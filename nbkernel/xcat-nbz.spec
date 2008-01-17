@@ -5,10 +5,10 @@ Source1: kernel-2.6.18-8.el5.i686.rpm
 %define tarch x86
 %endif
 %ifarch x86_64
-Source1: kernel-2.6.18-8.1.8.el5.x86_64.rpm
-Source2: modlist-2.6.18-8.1.8.el5.x86_64
-%define version	2.6.18_8.1.8
-%define kver 2.6.18-8.1.8.el5
+Source1: kernel-2.6.18-8.el5.x86_64.rpm
+Source2: modlist-2.6.18-8.el5.x86_64
+%define version	2.6.18_8
+%define kver 2.6.18-8.el5
 %define tarch x86_64
 %endif
 %ifarch ppc ppc64
