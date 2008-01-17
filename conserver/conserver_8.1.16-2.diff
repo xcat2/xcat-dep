@@ -1,0 +1,3539 @@
+--- conserver-8.1.16.orig/conserver/test.cf
++++ conserver-8.1.16/conserver/test.cf
+@@ -0,0 +1,30 @@
++# dummy conserver config file
++#
++# $Id: dummy.cf,v 4.3 92/07/27 12:23:59 ksb Exp $
++#
++# 1. change the `/dev/ttya' to any tty device you can put a serial device on
++#    that you could talk to with kermit/cu.  Put in the baud rate and parity.
++#
++# 2. change the `cc.purdue.edu' to your local domain.
++#
++# 3. !! do not leave this up, as it can give local users a root shell (login)
++#    !! for extended testing change the `|' to `|su - tst' where tst is a
++#    !! vanilla test acount, or comment out the `login' console.
++#
++# list of consoles we serve
++# name : tty[@host] : baud[parity] : device : group
++DOMAINHACK=
++LOGDIR=/tmp
++BREAK5=\rtest\r
++# shell:|:9600p:&:5
++# bash:|/usr/local/bin/bash::&:2
++web:!localhost:80:&:
++# b:/dev/ttyb:9600p:&:
++#ts6-10:!ts6:10010:&:
++#ts6-11:!ts6:10011:&:
++#ts6-12:!ts6:10012:&:
++#ts6-13:!ts6:10013:&:
++%%
++# list of clients we allow
++# type machines
++trusted: 127.0.0.1
+--- conserver-8.1.16.orig/conserver/main.c
++++ conserver-8.1.16/conserver/main.c
+@@ -357,7 +357,7 @@
+ 	} else {
+ 	    ciphers = "ALL:!LOW:!EXP:!MD5:@STRENGTH";
+ 	}
+-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, SSLVerifyCallback);
++	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSLVerifyCallback);
+ 	SSL_CTX_set_options(ctx,
+ 			    SSL_OP_ALL | SSL_OP_NO_SSLv2 |
+ 			    SSL_OP_SINGLE_DH_USE);
+@@ -365,6 +365,9 @@
+ 			 SSL_MODE_ENABLE_PARTIAL_WRITE |
+ 			 SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+ 			 SSL_MODE_AUTO_RETRY);
++	if (config->sslauthority != (char *)0) {
++	    SSL_CTX_load_verify_locations(ctx,config->sslauthority,"");
++	}
+ 	SSL_CTX_set_tmp_dh_callback(ctx, TmpDHCallback);
+ 	if (SSL_CTX_set_cipher_list(ctx, ciphers) != 1) {
+ 	    Error("SetupSSL(): setting SSL cipher list failed");
+@@ -1190,6 +1193,12 @@
+ 		if ((optConf->secondaryport = StrDup(optarg)) == (char *)0)
+ 		    OutOfMem();
+ 		break;
++	    case 'A':
++#if HAVE_OPENSSL
++		if ((optConf->sslauthority = StrDup(optarg)) == (char*)0) 
++		    OutOfMem();
++#endif
++		break;
+ 	    case 'c':
+ #if HAVE_OPENSSL
+ 		if ((optConf->sslcredentials =
+@@ -1529,6 +1538,12 @@
+     else
+ 	config->sslrequired = defConfig.sslrequired;
+ 
++    if (optConf->sslauthority != (char *)0)
++	config->sslauthority = StrDup(optConf->sslauthority);
++    else if (pConfig->sslauthority != (char *)0)
++	config->sslauthority = StrDup(pConfig->sslauthority);
++    else
++	config->sslauthority = StrDup(defConfig.sslauthority);
+     if (optConf->sslcredentials != (char *)0)
+ 	config->sslcredentials = StrDup(optConf->sslcredentials);
+     else if (pConfig->sslcredentials != (char *)0)
+--- conserver-8.1.16.orig/conserver/readcfg.c
++++ conserver-8.1.16/conserver/readcfg.c
+@@ -4385,6 +4385,8 @@
+ #if HAVE_OPENSSL
+     if (c->sslcredentials != (char *)0)
+ 	free(c->sslcredentials);
++    if (c->sslauthority != (char *)0)
++	free(c->sslauthority);
+ #endif
+     free(c);
+ }
+@@ -4474,6 +4476,12 @@
+ 		parserConfigTemp->secondaryport = (char *)0;
+ 	    }
+ #if HAVE_OPENSSL
++	    if (parserConfigTemp->sslauthority != (char *)0) {
++		if (pConfig->sslauthority != (char *)0)
++		    free(pConfig->sslauthority);
++		pConfig->sslauthority = parserConfigTemp->sslauthority;
++		parserConfigTemp->sslauthority = (char *)0;
++	    }
+ 	    if (parserConfigTemp->sslcredentials != (char *)0) {
+ 		if (pConfig->sslcredentials != (char *)0)
+ 		    free(pConfig->sslcredentials);
+@@ -4786,6 +4794,33 @@
+ 
+ void
+ #if PROTOTYPES
++ConfigItemSslauthority(char *id)
++#else
++ConfigItemSslauthority(id)
++    char *id;
++#endif
++{
++    CONDDEBUG((1, "ConfigItemSslauthority(%s) [%s:%d]", id, file, line));
++#if HAVE_OPENSSL
++    if (parserConfigTemp->sslauthority != (char *)0)
++	free(parserConfigTemp->sslauthority);
++
++    if ((id == (char *)0) || (*id == '\000')) {
++	parserConfigTemp->sslauthority = (char *)0;
++	return;
++    }
++    if ((parserConfigTemp->sslauthority = StrDup(id)) == (char *)0)
++	OutOfMem();
++#else
++    if (isMaster)
++	Error
++	    ("sslauthority ignored - encryption not compiled into code [%s:%d]",
++	     file, line);
++#endif
++}
++
++void
++#if PROTOTYPES
+ ConfigItemSslcredentials(char *id)
+ #else
+ ConfigItemSslcredentials(id)
+@@ -4962,6 +4997,7 @@
+     {"secondaryport", ConfigItemSecondaryport},
+     {"setproctitle", ConfigItemSetproctitle},
+     {"sslcredentials", ConfigItemSslcredentials},
++    {"sslauthority", ConfigItemSslauthority},
+     {"sslrequired", ConfigItemSslrequired},
+     {"unifiedlog", ConfigItemUnifiedlog},
+     {(char *)0, (void *)0}
+@@ -5250,6 +5286,27 @@
+ 	}
+ #endif
+ #if HAVE_OPENSSL
++	if (optConf->sslauthority == (char *)0) {
++	    if (pConfig->sslauthority == (char *)0) {
++		if (config->sslauthority != (char *)0) {
++		    free(config->sslauthority);
++		    config->sslauthority = (char *)0;
++		    Msg("warning: `sslauthority' config option changed - you must restart for it to take effect");
++		}
++	    } else {
++		if (config->sslauthority == (char *)0 ||
++		    strcmp(pConfig->sslauthority,
++			   config->sslauthority) != 0) {
++		    if (config->sslauthority != (char *)0)
++			free(config->sslauthority);
++		    if ((config->sslauthority =
++			 StrDup(pConfig->sslauthority))
++			== (char *)0)
++			OutOfMem();
++		    Msg("warning: `sslauthority' config option changed - you must restart for it to take effect");
++		}
++	    }
++	}
+ 	if (optConf->sslcredentials == (char *)0) {
+ 	    if (pConfig->sslcredentials == (char *)0) {
+ 		if (config->sslcredentials != (char *)0) {
+--- conserver-8.1.16.orig/conserver/readcfg.h
++++ conserver-8.1.16/conserver/readcfg.h
+@@ -27,6 +27,7 @@
+ #endif
+ #if HAVE_OPENSSL
+     char *sslcredentials;
++    char *sslauthority;
+     FLAG sslrequired;
+ #endif
+ } CONFIG;
+--- conserver-8.1.16.orig/console/console.c
++++ conserver-8.1.16/console/console.c
+@@ -105,7 +105,7 @@
+ 	} else {
+ 	    ciphers = "ALL:!LOW:!EXP:!MD5:@STRENGTH";
+ 	}
+-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, SSLVerifyCallback);
++	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSLVerifyCallback);
+ 	SSL_CTX_set_options(ctx,
+ 			    SSL_OP_ALL | SSL_OP_NO_SSLv2 |
+ 			    SSL_OP_SINGLE_DH_USE);
+@@ -113,6 +113,9 @@
+ 			 SSL_MODE_ENABLE_PARTIAL_WRITE |
+ 			 SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+ 			 SSL_MODE_AUTO_RETRY);
++	if (config->sslauthority != (char *)0) {
++	    SSL_CTX_load_verify_locations(ctx, config->sslauthority,"");
++	}
+ 	if (SSL_CTX_set_cipher_list(ctx, ciphers) != 1) {
+ 	    Error("Setting SSL cipher list failed");
+ 	    Bye(EX_UNAVAILABLE);
+@@ -2204,6 +2207,14 @@
+ 	config->playback = 0;
+ 
+ #if HAVE_OPENSSL
++    if (optConf->sslauthority != (char *)0 &&
++	optConf->sslauthority[0] != '\000')
++	config->sslauthority = StrDup(optConf->sslauthority);
++    else if (pConfig->sslauthority != (char *)0 &&
++	     pConfig->sslauthority[0] != '\000')
++	config->sslauthority = StrDup(pConfig->sslauthority);
++    else
++	config->sslauthority = (char *)0;
+     if (optConf->sslcredentials != (char *)0 &&
+ 	optConf->sslcredentials[0] != '\000')
+ 	config->sslcredentials = StrDup(optConf->sslcredentials);
+--- conserver-8.1.16.orig/console/readconf.h
++++ conserver-8.1.16/console/readconf.h
+@@ -18,6 +18,7 @@
+     unsigned short playback;
+ #if HAVE_OPENSSL
+     char *sslcredentials;
++    char *sslauthority;
+     FLAG sslrequired;
+     FLAG sslenabled;
+ #endif
+--- conserver-8.1.16.orig/console/readconf.c
++++ conserver-8.1.16/console/readconf.c
+@@ -37,6 +37,8 @@
+     if (c->escape != (char *)0)
+ 	free(c->escape);
+ #if HAVE_OPENSSL
++    if (c->sslauthority != (char *)0)
++	free(c->sslauthority);
+     if (c->sslcredentials != (char *)0)
+ 	free(c->sslcredentials);
+ #endif
+@@ -86,6 +88,13 @@
+     if (parserConfigDefault->playback != FLAGUNKNOWN)
+ 	c->playback = parserConfigDefault->playback;
+ #if HAVE_OPENSSL
++    if (parserConfigDefault->sslauthority != (char *)0) {
++	if (c->sslauthority != (char *)0)
++	    free(c->sslauthority);
++	if ((c->sslauthority =
++	     StrDup(parserConfigDefault->sslauthority)) == (char *)0)
++	    OutOfMem();
++    }
+     if (parserConfigDefault->sslcredentials != (char *)0) {
+ 	if (c->sslcredentials != (char *)0)
+ 	    free(c->sslcredentials);
+@@ -480,6 +489,32 @@
+ 
+ void
+ #if PROTOTYPES
++ConfigItemSslauthority(char *id)
++#else
++ConfigItemSslauthority(id)
++    char *id;
++#endif
++{
++    CONDDEBUG((1, "ConfigItemSslauthority(%s) [%s:%d]", id, file, line));
++#if HAVE_OPENSSL
++    if (parserConfigTemp->sslauthority != (char *)0)
++	free(parserConfigTemp->sslauthority);
++
++    if ((id == (char *)0) || (*id == '\000')) {
++	parserConfigTemp->sslauthority = (char *)0;
++	return;
++    }
++    if ((parserConfigTemp->sslauthority = StrDup(id)) == (char *)0)
++	OutOfMem();
++#else
++    Error
++	("sslauthority ignored - encryption not compiled into code [%s:%d]",
++	 file, line);
++#endif
++}
++
++void
++#if PROTOTYPES
+ ConfigItemSslcredentials(char *id)
+ #else
+ ConfigItemSslcredentials(id)
+@@ -712,6 +747,7 @@
+     {"port", ConfigItemPort},
+     {"replay", ConfigItemReplay},
+     {"sslcredentials", ConfigItemSslcredentials},
++    {"sslauthority", ConfigItemSslauthority},
+     {"sslrequired", ConfigItemSslrequired},
+     {"sslenabled", ConfigItemSslenabled},
+     {"striphigh", ConfigItemStriphigh},
+--- conserver-8.1.16.orig/debian/compat
++++ conserver-8.1.16/debian/compat
+@@ -0,0 +1 @@
++4
+--- conserver-8.1.16.orig/debian/changelog
++++ conserver-8.1.16/debian/changelog
+@@ -0,0 +1,303 @@
++conserver (8.1.16-2) gutsy; urgency=low
++
++  * Added support for requiring SSL authenticated connections
++  * Added support for specifying a certificate authority other
++    than the default
++  
++  Credit goes to Jarrod Johnson (jbjohnso@us.ibm.com) for both
++  of these patches.
++
++ -- Andy Wray <andywray@us.ibm.com>  Fri, 11 Jan 2008 16:28:30 -0500
++
++conserver (8.1.16-1) unstable; urgency=low
++
++  * New upstream release
++  * added colon after each 'closes' in the changelog to silence
++    'possible-missing-colon-in-closes' complaints
++
++ -- Joergen Haegg <jh@debian.org>  Thu, 12 Apr 2007 20:03:53 +0200
++
++conserver (8.1.15-3) unstable; urgency=low
++
++  * added update to french translation from Christian Perrier (closes: #408208)
++  * updated many po-files from tar file by Christian Perrier
++  * added update to czech translation from Jakub Kasparec (closes: #408731)
++  * added update to russian translation from Yuri Kozlov (closes: #408751)
++  * added update to german translation from Helge Kreutzmann (closes: #408859)
++  * closing old bug, should have been closed in 8.1.14-1 (closes: #359235)
++  * closing old bug, ssl is compiled in (closes: #396455)
++  * closing old bug, amd64 is available (closes: #387254)
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 29 Jan 2007 21:06:23 +0100
++
++conserver (8.1.15-2) unstable; urgency=low
++
++  * added update to german translation from Helge Kreutzmann (closes: #407845)
++  * added update to czech translation from Jakub Kasparec (closes: #356715)
++  * added update to french translation from Christian Perrier (closes: #405515)
++  * added XS-Autobuild header in control file
++  * updated to debian policy 3.7.2.2 
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 22 Jan 2007 22:19:47 +0100
++
++conserver (8.1.15-1) unstable; urgency=low
++
++  * New upstream release
++  * bug in debian/rules, didn't udpate debian/po, patch
++    from Christian Perrier (closes: #405516)
++
++ -- Joergen Haegg <jh@debian.org>  Thu,  4 Jan 2007 11:43:30 +0100
++
++conserver (8.1.14-2) unstable; urgency=low
++
++  * spelling error corrected, patch from Helge Kreutzmann (closes: #402942)
++  * updated german translation (closes: #402944)
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 18 Dec 2006 05:49:41 +0100
++
++conserver (8.1.14-1) unstable; urgency=low
++
++  * new upstream release
++  * encryption seems to work. (closes: #359235)
++  * updated Czech translation. (closes: #356715)
++
++ -- Joergen Haegg <jh@debian.org>  Wed, 19 Apr 2006 19:35:53 +0200
++
++conserver (8.1.13-2) unstable; urgency=low
++
++  * added French translation from Clément Stenac <zorglub@via.ecp.fr>
++    (closes: #352057)
++  * added Czech translation from Igor Jasa <Igor.Jasa@seznam.cz>
++    (closes: #319402)
++
++ -- Joergen Haegg <jh@debian.org>  Fri, 10 Feb 2006 22:16:15 +0100
++
++conserver (8.1.13-1) unstable; urgency=low
++
++  * New upstream release
++  	"This latest release includes what I believe is a fix for the
++       'conserver runs wild and eats up the CPU' issue that I've heard about."
++       (closes: #339729)
++  * updated Build-depends (closes: #342015)
++  * removed :adm from init and added 'create' in logrotate (closes: #344207)
++  * removed wrapper for console (closes: #344215)
++
++ -- Joergen Haegg <jh@debian.org>  Tue, 17 Jan 2006 17:09:18 +0100
++
++conserver (8.1.12-2) unstable; urgency=low
++
++  * recompiled against 0.9.8a-4 
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 14 Nov 2005 21:36:50 +0100
++
++conserver (8.1.12-1) unstable; urgency=low
++
++  * New upstream release fixes
++    crash from bad pointer manipulation during log replay - reported by
++    Ryan Kirkpatrick <linux@rkirkpat.net> (closes: #327756)
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 12 Sep 2005 21:44:13 +0200
++
++conserver (8.1.11-6) unstable; urgency=low
++
++  * added source dependency for libpam0g-dev, conserver should now
++    use PAM.
++
++ -- Joergen Haegg <jh@debian.org>  Tue,  9 Aug 2005 21:55:31 +0200
++
++conserver (8.1.11-5) unstable; urgency=low
++
++  * now depends on ${misc:Depends} instead of debconf 
++
++ -- Joergen Haegg <jh@debian.org>  Mon,  8 Aug 2005 21:33:09 +0200
++
++conserver (8.1.11-4) unstable; urgency=low
++
++  * moved some debconf notes to {NEWS,README}.Debian
++    Closes: #296521: debconf abuse should use NEWS.Debian
++
++ -- Joergen Haegg <jh@debian.org>  Thu, 24 Feb 2005 21:44:49 +0100
++
++conserver (8.1.11-3) unstable; urgency=low
++
++  * added missing danish translation from Morten Brix Pedersen. 
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 24 Jan 2005 21:07:44 +0100
++
++conserver (8.1.11-2) unstable; urgency=low
++
++  * new french translation from Clément Stenac (closes: #238774)
++  * new dutch translation from Luk Claes
++  * changed default logfile name to /var/log/conserver/&.log (closes: #287443)
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 17 Jan 2005 20:43:35 +0100
++
++conserver (8.1.11-1) unstable; urgency=low
++
++  * New upstream release
++  * danish translation from Morten Brix Pedersen (closes: #268400)
++  * dutch translation from Luk Claes (closes: #290769)
++  * default log file name changed to &.log for easier logrotate.
++    See the default conserver.cf.
++  * group adm is now set for the daemon also in /etc/init.d/conserver-server
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 17 Jan 2005 05:50:22 +0100
++
++conserver (8.1.1-3) unstable; urgency=low
++
++  * french translation from Clément Stenac (closes: #238774)
++
++ -- Joergen Haegg <jh@debian.org>  Tue, 23 Mar 2004 17:08:40 +0100
++
++conserver (8.1.1-2) unstable; urgency=low
++
++  * Mistake with sparc-package, try again 
++
++ -- Joergen Haegg <jh@debian.org>  Wed, 10 Mar 2004 20:39:02 +0100
++
++conserver (8.1.1-1) unstable; urgency=low
++
++  * New upstream release
++  * Added support for po-debconf (closes: #235173)
++  * logrotate should now be quiet if conserver isn't running.
++    (closes: #229662)
++  * Added swedish translation sv.po 
++
++ -- Joergen Haegg <jh@debian.org>  Thu,  4 Mar 2004 06:45:38 +0100
++
++conserver (8.0.9-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 15 Dec 2003 09:41:12 +0100
++
++conserver (8.0.8-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@debian.org>  Wed,  3 Dec 2003 06:33:51 +0100
++
++conserver (8.0.5-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@debian.org>  Wed,  5 Nov 2003 06:18:43 +0100
++
++conserver (8.0.1-1) unstable; urgency=low
++
++  * New upstream release
++  * Upstream has upgraded to autoconf-2.57 and now
++    uses recent config.guess/sub files
++  * Included fix for --with-64bits from NMU (closes: #202219).
++  * Added support for automatic conversion of old file formats, this
++    version has changed both protocol and config file format.
++
++ -- Joergen Haegg <jh@debian.org>  Wed,  1 Oct 2003 06:42:05 +0200
++
++conserver (7.2.7-1.1) unstable; urgency=low
++
++  * 1 day NMU 
++  * Add support for 64 bits --with-64bits (closes: #202219).
++  * Autocamicaly update config.{guess|sub}
++
++ -- Pierre Machard <pmachard@debian.org>  Fri, 12 Sep 2003 10:16:45 +0200
++
++conserver (7.2.7-1) unstable; urgency=low
++
++  * New upstream release
++  * Better client description. closes: #134141
++  * Added russian template for client. closes: #137625
++  * Bug in logrotate script. closes: #152464
++  * The new release also fixes the bug with case sensitive
++    access checks reported by Peter Chubb <peter@chubb.wattle.id.au>
++    It has also an updated manual for conserver.cf.
++    closes:  #186910,  #186911
++
++ -- Joergen Haegg <jh@debian.org>  Thu, 10 Apr 2003 06:05:09 +0200
++
++conserver (7.2.6-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@debian.org>  Mon,  7 Apr 2003 06:25:25 +0200
++
++conserver (7.2.5-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@debian.org>  Sat,  8 Mar 2003 07:27:45 +0100
++
++conserver (7.2.2-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@debian.org>  Mon, 10 Jun 2002 16:41:53 +0200
++
++conserver (7.2.1-2) unstable; urgency=low
++
++  * Server could not write pid-file when installed as non-root.
++    Logrotate file referred to wrong init file. Closes: #142063, #142803
++
++ -- Joergen Haegg <jh@debian.org>  Tue, 23 Apr 2002 22:11:26 +0200
++
++conserver (7.2.1-1) unstable; urgency=low
++
++  * New upstream release
++  * conserver is now compiled with --with-regex
++
++ -- Joergen Haegg <jh@debian.org>  Tue,  2 Apr 2002 21:52:43 +0200
++
++conserver (7.2.0-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@debian.org>  Wed, 13 Mar 2002 12:01:43 +0100
++
++conserver (7.1.3-1) unstable; urgency=low
++
++  * New upstream release
++  * added german description for the client from Sebastian Feltel
++    <sebastian@feltel.de> Closes: #116474, #117192
++  * conserver uses its own logfile now. Closes: #115130
++  * it is now possible to run conserver as non-root. Closes: #115131
++
++ -- Joergen Haegg <jh@debian.org>  Wed, 24 Oct 2001 20:51:11 +0200
++
++conserver (7.1.1-3) unstable; urgency=low
++
++  * new maintainer address 
++
++ -- Joergen Haegg <jh@debian.org>  Tue, 25 Sep 2001 05:59:55 +0200
++
++conserver (7.1.1-2) unstable; urgency=low
++
++  * moved package temporary to non-free until the
++  Ohio State license  has been changed.
++  Closes: bug#96624
++
++ -- Joergen Haegg <jh@axis.com>  Fri,  7 Sep 2001 23:09:48 +0200
++
++conserver (7.1.1-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@axis.com>  Sun, 19 Aug 2001 07:33:07 +0200
++
++conserver (7.0.2-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@axis.com>  Mon, 18 Jun 2001 22:33:16 +0200
++
++conserver (7.0.1-1) unstable; urgency=low
++
++  * New upstream release
++
++ -- Joergen Haegg <jh@axis.com>  Sun,  6 May 2001 07:30:22 +0200
++
++conserver (7.0.0-1) unstable; urgency=low
++
++  * Initial Release.
++
++ -- Joergen Haegg <jh@axis.com>  Thu, 15 Mar 2001 14:37:35 +0100
++
+--- conserver-8.1.16.orig/debian/conserver-server.config
++++ conserver-8.1.16/debian/conserver-server.config
+@@ -0,0 +1,23 @@
++#!/bin/sh -e
++
++. /usr/share/debconf/confmodule
++
++db_input medium conserver-server/run_as_root || true
++db_go
++
++db_input medium conserver-server/port || true
++db_go
++
++db_input medium conserver-server/base_port || true
++db_go
++
++db_input medium conserver-server/listen_address || true
++db_go
++
++# upgrade to version 8.x.x
++if [ -f /etc/conserver/conserver.cf ]; then
++	if egrep -q '^[^:#]+:[^:]*:' /etc/conserver/conserver.cf; then
++		db_input medium conserver-server/upgrade_800_flag || true
++		db_go
++	fi
++fi
+--- conserver-8.1.16.orig/debian/conserver-server.logrotate
++++ conserver-8.1.16/debian/conserver-server.logrotate
+@@ -0,0 +1,12 @@
++
++/var/log/conserver/*.log {
++	rotate 7
++	size 300k
++	daily
++	compress
++	missingok
++	create 0640 conservr adm
++	postrotate
++		/etc/init.d/conserver-server rotate
++	endscript
++}
+--- conserver-8.1.16.orig/debian/conserver-client.doc-base
++++ conserver-8.1.16/debian/conserver-client.doc-base
+@@ -0,0 +1,9 @@
++Document: conserver
++Title: Conserver
++Author: conserver.org and others
++Abstract: The conserver web page
++Section: Apps/System
++
++Format: HTML
++Index: /usr/share/doc/conserver-client/conserver.html
++Files: /usr/share/doc/conserver-client/conserver.html
+--- conserver-8.1.16.orig/debian/rules
++++ conserver-8.1.16/debian/rules
+@@ -0,0 +1,128 @@
++#!/usr/bin/make -f
++# Sample debian/rules that uses debhelper. 
++# GNU copyright 1997 by Joey Hess.
++#
++# This version is for a hypothetical package that builds an
++# architecture-dependant package, as well as an architecture-independent
++# package.
++
++# Uncomment this to turn on verbose mode. 
++#export DH_VERBOSE=1
++
++client = conserver-client
++clientd = debian/$(client)
++server = conserver-server
++serverd = debian/$(server)
++
++configure: configure-stamp
++configure-stamp:
++	dh_testdir
++	# Add here commands to configure the package.
++	./configure --sysconfdir=/etc/conserver \
++		--with-openssl \
++		--with-pam \
++		--with-regex \
++		--with-port=782 \
++		--prefix=/usr \
++		--mandir=\$${prefix}/share/man \
++		--infodir=\$${prefix}/share/info \
++		--with-logfile=/var/log/conserver/server.log \
++		--with-pidfile=/var/run/conserver.pid \
++		--with-libwrap \
++		--with-64bit
++	touch configure-stamp
++
++build: configure-stamp build-stamp
++build-stamp:
++	dh_testdir
++
++	# Add here commands to compile the package.
++	$(MAKE)
++
++	touch build-stamp
++
++clean:
++	dh_testdir
++	dh_testroot
++	rm -f build-stamp configure-stamp
++	rm -f config.log config.cache config.status
++
++	# Add here commands to clean up after the build process.
++	-$(MAKE) distclean
++
++	debconf-updatepo
++
++	dh_clean
++
++install: DH_OPTIONS=
++install: build
++	dh_testdir
++	dh_testroot
++	dh_clean -k
++	dh_installdirs
++
++	# Add here commands to install the package into debian/conserver.
++	# $(MAKE) install prefix=$(CURDIR)/debian/conserver/usr \
++	#	etcprefix=$(CURDIR)/debian/conserver
++	install -d $(serverd)/usr/sbin
++	install -m 0755 conserver/conserver $(serverd)/usr/sbin
++	install -d $(serverd)/etc/conserver
++
++	install -d $(serverd)/usr/lib/$(server)
++	install -m 0755 conserver/convert $(serverd)/usr/lib/$(server)
++
++	install -m 0644 debian/default.cf $(serverd)/etc/conserver/conserver.cf
++
++	install -d $(serverd)/usr/share/man/man5
++	install -m 0644 conserver.cf/conserver.cf.man \
++		$(serverd)/usr/share/man/man5/conserver.cf.5
++	install -m 0644 conserver.cf/conserver.passwd.man \
++		$(serverd)/usr/share/man/man5/conserver.passwd.5
++
++	install -d $(clientd)/etc/conserver
++	install -m 0644 debian/console.cf $(clientd)/etc/conserver/console.cf
++	install -d $(clientd)/usr/bin
++	install -m 0755 console/console $(clientd)/usr/bin/console
++	install -d $(clientd)/usr/share/man/man1
++	install -m 0644 console/console.man \
++		$(clientd)/usr/share/man/man1/console.1
++
++# Build architecture-independent files here.
++# Pass -i to all debhelper commands in this target to reduce clutter.
++binary-indep: DH_OPTIONS=-i
++binary-indep: build install
++
++# Build architecture-dependent files here.
++# Pass -a to all debhelper commands in this target to reduce clutter.
++binary-arch: DH_OPTIONS=-a
++binary-arch: build install
++	dh_testdir
++	dh_testroot
++	dh_installdebconf
++	dh_installdocs
++	dh_installexamples
++#	dh_installmenu
++#	dh_installemacsen
++#	dh_installpam
++	dh_installinit
++#	dh_installcron
++	dh_installman
++#	dh_installinfo
++	dh_installlogrotate
++#	dh_undocumented
++	dh_installchangelogs CHANGES
++	dh_strip
++#	dh_link
++	dh_compress
++	dh_fixperms
++#	dh_suidregister
++	dh_installdeb
++#	dh_makeshlibs
++#	dh_perl
++	dh_shlibdeps
++	dh_gencontrol
++	dh_md5sums
++	dh_builddeb
++
++binary: binary-indep binary-arch
++.PHONY: build clean binary-indep binary-arch binary install configure
+--- conserver-8.1.16.orig/debian/conserver-client.manpages
++++ conserver-8.1.16/debian/conserver-client.manpages
+@@ -0,0 +1 @@
++console/console.man
+--- conserver-8.1.16.orig/debian/conserver-client.docs
++++ conserver-8.1.16/debian/conserver-client.docs
+@@ -0,0 +1 @@
++conserver.html
+--- conserver-8.1.16.orig/debian/po/ru.po
++++ conserver-8.1.16/debian/po/ru.po
+@@ -0,0 +1,198 @@
++# translation of conserver_8.1.15-2.1_debconf_ru.po to Russian
++#
++#    Translators, if you are not familiar with the PO format, gettext
++#    documentation is worth reading, especially sections dedicated to
++#    this format, e.g. by running:
++#         info -n '(gettext)PO Files'
++#         info -n '(gettext)Header Entry'
++#
++#    Some information specific to po-debconf are available at
++#            /usr/share/doc/po-debconf/README-trans
++#         or http://www.debian.org/intl/l10n/po-debconf/README-trans
++#
++#    Developers do not need to manually edit POT or PO files.
++#
++# Yuri Kozlov <kozlov.y@gmail.com>, 2007.
++msgid ""
++msgstr ""
++"Project-Id-Version: 8.1.15-2.1\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2007-01-28 10:39+0300\n"
++"Last-Translator: Yuri Kozlov <kozlov.y@gmail.com>\n"
++"Language-Team: Russian <debian-l10n-russian@lists.debian.org>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"X-Generator: KBabel 1.11.4\n"
++"Plural-Forms:  nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 && n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr "Настроить консоль автоматически?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++"Если ответить утвердительно, то в файле /etc/conserver/console.cf "
++"параметрам CONSERVER_MASTER и CONSERVER_PORT будут присвоены "
++"значения, полученные при ответах на последующие вопросы"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Имя хоста, на котором установлен ваш сервер conserver:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++"Это имя хоста, на котором установлен пакет conserver-server. Если ничего "
++"не указывать, то клиент 'console' будет использовать имя хоста 'console'. "
++"Имя сервера может быть изменено в время выполнения программы "
++"опцией -M."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid "The server port number to connect to:"
++msgstr "Номер порта сервера для соединения:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++"Укажите номер порта сервера conserver для соединения. Можно указывать "
++"номер порта или имя сервиса."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid "The master port number for the conserver server:"
++msgstr "Номер порта мастер сервера conserver:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++"Укажите порт TCP мастер процесса, к которому подключаются клиенты. "
++"Можно указывать номер порта или имя сервиса. Порт по умолчанию для "
++"conserver равен 782; если запускать без прав суперпользователя, порт "
++"должен быть больше чем 1024."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid "The base port number for the conserver children:"
++msgstr "Базовый номер порта потомков conserver:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++"Укажите базовый порт, который должны слушать потомки. Каждый "
++"потомок начинает искать свободные порты с этого номера "
++"и увеличивает его, пытаясь найти максимальное число свободных портов, "
++"равное удвоенному максимальному числу групп. Если свободных портов "
++"такого диапазона нет, то conserver завершает работу. По умолчанию "
++"(если ничего не вводить) conserver "
++"позволяет операционной системе выбирать свободный порт. "
++"(Conserver порождает потомка для каждой группы консолей, которой "
++"нужно управлять и назначает каждому процессу номер порта, который "
++"нужно прослушивать.)"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr ""
++"Прослушиваемый адрес (если ничего не вводить, выполняется прослушивание "
++"на всех адресах):"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++"Введите прослушиваемый адрес. Это позволит conserver привязаться только "
++"к определённому IP-адресу (например `127.0.0.1'), а не ко всем интерфейсам. "
++"По умолчанию выполняется привязка ко всем интерфейсам."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr "Запускать conserver с правами суперпользователя?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++"Conserver можно настроить на работу с правами суперпользователя или "
++"пользователя 'conservr'. При работе без прав суперпользователя "
++"невозможно использовать теневые пароли в файле conserver.passwd. "
++"(Подробней смотрите в руководстве по conserver.passwd.)"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Преобразовать файлы conserver.cf и conserver.passwd в новый формат?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
++"Изменён протокол и форматы файлов! Был пересмотрен клиент/серверный "
++"протокол. Вы *ДОЛЖНЫ* использовать клиента версии 8.0.1 с сервером "
++"версии 8.0.1. Эти версии клиента и сервера не будут работать с версиями "
++"до pre-8.0.0. Был изменён формат конфигурационных файлов "
++"conserver.cf и conserver.passwd, подробней об этом написано в /"
++"usr/share/doc/conserver-server/README.Debian. Файлы /etc/"
++"conserver/conserver.cf и /etc/conserver/conserver.passwd будут преобразованы "
++"в новый формат, а их оригиналы будут сохранены под тем ми же именами с "
++"суффиксом .OLD. Проверьте правильность файлов после преобразования!"
++
+--- conserver-8.1.16.orig/debian/po/nl.po
++++ conserver-8.1.16/debian/po/nl.po
+@@ -0,0 +1,224 @@
++#
++#    Translators, if you are not familiar with the PO format, gettext
++#    documentation is worth reading, especially sections dedicated to
++#    this format, e.g. by running:
++#         info -n '(gettext)PO Files'
++#         info -n '(gettext)Header Entry'
++#
++#    Some information specific to po-debconf are available at
++#            /usr/share/doc/po-debconf/README-trans
++#         or http://www.debian.org/intl/l10n/po-debconf/README-trans
++#
++#    Developers do not need to manually edit POT or PO files.
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: conserver 8.1.1-2\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2005-01-16 16:33+0100\n"
++"Last-Translator: Luk Claes <luk.claes@ugent.be>\n"
++"Language-Team: Debian l10n Dutch <debian-l10n-dutch@lists.debian.org>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=utf-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr ""
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Naam van de computer waar uw conserver-server is geïnstalleerd:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++#, fuzzy
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++"De conserver-computernaam: dit is de naam van de computer waar het "
++"'conserver-server'-pakket is geïnstalleerd. De client, 'console', zal de "
++"computernaam 'console' gebruiken als er geen wordt opgegeven. De servernaam "
++"kan gewijzigd worden met de '-M'-optie."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++#, fuzzy
++msgid "The server port number to connect to:"
++msgstr "Geef het serverpoortnummer om naar te verbinden:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++"Geef het poortnummer van de conserver-server waarnaar u wilt verbinden. Dit "
++"is ofwel een poortnummer, ofwel een naam van een dienst."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++#, fuzzy
++msgid "The master port number for the conserver server:"
++msgstr "Geef het hoofd-poortnummer voor de conserver-server:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++"Geef de TCP-poort waarop het hoofdproces moet luisteren naar clients. Dit is "
++"ofwel een poortnummer ofwel een naam van een dienst. Het oorspronkelijke "
++"poortnummer voor conserver is 782, maar het moet hoger zijn dan 1024 als het "
++"proces draait als niet-root."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++#, fuzzy
++msgid "The base port number for the conserver children:"
++msgstr "Geef het basis-poortnummer voor de conserver-kinderen:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++"Geef de basispoort waarop kinderen moeten luisteren. Elk kind begint te "
++"zoeken naar vrije poorten vanaf dit poortnummer en hoger. Het probeert een "
++"maximaal aantal poorten gelijk aan het dubbel van het maximale aantal "
++"groepen. Als er geen vrije poorten beschikbaar zijn in dit bereik, dan stopt "
++"conserver. Standaard laat conserver het besturingssysteem een vrije poort "
++"kiezen. Geen invoer selecteert de standaard. (Conserver forkt een kind voor "
++"elke groep consoles die het moet beheren en geeft aan elk proces een "
++"poortnummer om op te luisteren.)"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++#, fuzzy
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr ""
++"Geef de adressen waarop geluisterd moet worden (alle adressen als geen "
++"invoer):"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++"Geef het adres om op te luisteren. Dit laat toe om conserver te verbinden "
++"aan een bepaald IP-adres (zoals `127.0.0.1') in plaats van alle interfaces. "
++"De standaard is om te verbinden met alle interfaces."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr "Moet conserver als root worden gedraaid?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++"Conserver kan geconfigureerd worden om als root of als 'conservr' te "
++"draaien. Het is niet mogelijk om het schaduwwachtwoord in conserver.passwd "
++"te gebruiken als het draait als niet-root. (Zie de manpagina van conserver."
++"passwd voor meer details.)"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++#, fuzzy
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Converteer conserver.cf en conserver.passwd naar het nieuwe formaat:"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++#, fuzzy
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
++"Protocol en bestandsformaat zijn gewijzigd! Het client/server-protocol is "
++"opnieuw bekeken. U *MOET* een 8.0.1-client gebruiken met een 8.0.1-server. "
++"Een client/server-combinatie met pre-8.0.0-code zal niet werken. Het "
++"bestandsformaat van de configuratiebestanden conserver.cf en conserver."
++"passwd is gewijzigd, lees /usr/share/doc/conserver-server/README.Debian voor "
++"meer details. Door bevestigend te antwoorden zal getracht worden /etc/"
++"conserver/conserver.cf en /etc/conserver/conserver.passwd te converteren "
++"naar het nieuwe formaat. De oude bestanden zullen hernoemd worden met een ."
++"OLD-suffix. Controleer de bestanden na de conversie!"
++
++#~ msgid "Protocol has changed with version 8.0.0 and 8.0.1!"
++#~ msgstr "Protocol is gewijzigd in versie 8.0.0 en 8.0.1!"
++
++#~ msgid ""
++#~ "Version 8.0.0: The client/server protocol has been rearchitected. You "
++#~ "*MUST* use an 8.0.0 client with an 8.0.0 server.  No combination of "
++#~ "client/server will work with pre-8.0.0 code. Version 8.0.1: There's a "
++#~ "slight client/server protocol change to implement the new 'initcmd' "
++#~ "console option.  If you use this functionality with an 8.0.0 client, "
++#~ "you'll run into a compatibility problem while the 'initcmd' command is "
++#~ "running. Please read /usr/share/doc/conserver-client/README.Debian for "
++#~ "more details."
++#~ msgstr ""
++#~ "Versie 8.0.0: het client/server-protocol is opnieuw bekeken. U *MOET* een "
++#~ "8.0.0-client gebruiken met een 8.0.0-server. Een client/server-combinatie "
++#~ "met pre-8.0.0-code zal niet werken. Versie 8.0.1: er is een kleine client/"
++#~ "server-protocolwijziging om de nieuwe 'initcmd'-consoleoptie te "
++#~ "implementeren. Als u deze functionaliteit gebruikt met een 8.0.0-client, "
++#~ "dan zult u compatibiliteitsproblemen ondervinden terwijl het 'initcmd'-"
++#~ "commando wordt uitgevoerd. Lees /usr/share/doc/conserver-client/README."
++#~ "Debian voor meer details."
++
++#~ msgid "conserver is compiled with tcp-wrappers"
++#~ msgstr "conserver is gecompileerd met tcp-wrappers"
++
++#~ msgid "Use the name 'conserver' in the tcp_wrapper config files."
++#~ msgstr ""
++#~ "Gebruik de naam 'conserver' in de configuratiebestanden van tcp_wrapper."
+--- conserver-8.1.16.orig/debian/po/da.po
++++ conserver-8.1.16/debian/po/da.po
+@@ -0,0 +1,220 @@
++#
++#    Translators, if you are not familiar with the PO format, gettext
++#    documentation is worth reading, especially sections dedicated to
++#    this format, e.g. by running:
++#         info -n '(gettext)PO Files'
++#         info -n '(gettext)Header Entry'
++#
++#    Some information specific to po-debconf are available at
++#            /usr/share/doc/po-debconf/README-trans
++#         or http://www.debian.org/intl/l10n/po-debconf/README-trans
++#
++#    Developers do not need to manually edit POT or PO files.
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: conserver 8.1.1\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2004-08-27 14:08+0200\n"
++"Last-Translator: Morten Brix Pedersen <morten@wtf.dk>\n"
++"Language-Team: Danish <dansk@klid.dk>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr ""
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Værtsnavn hvor din conserver-server er installeret:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++#, fuzzy
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++"Conserver-værtsnavnet er værtsnavnet hvor conserver-serveren pakken er "
++"installeret. Klienten, 'console', vil bruge værtsnavnet 'console' hvis du "
++"ikke skriver noget her. Servernavnet kan ændres under kørslen, med -M "
++"tilvalget."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++#, fuzzy
++msgid "The server port number to connect to:"
++msgstr "Indtast serverporten at forbinde til:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++"Indstil conserver-server porten at forbidne til. Dette kan enten være en "
++"port eller et service navn."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++#, fuzzy
++msgid "The master port number for the conserver server:"
++msgstr "Indtast hoved-porten for conserver-serveren:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++"Indstil den TCP-port som hoved ('master')-processen skal lytte efter "
++"klienter på. Dette kan være enten en port eller navnet på en service. Den "
++"oprindelige port for conserver er 782. Det skal være højere end 1024 hvis "
++"conserver ikke køres som root."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++#, fuzzy
++msgid "The base port number for the conserver children:"
++msgstr "Indtast base-porten for conserver børneprocesser:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++"Indstil base-porten for børneprocesser at lytte på. Hvert 'barn' starter med "
++"at kigge efter frie porte ved dette port nummer og arbejder opad. Der prøves "
++"max antallet af porte lig med dobbelt så meget som det maksimale tilladte "
++"grupper. Hvis ingen frie porte er tilgængelige i det område, afslutter "
++"conserver. Som standard lader conserver operativsystemet vælge en fri port. "
++"Hvis du ikke skriver noget her, vælges standarden.(Conserver opretter "
++"børneprocesser for hver enkel gruppe af consoles som skal håndteres og "
++"tildeler hver process sin egen port at lytte på.)"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++#, fuzzy
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr "Indtast adressen der skal lyttes på (hvis tom, alle adresser):"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++"Indstil adressen der skal lyttes på. Dette tillader conserver at lytte på en "
++"bestemt IP-adresse (f.eks. `127.0.0.1') istedet for på alle enheder. "
++"Standarden er at lytte på alle enheder."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr "Skal conserver køre som root?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++"Conserver kan sættes op til at køre som root eller 'conservr'. Det er ikke "
++"muligt at bruge skyggeadgangskoder hvis der ikke køres som root i conserver."
++"passwd. (Se conserver.passwd manualen for flere detaljer.)"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++#, fuzzy
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Konvertér conserver.cf og conserver.passwd til nyt format:"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++#, fuzzy
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
++"Protokol og filformat er ændret! Klient/server protokollen har fået en ny "
++"arkitektur. Du *SKAL* bruge en 8.0.1 klient med en 8.0.1 server. Ingen "
++"kombination af klient/server vil virke med før-8.0.0 kode. "
++"Opsætningsfilformatet for både conserver.cf og conserver.passwd er blevet "
++"ændret. Læs /usr/share/doc/conserver-server/README.Debian for flere "
++"detaljer. Ved at svare ja, vil jeg prøve at konvertere /etc/conserver/"
++"conserver.cf og /etc/conserver/conserver.passwd til det nye format. De gamle "
++"filer vil blive omdøbt med .OLD som endelse. Du bør tjekke filerne selv "
++"efter konverteringen!"
++
++#~ msgid "Protocol has changed with version 8.0.0 and 8.0.1!"
++#~ msgstr "Protokollen er blevet ændret med version 8.0.0 og 8.0.1!"
++
++#~ msgid ""
++#~ "Version 8.0.0: The client/server protocol has been rearchitected. You "
++#~ "*MUST* use an 8.0.0 client with an 8.0.0 server.  No combination of "
++#~ "client/server will work with pre-8.0.0 code. Version 8.0.1: There's a "
++#~ "slight client/server protocol change to implement the new 'initcmd' "
++#~ "console option.  If you use this functionality with an 8.0.0 client, "
++#~ "you'll run into a compatibility problem while the 'initcmd' command is "
++#~ "running. Please read /usr/share/doc/conserver-client/README.Debian for "
++#~ "more details."
++#~ msgstr ""
++#~ "Version 8.0.0: Klient/server-protokollen har fået en ny arkitektur. Du "
++#~ "*SKAL* brug en 8.0.0 klient med en 8.0.0 server. Ingen kombination af "
++#~ "klient/server vil virke med før-8.0.0 kode. Version 8.0.1: Der er en "
++#~ "mindre klient/server ændring i protokollen for at implementere det nye "
++#~ "'initcmd' console tilvalg. Hvis du bruger denne funktionalitet med en "
++#~ "8.0.0 klient, vil du løbe ind i kompatibilitetsproblemer hvis 'initcmd' "
++#~ "kommandoen kører. Læs /usR/share/doc/conserver-client/README.Debian for "
++#~ "flere detaljer."
++
++#~ msgid "conserver is compiled with tcp-wrappers"
++#~ msgstr "conserver er kompileret med tcp-wrappers"
++
++#~ msgid "Use the name 'conserver' in the tcp_wrapper config files."
++#~ msgstr "Brug navnet 'conserver' i tcp_wrapper opsætningsfilerne."
+--- conserver-8.1.16.orig/debian/po/fr.po
++++ conserver-8.1.16/debian/po/fr.po
+@@ -0,0 +1,194 @@
++# translation of fr.po to French
++#
++#    Translators, if you are not familiar with the PO format, gettext
++#    documentation is worth reading, especially sections dedicated to
++#    this format, e.g. by running:
++#         info -n '(gettext)PO Files'
++#         info -n '(gettext)Header Entry'
++#
++#    Some information specific to po-debconf are available at
++#            /usr/share/doc/po-debconf/README-trans
++#         or http://www.debian.org/intl/l10n/po-debconf/README-trans
++#
++#    Developers do not need to manually edit POT or PO files.
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: conserver 8.1.1\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2006-02-01 10:37+0100\n"
++"Last-Translator: Clément Stenac <zorglub@via.ecp.fr>\n"
++"Language-Team: French <debian-l10n-french@lists.debian.org>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"X-Generator: KBabel 1.9.1\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr "Souhaitez-vous configurer la console automatiquement ?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++"Si vous choisissez cette option, les valeurs CONSERVER_MASTER et "
++"CONSERVER_PORT du fichier « /etc/conserver/console.cf » seront remplacées "
++"par les réponses aux questions suivantes."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Nom de l'hôte où est installé le serveur « conserver » :"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++"Veuillez indiquer le nom de l'hôte où est installé le paquet conserver-"
++"server. Le client, « console », utilisera le nom d'hôte « console » si ce "
++"champ est laissé vide. Le nom du serveur peut être modifié en lançant "
++"l'exécution avec l'option -M."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid "The server port number to connect to:"
++msgstr "Numéro du port de connexion sur le serveur :"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++"Veuillez choisir le port où le serveur est à l'écoute. Vous pouvez indiquer "
++"un numéro de port ou un nom de service."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid "The master port number for the conserver server:"
++msgstr "Numéro du port maître pour le serveur « conserver » :"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++"Veuillez choisir le port TCP sur lequel le processus maître sera à l'écoute. "
++"Vous pouvez indiquer un numéro de port ou un nom de service."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid "The base port number for the conserver children:"
++msgstr "Numéro du port de base pour les processus fils « conserver » :"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++"Veuillez choisir le port de base sur lequel les fils écouteront. Chaque fils "
++"cherchera des ports libres à partir de ce numéro de port, en essayant au "
++"maximum un nombre de ports égal à deux fois le nombre maximal de groupes. Si "
++"aucun port n'est disponible dans cette plage, « conserver » s'arrête. Par "
++"défaut, « conserver » laisse le système d'exploitation choisir un port "
++"libre. La valeur par défaut sera utilisée si vous laissez ce champ libre. "
++"« conserver » crée un fils pour chaque groupe de consoles qu'il doit "
++"administrer et assigne à chaque processus un numéro de port sur lequel "
++"écouter."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr "Adresse d'écoute (toutes si champ vide) :"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++"Veuillez choisir l'adresse sur laquelle écouter. « conserver » sera alors à "
++"l'écoute sur une seule adresse IP (telle que « 127.0.0.1 ») et non sur "
++"toutes les interfaces. Par défaut il sera à l'écoute sur toutes les "
++"interfaces."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr ""
++"Souhaitez-vous que « conserver » s'exécute en tant que superutilisateur ?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++"Le logiciel « conserver » peut être configuré pour s'exécuter avec les "
++"privilèges du superutilisateur ou ceux de « conserver ». Il n'est pas "
++"possible d'utiliser les mots de passe cachés (« shadow passwords ») avec "
++"« conserver » s'il ne s'exécute pas en tant que superutilisateur. Veuillez "
++"consulter le manuel de conserver.passwd pour plus de détails."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Faut-il convertir conserver.cf et conserver.passwd au nouveau format ?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
++"Le protocole et le format de fichier ont changé. Le protocole client/serveur "
++"a subi des modifications d'architecture. Vous *DEVEZ* utiliser un "
++"client 8.0.1 avec un serveur 8.0.1. Aucune combinaison de client/serveur ne "
++"fonctionnera avec les versions antérieures à la version 8.0.0. Les formats "
++"du fichier de configuration de conserver.cf et conserver.passwd ont changé "
++"et vous devez lire /usr/share/doc/conserver-server/README.Debian pour plus "
++"de détails. Si vous choisissez cette option, les fichiers /etc/conserver/"
++"conserver.cf et /etc/conserver/conserver.passwd seront convertis vers le "
++"nouveau format. Les anciens fichiers seront renommés avec le suffixe .OLD. "
++"Veuillez vérifier les fichiers après la conversion."
+--- conserver-8.1.16.orig/debian/po/de.po
++++ conserver-8.1.16/debian/po/de.po
+@@ -0,0 +1,188 @@
++# Translation of conserver debconf templates to German
++# Copyright (C) Sebastian Feltel <sebastian@feltel.de>, 2004.
++# Copyright (C) Helge Kreutzmann <debian@helgefjell.de>, 2006, 2007.
++# This file is distributed under the same license as the conserver package.
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: conserver 8.1.15-1\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2007-01-28 06:07+0100\n"
++"Last-Translator: Helge Kreutzmann <debian@helgefjell.de>\n"
++"Language-Team: German <debian-l10n-german@lists.debian.org>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=ISO-8859-15\n"
++"Content-Transfer-Encoding: 8bit\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr "M�chten Sie die Konsole automatisch konfigurieren?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++"Wenn Sie dies auf �wahr� setzen, dann wird /etc/conserver/console.cf "
++"bearbeitet und CONSERVER_MASTER und CONSERVER_PORT mit den aus den n�chsten "
++"Fragen konfigurierten Werten ersetzt."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Hostnamen des Rechners, auf dem Ihr Conserver-Server installiert ist:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++"Der Conserver-Hostname ist der Hostname des Rechners, auf dem das conserver-"
++"server-Paket installiert ist. Der Client �console� wird, wenn nichts anderes "
++"angegeben ist, den Hostnamen �console� verwenden. Der Servername kann zur "
++"Programmlaufzeit mit der Option -M ge�ndert werden."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid "The server port number to connect to:"
++msgstr "Server-Port, mit dem verbunden werden soll:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++"Setzt den Conserver-Server-Port, mit den verbunden werden soll. Dies kann "
++"entweder eine Portnummer oder ein Servicename sein."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid "The master port number for the conserver server:"
++msgstr "Hauptportnummer des Conserver-Servers:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++"Setzt den TCP-Port, auf dem der Hauptprozess auf Clients lauschen soll. Dies "
++"kann entweder eine Portnummer oder ein Servicename sein. Die urspr�ngliche "
++"Portnummer f�r Conserver ist 782; sie muss h�her als 1024 sein, falls er "
++"nicht mit root-Rechten l�uft."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid "The base port number for the conserver children:"
++msgstr "Basis-Portnummer der Conserver-Kinder:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++"Setzt die Basis-Portnummer, an der die Kinder lauschen sollen. Jedes Kind "
++"beginnt an dieser Portnummer mit der Suche nach einem freien Port und "
++"arbeitet sich nach oben. Hierbei werden maximal doppelt so viele Ports "
++"versucht wie Gruppen existieren. Falls in diesem Bereich keine freien Ports "
++"existieren, beendet sich Conserver. Standardm��ig l�sst Conserver das "
++"Betriebssystem einen freien Port ausw�hlen. Leere Eingabe w�hlt die "
++"Standardeinstellung (Conserver spaltet f�r jede Konsolen-Gruppe die es "
++"verwalten muss ein Kind ab und weist jedem Prozess eine Portnummer zu, auf "
++"der er lauschen soll)."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr ""
++"Die Adresse, auf der gelauscht werden soll (falls leer wird auf "
++"allen Adressen gelauscht):"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++"Stellt die Adressen ein, auf denen gelauscht werden soll. Dies erlaubt es "
++"Conserver, sich auf eine spezielle IP-Adresse (wie �127.0.0.1�) statt auf "
++"alle Schnittstellen zu binden. Standardm��ig bindet er sich an alle "
++"Schnittstellen."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr "Soll Conserver unter Root laufen?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++"Conserver kann so konfiguriert werden, dass er unter �root� oder unter "
++"�conservr� laufen kann. Es ist nicht m�glich, die Shadow-Passw�rter in "
++"conserver.passwd zu verwenden, falls Conserver nicht unter root l�uft (lesen "
++"Sie das Handbuch f�r conserver.passwd f�r weitere Details)."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Konvertiere conserver.cf und conserver.passwd in das neue Format?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
++"Protokoll- und Datei-Format haben sich ge�ndert! Das Client-Server-Protokoll "
++"wurde neu strukturiert. Sie *M�SSEN* einen 8.0.1-Client mit einem 8.0.1-"
++"Server verwenden. Keine Kombination von Client/Server wird mit pre-8.0.0-"
++"Code funktionieren. Das Konfigurationsdateiformat wurde sowohl f�r conserver."
++"cf als auch f�r conserver.passwd ge�ndert, bitte lesen Sie /usr/share/doc/"
++"conserver-server/README.Debian f�r weitere Details./etc/conserver/conserver.cf"
++"und /etc/conserver/conserver.passwd werden in das neue Format konvertiert, "
++"die alte Datei bekommt die Endung .OLD. Bitte �berpr�fen Sie die Dateien nach "
++"der Konvertierung!"
++
++#~ msgid "The conserver hostname"
++#~ msgstr "Der Conserver-Hostname"
+--- conserver-8.1.16.orig/debian/po/templates.pot
++++ conserver-8.1.16/debian/po/templates.pot
+@@ -0,0 +1,145 @@
++# SOME DESCRIPTIVE TITLE.
++# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
++# This file is distributed under the same license as the PACKAGE package.
++# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
++#
++#, fuzzy
++msgid ""
++msgstr ""
++"Project-Id-Version: PACKAGE VERSION\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
++"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
++"Language-Team: LANGUAGE <LL@li.org>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=CHARSET\n"
++"Content-Transfer-Encoding: 8bit\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr ""
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid "The server port number to connect to:"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid "The master port number for the conserver server:"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid "The base port number for the conserver children:"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr ""
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr ""
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr ""
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
+--- conserver-8.1.16.orig/debian/po/pt.po
++++ conserver-8.1.16/debian/po/pt.po
+@@ -0,0 +1,180 @@
++# Portuguese translation of conserver's debconf messages.
++# Rui Branco <ruipb@debianpt.org>, 2007 - initial translation
++#
++msgid ""
++msgstr ""
++"Project-Id-Version: conserver\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2007-01-28 12:43+0000\n"
++"Last-Translator: Rui Branco <ruipb@debianpt.org>\n"
++"Language-Team: Portuguese <traduz@debianpt.org>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr "Deseja configurar a consola automaticamente?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++"Ao responder afirmativamente será editado o /etc/conserver/console.cf e "
++"substituirá o CONSERVER_MASTER e CONSERVER_PORT com os valores a configurar "
++"nas próximas questões"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Nome da máquina onde o servidor conserser está instalado:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++"O nome da máquina conserver é o nome da máquina onde o pacote conserver-"
++"server está instalado. O cliente 'console' terá o nome da máquina 'console' "
++"se este ficar em branco. O nome de servidor pode ser alterado durante a "
++"execução com a opção -M."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid "The server port number to connect to:"
++msgstr "Número da porta no servidor para a ligação a este:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++"Defina a porta em qual o servidor conserver se ligará. Esta pode ser ou um "
++"número de porta ou um nome de serviço."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid "The master port number for the conserver server:"
++msgstr "Número de porta principal para o servidor conserver:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++"Defina a porta TCP de escuta do processo principal para os clientes. Esta "
++"pode ser um número de porta ou um nome de serviço. O número de porta "
++"original para o conserver é 782, tem que ser maior que 1024 se correr como "
++"não-root."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid "The base port number for the conserver children:"
++msgstr "Número de porta de base para os processos filhos do conserver:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++"Defina o número de porta base de escuta para os processos filhos. Cada "
++"processo inicia a procura por portas livres a partir deste número de porta "
++"e, a partir daqui para a frente, tentar um número máximo de portas equivale "
++"a duas vezes o número máximos de grupos. Se não estiverem disponíveis portas "
++"livres naquele intervalo, o conserver termina. Por omissão, o conserver "
++"permite que o sistema operativo escolha outra porta livre. Uma entrada em "
++"branco selecciona a omissão (o Conserver gerá um sub-processo para cada "
++"grupo de consolas que tem que gerir e atribui a cada processo um número de "
++"porta para escutar)"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr ""
++"Endereços para escutar (se deixado em branco o valor por omissão será todos)"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++"Define o endereço para escutar.  Isto permite que o conserver se ligue a um "
++"endereço IP particular (como `127.0.0.1') em vez de todas as interfaces. A "
++"omissão é ligar-se a todas as interfaces."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr "Deverá o conserver correr como root?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++"O Conserver pode ser configurado para correr como root ou como 'conservr'. "
++"Não é possível usar o shadow password se correr o conserver como não-root em "
++"conserver.passwd. (Veja o manual para o conserver.passwd para mais detalhes)."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Converter o conserver.cf e conserver.passwd para um novo formato?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
++"O protocolo e o formato de ficheiro foram alterados! O protocolo cliente/"
++"servidor foi re-arquitectado. *TERÁ* que usar um cliente 8.0.1 com o "
++"servidor 8.0.1.  Nenhuma combinação de cliente/servidor irá funcionar com "
++"código pre-8.0.0. O formato do ficheiro de configuração para ambos os "
++"conserver.cf e conserver.passwd foi modificado, leia /usr/share/doc/"
++"conserver-server/README.Debian para mais detalhes. O /etc/conserver/"
++"conserver.cf e /etc/conserver/conserver.passwd será convertida para o novo "
++"formato, a versão antiga será renomeada com o sufixo .OLD. Verifique os "
++"ficheiros após a conversão!"
+--- conserver-8.1.16.orig/debian/po/cs.po
++++ conserver-8.1.16/debian/po/cs.po
+@@ -0,0 +1,160 @@
++# translation of conserver.po to czech
++# translation of conserver.cs_utf8.po
++#
++#    Translators, if you are not familiar with the PO format, gettext
++#    documentation is worth reading, especially sections dedicated to
++#    this format, e.g. by running:
++#         info -n '(gettext)PO Files'
++#         info -n '(gettext)Header Entry'
++#
++#    Some information specific to po-debconf are available at
++#            /usr/share/doc/po-debconf/README-trans
++#         or http://www.debian.org/intl/l10n/po-debconf/README-trans
++#
++#    Developers do not need to manually edit POT or PO files.
++#
++# Jakub Kasparec <mr.k@centrum.cz>, 2007.
++msgid ""
++msgstr ""
++"Project-Id-Version: conserver.cs_utf8\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2007-01-27 00:24+0000\n"
++"Last-Translator: Jakub Kasparec <mr.k@centrum.cz>\n"
++"Language-Team: czech <debian-l10n-czech@lists.debian.org>\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=UTF-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++"X-Generator: KBabel 1.11.4\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr "Přejete si nakonfigurovat konzoli automaticky?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++"Nastavením této hodnoty na `true' se upraví /etc/conserver/console.cf, ve "
++"kterém se nahradí hodnoty pro CONSERVER_MASTER a CONSERVER_PORT za hodnoty "
++"nastavené v následujících otázkách"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Jméno počítače, na který je server conserver nainstalován:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr "Hostitelské jméno conserveru je jméno počítače, na který je nainstalován balík conserver-server. Pokud ponecháte pole prázdné, použije klient 'console' hostitelské jméno 'console'. Jméno serveru může být změněno za běhu parametrem -M."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid "The server port number to connect to:"
++msgstr "Serverové číslo portu pro připojení:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr "Nastavte serverový port conserveru, ke kterému se chcete připojovat. Může to být buď číslo portu nebo název služby."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid "The master port number for the conserver server:"
++msgstr "Hlavní číslo portu pro server conserver:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr "Nastavte TCP port pro hlavní proces, na kterém se bude naslouchat klientům. Toto může být buď číslo portu nebo název služby. Původní číslo portu pro conserver je 782, ale pokud jej nespouštíte jako root, musíte použít vyšší číslo portu než 1024."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid "The base port number for the conserver children:"
++msgstr "Základní číslo portu pro potomky conserveru:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr "Nastavte základní port, na kterém budou naslouchat potomci. Každý potomek začne hledat nové porty na zadaném čísle portu a pokračuje směrem vzůru až do dvojnásobku maximálního počtu skupin. Pokud nejsou v tomto rozsahu nalezeny žádné volné porty, conserver skončí. V základním nastavení nechá conserver výběr volného portu na operačním systému. Nezadáte-li nic, použije se výchozí nastavení (conserver vytvoří potomka pro každou skupinu konzolí které musí spravovat a každému procesu přiřadí číslo portu, na kterém má naslouchat)."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr "Adresa pro naslouchání (pokud je prázdná, použije výchozí pro všechny):"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr "Zadejte adresu, na které má conserver naslouchat.  To umožňuje conserveru se navázat na konkrétní IP adresu (jako `127.0.0.1') místo poslouchání na všech rozhraních. Výchozí je naslouchat na všech rozraních."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr "Má se conserver spouštět jako root?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr "Conserver může být nakonfigurován tak, aby se spouštěl pod uživatelem root, nebo jako 'conservr'. Pokud není conserver spuštěn jako root, není možné v passwd conserveru používat stínové heslo. (Pro více informací se podívejte na manuálové stránky conserver.passwd)"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Převést conserver.cf a conserver.passwd na nový formát?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr "Protokol a formát souboru se změnil! Klient/server protokol byl přebudován. MUSÍTE použít klienta 8.0.1 se serverem 8.0.1. Jiná kombinace klienta/serveru nebude pracovat s kódem před 8.0.0. Konfigurační soubor formátu pro oba conserver.cf a conserver.passwd byl změněn. Přečtěte si prosím /usr/share/doc/conserver-server/README.Debian pro další informace. Soubory /etc/conserver/conserver.cf a /etc/conserver/conserver.passwd budou převedeny na nový formát. Staré soubory budou přejmenovány s příponou .OLD. Zkontrolujte prosím změněné soubory!"
++
+--- conserver-8.1.16.orig/debian/po/sv.po
++++ conserver-8.1.16/debian/po/sv.po
+@@ -0,0 +1,188 @@
++# Translators, if you are not familiar with the PO format, gettext
++# documentation is worth reading, especially sections dedicated to
++# this format, e.g. by running:
++# info -n '(gettext)PO Files'
++# info -n '(gettext)Header Entry'
++# Some information specific to po-debconf are available at
++# /usr/share/doc/po-debconf/README-trans
++# or http://www.debian.org/intl/l10n/po-debconf/README-trans
++# Developers do not need to manually edit POT or PO files.
++# , fuzzy
++# Joergen Haegg <jh@debian.org>, 2005.
++# 
++# 
++msgid ""
++msgstr ""
++"Project-Id-Version: conserver 8.1.15-3\n"
++"Report-Msgid-Bugs-To: jh@debian.org\n"
++"POT-Creation-Date: 2007-01-22 22:19+0100\n"
++"PO-Revision-Date: 2007-01-29 20:35+0100\n"
++"Last-Translator: Jörgen Hägg <jh@debian.org>\n"
++"Language-Team: Swedish\n"
++"MIME-Version: 1.0\n"
++"Content-Type: text/plain; charset=utf-8\n"
++"Content-Transfer-Encoding: 8bit\n"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid "Do you want to configure console automatically?"
++msgstr "Vill du konfigurera console automatiskt?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-client.templates:1001
++msgid ""
++"Setting this to true will edit /etc/conserver/console.cf and replace "
++"CONSERVER_MASTER and CONSERVER_PORT with the configured values in the next "
++"questions"
++msgstr ""
++"Genom att sätta denna till sant kommer /etc/conserver/console.cf att "
++"editeras och ersätta CONSERVER_MASTER och CONSERVER_PORT med de "
++"konfigurerade värdena i de följande frågorna"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid "Hostname where your conserver server is installed:"
++msgstr "Maskinens namn där conserver-demonen är installerad:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:2001
++msgid ""
++"The conserver hostname is the hostname where the conserver-server package is "
++"installed. The client, 'console', will use the hostname 'console' if left "
++"empty. The server name can be changed during runtime with the -M option."
++msgstr ""
++"Maskinen där conserver-serverpaketet är installerat. Om detta fält "
++"lämnas tomt kommer klientprogrammet ('console') att använda namnet 'console' "
++"i stället. Demonens maskinnamn kan ändras med flaggan -M."
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid "The server port number to connect to:"
++msgstr "Portnumret som klientprogrammet ska kontakta:"
++
++#. Type: string
++#. Description
++#: ../conserver-client.templates:3001
++msgid ""
++"Set the conserver server port to connect to. This may be either a port "
++"number or a service name."
++msgstr ""
++"Ange här det portnummer på servermaskinen som klientprogrammet ('console') "
++"ska kontakta. Det kan vara ett tal eller tjänstens namn."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid "The master port number for the conserver server:"
++msgstr "Huvudportnumret för conserverdemonens maskin:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:1001
++msgid ""
++"Set the TCP port for the master process to listen on for clients. This may "
++"be either a port number or a service name. The original port number for "
++"conserver is 782, must be higher than 1024 if running as non-root."
++msgstr ""
++"Ange TCP-porten som huvudprocessen ska lyssna efter klienter på. Det kan "
++"antingen vara ett nummer eller ett tjänstenamn. Det ursrprungliga numret för "
++"conserver är 782. Om demonen inte körs som root måste numret vara större än "
++"1024."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid "The base port number for the conserver children:"
++msgstr "Första portnumret för underprocesser till conserver:"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:2001
++msgid ""
++"Set the base port for children to listen on. Each child starts looking for "
++"free ports at this port number and working upward, trying a maximum number "
++"of ports equal to twice the maximum number of groups. If no free ports are "
++"available in that range, conserver exits. By default, conserver lets the "
++"operating system choose a free port. Empty input selects the default. "
++"(Conserver forks a child for each group of consoles it must manage and "
++"assigns each process a port number to listen on.)"
++msgstr ""
++"Anger det första portnumer som underprocesser lyssnar på. Varje ny process "
++"börjar leta ledia portnummer från detta nummer och går uppåt tills den når "
++"maxnumret som är lika med antal grupper*2. Conserverdemonen avbryter om det "
++"inte finns lediga portar i det området. Normalt låter conserver "
++"operativsystemet välja en ledig port, detta är vad som händer om fältet är "
++"tomt. (Conserver startar en ny process för varje grupp av terminaler den ska "
++"sköta och ger varje process ett portnummer att lyssna på."
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid "The listen address (defaults to all addresses if empty):"
++msgstr "Adressen som demonen lyssnar på (alla adresser om tomt):"
++
++#. Type: string
++#. Description
++#: ../conserver-server.templates:3001
++msgid ""
++"Set the address to listen on.  This allows conserver to bind to a particular "
++"IP address (like `127.0.0.1') instead of all interfaces. The default is to "
++"bind to all interfaces."
++msgstr ""
++"Detta sätter den adress som conserverdemonen lyssnar på. Det gör det möjligt "
++"att binda till en specifik ip-adress (exempelvis 127.0.0.1) i stället för "
++"binad till alla tillgängliga 'interface'."
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid "Should conserver run as root?"
++msgstr "Ska conserver köras som root?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:4001
++msgid ""
++"Conserver can be configured to run as root or as 'conservr'. It is not "
++"possible to use the shadow password if running as non-root in conserver."
++"passwd. (See the manual for conserver.passwd for more details.)"
++msgstr ""
++"Conserver kan konfigureras att köra som root eller som användaren "
++"'conservr'. Det är inte möjligt för den att använda 'shadow'-databasens "
++"lösenord när den kör som annan användade än root. (Se manualen för conserver."
++"passwd för närmare detaljer.)"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid "Convert conserver.cf and conserver.passwd to new format?"
++msgstr "Omvandla conserver.cf och conserver.passwd till det nya formatet?"
++
++#. Type: boolean
++#. Description
++#: ../conserver-server.templates:5001
++msgid ""
++"Protocol and file format has changed! The client/server protocol has been "
++"rearchitected. You *MUST* use an 8.0.1 client with an 8.0.1 server.  No "
++"combination of client/server will work with pre-8.0.0 code. The config file "
++"format for both conserver.cf and conserver.passwd has been changed, read /"
++"usr/share/doc/conserver-server/README.Debian for more details. The /etc/"
++"conserver/conserver.cf and /etc/conserver/conserver.passwd will be converted "
++"to the new format and the old will be renamed with .OLD as suffix. Check the "
++"files after the conversion!"
++msgstr ""
++"Protokoll och filformat har ändrats! Klient-serverprotokollet har gjorts om "
++"helt. Du *måste* använda en 8.0.1-klient mot en 8.0.1-server. Ingen annan "
++"kombination av klient/server kommer att fungera tillsammans med versioner "
++"före 8.0.0. Konfigureringsfilerna conserver.cf och conserver.passwd har båda "
++"nytt format, läs /usr/share/doc/conserver-server/README.Debian för mer "
++"detaljer. Om du anger 'Yes' kommer jag att försöka omvandla /etc/conserver/"
++"conserver.cf och /etc/conserver/conserver.passwd till det nya formatet, de "
++"ursprungliga filerna döps om med 'OLD' som suffix. Kontrollera filerna efter "
++"konverteringen!"
++
+--- conserver-8.1.16.orig/debian/po/POTFILES.in
++++ conserver-8.1.16/debian/po/POTFILES.in
+@@ -0,0 +1,2 @@
++[type: gettext/rfc822deb] conserver-client.templates
++[type: gettext/rfc822deb] conserver-server.templates
+--- conserver-8.1.16.orig/debian/conserver-client.postinst
++++ conserver-8.1.16/debian/conserver-client.postinst
+@@ -0,0 +1,25 @@
++#!/bin/bash -e
++
++conf=/etc/conserver/console.cf
++
++
++if [ "$1" = "configure" -a -e /usr/share/debconf/confmodule ]; then
++	. /usr/share/debconf/confmodule
++
++	db_get conserver-client/config
++	if [ "$RET" = "true" ]; then
++
++		touch $conf
++		db_get conserver-client/server
++		perl -pi -e "s/\w+;$/$RET;/ if /^master\s/" $conf
++		db_get conserver-client/port
++		perl -pi -e "s/\w+;$/$RET;/ if /^port\s/" $conf
++	fi
++fi
++
++# dh_installdeb will replace this with shell code automatically
++# generated by other debhelper scripts.
++
++#DEBHELPER#
++
++
+--- conserver-8.1.16.orig/debian/conserver-server.dirs
++++ conserver-8.1.16/debian/conserver-server.dirs
+@@ -0,0 +1 @@
++/var/log/conserver
+--- conserver-8.1.16.orig/debian/conserver-server.init
++++ conserver-8.1.16/debian/conserver-server.init
+@@ -0,0 +1,95 @@
++#! /bin/sh
++### BEGIN INIT INFO
++# Provides:          conserver
++# Required-Start:    $syslog $named $time $local_fs
++# Required-Stop:     $syslog $named $time $local_fs
++# Should-Start:      
++# Should-Stop:       
++# Default-Start:     2 3 4 5
++# Default-Stop:      0 1 6
++# Short-Description: start the conserver daemon
++# Description:       this script will start the conserver daemon
++#		     used by the conserver-client console program
++### END INIT INFO
++
++PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
++DAEMON=/usr/sbin/conserver
++NAME=conserver
++DESC=conserver
++conf=/etc/conserver/server.conf
++localconf=/etc/conserver/server.local
++OPTS=
++ASROOT=
++
++if [ -f $conf ]; then
++	. $conf
++fi
++if [ -f $localconf ]; then
++	. $localconf
++fi
++
++test -f $DAEMON || exit 0
++
++set -e
++
++case "$1" in
++  start)
++	echo -n "Starting $DESC: "
++	# somehow conserver hangs dpkg -i, --background is a workaround
++	if [ "$ASROOT" ]; then
++		start-stop-daemon --background --start \
++			--quiet --exec $DAEMON -- -d $OPTS
++	else
++		touch /var/run/conserver.pid
++		chown -R conservr:adm /var/log/conserver /var/run/conserver.pid
++		start-stop-daemon --chuid conservr --background --start \
++			--quiet --exec $DAEMON -- -d $OPTS
++	fi
++	echo "$NAME."
++	;;
++  stop)
++	echo -n "Stopping $DESC: "
++	start-stop-daemon --stop --oknodo --quiet --pidfile /var/run/$NAME.pid
++	echo "$NAME."
++	;;
++  reload|force-reload)
++	#
++	echo "Reloading $DESC configuration files."
++	start-stop-daemon --stop --signal 1 --quiet --pidfile /var/run/$NAME.pid
++  ;;
++  rotate)
++	#
++	# make conserver quietly reopen it's log files
++	# 
++	if [ -f /var/run/$NAME.pid ]; then
++		kill -USR2 `cat /var/run/$NAME.pid`
++	fi
++  ;;
++  restart)
++	#
++	#	If the "reload" option is implemented, move the "force-reload"
++	#	option to the "reload" entry above. If not, "force-reload" is
++	#	just the same as "restart".
++	#
++	echo -n "Restarting $DESC: "
++	start-stop-daemon --stop --oknodo --quiet --pidfile /var/run/$NAME.pid
++	sleep 1
++	if [ "$ASROOT" ]; then
++		start-stop-daemon --background --start \
++			--quiet --exec $DAEMON -- -d $OPTS
++	else
++		start-stop-daemon --chuid conservr --background --start \
++			--quiet --exec $DAEMON -- -d $OPTS
++	fi
++	echo "$NAME."
++	;;
++  *)
++	N=/etc/init.d/$NAME
++	# echo "Usage: $N {start|stop|restart|reload|force-reload}" >&2
++	echo "Usage: $N {start|stop|restart|force-reload|rotate}" >&2
++	exit 1
++	;;
++esac
++
++exit 0
++
+--- conserver-8.1.16.orig/debian/README.Debian
++++ conserver-8.1.16/debian/README.Debian
+@@ -0,0 +1,140 @@
++
++conserver is compiled with tcp-wrappers
++Use the name 'conserver' in the tcp_wrapper config files.
++
++ -- Joergen Haegg <jh@debian.org>  Thu, 24 Feb 2005 21:29:28 +0100
++
++---------------------------------------------------------------------------
++
++conserver for Debian
++--------------------
++
++I had to make a script-wrapper around console to be able
++to configure the conserver host.
++
++The only reason that conserver ended up in non-free
++is the Ohio State license that don't explicitly allows modification.
++I will move it to main if this can be solved.
++
++Conserver is compiled with tcp_wrappers.
++Use the name 'conserver' as the daemon name in /etc/hosts.allow.
++
++
++------------------------
++
++REMEMBER: conserver will not start unless it has a
++valid /etc/conserver.cf. Check /var/log/server.log.
++
++------------------------
++
++Version 8 has changed both protocol and config file format, here
++is more info from the INSTALL file:
++
++    Whenever you upgrade I suggest you upgrade both the client and
++    server.  Most times, however, you can get away without upgrading
++    the client (it's usually a fairly static piece of code).  I'll
++    document any dependencies here, but check the CHANGES file for any
++    new features added to the client if you're considering *not*
++    upgrading.
++
++    Version 8.0.2
++
++	- I've added a '^Ec;' sequence to allow the client to signal the
++	  server as to when it's ready to see console data.  Without
++	  this, verbose consoles will prevent clients from attaching
++	  (the client sees unexpected data).  An 8.0.2 client should be
++	  compatible with an 8.0.1 server, but an 8.0.1 client is not
++	  compatible with an 8.0.2 server.
++
++    Version 8.0.1
++
++	- There's a slight client/server protocol change to implement
++	  the new 'initcmd' console option.  If you use this
++	  functionality with an 8.0.0 client, you'll run into a
++	  compatibility problem while the 'initcmd' command is running.
++
++    Version 8.0.0
++
++	- The client/server protocol has been rearchitected.  You *MUST*
++	  use an 8.0.0 client with an 8.0.0 server.  No combination of
++	  client/server will work with pre-8.0.0 code.
++
++	- Upgrading from pre-8.0.0 code to 8.0.0 and beyond requires
++	  you to change your conserver.cf and conserver.passwd files
++	  because both of the file formats have changed.
++
++	  The conserver.cf file changes are so major that there is a
++	  convert program available in the conserver subdirectory.  Just
++	  run './conserver/convert <old-cf-file>' and it will attempt a
++	  conversion to the new format, sending it to stdout.  Any errors
++	  will be printed to stderr.  There are a couple of things
++	  you might need to adjust.  First are the user access lists.
++	  If you are restricting users to certain consoles in your old
++	  conserver.passwd file, you'll need to move those restrictions
++	  into the new conserver.cf file.  Restrictions are set with the
++	  'ro' and 'rw' tags in the configuration file.  Second are the
++	  'access' blocks.  What get produced by the convert program
++	  will be functionally equivalent to the old behavior, but you
++	  may be able to tune things to better suit your environment.
++
++	  The conserver.passwd file's console restrictions have moved,
++	  as described above.  So to convert the conserver.passwd file,
++	  all you really need to do is something like:
++
++		awk -F: '{print $1 ":" $2}' <old-passwd-file>
++
++	  If you have comments or continuation lines in your file,
++	  you'll have to do a bit more cleanup to strip out the third
++	  field (which is what the awk command is intending to do).
++
++	- Conserver no longer trusts reverse DNS information by default.
++	  If you use the --with-trustrevdns configure flag, you can
++	  re-enable the use of gethostbyaddr() [I don't recommended it,
++	  however].  If you are using domain names in access lists,
++	  you'll either need to change those to use hostnames and/or ip
++	  addresses/ranges or use the --with-trustrevdns flag.  For
++	  example, if you have (in the
++	  8.0.0 format):
++
++		allowed conserver.com;  # allow *.conserver.com
++
++	  then you'll need to worry about this change.  If you only use
++	  full hostnames, you shouldn't have to do anything.
++
++    Version 7.2.4
++
++        - If SSL support is compiled into the code, older versions of
++          the client and server are, by default, incompatible because
++          encrypted connections are a requirement.  Use of the -E flag in
++          the client and/or server can work around this (but I discourage
++          this - please upgrade the clients and servers instead).
++
++    Version 7.2.0
++
++        - The code related to broadcast messages in the client (-b) has
++          changed.  If you want the username to come across properly in
++          the broadcast message, you'll need to make sure you upgrade
++          to the 7.2.0 client.
++
++    Version 7.1.1
++
++        - Both conserver.passwd and conserver.cf file parsing behaves
++          the same now.  Both use leading whitespace as a continuation
++          line indicator - if you have leading whitespace on a line
++          (aside from comments) you probably should remove it.
++
++    Version 7.1.0
++
++        - The client/server protocol has changed.  You *MUST* use a
++          7.1.0 client with a 7.1.0 and above server.  A 7.1.0 client
++          is *not* backward compatible with a pre-7.1.0 server.
++
++        - Some of the flags in the client (-d, -D, and -r) and server
++          (-n) have been given new identities to make the client and
++          server flags more uniform.
++
++        - The conserver.passwd file now uses the first username match
++          to determine access rights - if you have multiple instances
++          of a username in an existing password file, they must be
++          combined into one to continue to work.
++
+--- conserver-8.1.16.orig/debian/console.cf
++++ conserver-8.1.16/debian/console.cf
+@@ -0,0 +1,7 @@
++
++# default config for console
++config * {
++master	CONSERVER_MASTER;
++port	CONSERVER_PORT;
++sslenabled no;
++}
+--- conserver-8.1.16.orig/debian/control
++++ conserver-8.1.16/debian/control
+@@ -0,0 +1,46 @@
++Source: conserver
++Section: non-free/comm
++Priority: optional
++Maintainer: Joergen Haegg <jh@debian.org>
++Build-Depends: debhelper (>= 4), po-debconf, libpam0g-dev, libwrap0-dev, libssl-dev
++Standards-Version: 3.7.2.2
++XS-Autobuild: yes
++
++Package: conserver-server
++Architecture: any
++Depends: ${shlibs:Depends}, ${misc:Depends}, adduser
++Description: connect multiple user to a serial console with logging
++ Conserver is an application that allows multiple users to watch a
++ serial console at the same time.  It can log the data, allows users
++ to take write-access of a console (one at a time), and has a
++ variety of bells and whistles to accentuate that basic
++ functionality.  The idea is that conserver will log all your serial
++ traffic so you can go back and review why something crashed, look
++ at changes (if done on the console), or tie the console logs into a
++ monitoring system (just watch the logfiles it creates).  With
++ multi-user capabilities you can work on equipment with others,
++ mentor, train, etc.  It also does all that client-server stuff so
++ that, assuming you have a network connection, you can interact with
++ any of the equipment from home or wherever.
++ .
++ This is the server part of the conserver system.
++
++Package: conserver-client
++Architecture: any
++Depends: ${shlibs:Depends}, ${misc:Depends}
++Description: connect to a console server
++ Conserver is an application that allows multiple users to watch a
++ serial console at the same time.  It can log the data, allows users
++ to take write-access of a console (one at a time), and has a
++ variety of bells and whistles to accentuate that basic
++ functionality.  The idea is that conserver will log all your serial
++ traffic so you can go back and review why something crashed, look
++ at changes (if done on the console), or tie the console logs into a
++ monitoring system (just watch the logfiles it creates).  With
++ multi-user capabilities you can work on equipment with others,
++ mentor, train, etc.  It also does all that client-server stuff so
++ that, assuming you have a network connection, you can interact with
++ any of the equipment from home or wherever.
++ .
++ This is client part of the conserver system.
++  
+--- conserver-8.1.16.orig/debian/conserver-client.dirs
++++ conserver-8.1.16/debian/conserver-client.dirs
+@@ -0,0 +1 @@
++/etc/conserver
+--- conserver-8.1.16.orig/debian/conserver-server.docs
++++ conserver-8.1.16/debian/conserver-server.docs
+@@ -0,0 +1,7 @@
++conserver.html
++FAQ
++PROTOCOL
++README
++TODO
++conserver/Sun-serial
++debian/TODO.Debian
+--- conserver-8.1.16.orig/debian/conserver-server.examples
++++ conserver-8.1.16/debian/conserver-server.examples
+@@ -0,0 +1,4 @@
++conserver.cf/test.cf
++conserver.cf/conserver.cf
++conserver.cf/conserver.passwd
++autologin
+--- conserver-8.1.16.orig/debian/conserver-server.postrm
++++ conserver-8.1.16/debian/conserver-server.postrm
+@@ -0,0 +1,35 @@
++#!/bin/sh
++# postrm script for conserver-client
++#
++set -e
++case "$1" in
++purge)
++	rm -rf /var/log/conserver
++	rm -f /etc/conserver/conserver.passwd
++	rm -f /etc/conserver/server.conf
++	rm -f /etc/conserver/server.local
++
++	if grep -q '^conservr:' /etc/passwd; then
++		echo "Removing user conservr"
++		userdel conservr || echo "WARNING: problem removing user conservr"
++	fi
++	# try remove the confdirectory (why isn't there a 'prerm purge'?)
++	if [ -d /etc/conserver ]; then
++		rmdir --ignore-fail-on-non-empty /etc/conserver
++	fi
++
++	;;
++remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
++	;;
++*)
++	echo "postrm called with unknown argument \`$1'" >&2
++	exit 0
++
++esac
++
++# dh_installdeb will replace this with shell code automatically
++# generated by other debhelper scripts.
++
++#DEBHELPER#
++
++
+--- conserver-8.1.16.orig/debian/watch
++++ conserver-8.1.16/debian/watch
+@@ -0,0 +1,6 @@
++# Example watch control file for uscan
++# Rename this file to "watch" and then you can run the "uscan" command
++# to check for upstream updates and more.
++# Site		Directory		Pattern			Version	Script
++http://www.conserver.com /		conserver-(.*)\.tar\.gz	debian	uupdate
++
+--- conserver-8.1.16.orig/debian/default.cf
++++ conserver-8.1.16/debian/default.cf
+@@ -0,0 +1,55 @@
++# The character '&' in logfile names are substituted with the console
++# name.
++#
++config * {
++	sslrequired no;
++}
++default full {
++	rw *;
++}
++default * {
++	logfile /var/log/conserver/&.log;
++	timestamp "";
++	include full;
++	sslrequired no;
++}
++##
++## list of consoles we serve
++##
++#console tweety {
++#	master localhost;
++#	type host;
++#	host ts1;
++#	port 2002;
++#}
++#console bambam {
++#	master localhost;
++#	type host;
++#	host ts1;
++#	port 2003;
++#}
++#console shell {
++#	master localhost;
++#	logfile /dev/null;
++#	type exec;
++#	exec "";
++#}
++#console telnet {
++#	master localhost;
++#	logfile /dev/null;
++#	type exec;
++#	exec telnet host;
++#}
++#console ttya {
++#	master localhost;
++#	type device;
++#	device /dev/ttya;
++#	baud 9600;
++#	parity none;
++#}
++##
++## list of clients we allow
++##
++access * {
++	allowed 127.0.0.1;
++}
+--- conserver-8.1.16.orig/debian/NEWS
++++ conserver-8.1.16/debian/NEWS
+@@ -0,0 +1,32 @@
++conserver (8.1.13-1) unstable; urgency=low
++
++ Wrapper for console is removed, console has its own
++ config file, /etc/conserver/console.cf.
++
++ BEWARE!
++ Selecting automatic config for conserver-client (cnosole)
++ will edit ALL 'master' and 'port' lines in
++ /etc/conserver/console.cf.
++ Indented 'master' and/or 'port' lines will be ignored!
++
++ Encryption between client and server is turned off by default
++ in the default config files.
++
++
++ -- Joergen Haegg <jh@debian.org>  Tue, 17 Jan 2006 20:05:00 +0100
++
++conserver (8.1.11-3) unstable; urgency=low
++
++ Protocol has changed with version 8.0.0 and 8.0.1!
++
++ Version 8.0.0: The client/server protocol has been rearchitected. You
++ *MUST* use an 8.0.0 client with an 8.0.0 server.  No combination of
++ client/server will work with pre-8.0.0 code.
++ 
++ Version 8.0.1: There's a slight client/server protocol change to
++ implement the new 'initcmd' console option.  If you use this
++ functionality with an 8.0.0 client, you'll run into a compatibility
++ problem while the 'initcmd' command is running.  Please read
++ /usr/share/doc/conserver-client/README.Debian for more details.
++
++ -- Joergen Haegg <jh@debian.org>  Thu, 24 Feb 2005 21:25:50 +0100
+--- conserver-8.1.16.orig/debian/conserver-client.postrm
++++ conserver-8.1.16/debian/conserver-client.postrm
+@@ -0,0 +1,27 @@
++#! /bin/sh
++# postrm script for #PACKAGE#
++
++set -e
++
++case "$1" in
++purge)
++	rm -f /etc/conserver/console.conf
++	# try remove the confdirectory (why isn't there a 'prerm purge'?)
++	if [ -d /etc/conserver ]; then
++		rmdir --ignore-fail-on-non-empty /etc/conserver
++	fi
++	;;
++remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
++	;;
++*)
++	echo "postrm called with unknown argument \`$1'" >&2
++	exit 0
++
++esac
++
++# dh_installdeb will replace this with shell code automatically
++# generated by other debhelper scripts.
++
++#DEBHELPER#
++
++
+--- conserver-8.1.16.orig/debian/conserver-server.manpages
++++ conserver-8.1.16/debian/conserver-server.manpages
+@@ -0,0 +1 @@
++conserver/conserver.man
+--- conserver-8.1.16.orig/debian/conserver-client.templates
++++ conserver-8.1.16/debian/conserver-client.templates
+@@ -0,0 +1,23 @@
++Template: conserver-client/config
++Type: boolean
++Default: true
++_Description: Do you want to configure console automatically?
++ Setting this to true will edit /etc/conserver/console.cf
++ and replace CONSERVER_MASTER and CONSERVER_PORT with the
++ configured values in the next questions
++
++Template: conserver-client/server
++Type: string
++Default: localhost
++_Description: Hostname where your conserver server is installed:
++ The conserver hostname is the hostname where the conserver-server
++ package is installed. The client, 'console', will use the hostname 'console'
++ if left empty. The server name can be changed during runtime with
++ the -M option.
++
++Template: conserver-client/port
++Type: string
++Default: 3109
++_Description: The server port number to connect to:
++ Set the conserver server port to connect to. This may be either a port
++ number or a service name.
+--- conserver-8.1.16.orig/debian/console.sh
++++ conserver-8.1.16/debian/console.sh
+@@ -0,0 +1,35 @@
++#!/bin/sh
++
++# wrapper around console to enable use of a config-file.
++# /jh
++
++file=/etc/conserver/console.conf
++if [ -f $file ]; then
++	. $file
++else
++	echo "console not configured, using default 'console' as conserver"
++fi
++
++while [ $# -gt 0 ]; do
++	case "$1" in
++	-p)
++		PORT=$2
++		shift 2
++		;;
++	-M)
++		CONSERVER=$2
++		shift 2
++		;;
++	*)
++		arg="$arg $1"
++		shift
++		;;
++	esac
++done
++
++if [ "$CONSERVER" ]; then
++	set -- -p $PORT -M $CONSERVER $arg
++else
++	set -- $arg
++fi
++exec /usr/lib/conserver-client/console "$@"
+--- conserver-8.1.16.orig/debian/conserver-server.templates
++++ conserver-8.1.16/debian/conserver-server.templates
+@@ -0,0 +1,49 @@
++Template: conserver-server/port
++Type: string
++Default: 3109
++_Description: The master port number for the conserver server:
++ Set the TCP port for the master process to listen on for clients. This may
++ be either a port number or a service name. The original port number for
++ conserver is 782, must be higher than 1024 if running as non-root.
++
++Template: conserver-server/base_port
++Type: string
++_Description: The base port number for the conserver children:
++ Set the base port for children to listen on. Each child starts looking for
++ free ports at this port number and working upward, trying a maximum number
++ of ports equal to twice the maximum number of groups. If no free ports are
++ available in that range, conserver exits. By default, conserver lets the
++ operating system choose a free port.
++ Empty input selects the default.
++ (Conserver forks a child for each group of consoles it must manage and
++ assigns each process a port number to listen on.)
++
++Template: conserver-server/listen_address
++Type: string
++_Description: The listen address (defaults to all addresses if empty):
++ Set the address to listen on.  This allows conserver to bind to a
++ particular IP address (like `127.0.0.1') instead of all interfaces. The
++ default is to bind to all interfaces.
++
++Template: conserver-server/run_as_root
++Type: boolean
++Default: false
++_Description: Should conserver run as root?
++ Conserver can be configured to run as root or as 'conservr'. It is not
++ possible to use the shadow password if running as non-root in
++ conserver.passwd. (See the manual for conserver.passwd for more details.)
++
++Template: conserver-server/upgrade_800_flag
++Type: boolean
++Default: true
++_Description: Convert conserver.cf and conserver.passwd to new format?
++ Protocol and file format has changed!
++ The client/server protocol has been rearchitected. You *MUST* use an 8.0.1
++ client with an 8.0.1 server.  No combination of client/server will work
++ with pre-8.0.0 code.
++ The config file format for both conserver.cf and conserver.passwd has been
++ changed, read /usr/share/doc/conserver-server/README.Debian for more
++ details.
++ The /etc/conserver/conserver.cf and /etc/conserver/conserver.passwd will be
++ converted to the new format and the old will be renamed with .OLD as suffix.
++ Check the files after the conversion!
+--- conserver-8.1.16.orig/debian/TODO.Debian
++++ conserver-8.1.16/debian/TODO.Debian
+@@ -0,0 +1,2 @@
++
++* making conserver run as non-root
+--- conserver-8.1.16.orig/debian/conserver-client.config
++++ conserver-8.1.16/debian/conserver-client.config
+@@ -0,0 +1,15 @@
++#!/bin/sh -e
++
++. /usr/share/debconf/confmodule
++
++db_input medium conserver-client/config || true
++db_go
++
++db_get conserver-client/config
++if [ "$RET" = "true" ]; then
++	db_input medium conserver-client/server || true
++	db_go
++
++	db_input medium conserver-client/port || true
++	db_go
++fi
+--- conserver-8.1.16.orig/debian/conserver-server.postinst
++++ conserver-8.1.16/debian/conserver-server.postinst
+@@ -0,0 +1,106 @@
++#!/bin/bash -e
++# postinst script for conserver-server
++
++conf=/etc/conserver/server.conf
++localconf=/etc/conserver/server.local
++
++run_as_non_root() {
++	if ! grep -q '^conservr:' /etc/passwd; then
++		adduser --system --home /etc/conserver --ingroup dialout \
++		--disabled-password conservr > /dev/null 2>&1
++	fi
++	touch /var/run/conserver.pid
++	chown -R conservr:adm /var/log/conserver /var/run/conserver.pid
++	chmod 750 /var/log/conserver
++
++	if [ ! -f /etc/conserver/conserver.passwd ]; then
++		touch /etc/conserver/conserver.passwd
++	fi
++	chown conservr:root /etc/conserver/conserver.passwd
++	chmod 0600 /etc/conserver/conserver.passwd
++}
++
++run_as_root() {
++	touch /var/run/conserver.pid
++	chown -R root:root /var/log/conserver /var/run/conserver.pid
++	chmod 750 /var/log/conserver
++
++	if [ ! -f /etc/conserver/conserver.passwd ]; then
++		touch /etc/conserver/conserver.passwd
++	fi
++	chown root:root /etc/conserver/conserver.passwd
++	chmod 0600 /etc/conserver/conserver.passwd
++
++}
++
++case "$1" in
++configure)
++	asroot=
++	if [ -e /usr/share/debconf/confmodule ]; then
++		. /usr/share/debconf/confmodule
++
++		cf=/etc/conserver/conserver.cf
++		pf=/etc/conserver/conserver.passwd
++		db_get conserver-server/upgrade_800_flag
++		if [ -f $cf -a ! -f "$cf.OLD" -a "$RET" = "true" ]; then
++			if egrep -q '^[^:#]+:[^:]*:' $cf; then
++				echo "renaming $cf to $cf.OLD"
++				mv $cf $cf.OLD
++				echo "convert $cf.OLD into $cf"
++				/usr/lib/conserver-server/convert $cf.OLD > $cf
++
++				echo "convert $pf, saving old file in $pf.OLD"
++				perl -p -i.OLD -e \
++					's/^([^:]+):([^:]+).*/\1:\2/' $pf
++			fi
++		fi
++
++
++
++		db_get conserver-server/run_as_root
++		if [ "$RET" = "true" ]; then
++			asroot=1
++		fi
++
++		db_get conserver-server/port
++		if [ "$RET" ]; then
++			port="-p $RET"
++		fi
++		db_get conserver-server/base_port
++		if [ "$RET" ]; then
++			base_port="-b $RET"
++		fi
++		db_get conserver-server/listen_address
++		if [ "$RET" ]; then
++			listen="-M $RET"
++		fi
++		echo "OPTS='$port $base_port $listen'" > $conf
++		echo "ASROOT=$asroot" >> $conf
++	fi
++	if [ ! -f $localconf ]; then
++		touch $localconf
++	fi
++	##########################################################
++	if [ "$asroot" ]; then
++		run_as_root
++	else
++		run_as_non_root
++	fi
++	;;
++
++abort-upgrade|abort-remove|abort-deconfigure)
++	;;
++*)
++        echo "postinst called with unknown argument \`$1'" >&2
++        exit 0
++	;;
++esac
++
++# dh_installdeb will replace this with shell code automatically
++# generated by other debhelper scripts.
++
++#DEBHELPER#
++
++exit 0
++
++
+--- conserver-8.1.16.orig/debian/copyright
++++ conserver-8.1.16/debian/copyright
+@@ -0,0 +1,124 @@
++This package was debianized by Joergen Haegg <jh@debian.org> on
++Thu, 15 Mar 2001 14:37:35 +0100.
++
++It was downloaded from http://www.conserver.com
++
++Upstream Author: Maintainer/Enhancer: Bryan Stansell (bryan@conserver.com)
++
++Copyright:
++
++Since this piece of software has had many contiributors, there is a
++"chain" of licensing information embedded in the files.  I've copied
++what I could find here so that it's easy to reference.  The entire
++bundle of software is guided by these licensing statements.
++
++----------------------------------------------------------------------------
++
++Copyright (c) 2000, conserver.com
++All rights reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are
++met:
++
++  - Redistributions of source code must retain the above copyright notice,
++    this list of conditions and the following disclaimer.
++
++  - Redistributions in binary form must reproduce the above copyright
++    notice, this list of conditions and the following disclaimer in the
++    documentation and/or other materials provided with the
++    distribution.
++
++  - Neither the name of conserver.com nor the names of its contributors
++    may be used to endorse or promote products derived from this
++    software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
++IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
++TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
++PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR
++CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
++EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
++PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++----------------------------------------------------------------------------
++
++Copyright (c) 1998, GNAC, Inc.
++All rights reserved.
++
++Redistribution and use in source and binary forms, with or without
++modification, are permitted provided that the following conditions are
++met:
++
++  - Redistributions of source code must retain the above copyright notice,
++    this list of conditions and the following disclaimer.
++
++  - Redistributions in binary form must reproduce the above copyright
++    notice, this list of conditions and the following disclaimer in the
++    documentation and/or other materials provided with the
++    distribution.
++
++  - Neither the name of GNAC, Inc. nor the names of its contributors
++    may be used to endorse or promote products derived from this
++    software without specific prior written permission.
++
++THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS
++IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED
++TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
++PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE REGENTS OR
++CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
++EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
++PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
++PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
++LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
++NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
++SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
++
++----------------------------------------------------------------------------
++
++Copyright 1992 Purdue Research Foundation, West Lafayette, Indiana
++47907.  All rights reserved.
++
++This software is not subject to any license of the American Telephone
++and Telegraph Company or the Regents of the University of California.
++
++Permission is granted to anyone to use this software for any purpose on
++any computer system, and to alter it and redistribute it freely, subject
++to the following restrictions:
++
++1. Neither the authors nor Purdue University are responsible for any
++   consequences of the use of this software.
++
++2. The origin of this software must not be misrepresented, either by
++   explicit claim or by omission.  Credit to the authors and Purdue
++   University must appear in documentation and sources.
++
++3. Altered versions must be plainly marked as such, and must not be
++   misrepresented as being the original software.
++
++4. This notice may not be removed or altered.
++
++----------------------------------------------------------------------------
++
++Copyright (c) 1990 The Ohio State University.
++All rights reserved.
++
++Redistribution and use in source and binary forms are permitted
++provided that: (1) source distributions retain this entire copyright
++notice and comment, and (2) distributions including binaries display
++the following acknowledgement:  ``This product includes software
++developed by The Ohio State University and its contributors''
++in the documentation or other materials provided with the distribution
++and in all advertising materials mentioning features or use of this
++software. Neither the name of the University nor the names of its
++contributors may be used to endorse or promote products derived
++from this software without specific prior written permission.
++THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR
++IMPLIED WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED
++WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE.
++
++----------------------------------------------------------------------------
+--- conserver-8.1.16.orig/autologin/Makefile
++++ conserver-8.1.16/autologin/Makefile
+@@ -0,0 +1,52 @@
++### Path settings
++srcdir = .
++top_srcdir = ..
++prefix = /usr
++exec_prefix = ${prefix}
++bindir = ${exec_prefix}/bin
++sysconfdir = /etc/conserver
++
++### Installation programs and flags
++INSTALL = /usr/bin/install -c
++INSTALL_PROGRAM = ${INSTALL} -s
++LN_S = ln -s
++MKDIR = mkdir -p -m 755
++
++### Compiler and link options
++CC	= gcc
++CFLAGS	= -O # -DPUCC -DSUN5
++DEFS	= -DHAVE_CONFIG_H -DSYSCONFDIR=\"$(sysconfdir)\"
++CPPFLAGS = -I.. -I$(top_srcdir) -I$(srcdir) $(DEFS)  
++LDFLAGS	=  
++LIBS	= -lutil -lcrypt  -lssl -lcrypto
++
++
++
++### Makefile rules - no user-servicable parts below
++
++AUTOLOGIN_OBJS = main.o autologin.o
++AUTOLOGIN_HDRS = ../config.h $(top_srcdir)/compat.h $(srcdir)/main.h
++ALL = autologin
++
++
++all: $(ALL)
++
++$(AUTOLOGIN_OBJS): $(AUTOLOGIN_HDRS)
++
++autologin: $(AUTOLOGIN_OBJS)
++	$(CC) $(CFLAGS) $(LDFLAGS) -o autologin $(AUTOLOGIN_OBJS) $(LIBS)
++
++.c.o:
++	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
++
++clean:
++	rm -f *~ *.o $(ALL) core
++
++distclean: clean
++	rm -f Makefile
++
++install: autologin
++	$(MKDIR) $(DESTDIR)$(bindir)
++	$(INSTALL_PROGRAM) autologin $(DESTDIR)$(bindir)
++
++.PHONY: clean distclean install
+--- conserver-8.1.16.orig/contrib/chat/Makefile
++++ conserver-8.1.16/contrib/chat/Makefile
+@@ -0,0 +1,52 @@
++### Path settings
++srcdir = .
++top_srcdir = ../..
++prefix = /usr
++exec_prefix = ${prefix}
++bindir = ${exec_prefix}/bin
++sysconfdir = /etc/conserver
++mandir = ${prefix}/share/man
++
++### Installation programs and flags
++INSTALL = /usr/bin/install -c
++INSTALL_PROGRAM = ${INSTALL} -s
++LN_S = ln -s
++MKDIR = mkdir -p -m 755
++
++### Compiler and link options
++CC	= gcc
++CFLAGS	= -O
++DEFS	= -DHAVE_CONFIG_H
++CPPFLAGS = -I$(top_srcdir) -I$(srcdir) $(DEFS)  
++LDFLAGS	=  
++LIBS	= -lutil -lcrypt  -lssl -lcrypto
++
++
++
++### Makefile rules - no user-servicable parts below
++
++CHAT_OBJS = chat.o
++CHAT_HDRS = ../../config.h
++ALL = chat
++
++all: $(ALL)
++
++chat: $(CHAT_OBJS)
++	$(CC) $(CFLAGS) $(LDFLAGS) -o chat $(CHAT_OBJS) $(LIBS)
++
++.c.o:
++	$(CC) $(CFLAGS) $(CPPFLAGS) -c -o $@ $<
++
++clean:
++	rm -f *~ *.o $(ALL) core
++
++distclean: clean
++	rm -f Makefile
++
++install: chat
++	$(MKDIR) $(DESTDIR)$(bindir)
++	$(INSTALL_PROGRAM) chat $(DESTDIR)$(bindir)
++	$(MKDIR) $(DESTDIR)$(mandir)/man1
++	$(INSTALL) chat.man $(DESTDIR)$(mandir)/man1/chat.1
++
++.PHONY: clean distclean install
