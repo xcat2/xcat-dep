@@ -1,0 +1,72 @@
+*** fping.c.ORIG	Mon Nov 20 09:45:00 2000
+--- fping.c	Mon Nov 20 09:45:51 2000
+***************
+*** 219,225 ****
+  
+  extern char *optarg;
+  extern int optind,opterr;
+! extern char *sys_errlist[];
+  extern int h_errno;
+  
+  #ifdef __cplusplus
+--- 219,225 ----
+  
+  extern char *optarg;
+  extern int optind,opterr;
+! /*extern char *sys_errlist[];*/
+  extern int h_errno;
+  
+  #ifdef __cplusplus
+***************
+*** 842,848 ****
+        if(verbose_flag || unreachable_flag) {
+  	printf("%s", h->host);
+  	if (verbose_flag) 
+! 	  printf(" is unreachable");
+  	printf("\n");
+        }
+      }
+--- 842,849 ----
+        if(verbose_flag || unreachable_flag) {
+  	printf("%s", h->host);
+  	if (verbose_flag) 
+! /*	  printf(" is unreachable");*/
+! 	  printf(": noping");
+  	printf("\n");
+        }
+      }
+***************
+*** 1129,1135 ****
+      /* handle some problem */
+      if (handle_random_icmp(icp, result, &response_addr))
+        num_othericmprcvd++;
+!     return 1;
+    }
+
+    if (icp->icmp_id   != ident)
+--- 1130,1136 ----
+      /* handle some problem */
+      if (handle_random_icmp(icp, result, &response_addr))
+        num_othericmprcvd++;
+!     return 0;
+    }
+
+    if (icp->icmp_id   != ident)
+***************
+*** 1196,1202 ****
+      num_alive++;
+      if(verbose_flag||alive_flag) {
+        printf("%s",h->host);
+!       if (verbose_flag) printf(" is alive");
+        if (elapsed_flag) printf(" (%s ms)", sprint_tm(this_reply));
+        if (response_addr.sin_addr.s_addr != h->saddr.sin_addr.s_addr)
+  	printf(" [<- %s]", inet_ntoa(response_addr.sin_addr));
+--- 1197,1204 ----
+      num_alive++;
+      if(verbose_flag||alive_flag) {
+        printf("%s",h->host);
+! /*      if (verbose_flag) printf(" is alive");*/
+!       if (verbose_flag) printf(": ping");
+        if (elapsed_flag) printf(" (%s ms)", sprint_tm(this_reply));
+        if (response_addr.sin_addr.s_addr != h->saddr.sin_addr.s_addr)
+  	printf(" [<- %s]", inet_ntoa(response_addr.sin_addr));
