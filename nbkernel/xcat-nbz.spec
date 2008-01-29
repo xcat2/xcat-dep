@@ -32,19 +32,20 @@ License: GPL
 Summary: xcat-nbroot-oss provides opensource components of the netboot image
 URL:	 http://xcat.org
 Buildroot:  %{_localstatedir}/tmp/xcat-nbk
+Prefix: /opt/xcat
 
 %Description
 xcat-nbroot-oss is a particular packaging of buildroot from the uclibc.org site.
 All files included are as they were downloadable on 4/7/2007
 %Prep
 rm -rf %{name}
-mkdir -p %{name}/usr/share/xcat/netboot/%{tarch}/nbroot
+mkdir -p %{name}/%{prefix}/share/xcat/netboot/%{tarch}/nbroot
 cd %{name}
-mkdir -p usr/share/xcat/netboot/%{tarch}/nbroot
-cd usr/share/xcat/netboot/%{tarch}/nbroot
+mkdir -p ./%{prefix}/share/xcat/netboot/%{tarch}/nbroot
+cd ./%{prefix}/share/xcat/netboot/%{tarch}/nbroot
 rpm2cpio %{SOURCE1} | cpio -ivdum
-mkdir -p ../../../../../../tftpboot/xcat/
-cp boot/vmlinuz* ../../../../../../tftpboot/xcat/nbk.%{tarch}
+mkdir -p ../../../../../../../tftpboot/xcat/
+cp boot/vmlinuz* ../../../../../../../tftpboot/xcat/nbk.%{tarch}
 mv boot/* ../
 rmdir boot
 
@@ -54,13 +55,14 @@ rmdir boot
 
 %Build
 cd %{name}
-cd usr/share/xcat/netboot/%{tarch}/nbroot/lib/modules/*
+cd ./%{prefix}/share/xcat/netboot/%{tarch}/nbroot/lib/modules/*
+pwd;
 find kernel -type f -exec grep -q {} %{SOURCE2} \; -o -type f -a -exec rm {} \;
 find kernel -type d -a -empty | xargs rmdir
 find kernel -type d -a -empty | xargs rmdir
 find kernel -type d -a -empty | xargs rmdir
 cd -
-cd usr/share/xcat/netboot/%{tarch}/nbroot
+cd ./%{prefix}/share/xcat/netboot/%{tarch}/nbroot
 depmod -b . %{kver}
 
 %Install
