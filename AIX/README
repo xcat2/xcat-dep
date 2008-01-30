@@ -25,7 +25,12 @@ scipt, which is also included.
 
 The openssl-0.9.8 and openssh-4.5 software is available as AIX installp 
 filesets.  They are available on the AIX Expansion pack and also can be 
-found on the following web site: http://sourceforge.net.
+found on the following web site: http://sourceforge.net.  Note that some of 
+the other RPM packages have a dependency on this level of openssl.  Also, 
+since these are installp filesets you should run /usr/sbin/updtvpkg to make
+that RPM's reflection of what was installed by installp is updated.  If you
+don't do this you could get dependency errors when installing some of the RPM
+packages.
 
 The rest of the software listed above is provided in this (xcataixoss.tar.gz)
 tar file.  These are all RPM packages that have been built for AIX.
