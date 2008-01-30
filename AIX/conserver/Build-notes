@@ -1,0 +1,21 @@
+Build Notes
+
+You will need the gcc compiler which can be downloaded from the AIX Toolbox 
+for Linux Applications.  (http://www-03.ibm.com/systems/p/os/aix/linux)
+
+Will will also need the openssl-0.9.8 installp  fileset available from AIX.
+It is available on the AIX Expansion pack and also can be found on the
+following web site: http://sourceforge.net.  After installing the openssl 
+fileset make sure you run /usr/sbin/updtvpkg to update RPM's reflection of 
+what is installed.
+
+Download conserver-8.1.16.tar.gz from http://www.conserver.com/.
+
+Copy the gz file to /opt/freeware/src/packages/SOURCES.
+
+Copy the conserver.spec file to /opt/freeware/src/packages/SPECS.
+
+Run "rpm -bb conserver.spec", which creates:
+ /opt/freeware/src/packages/RPMS/ppc/conserver-8.1.16-2.aix5.3.ppc.rpm
+
+
