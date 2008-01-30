@@ -11,7 +11,9 @@ what is installed.
 
 Download conserver-8.1.16.tar.gz from http://www.conserver.com/.
 
-Copy the gz file to /opt/freeware/src/packages/SOURCES.
+Copy the gz file to /opt/freeware/src/packages/SOURCES.  Also copy 
+certificate-auth.patch to /opt/freeware/src/packages/SOURCES.  This patch file
+is provided in the Linux conserver directory of the xCAT SVN repository.
 
 Copy the conserver.spec file to /opt/freeware/src/packages/SPECS.
 
