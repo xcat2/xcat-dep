@@ -1,0 +1,192 @@
+diff -urN aufs/Makefile aufs.patched/Makefile
+--- aufs/Makefile	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/Makefile	2008-02-06 16:40:11.000000000 -0500
+@@ -70,7 +70,7 @@
+ 
+ ########################################
+ 
+-obj-$(CONFIG_AUFS) += aufs.o
++obj-m += aufs.o
+ aufs-y := module.o super.o sbinfo.o xino.o \
+ 	branch.o cpup.o whout.o plink.o wkq.o dcsub.o vfsub.o wbr_policy.o \
+ 	opts.o \
+diff -urN aufs/aufs.h aufs.patched/aufs.h
+--- aufs/aufs.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/aufs.h	2008-02-06 16:40:11.000000000 -0500
+@@ -114,6 +114,7 @@
+ 
+ /* ---------------------------------------------------------------------- */
+ 
++#define CONFIG_AUFS_MODULE
+ #ifdef CONFIG_AUFS_MODULE
+ 
+ /* call ksize() or not */
+diff -urN aufs/aufs_type.h aufs.patched/aufs_type.h
+--- aufs/aufs_type.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/aufs_type.h	2008-02-06 16:40:11.000000000 -0500
+@@ -30,6 +30,7 @@
+ 
+ /* ---------------------------------------------------------------------- */
+ 
++#define CONFIG_AUFS_BRANCH_MAX_127
+ #ifdef CONFIG_AUFS_BRANCH_MAX_127
+ /* some environments treat 'char' as 'unsigned char' by default */
+ typedef signed char aufs_bindex_t;
+diff -urN aufs/branch.h aufs.patched/branch.h
+--- aufs/branch.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/branch.h	2008-02-06 16:40:11.000000000 -0500
+@@ -26,7 +26,7 @@
+ #include <linux/fs.h>
+ #include <linux/mount.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ #include "misc.h"
+ #include "super.h"
+ 
+diff -urN aufs/build.sh aufs.patched/build.sh
+--- aufs/build.sh	1969-12-31 19:00:00.000000000 -0500
++++ aufs.patched/build.sh	2008-02-06 16:41:11.000000000 -0500
+@@ -0,0 +1,7 @@
++#!/bin/sh
++KVER=`uname -r`
++if [ ! -z "$1" ]; then
++	KVER=$1
++fi
++DIR=`cd $(dirname $0);pwd`
++make -C /lib/modules/$KVER/build SUBDIRS=$DIR modules
+diff -urN aufs/cpup.h aufs.patched/cpup.h
+--- aufs/cpup.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/cpup.h	2008-02-06 16:40:11.000000000 -0500
+@@ -25,12 +25,12 @@
+ 
+ #include <linux/fs.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ 
+ static inline
+ void au_cpup_attr_blksize(struct inode *inode, struct inode *h_inode)
+ {
+-#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19)
++#if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 17)
+ 	inode->i_blksize = h_inode->i_blksize;
+ #endif
+ }
+diff -urN aufs/dentry.h aufs.patched/dentry.h
+--- aufs/dentry.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/dentry.h	2008-02-06 16:40:11.000000000 -0500
+@@ -24,7 +24,7 @@
+ #ifdef __KERNEL__
+ 
+ #include <linux/fs.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ #include "misc.h"
+ #include "vfsub.h"
+ 
+diff -urN aufs/dir.h aufs.patched/dir.h
+--- aufs/dir.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/dir.h	2008-02-06 16:40:11.000000000 -0500
+@@ -25,7 +25,7 @@
+ 
+ #include <linux/fs.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 19)
+ typedef u64	au_filldir_ino_t;
+diff -urN aufs/file.h aufs.patched/file.h
+--- aufs/file.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/file.h	2008-02-06 16:40:11.000000000 -0500
+@@ -26,7 +26,7 @@
+ #include <linux/file.h>
+ #include <linux/fs.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ #include "misc.h"
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 18)
+@@ -118,7 +118,7 @@
+ 
+ /* ---------------------------------------------------------------------- */
+ 
+-#if !defined(CONFIG_AUFS_MODULE) || defined(CONFIG_AUFS_DENY_WRITE_ACCESS_PATCH)
++#if 0
+ int au_store_fmode_exec(struct nameidata *nd, struct inode *inode);
+ 
+ static inline int au_deny_write_access(struct file *h_file)
+diff -urN aufs/hinode.h aufs.patched/hinode.h
+--- aufs/hinode.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/hinode.h	2008-02-06 16:40:11.000000000 -0500
+@@ -26,7 +26,7 @@
+ #include <linux/fs.h>
+ #include <linux/inotify.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ //#include "branch.h"
+ #include "inode.h"
+ //#include "vfsub.h"
+diff -urN aufs/inode.h aufs.patched/inode.h
+--- aufs/inode.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/inode.h	2008-02-06 16:40:11.000000000 -0500
+@@ -25,7 +25,7 @@
+ 
+ #include <linux/fs.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ #include "misc.h"
+ 
+ struct aufs_hinode;
+diff -urN aufs/misc.h aufs.patched/misc.h
+--- aufs/misc.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/misc.h	2008-02-06 16:40:11.000000000 -0500
+@@ -27,7 +27,7 @@
+ #include <linux/namei.h>
+ #include <linux/sched.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 18)
+ #define I_MUTEX_QUOTA			0
+diff -urN aufs/opts.h aufs.patched/opts.h
+--- aufs/opts.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/opts.h	2008-02-06 16:40:11.000000000 -0500
+@@ -26,7 +26,7 @@
+ #include <linux/fs.h>
+ #include <linux/namei.h>
+ #include <linux/version.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ 
+ #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 22)
+ typedef const char *au_parser_pattern_t;
+diff -urN aufs/super.h aufs.patched/super.h
+--- aufs/super.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/super.h	2008-02-06 16:40:11.000000000 -0500
+@@ -31,7 +31,7 @@
+ #else
+ #include <linux/nfs_fs.h>
+ #endif
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ //#include "hinode.h"
+ #include "misc.h"
+ #include "opts.h"
+diff -urN aufs/whout.h aufs.patched/whout.h
+--- aufs/whout.h	2008-02-06 16:29:03.000000000 -0500
++++ aufs.patched/whout.h	2008-02-06 16:40:11.000000000 -0500
+@@ -24,7 +24,7 @@
+ #ifdef __KERNEL__
+ 
+ #include <linux/fs.h>
+-#include <linux/aufs_type.h>
++#include "aufs_type.h"
+ 
+ int au_alloc_whname(const char *name, int len, struct qstr *wh);
+ void au_free_whname(struct qstr *wh);
