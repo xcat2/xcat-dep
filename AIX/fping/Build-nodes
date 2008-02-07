@@ -1,0 +1,22 @@
+Build notes
+
+1. download fping.tar.gz (version 2.4b2_to) from http://fping.sourceforge.net/download/ 
+   and copy it to /tmp/fping directory.
+2. cd to /tmp/fping.
+3. un-tar the files
+4. run ./fping-2.4b2_to/configure to create a Makefile.
+5. Change line 121 
+   from 
+     extern int h_errno;
+   to 
+     #ifndef h_errno
+      extern int h_errno;
+     #endif
+   to avoid compiling errors.
+6. tar -cvf fping.tar fping-2.4b2_to
+7. gzip fping.tar to create a new fping.tar.gz
+8. copy fping.tar.gz to /opt/freeware/src/packages/SOURCES/ directory
+9. copy fping.spec to /opt/freeware/src/packages/SPECS/ directory
+10. cd to  /opt/freeware/src/packages/SPECS 
+11. run rpm -bb fping.spec
+

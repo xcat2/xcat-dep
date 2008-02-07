@@ -31,4 +31,4 @@ echo $RPM_BUILD_ROOT
 %Files
 %defattr(-,root,root)
 /usr/bin/fping
-/usr/share/man/man8/fping.8.gz
+/usr/share/man/man8/fping.8
