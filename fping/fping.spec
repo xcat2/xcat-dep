@@ -1,5 +1,5 @@
 Source: fping.tar.gz
-#Patch: fping.patch
+Patch: fping.patch
 Release: 1
 AutoReq: true
 AutoProv: true
@@ -16,7 +16,7 @@ URL:	 http://fping.sourceforge.net/
 fping pings hosts in parallel
 %Prep
 %setup -q
-#%patch
+%patch -p1
 
 
 %Build

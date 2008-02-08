@@ -5,9 +5,10 @@ Build notes
 2. cd to /tmp/fping.
 3. un-tar the files
 4. run ./fping-2.4b2_to/configure to create a Makefile.
-5. copy fping.spec to current directory
+5. copy fping.spec /tmp/fping directory 
 6. tar -cvf fping.tar fping.spec fping-2.4b2_to
 7. gzip fping.tar to create a new fping.tar.gz
 8. copy fping.tar.gz to /usr/src/packages/SOURCES/ directory
-9. rpmbuild -ta /usr/src/packages/SOURCES/fping.tar.gz
+9. copy fping.patch to /usr/src/packages/SOURCES/ directory
+10. rpmbuild -ta /usr/src/packages/SOURCES/fping.tar.gz
 
