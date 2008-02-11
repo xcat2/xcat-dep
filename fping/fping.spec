@@ -20,6 +20,7 @@ fping pings hosts in parallel
 
 
 %Build
+%configure
 make
 %Install
 mkdir -p $RPM_BUILD_ROOT/usr/bin
