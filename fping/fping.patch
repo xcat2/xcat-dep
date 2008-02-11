@@ -1,7 +1,23 @@
 diff -uNr fping-2.4b2_to/fping.c fping-2.4b2_to_new/fping.c
 --- fping-2.4b2_to/fping.c	2001-07-20 13:10:26.000000000 -0400
-+++ fping-2.4b2_to_new/fping.c	2008-02-11 10:11:32.000000000 -0500
-@@ -1574,7 +1574,7 @@
++++ fping-2.4b2_to_new/fping.c	2008-02-11 10:26:06.000000000 -0500
+@@ -1131,6 +1131,7 @@
+ 					printf( " is unreachable" );
+ 				
+ 				printf( "\n" );
++            fflush(stdout);
+ 			
+ 			}/* IF */
+ 		}/* IF */
+@@ -1466,6 +1467,7 @@
+ 				printf( " error while sending ping: %s\n", strerror( errno ) );
+ 			
+ 			printf( "\n" );
++         fflush(stdout);
+ 
+ 		}/* IF */
+ 		
+@@ -1574,7 +1576,7 @@
  		if( handle_random_icmp( icp, result, &response_addr ) )
  			num_othericmprcvd++;
  		
@@ -10,7 +26,7 @@ diff -uNr fping-2.4b2_to/fping.c fping-2.4b2_to_new/fping.c
  	
  	}/* IF */
  
-@@ -1665,6 +1665,7 @@
+@@ -1665,6 +1667,7 @@
  				printf( " [<- %s]", inet_ntoa( response_addr.sin_addr ) );
  
  			printf( "\n" );
@@ -18,3 +34,11 @@ diff -uNr fping-2.4b2_to/fping.c fping-2.4b2_to_new/fping.c
  		
  		}/* IF */
  	}/* IF */
+@@ -1693,6 +1696,7 @@
+ 			printf( " [<- %s]", inet_ntoa( response_addr.sin_addr ) );
+ 		
+ 		printf( "\n" );
++      fflush(stdout);
+ 	
+ 	}/* IF */
+ 	
