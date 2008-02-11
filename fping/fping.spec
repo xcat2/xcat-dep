@@ -1,6 +1,6 @@
 Source: fping.tar.gz
 Patch: fping.patch
-Release: 1
+Release: 2
 AutoReq: true
 AutoProv: true
 BuildRoot: %{_tmppath}/fping-2.4b2-root
