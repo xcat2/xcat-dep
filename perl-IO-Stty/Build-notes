@@ -1,0 +1,9 @@
+Build Notes
+
+1. Download IO-Stty-.02.tar.gz from CPAN to /tmp directory
+2. Uncompress and untar IO-Stty-.02.tar.gz 
+3. Copy IO-Stty-.02.spec to /tmp/IO-Stty-.02 directory (.spec taken from AIX version w/ "buildarch: noarch" change)
+4. From /tmp directory run: tar cvf IO-Stty-.02.tar IO-Stty-.02
+5. gzip IO-Stty-.02.tar
+6. cp IO-Stty-.02.tar.gz /usr/src/packages/SOURCES
+7. rpmbuild -ta  /usr/src/packages/SOURCES/IO-Stty-.02.tar.gz
