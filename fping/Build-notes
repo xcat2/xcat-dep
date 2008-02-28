@@ -1,0 +1,9 @@
+Build notes
+
+1. download fping.tar.gz (version 2.4b2_to) from http://fping.sourceforge.net/download/ 
+   and copy it to /usr/src/<pkgs>/SOURCES (where <pkgs>="redhat" for RH, and <pkgs>="packages" for SLES)
+2. copy fping.spec to /usr/src/<pkgs>/SOURCES directory
+3. copy fping.patch to /usr/src/<pkgs>/SOURCES/ directory
+4. rpmbuild -bb /usr/src/packages/SOURCES/fping.spec
+
+ 
