@@ -46,7 +46,7 @@ f="conserver/Makefile.in"
 %{__mv} $f $f.orig
 %{__sed} -e 's/^.*conserver\.rc.*$//' < $f.orig > $f
 
-%configure --with-master=%{master} --with-openssl
+%configure --with-master=%{master} --with-openssl --with-cffile=/etc/conserver.cf
 make
 
 
