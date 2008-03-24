@@ -11,8 +11,7 @@
 # hostname (console)
 %define master console
 
-# what red hat (or other distibution) version are you running?
-%define distver 2
+%define distver 3
 
 Summary: Serial console server daemon/client
 Name: %{pkg}
@@ -24,6 +23,7 @@ URL: http://www.conserver.com/
 Source: http://www.conserver.com/%{pkg}-%{ver}.tar.gz
 Patch: certificate-auth.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
+BuildRequires: openssl-devel
 Prefix: %{_prefix}
 
 
