@@ -14,7 +14,7 @@
 
 MStatus()
 {
-  ps ax|grep -v grep|grep atftpd: >& /dev/null
+  ps ax|grep -v grep|grep atftpd >& /dev/null
   if [ "$?" = "0" ]; then
     RVAL=0
     echo "atftpd service is running"
@@ -35,7 +35,7 @@ if [ -f /lib/lsb/init-functions ]; then
 elif [ -f /etc/init.d/functions ]; then
   . /etc/init.d/functions
   START_DAEMON=daemon
-  STATUS=status
+  STATUS=MStatus
   LOG_SUCCESS=success
   LOG_FAILURE=failure
   LOG_WARNING=passed
