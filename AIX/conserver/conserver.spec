@@ -76,6 +76,10 @@ make
 
 
 %post
+# Create necessary console directories
+#
+mkdir -p /var/log/consoles
+
 # Make sure /etc/services has a conserver entry
 #
 if ! egrep conserver /etc/services > /dev/null 2>&1 ; then
