@@ -76,6 +76,12 @@ make
 
 
 %post
+# Make sure /etc/services has a conserver entry
+#
+if ! egrep conserver /etc/services > /dev/null 2>&1 ; then
+  echo "console  782/tcp  conserver" >> /etc/services
+fi
+
 # Remove any existing entry, then add the current one
 #
  rmitab "conserver" > /dev/null 2>&1
