@@ -17,6 +17,16 @@ is provided in the Linux conserver directory of the xCAT SVN repository.
 
 Copy the conserver.spec file to /opt/freeware/src/packages/SPECS.
 
+Download and install the "patch" command from 
+"http://www-03.ibm.com/systems/p/os/aix/linux/toolbox/download.html". 
+The "patch" command that comes with AIX (including AIX 6.1) is an older 
+version which only supports standard "diff" format patches. The conserver 
+patch is NOT in standard "diff" format.
+
+The new "patch" command will be installed in "opt/freeware/bin", so prior 
+to building the conserver RPM, put the new "patch" command at the
+front of the path (i.e. "export PATH=/opt/freeware/bin:$PATH ).
+       
 Run "rpm -bb conserver.spec", which creates:
  /opt/freeware/src/packages/RPMS/ppc/conserver-8.1.16-2.aix5.3.ppc.rpm
 
