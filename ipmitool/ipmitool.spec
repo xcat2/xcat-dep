@@ -1,8 +1,9 @@
 Name:         ipmitool
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.9
-Provides:     OpenIPMI-tools = 2.0.6-5.el5.4
-Release:      2%{?_distro:.%{_distro}}
+#Provides:     OpenIPMI-tools = 2.0.6-5.el5.4
+Conflicts:    OpenIPMI-tools
+Release:      3
 License:      BSD
 Group:        Utilities
 Packager:     Duncan Laurie <duncan@iceblink.org>
