@@ -11,7 +11,7 @@
 # hostname (console)
 %define master console
 
-%define distver 3
+%define distver 4
 
 Summary: Serial console server daemon/client
 Name: %{pkg}
@@ -98,7 +98,7 @@ fi
 %config(noreplace) %{_sysconfdir}/conserver.passwd
 %attr(555,root,root) %{_initrddir}/conserver
 %{prefix}/bin/console
-%{prefix}/lib64/conserver/convert
+%{prefix}/lib*/conserver/convert
 %{prefix}/share/man/man1/console.1.gz
 %{prefix}/share/man/man8/conserver.8.gz
 %{prefix}/share/man/man5/conserver.cf.5.gz
