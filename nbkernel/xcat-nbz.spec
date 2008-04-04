@@ -1,14 +1,15 @@
 %ifarch i386 i586 i686 x86
-Source1: kernel-2.6.18-8.el5.i686.rpm 
-%define kver 2.6.18-8.el5
-%define version	2.6.18_8
+Source1: kernel-2.6.18-53.el5.i686.rpm 
+Source2: modlist-2.6.18-53.el5.x86
+%define kver 2.6.18-53.el5
+%define version	2.6.18_53
 %define tarch x86
 %endif
 %ifarch x86_64
-Source1: kernel-2.6.18-8.el5.x86_64.rpm
-Source2: modlist-2.6.18-8.el5.x86_64
-%define version	2.6.18_8
-%define kver 2.6.18-8.el5
+Source1: kernel-2.6.18-53.el5.x86_64.rpm
+Source2: modlist-2.6.18-53.el5.x86_64
+%define version	2.6.18_53
+%define kver 2.6.18-53.el5
 %define tarch x86_64
 %endif
 %ifarch ppc ppc64
@@ -20,7 +21,8 @@ Source2: modlist-2.6.18-53.el5.ppc64
 %endif
 BuildArch: noarch
 %define name	xCAT-nbkernel-%{tarch}
-Release: snap%(date +"%Y%m%d%H%M")
+Release: 1
+Epoch: 1
 AutoReq: false
 AutoProv: false
 Requires: xCAT-server xCAT-nbroot-oss-%{tarch} xCAT-nbroot-core-%{tarch}
