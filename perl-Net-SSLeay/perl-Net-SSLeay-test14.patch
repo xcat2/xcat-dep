@@ -1,0 +1,11 @@
+--- test.pl~	2003-08-17 10:27:54.000000000 +0300
++++ test.pl	2004-10-12 00:19:42.761693459 +0300
+@@ -187,7 +187,7 @@
+ $ENV{RND_SEED} = '1234567890123456789012345678901234567890';
+ print &test('14 www.bacus.pt',
+ 	    &Net::SSLeay::sslcat("www.bacus.pt", 443,
+-				 "get\n\r\n\r") =~ /<TITLE>/);
++				 "get\n\r\n\r") =~ /<TITLE>/i);
+ 
+ sub test_site ($$) {
+     my ($test_nro, $site) = @_;
