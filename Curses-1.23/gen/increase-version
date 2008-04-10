@@ -1,0 +1,22 @@
+#!/bin/sh
+##
+##  incrase-version -- Increases version number everywhere
+##
+##  Copyright (c) 2000  William Setzer
+##
+##  You may distribute under the terms of either the Artistic License
+##  or the GNU General Public License, as specified in the README file.
+##
+##  (but why would you want to?)
+
+if [ "$1" = "" ]; then
+    echo "Usage: $0 <version>"
+    exit 1
+fi
+
+vers=$1
+perl="/usr/local/bin/perl -p -i.bak -e"
+
+$perl "s/^(.VERSION = )\d+\.\d+/\${1}$vers/"       gen/make.Curses.pm
+$perl "s/(Curses-)\d+\.\d+/\${1}$vers/"            INSTALL
+$perl "s/(VERSION\s+=>\s+')\d+\.\d+/\${1}$vers/"   Makefile.PL

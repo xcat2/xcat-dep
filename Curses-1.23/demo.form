@@ -1,0 +1,199 @@
+#! /usr//bin/perl
+##
+
+use ExtUtils::testlib;
+use Curses;
+
+
+sub fatal {
+    clrtobot(0, 0);
+    addstr(0, 0, "@_\n");
+    refresh();
+    sleep 2;
+    exit 1;
+}
+
+
+
+sub driveForm($$) {
+    my ($fwin, $form) = @_;
+
+    while (1) {
+        my $ch = getch($fwin);
+        if ($ch == KEY_UP) {
+            form_driver($form, REQ_PREV_FIELD);
+        }  elsif ($ch == KEY_DOWN or $ch eq "\t" or
+                  $ch eq "\r" or $ch eq "\n") {
+            form_driver($form, REQ_NEXT_FIELD);
+        } elsif ($ch == KEY_LEFT) {
+            form_driver($form, REQ_LEFT_CHAR);
+        } elsif ($ch == KEY_RIGHT) {
+            form_driver($form, REQ_RIGHT_CHAR);
+        } elsif ($ch == KEY_NPAGE) {
+            form_driver($form, REQ_NEXT_PAGE);
+        } elsif ($ch == KEY_PPAGE) {
+            form_driver($form, REQ_PREV_PAGE);
+        }  elsif ($ch == KEY_DC or ord($ch) == 8 or ord($ch) == 127) {
+            form_driver($form, REQ_DEL_PREV);
+        } elsif ($ch == KEY_F(1)) {
+            last;
+        } elsif ($ch =~ /^\S$/) {
+            form_driver($form, ord($ch));
+        } else {
+            beep();
+        }
+    }
+}
+
+
+
+sub makeFields() {
+
+    my $flist = [
+                 [ 'L', 0,  0,  0,  8, "Form"        ],
+                 [ 'L', 0,  0,  2,  0, "First Name"  ],
+                 [ 'F', 1, 15,  2, 12, "F Name"      ],
+                 [ 'L', 0,  0,  3,  0, "Last Name"   ],
+                 [ 'F', 1, 15,  3, 12, "L Name"      ],
+                 [ 'L', 0,  0,  5,  8, "Form (pt 2)" ],
+                 [ 'L', 0,  0,  7,  0, "# Tuits"     ],
+                 [ 'F', 1,  5,  7, 12, "Tuits"       ],
+                 [ 'L', 0,  0,  8,  0, "# Bleems"    ],
+                 [ 'F', 1,  5,  8, 12, "Bleems"      ]
+                 ];
+
+    my @fl;
+
+    foreach my $F (@$flist) {
+        my $field;
+            # This is a Perl reference to a scalar number variable.  The
+            # number is the numerical equivalent (cast) of the C pointer to the
+            # executable-Curses FIELD object.  The reference is blessed into
+            # package "Curses::Field", but don't confuse it with a Perl
+            # object.
+
+        if ($F->[0] eq 'L') {
+            $field = new_field(1, length($F->[5]), $F->[3], $F->[4], 0, 0);
+            if ($field eq '') {
+                fatal("new_field $F->[5] failed");
+            }
+            set_field_buffer($field, 0, $F->[5]);
+            field_opts_off($field, O_ACTIVE);
+            field_opts_off($field, O_EDIT);
+        } elsif ($F->[0] eq 'F') {
+            $field = new_field($F->[1], $F->[2], $F->[3], $F->[4], 0, 0);
+            if ($field eq '') {
+                fatal("new_field $F->[5] failed");
+            }
+            if ($F->[5] eq "Tuits") {
+                set_field_buffer($field, 0, $F->[5]);
+            }
+            set_field_back($field, A_UNDERLINE);
+        }
+
+        push(@fl, $field);
+    }
+    return @fl;
+}
+
+
+
+sub makeForm(@) {
+    
+    my @fl = @_;
+
+    my @pack;
+    foreach $fieldR (@fl) {
+        push(@pack, $ {$fieldR});
+    }
+    push(@pack, 0);
+
+    # new_form()'s argument is a list of fields.  Its form is amazingly
+    # complex:
+
+    # The argument is a string whose ASCII encoding is an array of C
+    # pointers.  Each pointer is to a FIELD object of the
+    # executable-Curses library, except the last is NULL to mark the
+    # end of the list.  For example, assume there are two fields and
+    # the executable-Curses library represents them with FIELD objects
+    # whose addresses (pointers) are 0x11223344 and 0x0004080C.  The
+    # argument to Curses::new_form() is a 12 character string whose
+    # ASCII encoding is 0x112233440004080C00000000 .
+
+    # Maybe some day we can provide an alternative where there is an
+    # actual Perl field object class and the argument is a reference to
+    # a Perl list of them.
+
+    my $form = new_form(pack('L!*', @pack));
+    if ($form eq '') {
+        fatal("new_form failed");
+    }
+    return $form;
+}
+
+
+
+sub demo() {
+
+    noecho();
+
+    eval { new_form() };
+    if ($@ =~ m{not defined by your vendor}) {
+        print STDERR "Curses was not compiled with form function.\n";
+        exit 1;
+    }
+
+    my @fl = makeFields();
+
+    my $form = makeForm(@fl);
+
+    my $rows;
+    my $cols;
+
+    scale_form($form, $rows, $cols);
+
+    my $fwin = newwin($rows + 2, $cols + 4, 4, 0);
+    my $fsub = derwin($fwin, $rows, $cols, 1, 2);
+
+    set_form_win($form, $fwin);
+    set_form_sub($form, $fsub);
+
+    box($fwin, 0, 0);
+    keypad($fwin, 1);
+
+    post_form($form);
+
+    addstr(0, 0, "Use KEY_UP/KEY_DOWN/KEY_PPAGE/KEY_NPAGE to navigate");
+    addstr(1, 0, "Press 'ENTER' to select item, or 'F1' to exit");
+    addstr(2, 0, "Other alphanumeric characters will enter data");
+    refresh();
+
+    driveForm($fwin, $form);
+
+    unpost_form($form);
+    delwin($fwin);
+    free_form($form);
+    map { free_field($_) } @fl;
+}
+
+
+
+##############################################################################
+#                    MAINLINE
+##############################################################################
+
+initscr();
+
+# The eval makes sure if it croaks, we have a chance to restore the
+# terminal.
+
+eval { demo() };
+
+endwin();
+
+if ($@) {
+    print STDERR "Failed.  $@\n";
+    exit(1);
+}
+
+exit(0);

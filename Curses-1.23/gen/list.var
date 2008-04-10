@@ -1,0 +1,9 @@
+> int LINES;
+> int COLS;
+> WINDOW *stdscr;
+> WINDOW *curscr;
+> int COLORS;
+> int COLOR_PAIRS;
+/* char *ttytype; */
+/* char *Def_term; */
+/* bool My_term; */
