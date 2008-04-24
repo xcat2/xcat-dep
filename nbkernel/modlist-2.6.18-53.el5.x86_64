@@ -81,7 +81,7 @@ kernel/drivers/scsi/libiscsi.ko
 kernel/drivers/ata/sata_sis.ko
 kernel/drivers/scsi/aic94xx/aic94xx.ko
 kernel/drivers/scsi/scsi_transport_iscsi.ko
-kernel/drivers/scsi/libata.ko
+kernel/drivers/ata/libata.ko
 kernel/drivers/scsi/qla2xxx/qla2xxx.ko
 kernel/drivers/scsi/scsi_mod.ko
 kernel/drivers/scsi/aacraid/aacraid.ko
@@ -102,7 +102,7 @@ kernel/drivers/scsi/lpfc/lpfc.ko
 kernel/drivers/ata/sata_via.ko
 kernel/drivers/scsi/sd_mod.ko
 kernel/drivers/scsi/iscsi_tcp.ko
-kernel/drivers/scsi/ata_piix.ko
+kernel/drivers/ata/ata_piix.ko
 kernel/drivers/scsi/sg.ko
 kernel/drivers/ata/sata_sil24.ko
 kernel/drivers/ata/sata_sil.ko
