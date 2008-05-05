@@ -4,7 +4,7 @@
 Summary: yaboot binary for tftp server
 Name: %{pkg}
 Version: %{ver}
-Release: 1
+Release: 2
 Group: System/Administration
 License: GPL2
 URL: http://yaboot.ozlabs.org/
