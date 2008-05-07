@@ -1,0 +1,12 @@
+diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init
+--- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2003-02-27 21:06:50.000000000 -0500
++++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-05-07 15:56:06.000000000 -0400
+@@ -24,7 +24,7 @@
+ case "$1" in
+   start)
+     echo -n "Starting conserver: "
+-    daemon conserver -d
++    daemon conserver -o -O1 -d
+     echo
+     touch /var/lock/subsys/conserver
+     ;;

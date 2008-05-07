@@ -11,7 +11,7 @@
 # hostname (console)
 %define master console
 
-%define distver 4
+%define distver 5
 
 Summary: Serial console server daemon/client
 Name: %{pkg}
@@ -22,6 +22,7 @@ Group: System Environment/Daemons
 URL: http://www.conserver.com/
 Source: http://www.conserver.com/%{pkg}-%{ver}.tar.gz
 Patch: certificate-auth.patch
+Patch1: initscript.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 BuildRequires: openssl-devel
 Prefix: %{_prefix}
@@ -38,6 +39,7 @@ bells and whistles to accentuate that basic functionality.
 %{__rm} -rf %{buildroot}
 %setup -q
 %patch -p1
+%patch1 -p1
 
 
 %build
