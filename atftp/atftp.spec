@@ -2,15 +2,15 @@ Name: atftp
 Summary: Advanced Trivial File Transfer Protocol (ATFTP) - TFTP server
 Group: System Environment/Daemons
 Version: 0.7
-Release: 3
+Release: 4
 License: GPL
 Vendor: Linux Networx Inc.
 Source: atftp_0.7.dfsg.orig.tar.gz
 Source1: tftpd
 Patch: atftp_0.7.dfsg-3.diff
+Patch1: dfsg-3-to-multicast.diff
 Buildroot: /var/tmp/atftp-buildroot
 Packager: Allen Reese <areese@lnxi.com>
-#Provides: tftp-server
 Conflicts: tftp-server
 
 
@@ -35,6 +35,7 @@ files using the TFTP protocol.
 %prep
 %setup -n atftp-0.7.dfsg
 %patch -p1
+%patch1 -p1
 
 
 %build

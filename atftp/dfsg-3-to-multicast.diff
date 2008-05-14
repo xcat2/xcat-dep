@@ -1,0 +1,574 @@
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/options.c atftp-0.7.dev/options.c
+--- atftp-0.7.dfsg/options.c	2003-04-24 19:16:18.000000000 -0500
++++ atftp-0.7.dev/options.c	2008-05-06 11:29:24.000000000 -0500
+@@ -354,3 +354,8 @@
+      else
+           string[0] = 0;
+ }
++int  opt_equal(struct tftp_opt *opt1, struct tftp_opt *opt2)
++{
++     return ( (strncmp(opt1->option,opt2->option,OPT_SIZE) == 0) &&
++              (strncmp(opt1->value,opt2->value,OPT_SIZE) == 0)) ;
++}
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/options.h atftp-0.7.dev/options.h
+--- atftp-0.7.dfsg/options.h	2001-07-06 18:35:18.000000000 -0500
++++ atftp-0.7.dev/options.h	2008-05-06 11:29:24.000000000 -0500
+@@ -45,6 +45,6 @@
+ void opt_set_multicast(struct tftp_opt *options, char *addr, int port, int mc);
+ void opt_request_to_string(struct tftp_opt *options, char *string, int len);
+ void opt_options_to_string(struct tftp_opt *options, char *string, int len);
+-
++int opt_equal(struct tftp_opt *a,struct tftp_opt *b);
+ #endif
+ 
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftp.c atftp-0.7.dev/tftp.c
+--- atftp-0.7.dfsg/tftp.c	2008-05-13 13:45:41.000000000 -0500
++++ atftp-0.7.dev/tftp.c	2008-05-06 11:29:24.000000000 -0500
+@@ -408,8 +408,7 @@
+  */
+ int set_peer(int argc, char **argv)
+ {
+-     struct hostent *host;      /* for host name lookup */
+-     struct servent *sp;        /* server entry for tftp service */
++     int port=-1;
+ 
+      /* sanity check */
+      if ((argc < 2) || (argc > 3))
+@@ -418,13 +417,33 @@
+           return ERR;
+      }
+ 
+-     /* get the server entry */
+-     sp = getservbyname("tftp", "udp");
+-     if (sp == 0) {
+-          fprintf(stderr, "tftp: udp/tftp, unknown service.\n");
+-          return ERR;
++     /* get the server port */
++     if (argc == 3)
++     {
++          port = htons(atoi(argv[2]));
++          if (port < 0)
++          {
++               fprintf(stderr, "%s: bad port number.\n", argv[2]);
++               data.connected = 0;
++               return ERR;
++          }
++          data.sa_peer.sin_port = port;
++     } 
++     else
++     {
++          /* get the server entry */
++          struct servent *sp;
++          sp = getservbyname("tftp", "udp");
++          if (sp == 0) {
++               fprintf(stderr, "tftp: udp/tftp, unknown service.\n");
++               return ERR;
++          } else 
++          {
++               port = sp->s_port;
++          }
+      }
+ 
++     struct hostent *host;      /* for host name lookup */
+      /* look up the host */
+      host = gethostbyname(argv[1]);
+      /* if valid, update s_inn structure */
+@@ -437,7 +456,7 @@
+           Strncpy(data.hostname, host->h_name,
+                   sizeof(data.hostname));
+           data.hostname[sizeof(data.hostname)-1] = 0;
+-          data.sa_peer.sin_port = sp->s_port;
++          data.sa_peer.sin_port = port;
+      } 
+      else
+      {
+@@ -445,22 +464,10 @@
+           data.connected = 0;
+           return ERR;
+      }
+-     /* get the server port */
+-     if (argc == 3)
+-     {
+-          sp->s_port = htons(atoi(argv[2]));
+-          if (sp->s_port < 0)
+-          {
+-               fprintf(stderr, "%s: bad port number.\n", argv[2]);
+-               data.connected = 0;
+-               return ERR;
+-          }
+-          data.sa_peer.sin_port = sp->s_port;
+-     }
+      /* copy port number to data structure */
+-     data.port = ntohs(sp->s_port);
+-
++     data.port = ntohs(port);
+      data.connected = 1;
++
+      return OK;
+ }
+ 
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftpd.c atftp-0.7.dev/tftpd.c
+--- atftp-0.7.dfsg/tftpd.c	2008-05-13 13:45:41.000000000 -0500
++++ atftp-0.7.dev/tftpd.c	2008-05-06 11:38:38.000000000 -0500
+@@ -197,6 +197,7 @@
+       */
+      open_logger("atftpd", log_file, logging_level);
+      logger(LOG_NOTICE, "Advanced Trivial FTP server started (%s)", VERSION);
++     logger(LOG_NOTICE, "Build date: %s  %s ", __DATE__,__TIME__);
+ 
+ #ifdef HAVE_PCRE
+      /*  */
+@@ -474,7 +475,9 @@
+                     exit(1);
+                }
+                new->client_info->done = 0;
++               new->client_info->bytes_sent = 0;
+                new->client_info->next = NULL;
++               new->client_info->last_ack = -1;
+                
+                /* Start a new server thread. */
+                if (pthread_create(&tid, NULL, tftpd_receive_request,
+@@ -650,8 +653,11 @@
+                     logger(LOG_ERR, "connect: %s", strerror(errno));
+                     retval = ABORT;
+                }
+-               logger(LOG_DEBUG, "Creating new socket: %s:%d",
+-                      inet_ntoa(to.sin_addr), ntohs(to.sin_port));
++               logger(LOG_DEBUG, "Creating new socket: %s:%d, on interface 0x%x",
++                      inet_ntoa(to.sin_addr), ntohs(to.sin_port),ntohl(to.sin_addr.s_addr));
++
++               /* save the dest ip address to bind multicast to correct interface */
++               data->mcastaddr.imr_interface.s_addr = to.sin_addr.s_addr;
+                
+                /* read options from request */
+                opt_parse_request(data->data_buffer, data_size,
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftp_def.c atftp-0.7.dev/tftp_def.c
+--- atftp-0.7.dfsg/tftp_def.c	2004-02-12 21:16:09.000000000 -0600
++++ atftp-0.7.dev/tftp_def.c	2008-05-06 11:29:24.000000000 -0500
+@@ -140,8 +140,12 @@
+  */
+ inline char *Strncpy(char *to, const char *from, size_t size)
+ {
+-     to[size-1] = '\000';
+-     return strncpy(to, from, size - 1);
++     if (size > 0)
++     {
++          to[size-1] = '\000';
++          return strncpy(to, from, size - 1);
++     } else
++          return to;
+ }
+ 
+ 
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftpd_file.c atftp-0.7.dev/tftpd_file.c
+--- atftp-0.7.dfsg/tftpd_file.c	2004-02-17 20:21:47.000000000 -0600
++++ atftp-0.7.dev/tftpd_file.c	2008-05-06 11:29:24.000000000 -0500
+@@ -89,6 +89,27 @@
+      return OK;
+ }
+ 
++int  opt_same_file(struct tftp_opt *opt1, struct tftp_opt *opt2)
++{
++     if ( (strncmp(opt1->option,"filename",OPT_SIZE) == 0) &&
++          (strncmp(opt2->option,"filename",OPT_SIZE) == 0)) 
++     {
++        char tofilename[MAXLEN];
++        char fromfilename[MAXLEN];
++        Strncpy(tofilename, opt1->value, MAXLEN);
++        tftpd_rules_check(tofilename);
++        Strncpy(fromfilename, opt2->value, MAXLEN);
++        tftpd_rules_check(fromfilename);
++        struct stat tostat;
++        struct stat fromstat;
++        if( stat(tofilename,&tostat) || stat(fromfilename,&fromstat))
++           return 0;
++	
++	return (tostat.st_ino == fromstat.st_ino);
++     }
++     return 0;
++}
++
+ /*
+  * Receive a file. It is implemented as a state machine using a while loop
+  * and a switch statement. Function flow is as follow:
+@@ -117,7 +138,6 @@
+      char filename[MAXLEN];
+      char string[MAXLEN];
+      int timeout = data->timeout;
+-     int number_of_timeout = 0;
+      int all_blocks_received = 0; /* temporary kludge */
+      int convert = 0;           /* if true, do netascii convertion */
+ 
+@@ -265,8 +285,8 @@
+                switch (result)
+                {
+                case GET_TIMEOUT:
+-                    number_of_timeout++;
+-                    if (number_of_timeout > NB_OF_RETRY)
++                    data->client_info->number_of_timeout++;
++                    if (data->client_info->number_of_timeout > NB_OF_RETRY)
+                     {
+                          logger(LOG_INFO, "client (%s) not responding",
+                                 inet_ntoa(data->client_info->client.sin_addr));
+@@ -322,7 +342,7 @@
+                          else
+                               logger(LOG_WARNING, "source port mismatch, check bypassed");
+                     }
+-                    number_of_timeout = 0;
++                    data->client_info->number_of_timeout = 0;
+                     state = S_DATA_RECEIVED;
+                     break;
+                case GET_DISCARD:
+@@ -413,13 +433,13 @@
+      char filename[MAXLEN];
+      char string[MAXLEN];
+      int timeout = data->timeout;
+-     int number_of_timeout = 0;
+      int mcast_switch = data->mcast_switch_client;
+      struct stat file_stat;
+      int convert = 0;           /* if true, do netascii conversion */
+      struct thread_data *thread = NULL; /* used when looking for a multicast
+                                            thread */
+      int multicast = 0;         /* set to 1 if multicast */
++     time_t last_send_time=-1;
+ 
+      struct client_info *client_info = data->client_info;
+      struct client_info *client_old = NULL;
+@@ -428,6 +448,8 @@
+      int prev_block_number = 0; /* needed to support netascii convertion */
+      int prev_file_pos = 0;
+      int temp = 0;
++     int total_bytes_sent=0;
++     int clients_served=0;
+ 
+      /* look for mode option */
+      if (strcasecmp(data->tftp_options[OPT_MODE].value, "netascii") == 0)
+@@ -439,6 +461,7 @@
+      /* file name verification */
+      Strncpy(filename, data->tftp_options[OPT_FILENAME].value,
+              MAXLEN);
++     
+      if (tftpd_rules_check(filename) != OK)
+      {
+           tftp_send_error(sockfd, sa, EACCESS, data->data_buffer, data->data_buffer_size);
+@@ -497,7 +520,7 @@
+ 
+      /* To return the size of the file with tsize argument */
+      fstat(fileno(fp), &file_stat);
+-
++ 
+      /* tsize option */
+      if ((opt_get_tsize(data->tftp_options) > -1) && !convert)
+      {
+@@ -535,6 +558,32 @@
+                return ERR;
+           }
+ 
++
++          /* make sure that the oack packet will fit in the buffer */
++          int oacklen  = 2;
++          int i;
++          for (i = 2; i < OPT_NUMBER; i++)
++          {
++               if (data->tftp_options[i].enabled && data->tftp_options[i].specified)
++               {
++                    oacklen += strlen(data->tftp_options[i].option);
++                    oacklen++;
++                    oacklen += strlen(data->tftp_options[i].value);
++                    oacklen++;
++               }
++          }
++
++          if (oacklen > result) 
++          {
++               logger(LOG_NOTICE, "OACK will not fit in buffer of size %d. Options rejected.", result);
++               tftp_send_error(sockfd, sa, EOPTNEG, data->data_buffer, data->data_buffer_size);
++               if (data->trace)
++                    logger(LOG_DEBUG, "sent ERROR <code: %d, msg: %s>", EOPTNEG,
++                         tftp_errmsg[EOPTNEG]);
++               fclose(fp);
++               return ERR;
++          }
++
+           data->data_buffer_size = result + 4;
+           data->data_buffer = realloc(data->data_buffer, data->data_buffer_size);
+ 
+@@ -649,9 +698,14 @@
+                /* initialise multicast address structure */
+                data->mcastaddr.imr_multiaddr.s_addr =
+                     data->sa_mcast.sin_addr.s_addr;
+-               data->mcastaddr.imr_interface.s_addr = htonl(INADDR_ANY); 
++
+                setsockopt(data->sockfd, IPPROTO_IP, IP_MULTICAST_TTL, 
+                           &data->mcast_ttl, sizeof(data->mcast_ttl));
++
++               logger(LOG_DEBUG, "Multicast interface = %s \n",inet_ntoa(data->mcastaddr.imr_interface));
++               setsockopt(data->sockfd, IPPROTO_IP, IP_MULTICAST_IF,
++                          &(data->mcastaddr.imr_interface.s_addr),
++                          sizeof(data->mcastaddr.imr_interface.s_addr));
+                
+                /* set options data for OACK */
+                opt_set_multicast(data->tftp_options, data->mc_addr,
+@@ -674,6 +728,7 @@
+      memcpy(options, data->tftp_options, sizeof(options));
+      opt_set_multicast(options, data->mc_addr, data->mc_port, 0);
+ 
++
+      /* That's it, ready to send the file */
+      while (1)
+      {
+@@ -728,6 +783,7 @@
+                     tftp_send_data(sockfd, &data->sa_mcast,
+                                    block_number + 1, data_size,
+                                    data->data_buffer);
++                    client_info->bytes_sent += data_size-4;
+                }
+                else
+                {
+@@ -737,6 +793,8 @@
+                if (data->trace)
+                     logger(LOG_DEBUG, "sent DATA <block: %d, size %d>",
+                            block_number + 1, data_size - 4);
++               time(&last_send_time);
++
+                state = S_WAIT_PACKET;
+                break;
+           case S_WAIT_PACKET:
+@@ -746,12 +804,12 @@
+                switch (result)
+                {
+                case GET_TIMEOUT:
+-                    number_of_timeout++;
++                    client_info->number_of_timeout++;
+                     
+-                    if (number_of_timeout > NB_OF_RETRY)
++                    if (client_info->number_of_timeout > NB_OF_RETRY)
+                     {
+-                         logger(LOG_INFO, "client (%s) not responding",
+-                                inet_ntoa(client_info->client.sin_addr));
++                         logger(LOG_INFO, "client (%s) not responding. state=%d block_number=%d",
++                                inet_ntoa(client_info->client.sin_addr),timeout_state,block_number);
+                          state = S_END;
+                     }
+                     else
+@@ -779,7 +837,8 @@
+                                    /* Proceed normally with the next client,
+                                       going to OACK state */
+                                    logger(LOG_INFO,
+-                                          "Serving next client: %s:%d",
++                                          "Serving next client after timeout: state=%d, block_number=%d: %s:%d",
++                                          timeout_state,block_number,
+                                           inet_ntoa(client_info->client.sin_addr),
+                                           ntohs(client_info->client.sin_port));
+                                    sa = &client_info->client;
+@@ -796,7 +855,7 @@
+                                    break;
+                               }
+                          }
+-                         logger(LOG_WARNING, "timeout: retrying...");
++                         logger(LOG_WARNING, "timeout: retrying... state=%d, block_number=%d",timeout_state,block_number);
+                          state = timeout_state;
+                     }
+                     break;
+@@ -811,7 +870,13 @@
+                                * If this is an ACK for the last block, mark this client as
+                                * done
+                                */
+-                              if ((last_block != -1) && (block_number > last_block))
++                                logger(LOG_DEBUG,
++                                          "received ACK <block: %d> from wrong client: %s:%d",
++                                          ntohs(tftphdr->th_block),
++                                          inet_ntoa(from.sin_addr),
++                                          ntohs(from.sin_port));
++
++                              if ((last_block != -1) && (ntohs(tftphdr->th_block) > last_block))
+                               {
+                                    if (tftpd_clientlist_done(data, NULL, &from) == 1)
+                                         logger(LOG_DEBUG, "client done <%s>",
+@@ -851,11 +916,30 @@
+                          }
+                     }
+                     /* The ACK is from the current client */
+-                    number_of_timeout = 0;
+-                    block_number = ntohs(tftphdr->th_block);
++                    client_info->number_of_timeout = 0;
++                    int ACK_block_number =  ntohs(tftphdr->th_block);
++                    if (ACK_block_number == client_info->last_ack) {
++                      /* duplicate ACK, ignore */
++                      time_t now;
++                      time(&now);
++                      /* if a timeout has occurred, resend last block */
++                      if ((now-last_send_time) > timeout) {
++                        state = S_SEND_DATA;
++                        logger(LOG_DEBUG, "Duplicate ACK packet discarded <%d>, timeout. Resend last block.", ACK_block_number);
++                      } else {
++                        logger(LOG_DEBUG, "Duplicate ACK packet discarded <%d>.", ACK_block_number);
++                      }
++                      break;
++                    }
++
++                    client_info->last_ack = ACK_block_number;
++
++                    block_number = ACK_block_number;
++                    
+                     if (data->trace)
+                          logger(LOG_DEBUG, "received ACK <block: %d>",
+                                 block_number);
++
+                     if ((last_block != -1) && (block_number > last_block))
+                     {
+                          state = S_END;
+@@ -932,10 +1016,14 @@
+                }
+                break;
+           case S_END:
++               total_bytes_sent+=client_info->bytes_sent;
+                if (multicast)
+                {
+                     logger(LOG_DEBUG, "End of multicast transfer");
++                    logger(LOG_INFO,
++                           "Bytes sent while this client was master: %d",client_info->bytes_sent);
+                     /* mark the current client done */
++                    clients_served++;
+                     tftpd_clientlist_done(data, client_info, NULL);
+                     /* Look if there is another client to serve. We lock list of
+                        client to make sure no other thread try to add clients in
+@@ -948,13 +1036,21 @@
+                                 ntohs(client_info->client.sin_port));
+                          /* client is a new client structure */
+                          sa =  &client_info->client;
+-                         /* nedd to send an oack to that client */
++
++                         /*  send an oack to that client */
+                          state = S_SEND_OACK;                
+                          fseek(fp, 0, SEEK_SET);
+                     }
+                     else
+                     {
+-                         logger(LOG_INFO, "No more client, end of tranfers");
++                         int fs = file_stat.st_size;
++                         int blksze = (data->data_buffer_size - 4);
++                         int ttlblks = fs/blksze;
++                         int blksretry = (total_bytes_sent-file_stat.st_size)/blksze;
++                         logger(LOG_INFO, "No more client, end of tranfers. %d clients served",clients_served);
++                         logger(LOG_INFO, "Bytes saved over unicast: %ld", (clients_served*file_stat.st_size)-total_bytes_sent);
++                         logger(LOG_INFO, "File size: %d, total data bytes sent %d",file_stat.st_size,total_bytes_sent);
++                         logger(LOG_INFO, "Block re-sent: %d of %d = %f percent",blksretry, ttlblks, ((float)blksretry/(float)ttlblks)*100);
+                          fclose(fp);
+                          return OK;
+                     }
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftpd.h atftp-0.7.dev/tftpd.h
+--- atftp-0.7.dfsg/tftpd.h	2004-02-26 20:05:26.000000000 -0600
++++ atftp-0.7.dev/tftpd.h	2008-05-06 11:29:24.000000000 -0500
+@@ -71,6 +71,9 @@
+ struct client_info {
+      struct sockaddr_in client;
+      int done;                  /* that client as receive it's file */
++     int bytes_sent;
++     int number_of_timeout; /* number of timeouts while sending to this client */
++     int last_ack;       /* last ACK received from this client */
+      struct client_info *next;
+ };
+ 
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftpd_list.c atftp-0.7.dev/tftpd_list.c
+--- atftp-0.7.dfsg/tftpd_list.c	2004-02-26 20:05:26.000000000 -0600
++++ atftp-0.7.dev/tftpd_list.c	2008-05-06 11:29:24.000000000 -0500
+@@ -140,17 +140,9 @@
+      struct thread_data *current = thread_data; /* head of the list */
+      struct tftp_opt *tftp_options = data->tftp_options;
+      struct client_info *tmp;
+-     char options[MAXLEN];
+-     char string[MAXLEN];
+-     char *index;
+-     int len;
+ 
+      *thread = NULL;
+ 
+-     opt_request_to_string(tftp_options, options, MAXLEN);
+-     index = strstr(options, "multicast");
+-     len = (int)index - (int)options;
+-
+      /* lock the whole list before walking it */
+      pthread_mutex_lock(&thread_list_mutex);
+ 
+@@ -162,9 +154,9 @@
+                pthread_mutex_lock(&current->client_mutex);
+                if (current->client_ready == 1)
+                {
+-                    opt_request_to_string(current->tftp_options, string, MAXLEN);
+-                    /* must have exact same option string */
+-                    if (strncmp(string, options, len) == 0)
++                    /* must have exact same mode and refer to the same file */
++                    if (opt_same_file(current->tftp_options,tftp_options) &&
++                        opt_equal(&(current->tftp_options[OPT_MODE]), &(tftp_options[OPT_MODE])))
+                     {
+                          *thread = current;                         
+                          /* insert the new client at the end. If the client is already
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftpd_mtftp.c atftp-0.7.dev/tftpd_mtftp.c
+--- atftp-0.7.dfsg/tftpd_mtftp.c	2004-02-26 20:05:26.000000000 -0600
++++ atftp-0.7.dev/tftpd_mtftp.c	2008-05-06 11:29:24.000000000 -0500
+@@ -369,6 +369,13 @@
+           logger(LOG_ERR, "mtftp: can't open socket");
+           pthread_exit(NULL);
+      }
++
++     int one=1;
++     if (setsockopt(sockfd, SOL_IP, IP_PKTINFO, &one, sizeof(one)) != 0)
++     {
++          logger(LOG_WARNING, "Failed to set socket option: %s", strerror(errno));
++     }
++
+      /* bind the socket to the tftp port  */
+      if (bind(sockfd, (struct sockaddr*)&sa, sizeof(sa)) < 0)
+      {
+@@ -389,7 +396,8 @@
+                   that file name */
+                memset(&sa, 0, sizeof(sa)); /* this will hold the client info */
+                data_size = data->data_buffer_size;
+-               retval = tftp_get_packet(sockfd, -1, NULL, &sa, NULL, NULL,
++               struct sockaddr_in toaddr;
++               retval = tftp_get_packet(sockfd, -1, NULL, &sa, NULL, &toaddr,
+                                         data->timeout,
+                                         &data_size, data->data_buffer);
+ 
+@@ -463,6 +471,7 @@
+                getsockname(sockfd, (struct sockaddr *)&(sa), &len);
+                //memset(&sa, 0, sizeof(sa));
+                sa.sin_port = 0;
++
+                /* bind the socket to the tftp port  */
+                if (bind(thread->sockfd, (struct sockaddr*)&sa, sizeof(sa)) < 0)
+                {
+@@ -472,8 +481,12 @@
+                getsockname(thread->sockfd, (struct sockaddr *)&(sa), &len);
+ 
+                /* configure multicast socket */
+-               thread->mcastaddr.imr_multiaddr.s_addr = thread->sa_mcast.sin_addr.s_addr;
+-               thread->mcastaddr.imr_interface.s_addr = htonl(INADDR_ANY);
++               thread->mcastaddr.imr_interface.s_addr = toaddr.sin_addr.s_addr;
++               
++               setsockopt(thread->sockfd, IPPROTO_IP, IP_MULTICAST_IF,
++                          &(thread->mcastaddr.imr_interface.s_addr),
++                          sizeof(thread->mcastaddr.imr_interface.s_addr));
++
+                setsockopt(thread->sockfd, IPPROTO_IP, IP_MULTICAST_TTL,
+                           &data->mcast_ttl, sizeof(data->mcast_ttl));
+ 
+diff -uNr --exclude='*[^ch]' atftp-0.7.dfsg/tftp_file.c atftp-0.7.dev/tftp_file.c
+--- atftp-0.7.dfsg/tftp_file.c	2008-05-13 13:45:41.000000000 -0500
++++ atftp-0.7.dev/tftp_file.c	2008-05-06 11:29:24.000000000 -0500
+@@ -484,6 +484,14 @@
+                          sa_mcast.sin_family = AF_INET;
+                          sa_mcast.sin_addr.s_addr = htonl(INADDR_ANY);
+                          sa_mcast.sin_port = htons(mc_port);
++                         int yes=1;
++                         if (setsockopt(mcast_sockfd, SOL_SOCKET,
++                                        SO_REUSEADDR,
++                                        &yes, sizeof(yes)) < 0)
++                         {
++                              perror("setsockopt");
++                              exit(1);
++                         }
+                          
+                          if (bind(mcast_sockfd, (struct sockaddr *)&sa_mcast,
+                                   sizeof(sa_mcast)) < 0)
