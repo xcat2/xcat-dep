@@ -13,11 +13,11 @@ Source2: modlist-2.6.18-53.el5.x86_64
 %define tarch x86_64
 %endif
 %ifarch ppc ppc64
-Source1: kernel-2.6.18-53.el5.ppc64.rpm
-Source2: modlist-2.6.18-53.el5.ppc64
-%define kver 2.6.18-53.el5
+Source1: kernel-2.6.18-92.el5.ppc64.rpm
+Source2: modlist-2.6.18-92.el5.ppc64
+%define kver 2.6.18-92.el5
 %define tarch ppc64
-%define version	2.6.18_53
+%define version	2.6.18_92
 %endif
 BuildArch: noarch
 %define name	xCAT-nbkernel-%{tarch}
