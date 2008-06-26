@@ -2,7 +2,7 @@ Name: atftp
 Summary: Advanced Trivial File Transfer Protocol (ATFTP) - TFTP server
 Group: System Environment/Daemons
 Version: 0.7
-Release: 6
+Release: 7
 License: GPL
 Vendor: Linux Networx Inc.
 Source: atftp_0.7.dfsg.orig.tar.gz
