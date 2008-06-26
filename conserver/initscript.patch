@@ -1,6 +1,6 @@
 diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init
 --- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2003-02-27 21:06:50.000000000 -0500
-+++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-06-26 11:14:38.000000000 -0400
++++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-06-26 11:18:44.000000000 -0400
 @@ -6,15 +6,53 @@
  # description: conserver is a serial-port console daemon
  # config: /etc/conserver.cf
@@ -47,7 +47,7 @@ diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-di
 +    DAEMON=daemon
 +    SUCCESS=RHSuccess
 +    FAILURE=RHFailure
-+    PASSED=passed
++    PASSED=RHPassed
 +    STATUS=status
 +elif [ -f /lib/lsb/init-functions ]; then
 +    . /lib/lsb/init-functions
