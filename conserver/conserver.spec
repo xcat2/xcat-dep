@@ -11,7 +11,7 @@
 # hostname (console)
 %define master console
 
-%define distver 6
+%define distver 7
 
 Summary: Serial console server daemon/client
 Name: %{pkg}
