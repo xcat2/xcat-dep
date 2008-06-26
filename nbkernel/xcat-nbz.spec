@@ -1,15 +1,15 @@
 %ifarch i386 i586 i686 x86
-Source1: kernel-2.6.18-53.el5.i686.rpm 
-Source2: modlist-2.6.18-53.el5.x86
-%define kver 2.6.18-53.el5
-%define version	2.6.18_53
+Source1: kernel-2.6.18-92.el5.i686.rpm 
+Source2: modlist-2.6.18-92.el5.x86
+%define kver 2.6.18-92.el5
+%define version	2.6.18_92
 %define tarch x86
 %endif
 %ifarch x86_64
-Source1: kernel-2.6.18-53.el5.x86_64.rpm
-Source2: modlist-2.6.18-53.el5.x86_64
-%define version	2.6.18_53
-%define kver 2.6.18-53.el5
+Source1: kernel-2.6.18-92.el5.x86_64.rpm
+Source2: modlist-2.6.18-92.el5.x86_64
+%define version	2.6.18_92
+%define kver 2.6.18-92.el5
 %define tarch x86_64
 %endif
 %ifarch ppc ppc64
