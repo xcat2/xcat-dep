@@ -1,10 +1,15 @@
 diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init
 --- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2003-02-27 21:06:50.000000000 -0500
-+++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-06-26 11:04:32.000000000 -0400
-@@ -6,15 +6,48 @@
++++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-06-26 11:14:38.000000000 -0400
+@@ -6,15 +6,53 @@
  # description: conserver is a serial-port console daemon
  # config: /etc/conserver.cf
  #
++RHPassed()
++{
++    passed
++    echo
++}
 +RHSuccess()
 +{
 +    success
@@ -57,7 +62,7 @@ diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-di
  
  # make sure conserver is installed and executable
  [ -x /usr/sbin/conserver  ] || exit 1
-@@ -24,22 +57,46 @@
+@@ -24,23 +62,44 @@
  case "$1" in
    start)
      echo -n "Starting conserver: "
@@ -68,7 +73,6 @@ diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-di
 +    $STATUS conserver >& /dev/null
 +    if [ "$?" != "0" ]; then
 +        $FAILURE
-+        echo
 +        exit 1
 +    fi
 +    $SUCCESS
@@ -78,7 +82,6 @@ diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-di
 +    if [ "$?" != "0" ]; then
 +        echo -n "conserver not running, not stopping "
 +        $PASSED
-+        echo
 +        exit 1
 +    fi
      echo -n "Shutting down conserver: "
@@ -99,6 +102,7 @@ diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-di
    restart)
 -    echo -n "Restarting conserver: "
 -    killproc conserver -HUP
+-    echo
 +    $STATUS conserver >& /dev/null
 +    if [ "$?" != "0" ]; then
 +        exec $0 start
@@ -107,6 +111,6 @@ diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-di
 +        killproc conserver -HUP
 +    fi
 +    $SUCCESS
-     echo
      ;;
    *)
+     echo "Usage: conserver {start|stop|restart|status}"
