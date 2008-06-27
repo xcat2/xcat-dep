@@ -1,6 +1,6 @@
 diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init
 --- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2003-02-27 21:06:50.000000000 -0500
-+++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-06-26 11:18:44.000000000 -0400
++++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-06-27 12:05:28.000000000 -0400
 @@ -6,15 +6,53 @@
  # description: conserver is a serial-port console daemon
  # config: /etc/conserver.cf
@@ -22,7 +22,7 @@ diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-di
 +}
 +MStatus()
 +{
-+  ps ax|grep -v grep|grep conserver >& /dev/null
++  ps ax|grep -v grep|grep /usr/sbin/conserver >& /dev/null
 +  if [ "$?" = "0" ]; then
 +    RVAL=0
 +    echo "conserver is running"
