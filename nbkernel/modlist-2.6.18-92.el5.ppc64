@@ -61,9 +61,9 @@ kernel/drivers/net/ehea/ehea.ko
 kernel/drivers/net/netconsole.ko
 kernel/drivers/net/mii.ko
 kernel/drivers/net/e1000/e1000.ko
+kernel/drivers/net/e1000e/e1000e.ko
 kernel/drivers/net/myri10ge/myri10ge.ko
 kernel/drivers/net/ifb.ko
-kernel/drivers/net/e1000e/e1000e.ko
 kernel/drivers/net/igb/igb.ko
 kernel/drivers/net/bnx2.ko
 kernel/drivers/net/tg3.ko

@@ -21,7 +21,7 @@ Source2: modlist-2.6.18-92.el5.ppc64
 %endif
 BuildArch: noarch
 %define name	xCAT-nbkernel-%{tarch}
-Release: 2
+Release: 5
 Epoch: 1
 AutoReq: false
 AutoProv: false
@@ -72,6 +72,15 @@ rm -rf $RPM_BUILD_ROOT
 mkdir -p $RPM_BUILD_ROOT
 cd %{name}
 cp -a * $RPM_BUILD_ROOT
+
+%post
+if [ "$1" == "2" ]; then #only on upgrade, as on install it's probably not going to work...
+    if [ -f "/proc/cmdline" ]; then   # prevent running it during install into chroot image
+      . /etc/profile.d/xcat.sh
+       mknb %{tarch}
+   fi
+fi
+
 
 %Files
 %defattr(-,root,root)
