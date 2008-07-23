@@ -1,0 +1,8 @@
+The debian-conserver-xcat.patch.gz is to be patched on to the debian source
+package retrieved on a debian system via:
+$ apt-get source conserver
+or from the appropriate source package at http://packages.debian.org/
+and built with:
+$ dpkg-buildpackage
+
+The debian patch includes the SSL patches already.
