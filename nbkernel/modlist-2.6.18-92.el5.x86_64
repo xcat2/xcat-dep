@@ -22,6 +22,7 @@ kernel/fs/fscache/fscache.ko
 kernel/fs/nfs_common/nfs_acl.ko
 kernel/fs/lockd/lockd.ko
 kernel/fs/cachefiles/cachefiles.ko
+kernel/fs/fat/fat.ko
 kernel/fs/vfat/vfat.ko
 kernel/fs/nfs/nfs.ko
 kernel/fs/jbd/jbd.ko
@@ -63,6 +64,7 @@ kernel/drivers/block/nbd.ko
 kernel/drivers/block/loop.ko
 kernel/drivers/net/netconsole.ko
 kernel/drivers/net/e100.ko
+kernel/drivers/net/igb/igb.ko
 kernel/drivers/net/e1000/e1000.ko
 kernel/drivers/net/e1000e/e1000e.ko
 kernel/drivers/net/myri10ge/myri10ge.ko
