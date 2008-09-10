@@ -1,0 +1,25 @@
+diff -uNr a/common/slp_dhcp.c b/common/slp_dhcp.c
+--- a/common/slp_dhcp.c	2008-07-30 10:55:45.095231168 -0400
++++ b/common/slp_dhcp.c	2008-07-30 10:56:56.965305256 -0400
+@@ -65,6 +65,9 @@
+ #include <sys/types.h>
+ #include <sys/socket.h>
+ #include <sys/ioctl.h>
++#ifdef AIX
++#include <net/if.h>
++#endif
+ #include <net/if_arp.h>
+ #include <sys/time.h>
+ #endif
+diff -uNr a/common/slp_xcast.c b/common/slp_xcast.c
+--- a/common/slp_xcast.c	2008-07-30 10:55:49.928496400 -0400
++++ b/common/slp_xcast.c	2008-07-30 10:56:31.621158152 -0400
+@@ -173,7 +173,7 @@
+     int             flags = 0;
+     int             xferbytes;
+     struct in_addr  saddr;
+-    int		    optarg;
++    unsigned char   optarg;
+ 
+ 
+ #if defined(MSG_NOSIGNAL)
