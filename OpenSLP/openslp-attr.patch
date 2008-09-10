@@ -1,0 +1,1072 @@
+diff -r ec557b33c87b common/slp_message.c
+--- a/common/slp_message.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/common/slp_message.c	Thu Mar 15 11:22:28 2007 -0400
+@@ -863,6 +863,54 @@ int ParseSrvTypeRply(SLPBuffer buffer, S
+ 
+     return 0;
+ }
++
++/* TODO remove assert before submitting patch */
++#include <assert.h>
++
++/*--------------------------------------------------------------------------*/
++int ParseAttrExtension(SLPBuffer buffer, SLPSrvRply *srvrply)
++/*--------------------------------------------------------------------------*/
++{
++	SLPAttrExtEntry* entry;
++	
++	/* buffer->curpos is positioned on the service url length */
++	if(srvrply->extcount == 0) 
++	{
++		assert(srvrply->extarray == 0);
++		
++		srvrply->extarray = 
++			(SLPAttrExtEntry*)xmalloc(sizeof(SLPAttrExtEntry) * srvrply->urlcount);
++		if(srvrply->extarray == 0)
++			return SLP_ERROR_INTERNAL_ERROR;
++	}
++	
++	assert(srvrply->extcount <= srvrply->urlcount);
++
++	entry = srvrply->extarray + srvrply->extcount;
++	
++	entry->urllen = AsUINT16(buffer->curpos);
++	buffer->curpos += 2;
++	if(entry->urllen + 1 > buffer->end - buffer->curpos) 
++	{
++		return SLP_ERROR_PARSE_ERROR;
++	}
++	
++	entry->url = buffer->curpos;
++	buffer->curpos += entry->urllen;
++	entry->attrlen = AsUINT16(buffer->curpos);
++	buffer->curpos += 2;
++	if(entry->attrlen + 1 > buffer->end - buffer->curpos)
++	{
++		return SLP_ERROR_PARSE_ERROR;
++	}
++	entry->attrlist = buffer->curpos;
++	buffer->curpos += entry->attrlen;
++	
++	srvrply->extcount++;
++	
++	return SLP_ERROR_OK;
++}
++
+ 
+ /*--------------------------------------------------------------------------*/
+ int ParseExtension(SLPBuffer buffer, SLPMessage message)
+@@ -907,6 +955,29 @@ int ParseExtension(SLPBuffer buffer, SLP
+             }
+             break;
+ 
++        case SLP_EXTENSION_ID_ATTR:
++		/* TODO this needs to be cleaned up */
++		if(message->header.functionid == SLP_FUNCT_SRVRQST )
++		{
++			if(buffer->curpos + 5 > buffer->end)
++			{
++				result = SLP_ERROR_PARSE_ERROR;
++				goto CLEANUP;
++			}
++			message->body.srvrqst.attrext = 1;
++		}
++		if ( message->header.functionid == SLP_FUNCT_SRVRPLY ) 
++		{
++			if(buffer->curpos + 5 > buffer->end)
++			{
++				result = SLP_ERROR_PARSE_ERROR;
++				goto CLEANUP;
++			}
++			result = ParseAttrExtension(buffer, &message->body.srvrply);
++		}
++		
++		break;
++		
+         default:
+             if (extid >= 0x4000 && extid <= 0x7FFF )
+             {
+@@ -946,6 +1017,12 @@ void SLPMessageFreeInternals(SLPMessage 
+             xfree(message->body.srvrply.urlarray);
+             message->body.srvrply.urlarray = 0;
+         }
++	if (message->body.srvrply.extarray)
++	{
++		xfree(message->body.srvrply.extarray);
++		message->body.srvrply.extarray = 0;
++	}
++	
+         break;
+ 
+     case SLP_FUNCT_SRVREG:
+diff -r ec557b33c87b common/slp_message.h
+--- a/common/slp_message.h	Mon Mar 12 16:46:57 2007 -0400
++++ b/common/slp_message.h	Tue Mar 13 13:37:38 2007 -0400
+@@ -178,7 +178,7 @@ typedef UINT32*         PUINT32;
+ /* SLP Extension IDs                                                       */
+ /*=========================================================================*/
+ #define SLP_EXTENSION_ID_REG_PID   0x9799
+-
++#define SLP_EXTENSION_ID_ATTR      0x0002
+ 
+ /*=========================================================================*/
+ /* SLPHeader structure and associated functions                            */
+@@ -249,8 +249,20 @@ typedef struct _SLPSrvRqst
+     const char*     predicate;
+     int             spistrlen;
+     const char*     spistr;
++    int             attrext;
+ }SLPSrvRqst;
+ 
++
++
++/*=========================================================================*/
++typedef struct _SLPAttrExtEntry
++/*=========================================================================*/
++{
++	int urllen;
++	char* url;
++	int attrlen;
++	char* attrlist;
++}SLPAttrExtEntry;
+ 
+ /*=========================================================================*/
+ typedef struct _SLPSrvRply                                                 
+@@ -259,6 +271,9 @@ typedef struct _SLPSrvRply
+     int             errorcode;
+     int             urlcount;
+     SLPUrlEntry*    urlarray;
++    int             extcount;
++    SLPAttrExtEntry* extarray;
++
+ }SLPSrvRply;
+ 
+ 
+diff -r ec557b33c87b common/slp_property.c
+--- a/common/slp_property.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/common/slp_property.c	Thu Mar 15 12:41:26 2007 -0400
+@@ -216,6 +216,7 @@ int SetDefaultValues()
+     result |= SLPPropertySet("net.slp.securityEnabled","false");
+     result |= SLPPropertySet("net.slp.checkSourceAddr","true");
+     result |= SLPPropertySet("net.slp.OpenSLPVersion", SLP_VERSION);
++    result |= SLPPropertySet("net.slp.useAttrExt", "true");
+ 
+     return result;
+ }
+diff -r ec557b33c87b libslp/libslp.h
+--- a/libslp/libslp.h	Mon Mar 12 16:46:57 2007 -0400
++++ b/libslp/libslp.h	Wed Mar 14 09:26:16 2007 -0400
+@@ -130,6 +130,7 @@ typedef struct _SLPSrvUrlColatedItem
+     SLPListItem     listitem;
+     char*           srvurl;
+     unsigned short  lifetime;
++    char*           srvattr;
+ }SLPSrvUrlColatedItem;
+ 
+ /*=========================================================================*/
+@@ -197,6 +198,7 @@ typedef struct _SLPFindSrvsParams
+     const char*         predicate;
+     SLPSrvURLCallback*  callback;
+     void*               cookie;
++    SLPBoolean          useAttrExt;
+ }SLPFindSrvsParams,*PSLPFindSrvsParams;
+ 
+ 
+@@ -412,7 +414,8 @@ SLPError NetworkMcastRqstRply(PSLPHandle
+ #else
+ SLPError NetworkMcastRqstRply(const char* langtag,
+ #endif /* MI_NOT_SUPPORTED */
+-                              char* buf,
++			      long extoffset,
++			      char* buf,
+                               char buftype,
+                               int bufsize,
+                               NetworkRplyCallback callback,
+@@ -442,6 +445,7 @@ SLPError NetworkMcastRqstRply(const char
+ #ifndef UNICAST_NOT_SUPPORTED
+ /*=========================================================================*/
+ SLPError NetworkUcastRqstRply(PSLPHandleInfo handle,
++			      long extoffset,
+                               char* buf,
+                               char buftype,
+                               int bufsize,
+diff -r ec557b33c87b libslp/libslp_findattrs.c
+--- a/libslp/libslp_findattrs.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/libslp/libslp_findattrs.c	Tue Mar 13 09:29:42 2007 -0400
+@@ -222,6 +222,7 @@ SLPError ProcessAttrRqst(PSLPHandleInfo 
+ 	{
+ 	    void *cookie = (PSLPHandleInfo) handle;
+ 	    result = NetworkUcastRqstRply(handle,
++					  0,
+                                           buf,
+                                           SLP_FUNCT_ATTRRQST,
+ 					  bufsize,
+@@ -241,6 +242,7 @@ SLPError ProcessAttrRqst(PSLPHandleInfo 
+             
+             #ifndef MI_NOT_SUPPORTED
+             result = NetworkMcastRqstRply(handle,
++					  0,
+                                           buf,
+                                           SLP_FUNCT_ATTRRQST,
+                                           bufsize,
+@@ -248,6 +250,7 @@ SLPError ProcessAttrRqst(PSLPHandleInfo 
+                                           NULL);
+             #else	
+ 	    result = NetworkMcastRqstRply(handle->langtag,
++					  0,
+                                           buf,
+                                           SLP_FUNCT_ATTRRQST,
+                                           bufsize,
+diff -r ec557b33c87b libslp/libslp_findsrvs.c
+--- a/libslp/libslp_findsrvs.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/libslp/libslp_findsrvs.c	Thu Mar 15 12:37:23 2007 -0400
+@@ -51,53 +51,86 @@
+ 
+ /*-------------------------------------------------------------------------*/
+ SLPBoolean ColateSLPSrvURLCallback(SLPHandle hSLP,
+-                                   const char* pcSrvURL,
+-                                   unsigned short sLifetime,
++                                   const SLPUrlEntry* pcSrvURL,
++				   const SLPAttrExtEntry* pcSrvAttr,
+                                    SLPError errCode,
+                                    void *pvCookie)
+ /*-------------------------------------------------------------------------*/
+ {
+     SLPSrvUrlColatedItem*   collateditem;
+     PSLPHandleInfo          handle;
+-        
+     handle = (PSLPHandleInfo) hSLP;
+     handle->callbackcount ++;
+-    
+-#ifdef ENABLE_ASYNC_API
+-    /* Do not colate for async calls */
+-    if(handle->isAsync)
+-    {
+-        return handle->params.findsrvs.callback(hSLP,
+-                                                pcSrvURL,
+-                                                sLifetime,
+-                                                errCode,
+-                                                pvCookie);
+-    }
+-#endif
+-    
++    char* attr = NULL;
++    int ret;
+     if(errCode == SLP_LAST_CALL || 
+        handle->callbackcount > SLPPropertyAsInteger(SLPGetProperty("net.slp.maxResults")))
+     {
+-        /* We are done so call the caller's callback for each      */
++	    /* We are done so call the caller's callback for each      */
+         /* service URL colated item and clean up the colation list */
+-        handle->params.findsrvs.callback((SLPHandle)handle,
++
++	    handle->params.findsrvs.callback((SLPHandle)handle,
+                                          NULL,
+                                          0,
+                                          SLP_LAST_CALL,
+                                          handle->params.findsrvs.cookie);
+         goto CLEANUP;
+     }
+-    else if(errCode != SLP_OK)
++    else if(errCode != SLP_OK || ! pcSrvURL)
+     {
+         return SLP_TRUE;
+     }
++
++
++
++    if (pcSrvAttr && pcSrvAttr->attrlen)
++    {
++	    attr = (char*)xmalloc(pcSrvAttr->attrlen + 1);
++	    if (! attr) 
++		    return SLP_MEMORY_ALLOC_FAILED;
++           memcpy(attr, pcSrvAttr->attrlist, pcSrvAttr->attrlen);
++          *(attr + pcSrvAttr->attrlen) = 0x00;
++    }
++    
++
++#ifdef ENABLE_ASYNC_API
++    /* Do not colate for async calls */
++    if(handle->isAsync)
++    {
++
++	    ret =  handle->params.findsrvs.callback(hSLP,
++						    pcSrvURL->url,
++						    pcSrvURL->lifetime,
++						    errCode,
++						    pvCookie);
++	    /* if there is an attribute string, use the callback */
++            /* to pass the attribute ext. data to the user agent */
++	    /* this is a hack but it preserves compliance with rfc 2614 */
++	    if (attr)
++	    {
++		    ret = handle->params.findsrv.callback(hSLP,
++							  attr, 
++							  0, 
++							  errCode, 
++							  pvCookie);
++	    }
++	    if (attr)
++		    xfree(attr);
++	    return ret;
++    }
++#endif
++    
++
+ 
+     /* Add the service URL to the colation list */
+     collateditem = (SLPSrvUrlColatedItem*) handle->collatedsrvurls.head;
+     while(collateditem)
+     {
+-        if(strcmp(collateditem->srvurl,pcSrvURL) == 0)
+-        {
++       
++        
++	
++        {	
++	     collateditem = NULL;	
+             break;
+         }
+         collateditem = (SLPSrvUrlColatedItem*)collateditem->listitem.next;
+@@ -106,28 +139,37 @@ SLPBoolean ColateSLPSrvURLCallback(SLPHa
+     /* create a new item if none was found */
+     if(collateditem == NULL)
+     {
+-        collateditem = (SLPSrvUrlColatedItem*) xmalloc(sizeof(SLPSrvUrlColatedItem) + \
+-                                                       strlen(pcSrvURL) + 1);
+-        if(collateditem)
++        collateditem = (SLPSrvUrlColatedItem*) xmalloc(sizeof(SLPSrvUrlColatedItem));
++	
++        if(collateditem )
+         {
+             memset(collateditem,0,sizeof(SLPSrvUrlColatedItem));
+-            collateditem->srvurl = (char*)(collateditem + 1);
+-            strcpy(collateditem->srvurl,pcSrvURL);
+-            collateditem->lifetime = sLifetime;
++            collateditem->srvurl = (char*)pcSrvURL->url;
++            collateditem->lifetime = pcSrvURL->lifetime;
++	    collateditem->srvattr = attr;
+ 
+             /* Add the new item to the collated list */
+             SLPListLinkTail(&(handle->collatedsrvurls),
+                             (SLPListItem*)collateditem);
+ 
+             /* Call the caller's callback */
+-            if(handle->params.findsrvs.callback((SLPHandle)handle,
+-                                                pcSrvURL,
+-                                                sLifetime,
+-                                                SLP_OK,
+-                                                handle->params.findsrvs.cookie) == SLP_FALSE)
+-            {
+-                goto CLEANUP;
+-            }
++	    ret =  handle->params.findsrvs.callback((SLPHandle)handle,
++						    pcSrvURL->url,
++						    pcSrvURL->lifetime,
++						    SLP_OK,
++						    handle->params.findsrvs.cookie);
++
++	    /* if there is an attribute string, use the callback */
++            /* to pass the attribute ext. data to the user agent */
++	    /* this is a hack but it preserves compliance with rfc 2614 */
++	    if (attr)
++		    ret =  handle->params.findsrvs.callback((SLPHandle)handle,
++							    attr,
++							    0, 
++							    SLP_OK,
++							    handle->params.findsrvs.cookie);
++            if (! ret)
++		    goto CLEANUP;
+         }
+     }
+     
+@@ -139,6 +181,8 @@ CLEANUP:
+     {
+         collateditem = (SLPSrvUrlColatedItem*)SLPListUnlink(&(handle->collatedsrvurls),
+                                                             handle->collatedsrvurls.head);
++	if (collateditem->srvattr)
++		xfree(collateditem->srvattr);
+         xfree(collateditem);
+     }   
+     handle->callbackcount = 0;
+@@ -153,8 +197,10 @@ SLPBoolean ProcessSrvRplyCallback(SLPErr
+                                   void* cookie)
+ /*-------------------------------------------------------------------------*/
+ {
+-    int             i;
++    int             i, j;
+     SLPUrlEntry*    urlentry;
++    SLPAttrExtEntry* attrentry;
++    SLPUrlEntry     dummy;
+     SLPMessage      replymsg;
+     PSLPHandleInfo  handle      = (PSLPHandleInfo) cookie;
+     SLPBoolean      result      = SLP_TRUE;
+@@ -188,10 +234,12 @@ SLPBoolean ProcessSrvRplyCallback(SLPErr
+                replymsg->body.srvrply.errorcode == 0)
+             {
+                 urlentry = replymsg->body.srvrply.urlarray;
+-            
+                 for(i=0;i<replymsg->body.srvrply.urlcount;i++)
+                 {
+-                    
++			urlentry = &replymsg->body.srvrply.urlarray[i];
++			
++		    attrentry =  NULL;		                    
++
+ #ifdef ENABLE_SLPv2_SECURITY
+                     /*-------------------------------*/
+                     /* Validate the authblocks       */
+@@ -199,7 +247,7 @@ SLPBoolean ProcessSrvRplyCallback(SLPErr
+                     if(securityenabled &&
+                        SLPAuthVerifyUrl(handle->hspi,
+                                         1,
+-                                        &(urlentry[i])))
++                                        urlentry))
+                     {
+                         /* authentication failed skip this URLEntry */
+                         continue;
+@@ -209,13 +257,28 @@ SLPBoolean ProcessSrvRplyCallback(SLPErr
+                     /* Send the URL to the API caller */
+                     /*--------------------------------*/
+                     /* TRICKY: null terminate the url by setting the authcount to 0 */
+-                    ((char*)(urlentry[i].url))[urlentry[i].urllen] = 0;
+-    
++                    ((char*)(urlentry->url))[urlentry->urllen] = 0;
++		    
++		    for(j = 0; j < replymsg->body.srvrply.extcount;j++)
++		    {
++			    /* pick up the matching attribute if it is present */
++			    if ( ! SLPCompareString(replymsg->body.srvrply.extarray[j].urllen, 
++						    replymsg->body.srvrply.extarray[j].url,
++						    urlentry->urllen,
++						    urlentry->url))
++
++			    {
++				    attrentry = &replymsg->body.srvrply.extarray[j];
++				    break;
++			    }
++		    }
++		    
+                     result = ColateSLPSrvURLCallback((SLPHandle)handle,
+-                                                     urlentry[i].url,
+-                                                     (unsigned short)urlentry[i].lifetime,
++                                                     urlentry,
++                                                     attrentry, 
+                                                      SLP_OK,
+                                                      handle->params.findsrvs.cookie);
++
+                     if(result == SLP_FALSE)
+                     {
+                         break;
+@@ -225,6 +288,8 @@ SLPBoolean ProcessSrvRplyCallback(SLPErr
+             else if(replymsg->header.functionid == SLP_FUNCT_DAADVERT &&
+                     replymsg->body.daadvert.errorcode == 0)
+             {
++
++		    
+ #ifdef ENABLE_SLPv2_SECURITY
+                 if(securityenabled &&
+                    SLPAuthVerifyDAAdvert(handle->hspi,
+@@ -238,9 +303,13 @@ SLPBoolean ProcessSrvRplyCallback(SLPErr
+ #endif
+ 
+                 ((char*)(replymsg->body.daadvert.url))[replymsg->body.daadvert.urllen] = 0;
++
++		dummy.urllen = replymsg->body.daadvert.urllen;
++		dummy.url = (char*)replymsg->body.daadvert.url;
++
+                 result = ColateSLPSrvURLCallback((SLPHandle)handle,
+-                                                 replymsg->body.daadvert.url,
+-                                                 SLP_LIFETIME_MAXIMUM,
++						 &dummy, 
++						 NULL,
+                                                  SLP_OK,
+                                                  handle->params.findsrvs.cookie);
+             }
+@@ -260,12 +329,15 @@ SLPBoolean ProcessSrvRplyCallback(SLPErr
+ #endif
+ 
+                 ((char*)(replymsg->body.saadvert.url))[replymsg->body.saadvert.urllen] = 0;
++
++		dummy.urllen = replymsg->body.saadvert.urllen;
++		dummy.url = (char*)replymsg->body.saadvert.url;
++
+                 result = ColateSLPSrvURLCallback((SLPHandle)handle,
+-                                                 replymsg->body.saadvert.url,
+-                                                 SLP_LIFETIME_MAXIMUM,
++                                                 &dummy, 
++						 NULL,
+                                                  SLP_OK,
+                                                  handle->params.findsrvs.cookie);
+-
+             }
+         }
+         
+@@ -292,6 +364,9 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+     char*               spistr      = 0;
+ #endif
+ 
++    long                 nextExt      = 0;
++    
++
+     /*------------------------------------------*/
+     /* Is this a special attempt to locate DAs? */
+     /*------------------------------------------*/
+@@ -304,7 +379,7 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+     }
+ 
+ #ifdef ENABLE_SLPv2_SECURITY
+-    if(SLPPropertyAsBoolean(SLPGetProperty("net.slp.securityEnabled")))
++    if(SLPPropertyAsBoolean(SLPGetProperty("net.slp.securityEnabled"))) 
+     {
+         SLPSpiGetDefaultSPI(handle->hspi,
+                             SLPSPI_KEY_TYPE_PUBLIC,
+@@ -320,6 +395,12 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+     bufsize += handle->params.findsrvs.scopelistlen + 2; /*  2 bytes for len field */
+     bufsize += handle->params.findsrvs.predicatelen + 2; /*  2 bytes for len field */
+     bufsize += 2;    /*  2 bytes for spistr len*/
++
++    /* include room for attribute extension if option set */
++    if (handle->params.findsrvs.useAttrExt)
++	    bufsize += 10;
++    
++
+ #ifdef ENABLE_SLPv2_SECURITY
+     bufsize += spistrlen;
+ #endif
+@@ -356,13 +437,21 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+            handle->params.findsrvs.predicatelen);
+     curpos = curpos + handle->params.findsrvs.predicatelen;
+ #ifdef ENABLE_SLPv2_SECURITY
+-    ToUINT16(curpos,spistrlen);
+-    curpos = curpos + 2;
+-    memcpy(curpos,spistr,spistrlen);
+-    curpos = curpos + spistrlen;
++    ToUINT16(curpos,spistrlen)
++    memcpy(curpos + 2, spistr,spistrlen);
++    curpos = curpos + 2 + spistrlen;
+ #else
+     ToUINT16(curpos,0);
+-#endif
++    curpos = curpos + 2;
++#endif
++    if (handle->params.findsrvs.useAttrExt) 
++    {
++	    nextExt = (long)(char *)(curpos + 2 - buf);
++	    ToUINT16(curpos, 0x0002);
++	    memset(curpos + 2, 0x00, 8);
++    }
++    
++
+ 
+     /*--------------------------*/
+     /* Call the RqstRply engine */
+@@ -375,6 +464,7 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+ 	{
+ 	    void *cookie = (PSLPHandleInfo) handle;
+ 	    result = NetworkUcastRqstRply(handle,
++					  nextExt,
+                                           buf,
+                                           SLP_FUNCT_SRVRQST,
+ 					  bufsize,
+@@ -399,6 +489,7 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+             /* use multicast as a last resort */
+             #ifndef MI_NOT_SUPPORTED
+ 	    result = NetworkMcastRqstRply(handle,
++					  nextExt,
+ 					  buf,
+ 					  SLP_FUNCT_SRVRQST,
+ 					  bufsize,
+@@ -406,6 +497,7 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+ 					  NULL);
+ 	    #else		
+ 	    result = NetworkMcastRqstRply(handle->langtag,
++					  nextExt,
+                                           buf,
+                                           SLP_FUNCT_SRVRQST,
+                                           bufsize,
+@@ -418,7 +510,7 @@ SLPError ProcessSrvRqst(PSLPHandleInfo h
+         result = NetworkRqstRply(sock,
+                                  &peeraddr,
+                                  handle->langtag,
+-                                 0,
++                                 nextExt,
+                                  buf,
+                                  SLP_FUNCT_SRVRQST,
+                                  bufsize,
+@@ -559,7 +651,8 @@ SLPError SLPAPI SLPFindSrvs(SLPHandle  h
+     }
+     handle->params.findsrvs.callback     = callback;
+     handle->params.findsrvs.cookie       = pvCookie; 
+-
++    handle->params.findsrvs.useAttrExt    = 1;
++    
+ 
+     /*----------------------------------------------*/
+     /* Check to see if we should be async or sync   */
+@@ -578,7 +671,7 @@ SLPError SLPAPI SLPFindSrvs(SLPHandle  h
+            handle->params.findsrvs.predicate)
+         {
+             result = ThreadCreate((ThreadStartProc)AsyncProcessSrvRqst,handle);
+-        }
++         }
+         else
+         {
+             result = SLP_MEMORY_ALLOC_FAILED;    
+diff -r ec557b33c87b libslp/libslp_findsrvtypes.c
+--- a/libslp/libslp_findsrvtypes.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/libslp/libslp_findsrvtypes.c	Tue Mar 13 09:30:12 2007 -0400
+@@ -275,6 +275,7 @@ SLPError ProcessSrvTypeRqst(PSLPHandleIn
+ 	{
+             void *cookie = (PSLPHandleInfo) handle;
+ 	    result = NetworkUcastRqstRply(handle,
++					  0,
+                                           buf,
+                                           SLP_FUNCT_SRVTYPERQST,
+                                           bufsize,
+@@ -293,6 +294,7 @@ SLPError ProcessSrvTypeRqst(PSLPHandleIn
+             /* use multicast as a last resort */
+             #ifndef MI_NOT_SUPPORTED
+             result = NetworkMcastRqstRply(handle,
++					  0,
+                                           buf,
+ 					  SLP_FUNCT_SRVTYPERQST,
+ 					  bufsize,
+@@ -300,6 +302,7 @@ SLPError ProcessSrvTypeRqst(PSLPHandleIn
+ 					  NULL);
+             #else
+             result = NetworkMcastRqstRply(handle->langtag,
++					  0,
+                                           buf,
+                                           SLP_FUNCT_SRVTYPERQST,
+                                           bufsize,
+diff -r ec557b33c87b libslp/libslp_knownda.c
+--- a/libslp/libslp_knownda.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/libslp/libslp_knownda.c	Tue Mar 13 09:30:31 2007 -0400
+@@ -331,6 +331,7 @@ int KnownDADiscoveryRqstRply(int sock,
+ #else
+         NetworkMcastRqstRply("en",
+ #endif /* MI_NOT_SUPPORTED */
++			     0,
+                              buf,
+                              SLP_FUNCT_DASRVRQST,
+                              bufsize,
+diff -r ec557b33c87b libslp/libslp_network.c
+--- a/libslp/libslp_network.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/libslp/libslp_network.c	Thu Mar 15 10:46:12 2007 -0400
+@@ -629,6 +629,7 @@ SLPError NetworkMcastRqstRply(PSLPHandle
+ #else
+ SLPError NetworkMcastRqstRply(const char* langtag,
+ #endif /* MI_NOT_SUPPORTED */
++			      long extoffset,
+                               char* buf,
+                               char buftype,
+                               int bufsize,
+@@ -814,8 +815,14 @@ SLPError NetworkMcastRqstRply(const char
+         ToUINT24(sendbuf->start + 2, size);
+         /*flags*/
+         ToUINT16(sendbuf->start + 5, SLP_FLAG_MCAST);
+-        /*ext offset*/
+-        ToUINT24(sendbuf->start + 7,0);
++	if(extoffset != 0)
++	{
++            ToUINT24(sendbuf->start + 7, extoffset + langtaglen + 14);
++	}
++        else
++        {
++	    ToUINT24(sendbuf->start + 7, 0);
++	}
+         /*xid*/
+         ToUINT16(sendbuf->start + 10,xid);
+         /*lang tag len*/
+@@ -1056,6 +1063,7 @@ SLPError NetworkMcastRqstRply(const char
+ #ifndef UNICAST_NOT_SUPPORTED
+ /*=========================================================================*/
+ SLPError NetworkUcastRqstRply(PSLPHandleInfo handle,
++			      long extoffset,
+                               char* buf,
+                               char buftype,
+                               int bufsize,
+@@ -1190,8 +1198,19 @@ SLPError NetworkUcastRqstRply(PSLPHandle
+ 	ToUINT24(sendbuf->start + 2, size);
+ 	/*flags*/
+ 	ToUINT16(sendbuf->start + 5, SLP_FLAG_UCAST);  /*this is a unicast */
+-	/*ext offset*/
+-	ToUINT24(sendbuf->start + 7,0);
++        /*ext offset*/
++        /* TRICKY: the extoffset passed into us was the offset not
++         * including the header.  We need to fix up the offset so
++         * that it is from the beginning of the SLP message
++         */
++        if(extoffset != 0)
++	{
++            ToUINT24(sendbuf->start + 7,extoffset + langtaglen + 14);
++	}
++        else
++        {
++	    ToUINT24(sendbuf->start + 7, 0);
++	}
+ 	/*xid*/
+ 	ToUINT16(sendbuf->start + 10,xid);
+ 	/*lang tag len*/
+diff -r ec557b33c87b slpd/slpd_database.c
+--- a/slpd/slpd_database.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/slpd/slpd_database.c	Thu Mar 15 09:19:23 2007 -0400
+@@ -365,56 +365,74 @@ int SLPDDatabaseSrvRqstStart(SLPMessage 
+     SLPDatabaseEntry*           entry;
+     SLPSrvReg*                  entryreg;
+     SLPSrvRqst*                 srvrqst;
++    int                         err;
++    
+ #ifdef ENABLE_SLPv2_SECURITY
+     int                         i;
+ #endif
+-
++    int                          resultsize;
++    
+ 
+     /* start with the result set to NULL just to be safe */
+     *result = NULL;
+-
++    err = 0;
++    
+     dh = SLPDatabaseOpen(&G_SlpdDatabase.database);
+     if ( dh )
+     {
+         /* srvrqst is the SrvRqst being made */
+         srvrqst = &(msg->body.srvrqst);
+-
+-        while ( 1 )
+-        {
+-            /*-----------------------------------------------------------*/
+-            /* Allocate result with generous array of url entry pointers */
+-            /*-----------------------------------------------------------*/
+-            *result = (SLPDDatabaseSrvRqstResult*) xrealloc(*result, sizeof(SLPDDatabaseSrvRqstResult) + (sizeof(SLPUrlEntry*) * G_SlpdDatabase.urlcount));
+-            if ( *result == NULL )
+-            {
+-                /* out of memory */
+-                SLPDatabaseClose(dh);
+-                return SLP_ERROR_INTERNAL_ERROR;
+-            }
+-            (*result)->urlarray = (SLPUrlEntry**)((*result) + 1);
+-            (*result)->urlcount = 0;
+-            (*result)->reserved = dh;
+-
+-            /*-------------------------------------------------*/
+-            /* Rewind enumeration in case we had to reallocate */
+-            /*-------------------------------------------------*/
+-            SLPDatabaseRewind(dh);
+-
+-            /*-----------------------------------------*/
+-            /* Check to see if there is matching entry */
+-            /*-----------------------------------------*/
+-            while ( 1 )
+-            {
++	resultsize = G_SlpdDatabase.urlcount;
++	
++	*result = (SLPDDatabaseSrvRqstResult*)xmalloc(sizeof(SLPDDatabaseSrvRqstResult));
++	if (*result) 
++	{
++		(*result)->urlarray = (SLPUrlEntry**)xmalloc(sizeof(SLPUrlEntry) * resultsize);
++		if ((*result)->urlarray)
++		{
++			if (msg->body.srvrqst.attrext) 
++			{
++				(*result)->attrarray = (SLPAttrExtEntry*)xmalloc(
++					sizeof(SLPAttrExtEntry) * resultsize);
++				if (! (*result)->attrarray)
++				{
++					err = 1;
++				}
++			} else (*result)->attrarray = NULL;
++			
++		} else err = 1;
++	} else err = 1;
++	if (err)
++	{
++		if(*result)
++		{
++			if ((*result)->urlarray)
++				xfree((*result)->urlarray);
++			if ((*result)->attrarray)
++				xfree((*result)->attrarray);
++			xfree(*result);
++			*result = NULL;
++		}
++		SLPDatabaseClose(dh);
++		return SLP_ERROR_INTERNAL_ERROR;
++	}
++
++	(*result)->urlcount = 0;
++	(*result)->reserved = dh;
++	(*result)->attrcount = 0;
++	
++	while ( 1 )
++	{
+                 entry = SLPDatabaseEnum(dh);
+                 if ( entry == NULL )
+                 {
+-                    /* This is the only successful way out */
+-                    return 0;
+-                }
+-
++			/* This is the only successful way out */
++			return 0;
++                }
++		
+                 /* entry reg is the SrvReg message from the database */
+                 entryreg = &(entry->msg->body.srvreg);
+-
++		
+                 /* check the service type */
+                 if ( SLPCompareSrvType(srvrqst->srvtypelen,
+                                        srvrqst->srvtype,
+@@ -426,48 +444,72 @@ int SLPDDatabaseSrvRqstStart(SLPMessage 
+                                             srvrqst->scopelist) > 0 )
+                 {
+ #ifdef ENABLE_PREDICATES
+-                    if ( SLPDPredicateTest(msg->header.version,
+-                                           entryreg->attrlistlen,
+-                                           entryreg->attrlist,
+-                                           srvrqst->predicatelen,
+-                                           srvrqst->predicate) )
++			if ( SLPDPredicateTest(msg->header.version,
++					       entryreg->attrlistlen,
++					       entryreg->attrlist,
++					       srvrqst->predicatelen,
++					       srvrqst->predicate) )
+ #endif
+-                    {
+-
++			{
++				
+ #ifdef ENABLE_SLPv2_SECURITY
+-                        if ( srvrqst->spistrlen )
+-                        {
+-                            for ( i=0; i< entryreg->urlentry.authcount;i++ )
+-                            {
+-                                if ( SLPCompareString(srvrqst->spistrlen,
+-                                                      srvrqst->spistr,
+-                                                      entryreg->urlentry.autharray[i].spistrlen,
+-                                                      entryreg->urlentry.autharray[i].spistr) == 0 )
+-                                {
+-                                    break;
+-                                }
+-                            }
+-                            if ( i == entryreg->urlentry.authcount )
+-                            {
+-                                continue;
+-                            }
+-                        }
++				if ( srvrqst->spistrlen )
++				{
++					for ( i=0; i< entryreg->urlentry.authcount;i++ )
++					{
++						if ( SLPCompareString(srvrqst->spistrlen,
++								      srvrqst->spistr,
++								      entryreg->urlentry.autharray[i].spistrlen,
++								      entryreg->urlentry.autharray[i].spistr) == 0 )
++						{
++							break;
++						}
++					}
++					if ( i == entryreg->urlentry.authcount )
++					{
++						continue;
++					}
++				}
+ #endif
+-                        if ( (*result)->urlcount + 1 > G_SlpdDatabase.urlcount )
+-                        {
+-                            /* Oops we did not allocate a big enough result */
+-                            G_SlpdDatabase.urlcount *= 2;
+-                            break;
+-                        }
+-
+-                        (*result)->urlarray[(*result)->urlcount] = &(entryreg->urlentry);
+-                        (*result)->urlcount ++;
+-                    }
+-                }
+-            }
+-        }
+-    }
+-
++				if ((*result)->urlcount == resultsize)
++				{
++					resultsize += resultsize;
++					(*result)->urlarray = (SLPUrlEntry**)xrealloc(
++						(*result)->urlarray, 
++						sizeof(SLPUrlEntry) * resultsize);
++					(*result)->attrarray = (SLPAttrExtEntry*)xrealloc(
++						(*result)->attrarray,
++						sizeof(SLPUrlEntry) * resultsize);
++					if ((*result)->urlarray == NULL ||
++					    (*result)->attrarray == NULL)
++					{
++						xfree(*result);
++						SLPDatabaseClose(dh);
++						return SLP_ERROR_INTERNAL_ERROR;
++					}
++				}
++				
++				(*result)->urlarray[(*result)->urlcount] = &(entryreg->urlentry);
++
++				/* include attr info if request contains the attr ex. */
++				if(msg->body.srvrqst.attrext)
++				{
++					(*result)->attrarray[(*result)->urlcount].urllen = 
++						entryreg->urlentry.urllen;
++					(*result)->attrarray[(*result)->urlcount].url = 
++						(char *)entryreg->urlentry.url;
++					(*result)->attrarray[(*result)->urlcount].attrlen = 
++						entryreg->attrlistlen;
++					(*result)->attrarray[(*result)->urlcount].attrlist = 
++						(char *)entryreg->attrlist;
++					(*result)->attrcount++;
++				}
++				(*result)->urlcount++;
++			}
++                }
++	}
++	
++    }
+     return 0;
+ }
+ 
+@@ -485,6 +527,10 @@ void SLPDDatabaseSrvRqstEnd(SLPDDatabase
+     if ( result )
+     {
+         SLPDatabaseClose((SLPDatabaseHandle)result->reserved);
++	if(result->urlarray)
++		xfree(result->urlarray);
++	if(result->attrarray)
++		xfree(result->attrarray);
+         xfree(result);
+     }
+ }
+@@ -934,3 +980,4 @@ void SLPDDatabaseDump(void)
+     }
+ }
+ #endif
++
+diff -r ec557b33c87b slpd/slpd_database.h
+--- a/slpd/slpd_database.h	Mon Mar 12 16:46:57 2007 -0400
++++ b/slpd/slpd_database.h	Thu Mar 15 09:17:53 2007 -0400
+@@ -79,6 +79,9 @@ typedef struct _SLPDDatabaseSrvRqstResul
+     void*             reserved;
+     SLPUrlEntry**     urlarray;
+     int               urlcount;
++    SLPAttrExtEntry* attrarray;
++    int attrcount;
++	
+ }SLPDDatabaseSrvRqstResult;
+ 
+ 
+diff -r ec557b33c87b slpd/slpd_process.c
+--- a/slpd/slpd_process.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/slpd/slpd_process.c	Thu Mar 15 09:34:21 2007 -0400
+@@ -306,6 +306,7 @@ int ProcessSrvRqst(SLPMessage message,
+ {
+     int                         i;
+     SLPUrlEntry*                urlentry;
++    SLPAttrExtEntry*           attrentry;
+     SLPDDatabaseSrvRqstResult*  db          = 0;
+     int                         size        = 0;
+     SLPBuffer                   result      = *sendbuf;
+@@ -468,11 +469,23 @@ int ProcessSrvRqst(SLPMessage message,
+                         authblock = &(urlentry->autharray[j]);
+                         size += authblock->length;
+                         break;
+-                    }
++		    }
+                 }
+-            }
++	    }
++	    
++		
+ #endif 
+-        }
++
++	    /* size needs to include attribute extensions */
++	    if(message->body.srvrqst.attrext)
++	    {
++		    attrentry = &db->attrarray[i];
++		    size += 6; /* ext id (2), next ext (3), #auths (1) */
++		    size += attrentry->urllen + 2;
++		    size += attrentry->attrlen + 2;
++	    }
++	}
++	
+     }
+ 
+     /*------------------------------*/
+@@ -523,7 +536,7 @@ int ProcessSrvRqst(SLPMessage message,
+ 
+         for (i=0;i<db->urlcount;i++)
+         {
+-            /* urlentry is the url from the db result */
++		/* urlentry is the url from the db result */
+             urlentry = db->urlarray[i]; 
+ 
+ #ifdef ENABLE_SLPv1
+@@ -555,6 +568,40 @@ int ProcessSrvRqst(SLPMessage message,
+                 result->curpos = result->curpos + urlentry->opaquelen;
+             }
+         }
++	
++	if(message->body.srvrqst.attrext) 
++	{
++		char *nextsave = result->start + 7;
++		
++		for (i=0;i<db->attrcount;i++)
++		{
++			attrentry = &db->attrarray[i];
++			ToUINT24(nextsave, (long)(char *)(result->curpos - result->start));
++			
++			/* write the ext. id */
++			ToUINT16(result->curpos, SLP_EXTENSION_ID_ATTR); 
++			result->curpos += 2;
++			ToUINT24(result->curpos, 0L);
++			/* save ptr to next ext. field */
++			nextsave = result->curpos;
++			result->curpos += 3;
++			/* store the url */
++			ToUINT16(result->curpos, attrentry->urllen);
++			memcpy(result->curpos + 2, attrentry->url, attrentry->urllen);
++			result->curpos += attrentry->urllen + 2;
++			
++			/* store the attr list */
++			
++			ToUINT16(result->curpos, attrentry->attrlen);
++			memcpy(result->curpos + 2, attrentry->attrlist, attrentry->attrlen);
++			result->curpos += attrentry->attrlen + 2;
++
++			/* number of auths (0) */
++			*(result->curpos) = 0x00;
++			result->curpos++;
++		}
++	}
++
+     }
+     else
+     {
+diff -r ec557b33c87b slptool/slptool.c
+--- a/slptool/slptool.c	Mon Mar 12 16:46:57 2007 -0400
++++ b/slptool/slptool.c	Wed Mar 14 09:45:57 2007 -0400
+@@ -330,7 +330,7 @@ SLPBoolean mySrvUrlCallback( SLPHandle h
+                              void* cookie ) 
+ /*=========================================================================*/
+ {
+-    if(errcode == SLP_OK)
++    if(errcode == SLP_OK && srvurl)
+     {
+         printf("%s,%i\n",srvurl,lifetime);
+     }
+@@ -993,7 +993,6 @@ int main(int argc, char* argv[])
+         case FINDSRVS:
+             FindSrvs(&cmdline);
+             break;
+-        
+         #ifndef UNICAST_NOT_SUPPORTED
+         case UNICASTFINDSRVS:
+ 	    UnicastFindSrvs(&cmdline);

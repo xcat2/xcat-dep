@@ -1,0 +1,52 @@
+diff -uNr a/libslp/libslp_network.c b/libslp/libslp_network.c
+--- a/libslp/libslp_network.c	2008-08-29 14:07:28.755514312 -0400
++++ b/libslp/libslp_network.c	2008-08-29 14:07:06.563887952 -0400
+@@ -389,10 +389,8 @@
+     /*--------------------------*/
+     /* Main retransmission loop */
+     /*--------------------------*/
+-    while(xmitcount <= MAX_RETRANSMITS)
++    while(xmitcount < MAX_RETRANSMITS)
+     {
+-        xmitcount++;
+-
+         /*--------------------*/
+         /* setup recv timeout */
+         /*--------------------*/
+@@ -412,6 +410,7 @@
+             timeout.tv_sec = maxwait / 1000;
+             timeout.tv_usec = (maxwait % 1000) * 1000;
+         }
++        xmitcount++;
+ 
+         /*------------------------------------------------------------------*/
+         /* re-allocate buffer and make sure that the send buffer does not   */
+@@ -722,7 +721,7 @@
+         result = SLP_NETWORK_ERROR;
+         goto FINISHED;
+     }
+-    usebroadcast = SLPPropertyAsBoolean(SLPGetProperty("net.slp.useBroadcast"));
++    usebroadcast = SLPPropertyAsBoolean(SLPGetProperty("net.slp.isBroadcastOnly"));
+ 
+     /*-----------------------------------*/
+     /* Multicast/broadcast wait timeouts */
+@@ -765,10 +764,8 @@
+     /* Main retransmission loop */
+     /*--------------------------*/
+     xmitcount = 0;
+-    while(xmitcount <= MAX_RETRANSMITS)
++    while(xmitcount < MAX_RETRANSMITS)
+     {
+-        xmitcount++;
+-
+         totaltimeout += timeouts[xmitcount];
+         if(totaltimeout >= maxwait ||  timeouts[xmitcount] == 0)
+         {
+@@ -777,6 +774,7 @@
+         }
+         timeout.tv_sec = timeouts[xmitcount] / 1000;
+         timeout.tv_usec = (timeouts[xmitcount] % 1000) * 1000;
++        xmitcount++;
+         
+         /*------------------------------------------------------------------*/
+         /* re-allocate buffer and make sure that the send buffer does not   */

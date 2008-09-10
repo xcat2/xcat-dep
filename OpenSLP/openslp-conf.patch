@@ -1,0 +1,48 @@
+diff -uNr a/etc/slp.conf b/etc/slp.conf
+--- a/etc/slp.conf	2008-08-29 13:56:11.689444000 -0400
++++ b/etc/slp.conf	2008-08-29 13:55:52.804314976 -0400
+@@ -61,7 +61,7 @@
+ # return for a synchronous request before the timeout, or the maximum number
+ # of results to return through a callback if the request results are 
+ # reported asynchronously (default value is 256).
+-;net.slp.maxResults = 256
++net.slp.maxResults = 2000 
+ 
+ 
+ #----------------------------------------------------------------------------
+@@ -76,13 +76,13 @@
+ # A boolean indicating whether passive DA detection should be used.
+ # Default is true.  Uncomment the following line to disable passive DA 
+ # detection
+-;net.slp.passiveDADetection = false
++net.slp.passiveDADetection = false
+ 
+ # A boolean indicating whether active DA detection should be used. This is
+ # useful when the DAs available are explicitly restricted to those obtained
+ # from DHCP or the net.slp.DAAddresses property. Default is true.  Uncomment
+ # the following line to disable active DA detection
+-;net.slp.activeDADetection = false
++net.slp.activeDADetection = false
+ 
+ # The net.slp.DAActiveDiscoveryInterval property controls *periodic* 
+ # transmission of active DA discovery SrvRqsts.  The default setting
+@@ -140,7 +140,7 @@
+ ;net.slp.randomWaitBound = 5000
+ 
+ # A integer giving the network packet MTU in bytes. (Default is 1400)
+-;net.slp.MTU = 1400
++net.slp.MTU = 32767 
+ 
+ # A list of IP address of network interfaces on which the DA/SA should listen
+ # for slp requests.  By default, slpd will use all interfaces.
+--- a/libslp/libslp.h   2008-08-25 15:33:58.745701832 -0400
++++ b/libslp/libslp.h   2008-08-25 15:35:02.826960000 -0400
+@@ -101,7 +101,7 @@
+ #define LIBSLP_CONFFILE "%WINDIR%\\slp.conf"
+ #define LIBSLP_SPIFILE  "%WINDIR%\\slp.spi"
+ #else
+-#define LIBSLP_CONFFILE "/etc/slp.conf"
++#define LIBSLP_CONFFILE "/usr/local/etc/slp.conf"
+ #define LIBSLP_SPIFILE "/etc/slp.spi"
+ #endif
+ #endif
