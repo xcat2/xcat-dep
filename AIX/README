@@ -23,6 +23,7 @@ scipt, which is also included.
 14. perl-Expect-1.21-1
 15. fping-2.2b1-1
 16. Crypt-SSLeay-0.57
+17. openslp-1.2.1
 
 The openssl-0.9.8 and openssh-4.5 software is available as AIX installp 
 filesets.  They are available on the AIX Expansion pack and also can be 
