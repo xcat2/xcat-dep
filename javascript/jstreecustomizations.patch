@@ -1,0 +1,175 @@
+diff -urN jsTree/tree_component.css jsTree.xcat/tree_component.css
+--- jsTree/tree_component.css	2008-09-28 15:31:30.000000000 -0400
++++ jsTree.xcat/tree_component.css	2008-09-28 15:47:04.000000000 -0400
+@@ -22,7 +22,7 @@
+ 	float:left;
+ 	line-height:16px;
+ 	height:16px;
+-	padding:1px 4px 1px 23px !important;
++	padding:1px 4px 1px 3px !important;
+ 	color:black;
+ 	white-space:nowrap;
+ 	text-decoration:none;
+@@ -37,7 +37,7 @@
+ .tree li a.hover {
+ 	background-color: #e7f4f9;
+ 	border:1px solid #d8f0fa;
+-	padding:0px 3px 0px 22px !important;
++	padding:0px 3px 0px 2px !important;
+ 	background-position:3px 0px; 
+ }
+ .tree li a.clicked,
+@@ -45,11 +45,11 @@
+ .tree li span.clicked {
+ 	background-color: #beebff;
+ 	border:1px solid #99defd;
+-	padding:0px 3px 0px 22px !important;
++	padding:0px 3px 0px 2px !important;
+ 	background-position:3px 0px; 
+ }
+ .tree li span.clicked {
+-	padding:0px 3px 0px 20px !important;
++	padding:0px 3px 0px 0px !important;
+ }
+ 
+ .tree li a input,
+@@ -190,14 +190,14 @@
+ .rtl li a,
+ .rtl li span {
+ 	float:right;
+-	padding:1px 23px 1px 4px !important;
++	padding:1px 3px 1px 4px !important;
+ 	background-position:right 1px; 
+ 	margin-right:1px;
+ }
+ .rtl li a:hover {
+ 	background-color: #e7f4f9;
+ 	border:1px solid #d8f0fa;
+-	padding:0px 23px 0px 3px !important;
++	padding:0px 3px 0px 3px !important;
+ 	background-position:right 0px; 
+ 	margin-right:0px;
+ }
+@@ -206,12 +206,12 @@
+ .rtl li span.clicked {
+ 	background-color: #beebff;
+ 	border:1px solid #99defd;
+-	padding:0px 23px 0px 3px !important;
++	padding:0px 3px 0px 3px !important;
+ 	background-position:right 0px; 
+ 	margin-right:0px;
+ }
+ .rtl li span.clicked {
+-	padding:0px 21px 0px 3px !important;
++	padding:0px 1px 0px 3px !important;
+ }
+ .rtl ul ul {
+ 	background:url("images/dot.gif") right 1px repeat-y;
+@@ -221,4 +221,4 @@
+ }
+ .rtl #dragged li.open {
+ 	background-position: right 5px;
+-}
+\ No newline at end of file
++}
+diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
+--- jsTree/tree_component.js	2008-09-21 17:00:41.000000000 -0400
++++ jsTree.xcat/tree_component.js	2008-09-28 15:47:04.000000000 -0400
+@@ -314,7 +314,7 @@
+ 						event.target.blur();
+ 						return _this.error("LOCKED");
+ 					}
+-					_this.select_branch.apply(_this, [event.target, event.ctrlKey || _this.settings.rules.multiple == "on"]);
++					_this.select_branch.apply(_this, [event.target, event.ctrlKey || _this.settings.rules.multiple == "on", event.shiftKey]);
+ 					if(_this.inp) { _this.inp.blur(); }
+ 					event.preventDefault(); 
+ 					event.target.blur();
+@@ -704,10 +704,11 @@
+ 			if(off_t + 5 < beg_t) this.container.scrollTop(this.container.scrollTop() - (beg_t - off_t + 5) );
+ 			if(off_t + h_cor > end_t) this.container.scrollTop(this.container.scrollTop() + (off_t + h_cor - end_t) );
+ 		},
+-		select_branch : function (obj, multiple) {
++		select_branch : function (obj, multiple, ranged) {
+ 			if(this.locked) return this.error("LOCKED");
+ 			if(!obj && this.hovered !== false) obj = this.hovered;
+ 			var _this = this;
++            var _obj = obj;
+ 			obj = _this.get_node(obj);
+ 			if(!obj.size()) return this.error("SELECT: NOT A VALID NODE");
+ 			obj.children("a").removeClass("hover");
+@@ -718,10 +719,28 @@
+ 			if(this.settings.rules.multiple != false && multiple && obj.children("a.clicked").size() > 0) {
+ 				return this.deselect_branch(obj);
+ 			}
+-			if(this.settings.rules.multiple != false && multiple) {
++			if(this.settings.rules.multiple != false && multiple) { //Add obj to selected items due to multiple
+ 				this.selected_arr.push(obj);
+ 			}
+-			if(this.settings.rules.multiple != false && !multiple) {
++            if (ranged) {
++                var curidx = $(obj).parent().children().index(obj);
++                var previdx = $(obj).parent().children().index(this.selected);
++                if (curidx >= 0 && previdx >=0) {
++                    var firstidx=Math.min(curidx,previdx);
++                    var lastidx=Math.max(curidx,previdx);
++                    var siblings=$(obj).parent().children();
++                    for (var idx = firstidx+1;idx < lastidx; idx++) {
++                        this.select_branch($(siblings[idx]),1);
++//                        $(siblings[idx]).children("A").addClass("clicked");
++                    }
++                    this.selected_arr.push(obj);
++                } /* else { What to do when shift click tries to go somewhere totally different? too hard
++                    $("#rangedisplay").text(curidx);
++                } */
++                var sel = window.getSelection();
++                sel.removeAllRanges();
++            }
++			if(this.settings.rules.multiple != false && !multiple && !ranged) { //click without ctrl or shift
+ 				for(i in this.selected_arr) {
+ 					this.selected_arr[i].children("A").removeClass("clicked");
+ 				}
+@@ -767,11 +786,13 @@
+ 					this.selected = this.selected_arr[0];
+ 					this.set_cookie("selected");
+ 				}
++			    this.settings.callback.onchange.call(null, this.selected.get(0), _this);
+ 			}
+ 			else {
+ 				if(this.settings.rules.multiple != false) this.selected_arr = [];
+ 				this.selected = false;
+ 				this.set_cookie("selected");
++			    this.settings.callback.onchange.call(null, null, _this);
+ 			}
+ 		},
+ 		toggle_branch : function (obj) {
+@@ -787,7 +808,7 @@
+ 
+ 			if(this.settings.data.async && obj.find("li").size() == 0) {
+ 				var _this = this;
+-				obj.children("ul:eq(0)").remove().end().append("<ul><li class='last'><a style='background-image:url(" + _this.path + "images/throbber.gif)' href='#'>" + (_this.settings.lang.loading || "Loading ...") + "</a></li></ul>");
++				obj.children("ul:eq(0)").remove().end().append("<ul><li class='last'><a>" + (_this.settings.lang.loading || "Loading ...") + "<img src=\""+_this.path+"images/throbber.gif\"></a></li></ul>");
+ 				obj.removeClass("closed").addClass("open");
+ 				if(this.settings.data.type == "xml_flat" || this.settings.data.type == "xml_nested") {
+ 					var xsl = (this.settings.data.type == "xml_flat") ? "flat.xsl" : "nested.xsl";
+@@ -857,9 +878,12 @@
+ 			}
+ 			if(this.selected && obj.children("ul:eq(0)").find("a.clicked").size() > 0) {
+ 				obj.find("li:has(a.clicked)").each(function() {
+-					_this.deselect_branch(this);
++					_this.deselect_branch(this); //Commenting this out could preserve selection on close
++                    //I could see this as extremely useful, however it could be easy for someone to trip up
++                    //with lack of visual cue... perhaps a semi-shaded style for collapsed if wanting to preserve selection
+ 				});
+-				if(obj.children("a.clicked").size() == 0) this.select_branch(obj, (this.settings.rules.multiple != false && this.selected_arr.length > 0) );
++                //I disagree with the following scheme, that an entire group would be selected just for collapsing a selected child..
++				//if(obj.children("a.clicked").size() == 0) this.select_branch(obj, (this.settings.rules.multiple != false && this.selected_arr.length > 0) );
+ 			}
+ 			this.settings.callback.onclose.call(null, obj.get(0), this);
+ 		},
+@@ -1203,4 +1227,4 @@
+ 			}
+ 		}
+ 	}
+-}
+\ No newline at end of file
++}
