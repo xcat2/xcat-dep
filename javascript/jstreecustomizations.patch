@@ -1,6 +1,6 @@
-diff -urN jsTree/tree_component.css jsTree.xcat/tree_component.css
+diff -urN jsTree/tree_component.css jsTree-custom/tree_component.css
 --- jsTree/tree_component.css	2008-09-28 15:31:30.000000000 -0400
-+++ jsTree.xcat/tree_component.css	2008-09-28 15:47:04.000000000 -0400
++++ jsTree-custom/tree_component.css	2008-10-13 09:50:29.000000000 -0400
 @@ -22,7 +22,7 @@
  	float:left;
  	line-height:16px;
@@ -72,10 +72,35 @@ diff -urN jsTree/tree_component.css jsTree.xcat/tree_component.css
 -}
 \ No newline at end of file
 +}
-diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
+diff -urN jsTree/tree_component.js jsTree-custom/tree_component.js
 --- jsTree/tree_component.js	2008-09-21 17:00:41.000000000 -0400
-+++ jsTree.xcat/tree_component.js	2008-09-28 15:47:04.000000000 -0400
-@@ -314,7 +314,7 @@
++++ jsTree-custom/tree_component.js	2008-10-13 09:51:48.000000000 -0400
+@@ -136,6 +136,7 @@
+ 			this.container.addClass("tree").css({ position: "relative" });
+ 			if(this.settings.ui.rtl) this.container.addClass("rtl");
+ 			if(this.settings.rules.multiple) this.selected_arr = [];
++            this.recent_range = [];
+ 			this.offset = this.container.offset();
+ 			this.container.css({ position : "" });
+ 			if(this.settings.ui.dots == false) this.container.addClass("no_dots");
+@@ -236,14 +237,14 @@
+ 			str += ">";
+ 			if(this.settings.languages.length) {
+ 				for(var i = 0; i < this.settings.languages.length; i++) {
+-					str += "<a href='#' class='" + this.settings.languages[i] + "' ";
++					str += "<a class='" + this.settings.languages[i] + "' ";
+ 					if(data.icons && data.icons[this.settings.languages[i]]) 
+ 						str += " style='background-image:url(\"" + data.icons[this.settings.languages[i]] + "\");' ";
+ 					str += ">" + data.data[this.settings.languages[i]] + "</a>";
+ 				}
+ 			}
+ 			else {
+-				str += "<a href='#' ";
++				str += "<a ";
+ 				if(data.icons) 
+ 					str += " style='background-image:url(\"" + data.icons + "\");' ";
+ 				str += ">" + data.data + "</a>";
+@@ -314,7 +315,7 @@
  						event.target.blur();
  						return _this.error("LOCKED");
  					}
@@ -84,12 +109,12 @@ diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
  					if(_this.inp) { _this.inp.blur(); }
  					event.preventDefault(); 
  					event.target.blur();
-@@ -704,10 +704,11 @@
+@@ -704,10 +705,11 @@
  			if(off_t + 5 < beg_t) this.container.scrollTop(this.container.scrollTop() - (beg_t - off_t + 5) );
  			if(off_t + h_cor > end_t) this.container.scrollTop(this.container.scrollTop() + (off_t + h_cor - end_t) );
  		},
 -		select_branch : function (obj, multiple) {
-+		select_branch : function (obj, multiple, ranged) {
++		select_branch : function (obj, multiple, ranged,rangechild) {
  			if(this.locked) return this.error("LOCKED");
  			if(!obj && this.hovered !== false) obj = this.hovered;
  			var _this = this;
@@ -97,8 +122,13 @@ diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
  			obj = _this.get_node(obj);
  			if(!obj.size()) return this.error("SELECT: NOT A VALID NODE");
  			obj.children("a").removeClass("hover");
-@@ -718,10 +719,28 @@
+@@ -716,12 +718,47 @@
+ 			if(_this.settings.callback.beforechange.call(null,obj.get(0),_this) === false) return this.error("SELECT: STOPPED BY USER");
+ 			// IF multiple AND obj IS ALREADY SELECTED - DESELECT IT
  			if(this.settings.rules.multiple != false && multiple && obj.children("a.clicked").size() > 0) {
++                if ($(obj).parent().children().index(obj) ==  $(obj).parent().children().index(this.shiftanchor)) {
++                    this.shiftanchor=null;
++                }
  				return this.deselect_branch(obj);
  			}
 -			if(this.settings.rules.multiple != false && multiple) {
@@ -106,29 +136,43 @@ diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
  				this.selected_arr.push(obj);
  			}
 -			if(this.settings.rules.multiple != false && !multiple) {
-+            if (ranged) {
++            if (ranged && this.shiftanchor != null) {
++                for (var old_obj in this.recent_range) {
++                    this.deselect_branch(this.recent_range[old_obj],1);
++                }
++                this.recent_range=[];
 +                var curidx = $(obj).parent().children().index(obj);
-+                var previdx = $(obj).parent().children().index(this.selected);
++                var previdx = $(obj).parent().children().index(this.shiftanchor);
 +                if (curidx >= 0 && previdx >=0) {
 +                    var firstidx=Math.min(curidx,previdx);
 +                    var lastidx=Math.max(curidx,previdx);
 +                    var siblings=$(obj).parent().children();
 +                    for (var idx = firstidx+1;idx < lastidx; idx++) {
-+                        this.select_branch($(siblings[idx]),1);
++                        if (this.get_node($(siblings[idx])).children("a.clicked").size() == 0) {
++                            this.select_branch($(siblings[idx]),1,false,true);
++                        }
++                        this.recent_range.push(_this.get_node($(siblings[idx])));
 +//                        $(siblings[idx]).children("A").addClass("clicked");
 +                    }
 +                    this.selected_arr.push(obj);
-+                } /* else { What to do when shift click tries to go somewhere totally different? too hard
++                    this.recent_range.push(obj);
++                } /* else { What to do when shift click tries to go somewhere totally different? too hard for now..
 +                    $("#rangedisplay").text(curidx);
 +                } */
 +                var sel = window.getSelection();
 +                sel.removeAllRanges();
++            } else {
++                if (!rangechild) {
++                    this.shiftanchor = obj;
++                    this.recent_range=[];
++				    this.selected_arr.push(obj);
++                }
 +            }
 +			if(this.settings.rules.multiple != false && !multiple && !ranged) { //click without ctrl or shift
  				for(i in this.selected_arr) {
  					this.selected_arr[i].children("A").removeClass("clicked");
  				}
-@@ -767,11 +786,13 @@
+@@ -767,11 +804,13 @@
  					this.selected = this.selected_arr[0];
  					this.set_cookie("selected");
  				}
@@ -142,7 +186,7 @@ diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
  			}
  		},
  		toggle_branch : function (obj) {
-@@ -787,7 +808,7 @@
+@@ -787,7 +826,7 @@
  
  			if(this.settings.data.async && obj.find("li").size() == 0) {
  				var _this = this;
@@ -151,7 +195,7 @@ diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
  				obj.removeClass("closed").addClass("open");
  				if(this.settings.data.type == "xml_flat" || this.settings.data.type == "xml_nested") {
  					var xsl = (this.settings.data.type == "xml_flat") ? "flat.xsl" : "nested.xsl";
-@@ -857,9 +878,12 @@
+@@ -857,9 +896,12 @@
  			}
  			if(this.selected && obj.children("ul:eq(0)").find("a.clicked").size() > 0) {
  				obj.find("li:has(a.clicked)").each(function() {
@@ -166,7 +210,20 @@ diff -urN jsTree/tree_component.js jsTree.xcat/tree_component.js
  			}
  			this.settings.callback.onclose.call(null, obj.get(0), this);
  		},
-@@ -1203,4 +1227,4 @@
+@@ -939,10 +981,10 @@
+ 						if((typeof this.settings.lang.new_node).toLowerCase() != "string" && this.settings.lang.new_node[i]) val = this.settings.lang.new_node[i];
+ 						else val = this.settings.lang.new_node;
+ 					}
+-					$li.append("<a href='#' class='" + this.settings.languages[i] + "'>" + val + "</a>");
++					$li.append("<a class='" + this.settings.languages[i] + "'>" + val + "</a>");
+ 				}
+ 			}
+-			else { $li.append("<a href='#'>" + (this.settings.lang.new_node || "New folder") + "</a>"); }
++			else { $li.append("<a>" + (this.settings.lang.new_node || "New folder") + "</a>"); }
+ 			$li.addClass("leaf");
+ 			if(this.settings.rules.createat == "top" || this.selected.children("ul").size() == 0) {
+ 				this.moved($li,this.selected.children("a:eq(0)"),"inside", true);
+@@ -1203,4 +1245,4 @@
  			}
  		}
  	}
