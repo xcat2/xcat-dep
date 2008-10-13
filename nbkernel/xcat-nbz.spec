@@ -21,7 +21,7 @@ Source2: modlist-2.6.18-92.el5.ppc64
 %endif
 BuildArch: noarch
 %define name	xCAT-nbkernel-%{tarch}
-Release: 6
+Release: 7
 Epoch: 1
 AutoReq: false
 AutoProv: false
