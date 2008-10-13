@@ -11,6 +11,9 @@
 # Description: ATFTP server
 ### END INIT INFO
 
+if [ -r /etc/sysconfig/atftpd ]; then 
+    . /etc/sysconfig/atftpd
+fi
 
 RHSuccess()
 {
@@ -53,6 +56,7 @@ else
   echo "Error, don't know how to start on this platform"
   exit 1
 fi
+MULTARG="--no-multicast"
 
 case $1 in
 restart)
@@ -72,7 +76,10 @@ stop)
   ;;
 start)
   echo -n "Starting ATFTP "
-  $START_DAEMON /usr/sbin/atftpd --group nobody --daemon && $LOG_SUCCESS || $LOG_FAILURE
+  if [ "$ATFTPMULTICAST" == "yes" ]; then
+    MULTARG=""
+  fi
+  $START_DAEMON /usr/sbin/atftpd $MULTARG --group nobody --daemon && $LOG_SUCCESS || $LOG_FAILURE
   ;;
 esac
 
