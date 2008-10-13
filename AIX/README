@@ -1,10 +1,8 @@
 
-	WORK IN PROGRESS
-
 The following open source software is required for xCAT on AIX.  Please 
 review this list to make sure there are no conflicts with any software 
 currently installed on your system.   When you are ready to install the 
-RPM packages contained in this tar file you can run the "InstReqRpms"
+RPM packages contained in this tar file you can run the "instoss"
 scipt, which is also included. 
 
 1. openssl-0.9.8
@@ -25,6 +23,15 @@ scipt, which is also included.
 16. Crypt-SSLeay-0.57
 17. openslp-1.2.1
 
+Optional
+perl-DBD-mysql-4.007-1
+xcat-mysql-5.0-1.aix5.3.ppc.rpm (mysql-5.0.67)
+
+The optional MySQL packages are provided for when using the xCAT service 
+node support.  The xcat-mysql package is simply the MySQL gz file that has
+been downloaded from http://dev.mysql.com/downloads/mysql and included in 
+an xCAT RPM to make the installation of MySQL easier.
+
 The openssl-0.9.8 and openssh-4.5 software is available as AIX installp 
 filesets.  They are available on the AIX Expansion pack and also can be 
 found on the following web site: http://sourceforge.net.  Note that some of 
@@ -34,7 +41,7 @@ that RPM's reflection of what was installed by installp is updated.  If you
 don't do this you could get dependency errors when installing some of the RPM
 packages.
 
-The rest of the software listed above is provided in this (xcataixoss.tar.gz)
+The rest of the software listed above is provided in this (dep-aix.tar.gz)
 tar file.  These are all RPM packages that have been built for AIX.
 
 The tk, tcl, and expect packages come from the "AIX Toolbox for Linux 
