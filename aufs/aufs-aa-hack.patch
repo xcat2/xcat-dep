@@ -1,0 +1,111 @@
+diff -urN aufs/f_op.c aufs.post/f_op.c
+--- aufs/f_op.c	2008-02-03 23:22:46.000000000 -0500
++++ aufs.postf_op.c	2008-10-20 13:48:10.000000000 -0400
+@@ -25,14 +25,8 @@
+ #include <linux/version.h>
+ #include "aufs.h"
+ 
+-/* common function to regular file and dir */
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 18)
+ #define FlushArgs	h_file, id
+ int aufs_flush(struct file *file, fl_owner_t id)
+-#else
+-#define FlushArgs	h_file
+-int aufs_flush(struct file *file)
+-#endif
+ {
+ 	int err;
+ 	struct dentry *dentry;
+diff -urN aufs/file.h aufs.post/file.h
+--- aufs/file.h	2008-10-15 17:38:40.000000000 -0400
++++ aufs.post/file.h	2008-10-20 13:50:03.000000000 -0400
+@@ -73,11 +73,7 @@
+ 
+ /* f_op.c */
+ extern struct file_operations aufs_file_fop;
+-#if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 18)
+ int aufs_flush(struct file *file, fl_owner_t id);
+-#else
+-int aufs_flush(struct file *file);
+-#endif
+ 
+ /* finfo.c */
+ struct aufs_finfo *ftofi(struct file *file);
+diff -urN aufs/vfsub.c aufs.post/vfsub.c
+--- aufs/vfsub.c	2008-02-03 23:22:46.000000000 -0500
++++ aufs.post/vfsub.c	2008-10-20 13:45:45.000000000 -0400
+@@ -1075,7 +1075,7 @@
+ 	if (!IS_IMMUTABLE(h_inode) && !IS_APPEND(h_inode)) {
+ 		vfsub_ignore(a->vargs);
+ 		lockdep_off();
+-		*a->errp = notify_change(a->h_dentry, a->ia);
++		*a->errp = notify_change(a->h_dentry, NULL, a->ia);
+ 		lockdep_on();
+ 		if (!*a->errp)
+ 			au_update_fuse_h_inode(NULL, a->h_dentry); /*ignore*/
+diff -urN aufs/vfsub.h aufs.post/vfsub.h
+--- aufs/vfsub.h	2008-02-03 23:22:46.000000000 -0500
++++ aufs.post/vfsub.h	2008-10-20 13:44:50.000000000 -0400
+@@ -376,7 +376,7 @@
+ 		  dir->i_ino, AuDLNPair(dentry), symname, mode);
+ 	IMustLock(dir);
+ 
+-	err = vfs_symlink(dir, dentry, symname, mode);
++	err = vfs_symlink(dir, dentry, NULL, symname, mode);
+ 	if (!err) {
+ 		/* dir inode is locked */
+ 		au_update_fuse_h_inode(NULL, dentry->d_parent); /*ignore*/
+@@ -394,7 +394,7 @@
+ 	LKTRTrace("i%lu, %.*s, 0x%x\n", dir->i_ino, AuDLNPair(dentry), mode);
+ 	IMustLock(dir);
+ 
+-	err = vfs_mknod(dir, dentry, mode, dev);
++	err = vfs_mknod(dir, dentry, NULL, mode, dev);
+ 	if (!err) {
+ 		/* dir inode is locked */
+ 		au_update_fuse_h_inode(NULL, dentry->d_parent); /*ignore*/
+@@ -414,7 +414,7 @@
+ 	IMustLock(dir);
+ 
+ 	lockdep_off();
+-	err = vfs_link(src_dentry, dir, dentry);
++	err = vfs_link(src_dentry, NULL, dir, dentry, 0);
+ 	lockdep_on();
+ 	if (!err) {
+ 		LKTRTrace("src_i %p, dst_i %p\n",
+@@ -441,7 +441,7 @@
+ 	IMustLock(src_dir);
+ 
+ 	lockdep_off();
+-	err = vfs_rename(src_dir, src_dentry, dir, dentry);
++	err = vfs_rename(src_dir, src_dentry, NULL, dir, dentry, 0);
+ 	lockdep_on();
+ 	if (!err) {
+ 		/* dir inode is locked */
+@@ -460,7 +460,7 @@
+ 	LKTRTrace("i%lu, %.*s, 0x%x\n", dir->i_ino, AuDLNPair(dentry), mode);
+ 	IMustLock(dir);
+ 
+-	err = vfs_mkdir(dir, dentry, mode);
++	err = vfs_mkdir(dir, dentry, NULL, mode);
+ 	if (!err) {
+ 		/* dir inode is locked */
+ 		au_update_fuse_h_inode(NULL, dentry->d_parent); /*ignore*/
+@@ -477,7 +477,7 @@
+ 	IMustLock(dir);
+ 
+ 	lockdep_off();
+-	err = vfs_rmdir(dir, dentry);
++	err = vfs_rmdir(dir, dentry, 0);
+ 	lockdep_on();
+ 	/* dir inode is locked */
+ 	if (!err)
+@@ -494,7 +494,7 @@
+ 
+ 	/* vfs_unlink() locks inode */
+ 	lockdep_off();
+-	err = vfs_unlink(dir, dentry);
++	err = vfs_unlink(dir, dentry, 0);
+ 	lockdep_on();
+ 	/* dir inode is locked */
+ 	if (!err)
