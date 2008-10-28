@@ -20,7 +20,7 @@ tar file. They are all RPM packages that have been built for AIX.
 3. tcl-8.4.7-3
 4. tk-8.4.7-3
 5. expect-5.42.1-3
-6. conserver-8.1.7-2
+6. conserver-8.1.16-2
 7. perl-DBI-1.55-1
 8. perl-DBD-SQLite-1.13-1
 9. perl-IO-Socket-SSL-1.06-1
@@ -30,12 +30,11 @@ tar file. They are all RPM packages that have been built for AIX.
 13. perl-Digest-MD5-2.36-1
 14. perl-Expect-1.21-1
 15. fping-2.2b1-1
-16. Crypt-SSLeay-0.57
-17. openslp-1.2.1
+16. openslp-1.2.1
 
 Optional
-18. perl-DBD-mysql-4.007-1
-19. xcat-mysql-5.0-1.aix5.3.ppc.rpm (mysql-5.0.67)
+17. perl-DBD-mysql-4.007-1
+18. xcat-mysql-5.0-1 (mysql-5.0.67)
 
 When you are ready to install the RPM packages contained in this tar file
 you can run the "instoss" scipt, which is also included.
