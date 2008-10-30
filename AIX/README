@@ -4,7 +4,7 @@ optional when using xCAT on AIX. Please review this list to make sure there
 are no conflicts with any software currently installed on your system.
 
 The openssl-0.9.8 and openssh-4.5 software is available as AIX installp
-filesets.  They are available on the AIX Expansion pack and also can be
+filesets.  They are contained on the AIX Expansion pack and also can be
 found on the following web site: http://sourceforge.net.  Note that some of
 the other RPM packages have a dependency on this level of openssl.  Also,
 since these are installp filesets you should run /usr/sbin/updtvpkg to make
@@ -12,8 +12,17 @@ sure that RPM's reflection of what was installed by installp is updated.  If
 you don't do this you could get dependency errors when installing some of 
 the RPM packages.
 
-The rest of the software listed below is provided in this (dep-aix.tar.gz)
-tar file. They are all RPM packages that have been built for AIX.
+The rest of the required software listed below is provided in this 
+(dep-aix-2.1.tar.gz) tar file.
+
+The optional MySQL packages are provided in a separate tar file 
+(xcat-mysql-2.1.tar.gz) as a convenience for when you wish
+to use the xCAT service node support. The xcat-mysql package contains the
+MySQL 64 bit gz file that was downloaded from
+http://dev.mysql.com/downloads/mysql and included in an xCAT RPM to make
+the installation of MySQL easier.
+
+They are all RPM packages that have been built for AIX.
 
 1. openssl-0.9.8
 2. openssh-4.5
@@ -38,12 +47,6 @@ Optional
 
 When you are ready to install the RPM packages contained in this tar file
 you can run the "instoss" scipt, which is also included.
-
-The optional MySQL packages are provided as a convenience for when you wish
-to use the xCAT service node support. The xcat-mysql package contains the
-MySQL 64 bit gz file that was downloaded from
-http://dev.mysql.com/downloads/mysql and included in an xCAT RPM to make
-the installation of MySQL easier.
 
 The tk, tcl, and expect packages come from the "AIX Toolbox for Linux 
 Applications" web site. (http://www-03.ibm.com/systems/p/os/aix/linux).  The 
