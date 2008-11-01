@@ -2,7 +2,7 @@ Name: atftp
 Summary: Advanced Trivial File Transfer Protocol (ATFTP) - TFTP server
 Group: System Environment/Daemons
 Version: 0.7
-Release: 8
+Release: 9
 License: GPL
 Vendor: Linux Networx Inc.
 Source: atftp_0.7.dfsg.orig.tar.gz
@@ -11,6 +11,7 @@ Patch: atftp_0.7.dfsg-3.diff
 Patch1: dfsg-3-to-multicast.diff
 Patch2: dfsg-3-bigfiles.diff
 Patch3: dfsg-3-to-winpaths.diff
+Patch4: dfsg-3-mclistfix.diff
 Buildroot: /var/tmp/atftp-buildroot
 Packager: Allen Reese <areese@lnxi.com>
 Conflicts: tftp-server
@@ -40,6 +41,7 @@ files using the TFTP protocol.
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
+%patch4 -p1
 
 
 %build
@@ -86,6 +88,9 @@ fi
 
 
 %changelog
+* Wed Oct 29 2008 David Darrington <ddarring@linux.vnet.ibm.com>
+- Fix multicast server segfault
+
 * Sat Oct 20 2007 Jarrod Johnson <jbj-at@ura.dnsalias.org>
 - Update with debian patch
 

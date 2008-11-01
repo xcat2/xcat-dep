@@ -1,0 +1,31 @@
+--- atftp-0.7.dfsg/tftpd_list.c	2008-10-28 09:42:36.000000000 -0500
++++ atftp-0.7.dfsg.new/tftpd_list.c	2008-10-28 10:02:55.000000000 -0500
+@@ -137,7 +137,7 @@
+                                              struct thread_data *data,
+                                              struct client_info *client)
+ {
+-     struct thread_data *current = thread_data; /* head of the list */
++     struct thread_data *current;
+      struct tftp_opt *tftp_options = data->tftp_options;
+      struct client_info *tmp;
+ 
+@@ -146,6 +146,8 @@
+      /* lock the whole list before walking it */
+      pthread_mutex_lock(&thread_list_mutex);
+ 
++     current = thread_data; /* head of the list */
++
+      while (current)
+      {
+           if (current != data)
+--- atftp-0.7.dfsg/options.h	2008-10-28 09:42:36.000000000 -0500
++++ atftp-0.7.dfsg.new/options.h	2008-10-28 10:06:06.000000000 -0500
+@@ -45,6 +45,7 @@
+ void opt_set_multicast(struct tftp_opt *options, char *addr, int port, int mc);
+ void opt_request_to_string(struct tftp_opt *options, char *string, int len);
+ void opt_options_to_string(struct tftp_opt *options, char *string, int len);
+-int opt_equal(struct tftp_opt *a,struct tftp_opt *b);
++int  opt_equal(struct tftp_opt *a,struct tftp_opt *b);
++int  opt_same_file(struct tftp_opt *opt1, struct tftp_opt *opt2);
+ #endif
+ 
