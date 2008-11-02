@@ -1,0 +1,114 @@
+diff -urN gpxe-0.9.5/src/include/usr/iscsiboot.h gpxe-0.9.5-regroot/src/include/usr/iscsiboot.h
+--- gpxe-0.9.5/src/include/usr/iscsiboot.h	2008-10-01 13:30:45.000000000 -0400
++++ gpxe-0.9.5-regroot/src/include/usr/iscsiboot.h	2008-10-30 13:19:41.000000000 -0400
+@@ -2,5 +2,6 @@
+ #define _USR_ISCSIBOOT_H
+ 
+ extern int iscsiboot ( const char *root_path );
++extern int iscsireg ( const char *root_path );
+ 
+ #endif /* _USR_ISCSIBOOT_H */
+diff -urN gpxe-0.9.5/src/usr/autoboot.c gpxe-0.9.5-regroot/src/usr/autoboot.c
+--- gpxe-0.9.5/src/usr/autoboot.c	2008-10-01 13:30:44.000000000 -0400
++++ gpxe-0.9.5-regroot/src/usr/autoboot.c	2008-10-30 13:19:41.000000000 -0400
+@@ -135,6 +135,19 @@
+ }
+ 
+ /**
++ * Register a drive in BIOS (i.e. iSCSI), but don't boot from it
++ *
++ * @v root_path Root path
++ * @ret rc   Return status code
++ */
++int reg_root_path ( const char *root_path ) {
++	/* Quick hack */
++	if ( strncmp ( root_path, "iscsi:", 6 ) == 0 ) {
++		return iscsireg ( root_path );
++	} /* TODO: aoereg */
++    return -ENOTSUP;
++}
++/**
+  * Boot using root path
+  *
+  * @v root_path		Root path
+@@ -160,6 +173,7 @@
+  */
+ static int netboot ( struct net_device *netdev ) {
+ 	char buf[256];
++	char ruf[256];
+ 	struct in_addr next_server;
+ 	int rc;
+ 
+@@ -190,6 +204,12 @@
+ 	fetch_ipv4_setting ( NULL, &next_server_setting, &next_server );
+ 	fetch_string_setting ( NULL, &filename_setting, buf, sizeof ( buf ) );
+ 	if ( buf[0] ) {
++        /* Going to tftp, but first setup root path hinted BIOS drive if applicable */
++	    fetch_string_setting ( NULL, &root_path_setting, ruf, sizeof ( ruf ) );
++        if ( ruf[0] ) {
++            printf("Attempting to register BIOS drive per root path \"%s\"\n",ruf);
++            reg_root_path ( ruf );
++        }
+ 		printf ( "Booting from filename \"%s\"\n", buf );
+ 		return boot_next_server_and_filename ( next_server, buf );
+ 	}
+diff -urN gpxe-0.9.5/src/usr/iscsiboot.c gpxe-0.9.5-regroot/src/usr/iscsiboot.c
+--- gpxe-0.9.5/src/usr/iscsiboot.c	2008-10-01 13:30:44.000000000 -0400
++++ gpxe-0.9.5-regroot/src/usr/iscsiboot.c	2008-10-30 13:19:57.000000000 -0400
+@@ -36,6 +36,56 @@
+ 	return NULL;
+ }
+ 
++int iscsireg ( const char *root_path ) {
++	struct scsi_device *scsi;
++	struct int13_drive *drive;
++	int rc;
++
++	scsi = zalloc ( sizeof ( *scsi ) );
++	if ( ! scsi ) {
++		rc = -ENOMEM;
++		goto err_alloc_scsi;
++	}
++	drive = zalloc ( sizeof ( *drive ) );
++	if ( ! drive ) {
++		rc = -ENOMEM;
++		goto err_alloc_drive;
++	}
++
++	printf ( "Configuring iSCSI per %s\n", root_path );
++
++	if ( ( rc = iscsi_attach ( scsi, root_path ) ) != 0 ) {
++		printf ( "Could not attach iSCSI device: %s\n",
++			 strerror ( rc ) );
++		goto err_attach;
++	}
++	if ( ( rc = init_scsidev ( scsi ) ) != 0 ) {
++		printf ( "Could not initialise iSCSI device: %s\n",
++			 strerror ( rc ) );
++		goto err_init;
++	}
++
++	drive->blockdev = &scsi->blockdev;
++
++	/* FIXME: ugly, ugly hack */
++	struct net_device *netdev = guess_boot_netdev();
++	struct iscsi_session *iscsi =
++		container_of ( scsi->backend, struct iscsi_session, refcnt );
++	ibft_fill_data ( netdev, iscsi );
++
++	register_int13_drive ( drive );
++	printf ( "Registered as BIOS drive %#02x\n", drive->drive );
++    return 0;
++ err_init:
++	iscsi_detach ( scsi );
++ err_attach:
++	free ( drive );
++ err_alloc_drive:
++	free ( scsi );
++ err_alloc_scsi:
++	return rc;
++}
++
+ int iscsiboot ( const char *root_path ) {
+ 	struct scsi_device *scsi;
+ 	struct int13_drive *drive;
