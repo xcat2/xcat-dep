@@ -76,7 +76,10 @@ export PATH=/usr/vac/bin:$PATH
 	--enable-local-smux \
 	--with-sys-location="Unknown" \
 	--with-sys-contact="root@localhost" \
-	--with-default-snmp-version="3" \
+	--with-default-snmp-version="3" 
+
+cp libtool libtool.orig
+sed -e "s/hardcode_direct=yes/hardcode_direct=no/" libtool.orig > libtool
 	
 chmod +x %{__find_requires}
 make %{?smp_mflags}
