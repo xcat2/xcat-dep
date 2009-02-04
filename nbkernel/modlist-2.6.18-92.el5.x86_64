@@ -132,6 +132,8 @@ kernel/drivers/usb/host/ohci-hcd.ko
 kernel/drivers/usb/host/sl811-hcd.ko
 kernel/drivers/usb/host/isp116x-hcd.ko
 kernel/drivers/usb/host/sl811_cs.ko
+kernel/drivers/usb/net/cdc_ether.ko
+kernel/drivers/usb/net/usbnet.ko
 kernel/drivers/usb/storage/usb-storage.ko
 kernel/drivers/cpufreq/cpufreq_ondemand.ko
 kernel/drivers/cpufreq/cpufreq_powersave.ko

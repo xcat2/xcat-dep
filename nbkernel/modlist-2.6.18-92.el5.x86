@@ -126,6 +126,8 @@ kernel/drivers/rtc/rtc-ds1553.ko
 kernel/drivers/rtc/rtc-sysfs.ko
 kernel/drivers/rtc/rtc-lib.ko
 kernel/drivers/rtc/rtc-dev.ko
+kernel/drivers/usb/net/cdc_ether.ko
+kernel/drivers/usb/net/usbnet.ko
 kernel/drivers/usb/host/ehci-hcd.ko
 kernel/drivers/usb/host/uhci-hcd.ko
 kernel/drivers/usb/host/ohci-hcd.ko
