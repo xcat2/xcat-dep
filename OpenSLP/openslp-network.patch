@@ -1,12 +1,9 @@
 diff -uNr a/libslp/libslp_network.c b/libslp/libslp_network.c
 --- a/libslp/libslp_network.c	2008-08-29 14:07:28.755514312 -0400
 +++ b/libslp/libslp_network.c	2008-08-29 14:07:06.563887952 -0400
-@@ -389,10 +389,8 @@
+@@ -389,8 +389,6 @@
      /*--------------------------*/
-     /* Main retransmission loop */
-     /*--------------------------*/
--    while(xmitcount <= MAX_RETRANSMITS)
-+    while(xmitcount < MAX_RETRANSMITS)
+    while(xmitcount <= MAX_RETRANSMITS)
      {
 -        xmitcount++;
 -
