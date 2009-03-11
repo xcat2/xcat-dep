@@ -1,0 +1,102 @@
+diff -urN ipmitool-1.8.11/lib/ipmi_sol.c ipmitool-saneretry/lib/ipmi_sol.c
+--- ipmitool-1.8.11/lib/ipmi_sol.c	2009-02-25 15:38:52.000000000 -0500
++++ ipmitool-saneretry/lib/ipmi_sol.c	2009-03-11 14:20:03.000000000 -0400
+@@ -71,8 +71,6 @@
+ #define SOL_PARAMETER_SOL_PAYLOAD_CHANNEL       0x07
+ #define SOL_PARAMETER_SOL_PAYLOAD_PORT          0x08
+ 
+-#define MAX_SOL_RETRY           		6
+-
+ const struct valstr sol_parameter_vals[] = {
+ 	{ SOL_PARAMETER_SET_IN_PROGRESS,           "Set In Progress (0)" },
+ 	{ SOL_PARAMETER_SOL_ENABLE,                "Enable (1)" },
+@@ -92,7 +90,6 @@
+ static int            _in_raw_mode = 0;
+ static int            _disable_keepalive = 0;
+ static int            _use_sol_for_keepalive = 0;
+-static int            _keepalive_retries = 0;
+ 
+ extern int verbose;
+ 
+@@ -1507,12 +1504,6 @@
+ 
+ 	if (end.tv_sec - _start_keepalive.tv_sec > SOL_KEEPALIVE_TIMEOUT) {
+ 	   ret = intf->keepalive(intf);
+-	   if ( (ret!=0) && (_keepalive_retries < SOL_KEEPALIVE_RETRIES) ) {
+-         ret = 0;
+-         _keepalive_retries++;
+-	   }
+-	   else if ((ret==0) && (_keepalive_retries > 0))
+-         _keepalive_retries = 0;
+ 		gettimeofday(&_start_keepalive, 0);
+    }
+ 	return ret;
+@@ -1520,6 +1511,8 @@
+ 
+ 
+ 
++
++
+ /*
+  * ipmi_sol_red_pill
+  */
+@@ -1535,7 +1528,6 @@
+ 	int    retval;
+ 	int    buffer_size = intf->session->sol_data.max_inbound_payload_size;
+ 	int    keepAliveRet = 0;
+-	int    retrySol = 0;
+ 
+ 	buffer = (char*)malloc(buffer_size);
+ 	if (buffer == NULL) {
+@@ -1555,40 +1547,20 @@
+ 		FD_SET(intf->fd, &read_fds);
+ 
+ 		/* Send periodic keepalive packet */
+-		if(_use_sol_for_keepalive == 0)
+-		{
+-			keepAliveRet = ipmi_sol_keepalive_using_getdeviceid(intf);
+-		}
+-		else
+-		{
+-			keepAliveRet = ipmi_sol_keepalive_using_sol(intf);
+-		}
++      if(_use_sol_for_keepalive == 0)
++      {
++         keepAliveRet = ipmi_sol_keepalive_using_getdeviceid(intf);
++      }
++      else
++      {
++         keepAliveRet = ipmi_sol_keepalive_using_sol(intf);
++      }
+ 		
+ 		if (keepAliveRet != 0)
+ 		{
+-			/*
+-			 * Retrying the keep Alive before declaring a communication
+-			 * lost state with the IPMC. Helpful when the payload is 
+-			 * reset and brings down the connection temporarily. Otherwise,
+-			 * if we send getDevice Id to check the status of IPMC during
+-			 * this down time when the connection is restarting, SOL will 
+-			 * exit even though the IPMC is available and the session is open.
+-			 */
+-			if (retrySol == MAX_SOL_RETRY)
+-			{
+-				/* no response to Get Device ID keepalive message */
+-				bShouldExit = 1;
+-				continue;
+-			}
+-			else 
+-			{ 
+-				retrySol++;         
+-			}
+-		}
+-		else
+-		{
+-			/* if the keep Alive is successful reset retries to zero */
+-			retrySol = 0;
++			/* no response to keepalive message */
++			bShouldExit = 1;
++			continue;
+ 		}
+ 
+ 		/* Wait up to half a second */
