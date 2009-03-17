@@ -1,0 +1,11 @@
+Build Notes
+
+
+1. Download Net-Telnet-3.03.tar.gz from CPAN.
+2. Copy Net-Telnet-3.03.tar.gz /opt/freeware/src/packages/SOURCES/ directory
+3. Copy Net-Telnet.spec /opt/freeware/src/packages/SPECS/
+4. cd to  /opt/freeware/src/packages/SPECS
+5. Run "rpm -bb Net-Telnet.spec", which creates:
+  /opt/freeware/src/packages/RPMS/ppc/perl-Net-Telnet-3.03-1.2.aix6.1.ppc.rpm
+
+

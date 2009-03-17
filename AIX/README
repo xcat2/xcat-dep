@@ -48,11 +48,12 @@ Available from dep-aix-2.2.tar.gz.
 15. fping-2.2b1-1
 16. openslp-1.2.1
 17. perl-Crypt-SSLeay-0.57-1
+18. perl-Net-Telnet-3.03-1.2
 
 Optional
 Available from xcat-mysql-2.2.tar.gz.
-18. perl-DBD-mysql-4.007-1
-19. xcat-mysql-5.0-1 (mysql-5.0.67)
+19. perl-DBD-mysql-4.007-1
+20. xcat-mysql-5.0-1 (mysql-5.0.67)
 
 When you are ready to install the RPM packages contained in the 
 dep-aix-2.2.tar.gz tar file you can run the "instoss" script, 
