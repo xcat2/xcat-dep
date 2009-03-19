@@ -6,6 +6,6 @@ Build Notes
 3. Copy Net-Telnet.spec /opt/freeware/src/packages/SPECS/
 4. cd to  /opt/freeware/src/packages/SPECS
 5. Run "rpm -bb Net-Telnet.spec", which creates:
-  /opt/freeware/src/packages/RPMS/ppc/perl-Net-Telnet-3.03-1.2.aix6.1.ppc.rpm
+  /opt/freeware/src/packages/RPMS/ppc/perl-Net-Telnet-3.03-1.2.aix5.3.ppc.rpm
 
 
