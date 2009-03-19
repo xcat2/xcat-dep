@@ -61,11 +61,9 @@ cmd=/usr/share/spec-helper/compress_files
 [ -x $cmd ] || cmd=/usr/lib/rpm/brp-compress
 [ -x $cmd ] && $cmd
 
-# remove special files
-#find %{buildroot} -name "perllocal.pod" \
-#    -o -name ".packlist"                \
-#    -o -name "*.bs"                     \
-#    |xargs -i rm -f {}
+# remove special directories and files
+find %{buildroot} -name "aix-thread-multi" \
+    |xargs -i rm -r -f {}
 
 # no empty directories
 #find %{buildroot}%{_prefix}             \
