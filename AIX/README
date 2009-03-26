@@ -63,14 +63,6 @@ When you are ready to install the RPM packages contained in the
 dep-aix-2.2-snap*.tar.gz tar file you can run the "instoss" script, 
 which is included as a convenience.
 
-The dep-aix-2.2-snap*.tar.gz file also includes three AIX bundle files
-that can be used when setting up the AIX Network Installation Manager (NIM), 
-when preparing to install cluster nodes.  
-xCATaixSSL.bnd - contains a list of OpenSSL installp filesets.
-xCATaixSSH.bnd - contains a list of OpenSSH installp filesets.
-xCATaixSN.bnd - contains a list of software (installp & RPM) required for
-		xCAT service nodes.
-
 The tk, tcl, expect, and bash packages come from the "AIX Toolbox for Linux 
 Applications" web site. (http://www-03.ibm.com/systems/p/os/aix/linux).  The 
 packages have been included here for your convenience.  For details on 
