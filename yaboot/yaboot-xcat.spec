@@ -9,7 +9,8 @@ Group: System/Administration
 License: GPL2
 URL: http://yaboot.ozlabs.org/
 Source: http://yaboot.ozlabs.org/releases/yaboot-1.3.14.tar.gz
-Patch: yaboot-fixes.patch
+Patch0: yaboot-fixes.patch
+Patch1: yaboot-buf-expand.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 Prefix: %{_prefix}
 BuildArch: noarch
@@ -22,7 +23,8 @@ ppc nodes.
 %prep
 %{__rm} -rf %{buildroot}
 %setup -q -n yaboot-%{ver}
-%patch -p1
+%patch0 -p1
+%patch1 -p1
 
 
 %build
