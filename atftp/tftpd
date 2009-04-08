@@ -5,6 +5,8 @@
 
 ### BEGIN INIT INFO
 # Provides: tftpd
+# Required-Start: 
+# Required-Stop:
 # Default-Start: 3 4 5
 # Default-stop: 0 1 2 6
 # Short-Description: atftp
