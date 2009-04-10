@@ -1,0 +1,18 @@
+--- Virt.xs	2009-03-27 15:45:33.000000000 -0400
++++ /root/Virt.xs	2009-04-10 09:08:00.000000000 -0400
+@@ -1337,12 +1337,12 @@
+      virDomainPtr dom;
+      virConnectPtr destcon;
+      unsigned long flags;
+-     const char *dname;
+-     const char *uri;
++     const char *dname = SvPOK($arg) ? (char *)SvPV_nolen($arg) : NULL;
++     const char *uri = SvPOK($arg) ? (char *)SvPV_nolen($arg) : NULL;
+      unsigned long bandwidth;
+    CODE:
+      if ((RETVAL = virDomainMigrate(dom, destcon, flags, dname, uri, bandwidth)) == NULL) {
+-       _croak_error(virConnGetLastError(virDomainGetConnect(dom)));
++	_croak_error(virGetLastError());
+      }
+  OUTPUT:
+      RETVAL

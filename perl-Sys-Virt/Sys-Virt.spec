@@ -24,6 +24,7 @@ buildroot: %{_tmppath}/%{name}-%{version}-%(id -u -n)
 buildarch: x86_64
 prefix:    %(echo %{_prefix})
 source:    Sys-Virt-0.2.0.tar.gz
+patch:     Sys-Virt-fixes.patch
 
 %description
 The Sys::Virt module provides a Perl XS binding to the libvirt
@@ -39,6 +40,7 @@ a consistent API.
 
 %prep
 %setup -q -n %{pkgname}-%{version} 
+%patch
 chmod -R u+w %{_builddir}/%{pkgname}-%{version}
 
 %build
