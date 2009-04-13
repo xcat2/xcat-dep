@@ -1,0 +1,84 @@
+diff -urN gpxe-0.9.7/src/config/general.h gpxe-0.9.7-strip/src/config/general.h
+--- gpxe-0.9.7/src/config/general.h	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-strip/src/config/general.h	2009-04-12 09:32:49.000000000 -0400
+@@ -29,7 +29,7 @@
+  * Timer configuration
+  *
+  */
+-#define BANNER_TIMEOUT	20	/* Tenths of a second for which the shell
++#define BANNER_TIMEOUT	5	/* Tenths of a second for which the shell
+ 				   banner should appear */
+ 
+ /*
+@@ -46,9 +46,9 @@
+ 
+ #define	DOWNLOAD_PROTO_TFTP	/* Trivial File Transfer Protocol */
+ #undef	DOWNLOAD_PROTO_NFS	/* Network File System */
+-#define	DOWNLOAD_PROTO_HTTP	/* Hypertext Transfer Protocol */
++#undef	DOWNLOAD_PROTO_HTTP	/* Hypertext Transfer Protocol */
+ #undef	DOWNLOAD_PROTO_HTTPS	/* Secure Hypertext Transfer Protocol */
+-#undef	DOWNLOAD_PROTO_FTP	/* File Transfer Protocol */
++#define	DOWNLOAD_PROTO_FTP	/* File Transfer Protocol */
+ #undef	DOWNLOAD_PROTO_TFTM	/* Multicast Trivial File Transfer Protocol */
+ #undef	DOWNLOAD_PROTO_SLAM	/* Scalable Local Area Multicast */
+ #undef	DOWNLOAD_PROTO_FSP	/* FSP? */
+@@ -59,7 +59,7 @@
+  */
+ 
+ //#undef	SANBOOT_PROTO_ISCSI	/* iSCSI protocol */
+-//#undef	SANBOOT_PROTO_AOE	/* AoE protocol */
++#undef	SANBOOT_PROTO_AOE	/* AoE protocol */
+ 
+ /*
+  * Name resolution modules
+@@ -76,31 +76,31 @@
+  * you want to use.
+  *
+  */
+-//#define	IMAGE_NBI		/* NBI image support */
+-//#define	IMAGE_ELF		/* ELF image support */
+-//#define	IMAGE_FREEBSD		/* FreeBSD kernel image support */
+-//#define	IMAGE_MULTIBOOT		/* MultiBoot image support */
+-//#define	IMAGE_AOUT		/* a.out image support */
+-//#define	IMAGE_WINCE		/* WinCE image support */
+-//#define	IMAGE_PXE		/* PXE image support */
+-//#define	IMAGE_SCRIPT		/* gPXE script image support */
+-//#define	IMAGE_BZIMAGE		/* Linux bzImage image support */
+-//#define	IMAGE_COMBOOT		/* SYSLINUX COMBOOT image support */
+-//#define	IMAGE_EFI		/* EFI image support */
++#undef	IMAGE_NBI		/* NBI image support */
++#undef	IMAGE_ELF		/* ELF image support */
++#undef	IMAGE_FREEBSD		/* FreeBSD kernel image support */
++#undef	IMAGE_MULTIBOOT		/* MultiBoot image support */
++#undef	IMAGE_AOUT		/* a.out image support */
++#undef	IMAGE_WINCE		/* WinCE image support */
++#define	IMAGE_PXE		/* PXE image support */
++#define	IMAGE_SCRIPT		/* gPXE script image support */
++#define	IMAGE_BZIMAGE		/* Linux bzImage image support */
++#undef	IMAGE_COMBOOT		/* SYSLINUX COMBOOT image support */
++#undef	IMAGE_EFI		/* EFI image support */
+ 
+ /*
+  * Command-line commands to include
+  *
+  */
+-#define	AUTOBOOT_CMD		/* Automatic booting */
+-#define	NVO_CMD			/* Non-volatile option storage commands */
+-#define	CONFIG_CMD		/* Option configuration console */
+-#define	IFMGMT_CMD		/* Interface management commands */
+-#define	ROUTE_CMD		/* Routing table management commands */
++#undef	AUTOBOOT_CMD		/* Automatic booting */
++#undef	NVO_CMD			/* Non-volatile option storage commands */
++#undef	CONFIG_CMD		/* Option configuration console */
++#undef	IFMGMT_CMD		/* Interface management commands */
++#undef	ROUTE_CMD		/* Routing table management commands */
+ #define IMAGE_CMD		/* Image management commands */
+-#define DHCP_CMD		/* DHCP management commands */
+-#define SANBOOT_CMD		/* SAN boot commands */
+-#define LOGIN_CMD		/* Login command */
++#undef DHCP_CMD		/* DHCP management commands */
++#undef SANBOOT_CMD		/* SAN boot commands */
++#undef LOGIN_CMD		/* Login command */
+ 
+ /*
+  * Obscure configuration options
