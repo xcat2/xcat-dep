@@ -14,7 +14,7 @@
 name:      perl-Sys-Virt
 summary:   Sys-Virt - Represent and manage a libvirt hypervisor connection
 version:   0.2.0
-release:   1
+release:   2
 vendor:    Daniel P. Berrange <berrange@redhat.com>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
