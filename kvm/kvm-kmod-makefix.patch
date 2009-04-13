@@ -1,0 +1,23 @@
+--- kvm-84/kernel/Makefile	2009-02-12 10:19:26.000000000 -0500
++++ kvm-84/kernel/Makefile.rpmfixes	2009-03-12 08:26:33.000000000 -0400
+@@ -8,8 +8,6 @@
+ 
+ KVERREL = $(patsubst /lib/modules/%/build,%,$(KERNELDIR))
+ 
+-DESTDIR=
+-
+ MAKEFILE_PRE = $(ARCH_DIR)/Makefile.pre
+ 
+ INSTALLDIR = $(patsubst %/build,%/extra,$(KERNELDIR))
+@@ -104,11 +102,6 @@
+ install:
+ 	mkdir -p $(DESTDIR)/$(INSTALLDIR)
+ 	cp $(ARCH_DIR)/*.ko $(DESTDIR)/$(INSTALLDIR)
+-	for i in $(ORIGMODDIR)/drivers/kvm/*.ko \
+-		 $(ORIGMODDIR)/arch/$(ARCH_DIR)/kvm/*.ko; do \
+-		if [ -f "$$i" ]; then mv "$$i" "$$i.orig"; fi; \
+-	done
+-	/sbin/depmod -a $(DEPMOD_VERSION)
+ 
+ tmpspec = .tmp.kvm-kmod.spec
+ 
