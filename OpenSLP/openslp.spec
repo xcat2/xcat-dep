@@ -5,7 +5,7 @@
 %define distver 1 
 
 Summary: Open source implementation of Service Location Protocol V2 
-Name: %{pkg}
+Name: %{pkg}-xcat
 Version: %{ver}
 Release: %{distver}
 License: BSD
@@ -25,7 +25,7 @@ Open source implementation of Service Location Protocol V2
 # Set the path to pick up AIX toolbox patch program
 export PATH=/opt/freeware/bin:$PATH
 %{__rm} -rf %{buildroot}
-%setup -q
+%setup -q -n %{pkg}-%{ver}
 %patch0 -p1
 %patch1 -p1 
 %patch2 -p1 
