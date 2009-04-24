@@ -1,9 +1,11 @@
-diff -urN gpxe-0.9.7/src/arch/i386/prefix/romprefix.S gpxe-0.9.7-kvmworkaround/src/arch/i386/prefix/romprefix.S
+diff -urN gpxe-0.9.7/src/arch/i386/prefix/romprefix.S gpxe-0.9.7-kvm/src/arch/i386/prefix/romprefix.S
 --- gpxe-0.9.7/src/arch/i386/prefix/romprefix.S	2009-03-01 21:23:42.000000000 -0500
-+++ gpxe-0.9.7-kvmworkaround/src/arch/i386/prefix/romprefix.S	2009-03-13 13:27:43.000000000 -0400
-@@ -716,6 +716,7 @@
++++ gpxe-0.9.7-kvm/src/arch/i386/prefix/romprefix.S	2009-04-24 04:54:03.000000000 -0400
+@@ -715,7 +715,9 @@
+ 	movl	%fs:(0x6c), %eax
  1:	pushf
  	sti
++	nop
  	hlt
 +	nop
  	popf

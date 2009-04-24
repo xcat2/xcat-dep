@@ -1,6 +1,6 @@
 Name:           gpxe-kvm
 Version:        0.9.7
-Release:        1
+Release:        2
 Summary:        gPXE loader for virtual guests
 
 Group:          System Environment/Kernel
