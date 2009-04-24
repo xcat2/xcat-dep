@@ -1,13 +1,13 @@
 
 Name:           scsi-target-utils
-Version:        0.9.1
+Version:        0.9.6
 Release:        1
 Summary:        The SCSI target daemon and utility programs
 
 Group:          System Environment/Daemons
 License:        GPL
 URL:            http://stgt.berlios.de
-Source0:        http://stgt.berlios.de/releases/tgt-0.9.1.tar.bz2
+Source0:        http://stgt.berlios.de/releases/tgt-0.9.6.tar.bz2
 Source1:        tgtd.init
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}-root-%(%{__id_u} -n)
 
@@ -19,7 +19,7 @@ The SCSI target package contains the daemon and tools to setup a SCSI targets.
 Currently, software iSCSI targets are supported.
 
 %prep
-%setup -q -n tgt-0.9.1
+%setup -q -n tgt-0.9.6
 
 
 %build
@@ -69,10 +69,9 @@ rm -rf $RPM_BUILD_ROOT
 %doc doc/README.iscsi
 %{_sbindir}/tgtd
 %{_sbindir}/tgtadm
+%{_sbindir}/tgtimg
 #%{_sbindir}/tgt-admin Not yet, Config-General needed for this, will wait for now
 %{_sbindir}/tgt-setup-lun
-%{_sbindir}/mktape
-%{_sbindir}/dump_tape
 %{_mandir}/man8/*
 %{_initrddir}/tgtd
 
