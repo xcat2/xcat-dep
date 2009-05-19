@@ -1,0 +1,30 @@
+Index: libvirt-0.4.5/src/remote_internal.c
+===================================================================
+--- libvirt-0.4.5.orig/src/remote_internal.c
++++ libvirt-0.4.5/src/remote_internal.c
+@@ -623,9 +623,22 @@ doRemoteOpen (virConnectPtr conn,
+             cmd_argv[j++] = strdup ("none");
+         }
+         cmd_argv[j++] = strdup (priv->hostname);
+-        cmd_argv[j++] = strdup (netcat ? netcat : "nc");
+-        cmd_argv[j++] = strdup ("-U");
+-        cmd_argv[j++] = strdup (sockname ? sockname : LIBVIRTD_PRIV_UNIX_SOCKET);
++        if (netcat) {
++           cmd_argv[j++] = strdup (netcat);
++           cmd_argv[j++] = strdup ("-U");
++           cmd_argv[j++] = strdup (sockname ? sockname : LIBVIRTD_PRIV_UNIX_SOCKET);
++        } else {
++           cmd_argv[j++] = strdup ("socat");
++           cmd_argv[j++] = strdup ("-");
++           
++           char *socat_addr = 0;
++           if ((asprintf (&socat_addr, "GOPEN:%s",
++                         sockname ? sockname : LIBVIRTD_PRIV_UNIX_SOCKET)) < 0) {
++              error (conn, VIR_ERR_SYSTEM_ERROR, strerror (ENOMEM));
++              goto failed;
++           }
++           cmd_argv[j++] = socat_addr;
++        }
+         cmd_argv[j++] = 0;
+         assert (j == nr_args);
+         for (j = 0; j < (nr_args-1); j++)

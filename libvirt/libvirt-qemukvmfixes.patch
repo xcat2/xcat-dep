@@ -1,0 +1,33 @@
+diff -urN libvirt-0.6.3/src/qemu_conf.c libvirt-0.6.3-kvm-qemu/src/qemu_conf.c
+--- libvirt-0.6.3/src/qemu_conf.c	2009-05-19 22:22:22.000000000 -0400
++++ libvirt-0.6.3-kvm-qemu/src/qemu_conf.c	2009-05-19 22:22:07.000000000 -0400
+@@ -418,6 +418,7 @@
+     int newstdout = -1;
+     int ret = -1, status;
+     unsigned int major, minor, micro;
++    unsigned int kvmmajor, kvmminor, kvmmicro;
+     unsigned int version, kvm_version;
+     unsigned int flags = 0;
+ 
+@@ -440,6 +441,10 @@
+                &major, &minor, &micro, &kvm_version) != 4)
+         kvm_version = 0;
+ 
++    if (!kvm_version && sscanf(help, "QEMU PC emulator version %u.%u.%u (qemu-kvm-%u.%u.%u)",&major, &minor, &micro,&kvmmajor,&kvmminor,&kvmmicro) != 6)
++        kvm_version=0;
++    else
++        kvm_version=(kvmmajor*1000*1000)+(kvmminor*1000)+kvmmicro;
+     if (!kvm_version && sscanf(help, "QEMU PC emulator version %u.%u.%u",
+                &major, &minor, &micro) != 3)
+         goto cleanup2;
+@@ -648,8 +653,8 @@
+     }
+ 
+     snprintf(tapfdstr, sizeof(tapfdstr),
+-             "tap,fd=%d,script=,vlan=%d,ifname=%s",
+-             tapfd, vlan, net->ifname);
++             "tap,fd=%d,vlan=%d",
++             tapfd, vlan);
+ 
+     if (!(retval = strdup(tapfdstr)))
+         goto no_memory;
