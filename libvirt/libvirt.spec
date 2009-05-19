@@ -51,6 +51,10 @@ Release: 1%{?dist}%{?extra_release}
 License: LGPLv2+
 Group: Development/Libraries
 Source: libvirt-%{version}.tar.gz
+Patch0: libvirt-bigargv.patch
+Patch1: libvirt-destroyfix.patch
+Patch2: libvirt-socat.patch
+Patch3: libvirt-qemukvmfixes.patch
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 URL: http://libvirt.org/
 %if %{with_python}
@@ -59,14 +63,13 @@ BuildRequires: python python-devel
 Requires: libxml2
 Requires: readline
 Requires: ncurses
-Requires: dnsmasq
 Requires: bridge-utils
 Requires: iptables
 # needed for device enumeration
 Requires: hal
 # So remote clients can access libvirt over SSH tunnel
 # (client invokes 'nc' against the UNIX socket on the server)
-Requires: nc
+#Requires: nc
 %if %{with_sasl}
 Requires: cyrus-sasl
 # Not technically required, but makes 'out-of-box' config
@@ -93,24 +96,24 @@ Requires: /usr/sbin/qcow-create
 # For LVM drivers
 Requires: lvm2
 # For ISCSI driver
-Requires: iscsi-initiator-utils
+#Requires: iscsi-initiator-utils
 # For disk driver
 Requires: parted
 %if %{with_xen}
 BuildRequires: xen-devel
 %endif
 BuildRequires: libxml2-devel
-BuildRequires: xhtml1-dtds
+#BuildRequires: xhtml1-dtds
 BuildRequires: readline-devel
 BuildRequires: ncurses-devel
 BuildRequires: gettext
 BuildRequires: gnutls-devel
+#BuildRequires: libgnutls-devel
 BuildRequires: hal-devel
 %if %{with_avahi}
 BuildRequires: avahi-devel
 %endif
-BuildRequires: libselinux-devel
-BuildRequires: dnsmasq
+#BuildRequires: libselinux-devel
 BuildRequires: bridge-utils
 %if %{with_sasl}
 BuildRequires: cyrus-sasl-devel
@@ -132,11 +135,12 @@ BuildRequires: /usr/sbin/qcow-create
 # For LVM drivers
 BuildRequires: lvm2
 # For ISCSI driver
-BuildRequires: iscsi-initiator-utils
+#BuildRequires: iscsi-initiator-utils
 # For disk driver
 BuildRequires: parted-devel
 # For QEMU/LXC numa info
 BuildRequires: numactl-devel
+#BuildRequires: libnuma-devel
 Obsoletes: libvir
 
 # Fedora build root suckage
@@ -176,6 +180,10 @@ of recent versions of Linux (and other OSes).
 
 %prep
 %setup -q
+%patch0 -p1
+%patch1 -p1
+%patch2 -p1
+%patch3 -p1
 
 %build
 %if ! %{with_xen}
@@ -324,6 +332,9 @@ fi
 
 %doc AUTHORS ChangeLog NEWS README COPYING.LIB TODO
 %doc %{_mandir}/man1/virsh.1*
+/usr/bin/virt-xml-validate
+/usr/share/man/man1/virt-xml-validate.1.gz
+
 %{_bindir}/virsh
 %{_libdir}/lib*.so.*
 %dir %attr(0700, root, root) %{_sysconfdir}/libvirt/
