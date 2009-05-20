@@ -46,24 +46,26 @@ Available from dep-aix-2.2-snap*.tar.gz.
 13. perl-Digest-MD5-2.36-1
 14. perl-Expect-1.21-1
 15. fping-2.2b1-1
-16. openslp-1.2.1
+16. openslp-xcat-1.2.1-1
 17. perl-Crypt-SSLeay-0.57-1
 18. perl-Net-Telnet-3.03-1.2
 19. net-snmp-5.4.2.1-1
 20. net-snmp-devel-5.4.2.1-1
 21. net-snmp-perl-5.4.2.1-1
 22. bash-3.2-1.aix5.2.ppc.rpm
+23. rsync-2.6.2-1.aix5.1.ppc.rpm
 
 Optional
 Available from xcat-mysql-2.2-snap*.tar.gz.
-23. perl-DBD-mysql-4.007-1
-24. xcat-mysql-5.0-1 (mysql-5.0.67)
+24. perl-DBD-mysql-4.007-1
+25. xcat-mysql-5.0-1 (mysql-5.0.67)
 
 When you are ready to install the RPM packages contained in the 
 dep-aix-2.2-snap*.tar.gz tar file you can run the "instoss" script, 
 which is included as a convenience.
 
-The tk, tcl, expect, and bash packages come from the "AIX Toolbox for Linux 
+The tk, tcl, expect, rsync, and bash packages come from the "AIX Toolbox 
+for Linux 
 Applications" web site. (http://www-03.ibm.com/systems/p/os/aix/linux).  The 
 packages have been included here for your convenience.  For details on 
 the source and licenses etc. please refer to the Toolbox site.
@@ -78,8 +80,7 @@ the RPM was built for AIX with a few minor modifications.
 The fping software was downloaded from http://fping.sourceforge.net/ and the 
 RPM was built for AIX.
 
-The openslp-1.2.1 software was downloaded from http://openslp.org/download.html
-and the RPM was built for AIX.
+The openslp-xcat-1.2.1-1 package consists of openslp software downloaded from http://openslp.org/download.html and built for xCAT on AIX.
 
 The SNMP packages downloaded from http://www.net-snmp.org/download.html and the
 RPMs were built for AIX.
