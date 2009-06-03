@@ -1,0 +1,28 @@
+The following is the list of the required when using xCAT web GUI on AIX. 
+Please review this list to make sure there are no conflicts with any software currently installed on your system.
+
+Not available:
+1. ihs.6100.aix.ppc32.tar.gz
+2. php5 rpm package for IHS
+
+Available from xcat-web-dep:
+
+1.  bzip2-1.0.5-1.aix5.2.ppc.rpm
+2.  freetype-1.3.1-9.aix5.1.ppc.rpm
+3.  freetype2-2.1.7-5.aix5.1.ppc.rpm
+4.  gd-1.8.4-3.aix5.1.ppc.rpm
+5.  gd-progs-1.8.4-3.aix5.1.ppc.rpm
+6.  gettext-0.10.40-8.aix5.2.ppc.rpm
+7.  libjpeg-6b-6.aix5.1.ppc.rpm
+8.  libpng-1.2.32-2.aix5.2.ppc.rpm
+9.  libxml2-2.6.21-3.aix5.2.ppc.rpm
+10. zlib-1.2.3-4.aix5.2.ppc.rpm
+
+The bzip2, freetype, freetype2, gd, gd-progs, gettext, libjpeg, libpng, libxml2 and zlib packages come from the "AIX Toolbox for Linux Applications" web site. (http://www-03.ibm.com/system/p/os/aix/linux). The packages have been included here for your convenience. For details on the source and license etc. please refer to the Toolbox site.
+
+The IBM HTTP Server V6.1 (named "ihs.6100.aix.ppc32.tar.gz") was downloaded from the "IBM HTTP Server" web site. (http://www-01.ibm.com/software/webservers/httpservers/). IBM HTTP Server is based on the Apache HTTP Server (httpd.apache.org), developed by the Apache Software Foundation. There're many third-party modules written for Apache 2.0 that can be used for IBM HTTP Server. It is availabe for use free of charge but without IBM support.  We don't pack the IBM HTTP Server into xcat-web-dep because of the underlying legal issues, you HAVE TO download the IBM HTTP Server V6.1 from  http://www-01.ibm.com/software/webservers/httpservers/.
+
+The PHP v5.2.6 software was downloaded from http://www.php.net/releases/ and you can follow the file "Build-notes" to get the RPM package for IBM HTTP Server on AIX. This RPM package was built without MySQL support.
+
+!!!
+NOTE: before installing the PHP5 RPM package, the IBM HTTP Server package ("ihs.6100.aix.ppc32.tar.gz") must be installed, or else the configuration file of PHP for IBM HTTP Server will missed. 

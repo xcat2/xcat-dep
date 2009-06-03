@@ -1,0 +1,11 @@
+Build notes
+
+1. download php-5.2.6.tar.gz (version 5.2.6) from http://www.php.net/releases/ and copy it to /opt/freeware/src/packages/SOURCES/ directory.
+2. copy the php5.spec file to /opt/freeware/src/packages/SPECS/ directory.
+3. cd to /opt/freeware/src/packages/SPECS/ directory;
+4. run "rpm -bb php5.spec";
+
+Then, you will get the php5 rpm package for the IBM HTTP Server in the directory /opt/freeware/src/packages/ppc/. 
+
+!!!
+NOTE: this php5 rpm package is only used for the IBM HTTP Server V6.1.0.0 or higher, it cannot be used for original apache2 and IBM HTTP Server v2.0.47.1 or others.
