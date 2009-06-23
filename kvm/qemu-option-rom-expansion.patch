@@ -1,0 +1,91 @@
+diff -urN qemu-kvm-0.10.5/hw/pc.c qemu-kvm-0.10.5-extoptrom//hw/pc.c
+--- qemu-kvm-0.10.5/hw/pc.c	2009-05-21 05:05:19.000000000 -0400
++++ qemu-kvm-0.10.5-extoptrom//hw/pc.c	2009-06-23 09:32:02.000000000 -0400
+@@ -818,7 +818,7 @@
+ {
+     char buf[1024];
+     int ret, linux_boot, i;
+-    ram_addr_t ram_addr, vga_ram_addr, bios_offset, vga_bios_offset;
++    ram_addr_t ram_addr, vga_ram_addr, bios_offset, vga_bios_offset, option_rom_start = 0;
+     ram_addr_t below_4g_mem_size, above_4g_mem_size = 0;
+     int bios_size, isa_bios_size, vga_bios_size;
+     int pci_option_rom_offset;
+@@ -830,6 +830,9 @@
+     int index;
+     BlockDriverState *hd[MAX_IDE_BUS * MAX_IDE_DEVS];
+     BlockDriverState *fd[MAX_FD];
++    int using_vga = cirrus_vga_enabled || std_vga_enabled || vmsvga_enabled;
++
++
+ 
+     if (ram_size >= 0xe0000000 ) {
+         above_4g_mem_size = ram_size - 0xe0000000;
+@@ -905,7 +908,7 @@
+         exit(1);
+     }
+ 
+-    if (cirrus_vga_enabled || std_vga_enabled || vmsvga_enabled) {
++    if (using_vga) {
+         /* VGA BIOS load */
+         if (cirrus_vga_enabled) {
+             snprintf(buf, sizeof(buf), "%s/%s", bios_dir, VGABIOS_CIRRUS_FILENAME);
+@@ -923,11 +926,21 @@
+             fprintf(stderr, "qemu: could not load VGA BIOS '%s'\n", buf);
+             exit(1);
+         }
++	/* Round up vga bios size to the next 2k boundary */
++	vga_bios_size = (vga_bios_size + 2047) & ~2047;
++	option_rom_start = 0xc0000 + vga_bios_size;
++
+ 
+         /* setup basic memory access */
+-        cpu_register_physical_memory(0xc0000, 0x10000,
++        cpu_register_physical_memory(0xc0000, vga_bios_size,
+                                      vga_bios_offset | IO_MEM_ROM);
+     }
++    /* No point in placing option roms before this address, since bochs bios
++     * will only start looking for it at 0xc8000 */
++    if (option_rom_start < 0xc8000)
++   	option_rom_start = 0xc8000;
++    
++
+ 
+     /* map the last 128KB of the BIOS in ISA space */
+     isa_bios_size = bios_size;
+@@ -949,14 +962,15 @@
+         ram_addr_t option_rom_offset;
+         int size, offset;
+ 
+-        offset = 0;
++        offset = option_rom_start;
++
+         if (linux_boot) {
+             option_rom_offset = qemu_ram_alloc(TARGET_PAGE_SIZE);
+-            cpu_register_physical_memory(0xd0000, TARGET_PAGE_SIZE,
++            cpu_register_physical_memory(option_rom_start, TARGET_PAGE_SIZE,
+                                          option_rom_offset);
+             load_linux(0xd0000,
+                        kernel_filename, initrd_filename, kernel_cmdline, below_4g_mem_size);
+-            offset = TARGET_PAGE_SIZE;
++            offset += TARGET_PAGE_SIZE;
+         }
+ 
+         for (i = 0; i < nb_option_roms; i++) {
+@@ -966,7 +980,7 @@
+                         option_rom[i]);
+                 exit(1);
+             }
+-            if (size > (0x10000 - offset))
++            if (size > (0xe0000 - offset))
+                 goto option_rom_error;
+             option_rom_offset = qemu_ram_alloc(size);
+             ret = load_image(option_rom[i], phys_ram_base + option_rom_offset);
+@@ -980,7 +994,7 @@
+        initialization, and (optionally) marked readonly by the BIOS
+        before INT 19h.  See the PNPBIOS specification, appendix B.
+        DDIM support is mandatory for proper PCI expansion ROM support. */
+-            cpu_register_physical_memory(0xd0000 + offset,
++            cpu_register_physical_memory(offset,
+                                          size, option_rom_offset /* | IO_MEM_ROM */);
+             option_rom_setup_reset(0xd0000 + offset, size);
+             offset += size;
