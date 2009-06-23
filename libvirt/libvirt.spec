@@ -46,15 +46,12 @@
 
 Summary: Library providing a simple API virtualization
 Name: libvirt
-Version: 0.6.3
+Version: 0.6.4
 Release: 1%{?dist}%{?extra_release}
 License: LGPLv2+
 Group: Development/Libraries
 Source: libvirt-%{version}.tar.gz
-Patch0: libvirt-bigargv.patch
-Patch1: libvirt-destroyfix.patch
-Patch2: libvirt-socat.patch
-Patch3: libvirt-qemukvmfixes.patch
+Patch0: libvirt-socat.patch
 BuildRoot: %{_tmppath}/%{name}-%{version}-%{release}-root
 URL: http://libvirt.org/
 %if %{with_python}
@@ -181,9 +178,6 @@ of recent versions of Linux (and other OSes).
 %prep
 %setup -q
 %patch0 -p1
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
 
 %build
 %if ! %{with_xen}
