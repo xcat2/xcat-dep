@@ -1,6 +1,6 @@
 Name:           gpxe-kvm
 Version:        0.9.7
-Release:        2
+Release:        3
 Summary:        gPXE loader for virtual guests
 
 Group:          System Environment/Kernel
@@ -17,9 +17,9 @@ ExclusiveArch:  i386 x86_64
 
 
 Source0: gpxe-0.9.7.tar.gz
-Patch0: gpxe-0.9.7-kvmworkaround.patch
+Patch0: gpxe-0.9.7-branding.patch
 Patch1: gpxe-0.9.7-registeriscsionpxe.patch
-Patch2: gpxe-0.9.7-strip.patch
+Patch2: gpxe-0.9.7-config.patch
 
 %description
 The gPXE network bootloader provides network boot capability for virtual machines with e1000 and virtio network devices. This includes iSCSI and PXE with tftp or ftp image download capability.

@@ -1,6 +1,6 @@
 Name:           gpxe-undi
 Version:        0.9.7
-Release:        1
+Release:        2
 Summary:        gPXE loader for PXE clients
 
 Group:          System Environment/Kernel
@@ -15,12 +15,12 @@ BuildArch:	noarch
 
 
 Source0: gpxe-0.9.7.tar.gz
-Patch0: gpxe-0.9.7-kvmworkaround.patch
+Patch0: gpxe-0.9.7-branding.patch
 Patch1: gpxe-0.9.7-registeriscsionpxe.patch
-Patch2: gpxe-0.9.7-strip.patch
+Patch2: gpxe-0.9.7-config.patch
 
 %description
-The gPXE network bootloader provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, ftp downloads, and gPXE script based booting.
+The gPXE network bootloader provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and gPXE script based booting.
 
 %prep
 
