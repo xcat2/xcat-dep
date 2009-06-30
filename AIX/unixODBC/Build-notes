@@ -1,0 +1,26 @@
+ Build Notes
+
+Download unixODBC-2.2.14-aix-ppc-64.tar.gz.
+(See http://sourceforge.net/projects/unixodbc/ 
+ Select Download - green box
+ Click on package unixODBC on 2.2.14 line. Then choose
+ unixODBC-2.2.14-aix-ppc-64.tar.gz)
+
+Download and install binutils-2.14-3.aix5.1.ppc.rpm on to your buid machine. 
+
+
+Copy the gz file to the SOURCES directory.
+cp unixODBC-2.2.14-aix-ppc-64.tar.gz  /opt/freeware/src/packages/SOURCES
+
+Remove any old RPMs
+rm -f /opt/freeware/src/packages/SRPMS/unixODBC*rpm /opt/freeware/src/packages/RPMS/ppc/unixODBC*rpm
+
+Use the spec file provided to build the RPM. (The spec file specifies
+this particular unixODBC gz file, so it will have to be modified if you 
+want to use a different version etc.
+
+rpm -ba unixODBC.spec
+
+Creates:
+/opt/freeware/src/packages/RPMS/ppc/unixODBC-2.2.14-64bit.aix5.3.ppc.rpm
+
