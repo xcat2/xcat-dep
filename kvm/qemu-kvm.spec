@@ -1,6 +1,6 @@
 Name:           qemu-kvm
 Version:        0.10.5
-Release:        1
+Release:        2
 Summary:        Kernel Virtual Machine virtualization environment
 
 Group:          System Environment/Kernel
@@ -18,6 +18,7 @@ BuildRequires:  zlib-devel
 
 Source0: qemu-kvm-0.10.5.tar.gz
 Patch: qemu-option-rom-expansion.patch
+Patch1: qemu-kvm-0.10.5-flush-aio-on-migration.patch
 
 %description
 The Kernel Virtual Machine provides a virtualization enviroment for processors
@@ -27,6 +28,7 @@ with hardware support for virtualization: Intel's VT-x&VT-i and AMD's AMD-V.
 
 %setup 
 %patch -p1
+%patch1 -p1
 
 %build
 rm -rf %{buildroot}
