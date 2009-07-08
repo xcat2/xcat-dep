@@ -7,7 +7,8 @@
 
 
 Name:           kvm-kmod
-Version:        86
+Version:        2.6.30.1
+Epoch:          2
 Release:        1_%{kversion}_%{krelease}
 Summary:        %{kmod_name} kernel module
 
@@ -15,7 +16,7 @@ Group:          System Environment/Kernel
 License:        GPL
 URL:            http://www.qumranet.com
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}
-Source:		kvm-kmod-devel-86.tar.gz
+Source:		kvm-kmod-2.6.30.1.tar.gz
 #Patch:		kvm-kmod-makefix.patch
 
 ExclusiveArch: i386 x86_64 ia64
@@ -25,7 +26,7 @@ This kernel module provides support for virtual machines using hardware support
 (Intel VT-x&VT-i or AMD SVM).
 
 %prep
-%setup -q -n kvm-kmod-devel-86
+%setup -q -n kvm-kmod-2.6.30.1
 #%patch -p1
 
 %build
