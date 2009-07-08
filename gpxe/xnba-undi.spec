@@ -1,7 +1,9 @@
-Name:           gpxe-undi
+Name:           xnba-undi
 Version:        0.9.7
-Release:        3
-Summary:        gPXE loader for PXE clients
+Release:        5
+Summary:        xCAT Network Boot Agent for x86 PXE hosts
+Obsoletes:	gpxe-xcat
+Obsoletes:	gpxe-undi
 
 Group:          System Environment/Kernel
 License:        GPL
@@ -17,10 +19,11 @@ BuildArch:	noarch
 Source0: gpxe-0.9.7.tar.gz
 Patch0: gpxe-0.9.7-branding.patch
 Patch1: gpxe-0.9.7-registeriscsionpxe.patch
-Patch2: gpxe-0.9.7-undiconfig.patch
+Patch2: gpxe-0.9.7-config.patch
+Patch3: gpxe-0.9.7-ignorepackets.patch
 
 %description
-The gPXE network bootloader provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and gPXE script based booting.
+The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and gPXE script based booting.
 
 %prep
 
@@ -28,6 +31,7 @@ The gPXE network bootloader provides enhanced boot features for any UNDI complia
 %patch -p1
 %patch1 -p1
 %patch2 -p1
+%patch3 -p1
 
 %build
 
@@ -39,8 +43,9 @@ make bin/undionly.kpxe
 
 %install
 
-mkdir -p  %{buildroot}/tftpboot/
-cp src/bin/undionly.kpxe %{buildroot}/tftpboot/undionly.kpxe
+mkdir -p  %{buildroot}/tftpboot/xcat
+#Rename to avoid conflicting with potential vanilla undionly.kpxe that user may be using
+cp src/bin/undionly.kpxe %{buildroot}/tftpboot/xcat/xnba.kpxe
 
 
 %post 
@@ -51,5 +56,5 @@ cp src/bin/undionly.kpxe %{buildroot}/tftpboot/undionly.kpxe
 %{__rm} -rf %{buildroot}
 
 %files
-/tftpboot/undionly.kpxe
+/tftpboot/xcat/xnba.kpxe
 %changelog
