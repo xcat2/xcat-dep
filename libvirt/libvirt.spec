@@ -327,6 +327,7 @@ fi
 %doc AUTHORS ChangeLog NEWS README COPYING.LIB TODO
 %doc %{_mandir}/man1/virsh.1*
 /usr/bin/virt-xml-validate
+/usr/libexec/libvirt_parthelper
 /usr/share/man/man1/virt-xml-validate.1.gz
 
 %{_bindir}/virsh
