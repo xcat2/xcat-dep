@@ -1,4 +1,4 @@
-Name:           gpxe-kvm
+Name:           xnba-kvm
 Version:        0.9.7
 Release:        3
 Summary:        gPXE loader for virtual guests
