@@ -13,13 +13,8 @@ Packager: H. Peter Anvin <hpa@zytor.com>
 Buildroot: %{_tmppath}/%{name}-%{VERSION}-root
 BuildPrereq: nasm >= 0.98.39, perl
 Autoreq: 0
-%ifarch x86_64
-Requires: mtools, libc.so.6()(64bit)
+BuildRequires: mtools, libc.so.6()(64bit)
 %define my_cc gcc
-%else
-Requires: mtools, libc.so.6
-%define my_cc gcc -m32
-%endif
 
 # NOTE: extlinux belongs in /sbin, not in /usr/sbin, since it is typically
 # a system bootloader, and may be necessary for system recovery.
@@ -51,9 +46,9 @@ The EXTLINUX bootloader, for booting the local system, as well as all
 the SYSLINUX/PXELINUX modules in /boot.
 
 %package xcat
+BuildArch: noarch
 Summary: SYSLINUX modules in /tftpboot/xcat/syslinux, available for network booting
 Group: Applications/Internet
-Requires: syslinux
 
 %description xcat
 All the SYSLINUX/PXELINUX modules directly available for network
