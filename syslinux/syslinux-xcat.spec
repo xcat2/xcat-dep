@@ -47,12 +47,12 @@ the SYSLINUX/PXELINUX modules in /boot.
 
 %package xcat
 BuildArch: noarch
-Summary: SYSLINUX modules in /tftpboot/xcat/syslinux, available for network booting
+Summary: SYSLINUX modules in /opt/xcat/share/xcat/netboot/syslinux, available for network booting
 Group: Applications/Internet
 
 %description xcat
 All the SYSLINUX/PXELINUX modules directly available for network
-booting in the /tftpboot/xcat/syslinux directory.
+booting in the /opt/xcat/share/xcat/netboot/syslinux directory.
 
 %prep
 %setup -q -n syslinux-%{VERSION}
@@ -68,7 +68,7 @@ make CC='%{my_cc}' install-all \
 	INSTALLROOT=%{buildroot} BINDIR=%{_bindir} SBINDIR=%{_sbindir} \
 	LIBDIR=%{_libdir} DATADIR=%{_datadir} \
 	MANDIR=%{_mandir} INCDIR=%{_includedir} \
-	TFTPBOOT=/tftpboot/xcat/syslinux EXTLINUXDIR=/boot/extlinux
+	TFTPBOOT=/opt/xcat/share/xcat/netboot/syslinux EXTLINUXDIR=/boot/extlinux
 make CC='%{my_cc}' -C sample tidy
 mkdir -p %{buildroot}/etc
 ( cd %{buildroot}/etc && ln -s ../boot/extlinux/extlinux.conf . )
@@ -98,7 +98,7 @@ rm -rf %{buildroot}
 %config /etc/extlinux.conf
 
 %files xcat
-/tftpboot/xcat
+/opt/xcat/share/xcat/netboot/syslinux
 
 %post extlinux
 # If we have a /boot/extlinux.conf file, assume extlinux is our bootloader
