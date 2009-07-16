@@ -1,11 +1,11 @@
  Build Notes
 
-Download mysql-connector-odbc-3.51.27-aix5.3-powerpc-64bit.tar.gz.
+Download mysql-connector-odbc-3.51.27-aix5.3-powerpc-32bit.tar.gz.
 (See http://dev.mysql.com/downloads/connector/odbc/3.51.html#aix)
-	AIX 5.3 power 64-bit
+	AIX 5.3 power 32-bit
 
 Copy the gz file to the SOURCES directory.
-cp mysql-connector-odbc-3.51.27-aix5.3-powerpc-64bit.tar.gz /opt/freeware/src/packages/SOURCES
+cp mysql-connector-odbc-3.51.27-aix5.3-powerpc-32bit.tar.gz /opt/freeware/src/packages/SOURCES
 
 Remove any old RPMs
 rm -f /opt/freeware/src/packages/SRPMS/mysql-connector*rpm /opt/freeware/src/packages/RPMS/ppc/mysql-connector*rpm
@@ -17,5 +17,5 @@ a different version etc.
 rpm -ba mysql-connector-odbc.spec
 
 Creates:
-/opt/freeware/src/packages/RPMS/ppc/mysql-connector-odbc-3.51.27-64bit.aix5.3.ppc.rpm
+/opt/freeware/src/packages/RPMS/ppc/mysql-connector-odbc-3.51.27-32bit.aix5.3.ppc.rpm
 

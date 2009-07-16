@@ -52,4 +52,4 @@ want to use a different version etc.
 rpm -ba unixODBC.spec
 
 Creates:
-/opt/freeware/src/packages/RPMS/ppc/unixODBC-2.2.15-pre.aix5.3.ppc.rpm
+/opt/freeware/src/packages/RPMS/ppc/unixODBC-2.2.15-32bit.aix5.3.ppc.rpm

@@ -1,7 +1,7 @@
 Summary: Metapackage for unixODBC on AIX
 Name: unixODBC
 Version: 2.2.15
-Release: pre 
+Release: 32bit 
 License: LGPL
 Group: Applications/System
 Vendor: unixODBC 
@@ -27,21 +27,19 @@ cp %{SOURCE1} $RPM_BUILD_ROOT/
 cd $RPM_BUILD_ROOT
 gunzip -f unixODBC-2.2.15pre-aix-ppc.tar.gz
 tar -xf unixODBC-2.2.15pre-aix-ppc.tar 
+mkdir -p usr/lib
 cd usr/local/lib
 ln -s libodbcinst.so.1 libodbcinst.so
 ln -s libodbccr.so.1 libodbccr.so
 ln -s libodbc.so.1 libodbc.so
+cd $RPM_BUILD_ROOT/usr/lib
+ln -s ../local/lib/libodbc.so.1 libodbc.so
+ln -s ../local/lib/libodbcinst.so.1 libodbcinst.so
+ln -s ../local/lib/libodbccr.so.1 libodbccr.so
 
 %post
-cd /usr/local/lib
-ln -s /usr/local/lib/libodbc.so.1 /usr/lib/libodbc.so
-ln -s /usr/local/lib/libodbcinst.so.1 /usr/lib/libodbcinst.so
-ln -s /usr/local/lib/libodbccr.so.1 /usr/lib/libodbccr.so
 
 %postun
-rm /usr/lib/libodbc.so
-rm /usr/lib/libodbcinst.so
-rm /usr/lib/libodbccr.so
 
 %clean
 
@@ -51,3 +49,4 @@ rm /usr/lib/libodbccr.so
 /etc/odbcinst.ini
 /usr/local/lib
 /usr/local/bin
+/usr/lib
