@@ -1,16 +1,46 @@
  Build Notes
 
-Download unixODBC-2.2.14-aix-ppc-64.tar.gz.
-(See http://sourceforge.net/projects/unixodbc/ 
- Select Download - green box
- Click on package unixODBC on 2.2.14 line. Then choose
- unixODBC-2.2.14-aix-ppc-64.tar.gz)
+Due to problems building the lastest version 2.2.14 on AIX, had to
+Download from ftp://ftp.unixodbc.org/pub/unixODBC/
+unixODBC-2.2.15pre.tar
 
-Download and install binutils-2.14-3.aix5.1.ppc.rpm on to your buid machine. 
+gunzip
+tar -xvf
+'cd' to the directory containing the package's source code
+export CC=xlc_r
+export CCC=xlC_r
+./configure --enable-gui=no --enable-drivers=no  --enable-iconv=no --sysconfdir=/etc
+make
+make install
+
+The .a files in the lib need to converted into .so files using ar found
+in binutils:
+cd /usr/local/lib
+/opt/freeware/bin/ar -x libodbc.a
+/opt/freeware/bin/ar -x libodbccr.a
+/opt/freeware/bin/ar -x libodbcinst.a
+
+
+Create the tar and gz files:
+cd /tmp
+mkdir -p /tmp/odbc
+cd /tmp/odbc
+mkdir -p etc
+mkdir usr/local/bin
+mkdir usr/local/lib
+cp /etc/o*ini etc/.
+cp /usr/local/lib/libodbc*[a1] usr/local/lib/.
+cp /usr/local/bin/*sql usr/local/bin/.
+cp /usr/local/bin/odbc* usr/local/bin/.
+cp /usr/local/bin/dltest usr/local/bin/.
+tar -cvf ../unixODBC-2.2.15pre-aix-ppc.tar *
+cd ..
+gzip unixODBC-2.2.15pre-aix-ppc.tar
+
 
 
 Copy the gz file to the SOURCES directory.
-cp unixODBC-2.2.14-aix-ppc-64.tar.gz  /opt/freeware/src/packages/SOURCES
+cp unixODBC-2.2.15pre-aix-ppc.tar  /opt/freeware/src/packages/SOURCES
 
 Remove any old RPMs
 rm -f /opt/freeware/src/packages/SRPMS/unixODBC*rpm /opt/freeware/src/packages/RPMS/ppc/unixODBC*rpm
@@ -22,5 +52,4 @@ want to use a different version etc.
 rpm -ba unixODBC.spec
 
 Creates:
-/opt/freeware/src/packages/RPMS/ppc/unixODBC-2.2.14-64bit.aix5.3.ppc.rpm
-
+/opt/freeware/src/packages/RPMS/ppc/unixODBC-2.2.15-pre.aix5.3.ppc.rpm
