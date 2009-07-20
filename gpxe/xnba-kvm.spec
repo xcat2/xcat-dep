@@ -1,12 +1,13 @@
 Name:           xnba-kvm
 Version:        0.9.7
-Release:        3
+Release:        8
 Summary:        gPXE loader for virtual guests
 
 Group:          System Environment/Kernel
 License:        GPL
 URL:            http://etherboot.org/wiki/index.php
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}
+Obsoletes:      gpxe-kvm
 
 ExclusiveArch:  i386 x86_64
 
@@ -20,6 +21,9 @@ Source0: gpxe-0.9.7.tar.gz
 Patch0: gpxe-0.9.7-branding.patch
 Patch1: gpxe-0.9.7-registeriscsionpxe.patch
 Patch2: gpxe-0.9.7-config.patch
+Patch3: gpxe-0.9.7-ignorepackets.patch
+Patch4: gpxe-0.9.7-kvmworkaround.patch
+Patch5: gpxe-0.9.7-hdboot.patch
 
 %description
 The gPXE network bootloader provides network boot capability for virtual machines with e1000 and virtio network devices. This includes iSCSI and PXE with tftp or ftp image download capability.
@@ -30,6 +34,9 @@ The gPXE network bootloader provides network boot capability for virtual machine
 %patch -p1
 %patch1 -p1
 %patch2 -p1
+%patch3 -p1
+%patch4 -p1
+%patch5 -p1
 
 %build
 

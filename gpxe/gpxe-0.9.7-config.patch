@@ -1,6 +1,6 @@
 diff -urN gpxe-0.9.7/src/config/general.h gpxe-0.9.7-config/src/config/general.h
---- gpxe-0.9.7/src/config/general.h	2009-03-01 21:23:42.000000000 -0500
-+++ gpxe-0.9.7-config/src/config/general.h	2009-06-23 12:49:23.000000000 -0400
+--- gpxe-0.9.7/src/config/general.h	2009-07-09 10:15:27.000000000 -0400
++++ gpxe-0.9.7-config/src/config/general.h	2009-07-09 10:19:39.000000000 -0400
 @@ -48,7 +48,7 @@
  #undef	DOWNLOAD_PROTO_NFS	/* Network File System */
  #define	DOWNLOAD_PROTO_HTTP	/* Hypertext Transfer Protocol */
@@ -19,7 +19,7 @@ diff -urN gpxe-0.9.7/src/config/general.h gpxe-0.9.7-config/src/config/general.h
  
  /*
   * Name resolution modules
-@@ -76,16 +76,16 @@
+@@ -76,17 +76,17 @@
   * you want to use.
   *
   */
@@ -33,26 +33,26 @@ diff -urN gpxe-0.9.7/src/config/general.h gpxe-0.9.7-config/src/config/general.h
 -//#define	IMAGE_SCRIPT		/* gPXE script image support */
 -//#define	IMAGE_BZIMAGE		/* Linux bzImage image support */
 -//#define	IMAGE_COMBOOT		/* SYSLINUX COMBOOT image support */
+-//#define	IMAGE_EFI		/* EFI image support */
 +#define	IMAGE_NBI		/* NBI image support */
 +#define IMAGE_ELF		/* ELF image support */
 +#define	IMAGE_FREEBSD		/* FreeBSD kernel image support */
-+#define	IMAGE_MULTIBOOT		/* MultiBoot image support */
++#undef	IMAGE_MULTIBOOT		/* MultiBoot image support */
 +#undef	IMAGE_AOUT		/* a.out image support */
 +#undef	IMAGE_WINCE		/* WinCE image support */
 +#define	IMAGE_PXE		/* PXE image support */
 +#define	IMAGE_SCRIPT		/* gPXE script image support */
 +#define	IMAGE_BZIMAGE		/* Linux bzImage image support */
 +#undef	IMAGE_COMBOOT		/* SYSLINUX COMBOOT image support */
- //#define	IMAGE_EFI		/* EFI image support */
++#undef	IMAGE_EFI		/* EFI image support */
  
  /*
-@@ -93,14 +93,14 @@
-  *
+  * Command-line commands to include
+@@ -94,13 +94,13 @@
   */
  #define	AUTOBOOT_CMD		/* Automatic booting */
--#define	NVO_CMD			/* Non-volatile option storage commands */
+ #define	NVO_CMD			/* Non-volatile option storage commands */
 -#define	CONFIG_CMD		/* Option configuration console */
-+#undef	NVO_CMD			/* Non-volatile option storage commands */
 +#undef	CONFIG_CMD		/* Option configuration console */
  #define	IFMGMT_CMD		/* Interface management commands */
  #define	ROUTE_CMD		/* Routing table management commands */
