@@ -1,0 +1,12 @@
+diff -urN gpxe-0.9.7/src/arch/i386/interface/pxe/pxe_undi.c gpxe-0.9.7-8021ifacetype/src/arch/i386/interface/pxe/pxe_undi.c
+--- gpxe-0.9.7/src/arch/i386/interface/pxe/pxe_undi.c	2009-08-21 20:54:12.000000000 -0400
++++ gpxe-0.9.7-8021ifacetype/src/arch/i386/interface/pxe/pxe_undi.c	2009-08-21 20:53:53.000000000 -0400
+@@ -517,7 +517,7 @@
+ 	 * Most PXE stacks seem to take this approach.
+ 	 */
+ 	snprintf ( ( char * ) undi_get_iface_info->IfaceType,
+-		   sizeof ( undi_get_iface_info->IfaceType ), "gPXE" );
++		   sizeof ( undi_get_iface_info->IfaceType ), "DIX+802.3" );
+ 	undi_get_iface_info->LinkSpeed = 10000000; /* 10 Mbps */
+ 	undi_get_iface_info->ServiceFlags =
+ 		( SUPPORTED_BROADCAST | SUPPORTED_MULTICAST |

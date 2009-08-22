@@ -1,0 +1,111 @@
+diff -urN gpxe-0.9.7/src/arch/i386/firmware/pcbios/e820mangler.S gpxe-0.9.7-iretfixes/src/arch/i386/firmware/pcbios/e820mangler.S
+--- gpxe-0.9.7/src/arch/i386/firmware/pcbios/e820mangler.S	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-iretfixes/src/arch/i386/firmware/pcbios/e820mangler.S	2009-08-21 21:28:41.000000000 -0400
+@@ -490,6 +490,18 @@
+ 	.size get_mangled_e820, . - get_mangled_e820
+ 
+ /****************************************************************************
++ * Set/clear CF on the stack as appropriate, assumes stack is as it should
++ * be immediately before IRET
++ ****************************************************************************
++ */
++patch_cf:
++	pushw	%bp
++	movw	%sp, %bp
++	setc	8(%bp)	/* Set/reset CF; clears PF, AF, ZF, SF */
++	popw	%bp
++	ret
++
++/****************************************************************************
+  * INT 15,e820 handler
+  ****************************************************************************
+  */
+@@ -500,7 +512,8 @@
+ 	popw	%ds
+ 	call	get_mangled_e820
+ 	popw	%ds
+-	lret	$2
++	call	patch_cf
++	iret
+ 	.size int15_e820, . - int15_e820
+ 	
+ /****************************************************************************
+@@ -512,7 +525,7 @@
+ 	/* Call previous handler */
+ 	pushfw
+ 	lcall	*%cs:int15_vector
+-	pushfw
++	call	patch_cf
+ 	/* Edit result */
+ 	pushw	%ds
+ 	pushw	%cs:rm_ds
+@@ -524,9 +537,7 @@
+ 	xchgw	%ax, %cx
+ 	xchgw	%bx, %dx
+ 	popw	%ds
+-	/* Restore flags returned by previous handler and return */
+-	popfw
+-	lret	$2
++	iret
+ 	.size int15_e801, . - int15_e801
+ 	
+ /****************************************************************************
+@@ -538,16 +549,14 @@
+ 	/* Call previous handler */
+ 	pushfw
+ 	lcall	*%cs:int15_vector
+-	pushfw
++	call	patch_cf
+ 	/* Edit result */
+ 	pushw	%ds
+ 	pushw	%cs:rm_ds
+ 	popw	%ds
+ 	call	patch_1m
+ 	popw	%ds
+-	/* Restore flags returned by previous handler and return */
+-	popfw
+-	lret	$2
++	iret
+ 	.size int15_88, . - int15_88
+ 		
+ /****************************************************************************
+diff -urN gpxe-0.9.7/src/arch/i386/firmware/pcbios/fakee820.c gpxe-0.9.7-iretfixes/src/arch/i386/firmware/pcbios/fakee820.c
+--- gpxe-0.9.7/src/arch/i386/firmware/pcbios/fakee820.c	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-iretfixes/src/arch/i386/firmware/pcbios/fakee820.c	2009-08-21 21:28:41.000000000 -0400
+@@ -63,6 +63,8 @@
+ 			      "cmpl $0x534d4150, %%edx\n\t"
+ 			      "jne 99f\n\t"
+ 			      "pushaw\n\t"
++			      "movw %%sp, %%bp\n\t"
++			      "andb $~0x01, 22(%%bp)\n\t" /* Clear return CF */
+ 			      "leaw e820map(%%bx), %%si\n\t"
+ 			      "cs rep movsb\n\t"
+ 			      "popaw\n\t"
+@@ -73,8 +75,7 @@
+ 			      "xorl %%ebx,%%ebx\n\t"
+ 			      "\n1:\n\t"
+ 			      "popfw\n\t"
+-			      "clc\n\t"
+-			      "lret $2\n\t"
++			      "iret\n\t"
+ 			      "\n99:\n\t"
+ 			      "popfw\n\t"
+ 			      "ljmp *%%cs:real_int15_vector\n\t" )
+diff -urN gpxe-0.9.7/src/arch/i386/interface/pxe/pxe_entry.S gpxe-0.9.7-iretfixes/src/arch/i386/interface/pxe/pxe_entry.S
+--- gpxe-0.9.7/src/arch/i386/interface/pxe/pxe_entry.S	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-iretfixes/src/arch/i386/interface/pxe/pxe_entry.S	2009-08-21 21:28:41.000000000 -0400
+@@ -199,9 +199,12 @@
+ 	shll	$4, %edx
+ 	addl	$pxenv, %edx
+ 	movw	$0x564e, %ax
++	pushw	%bp
++	movw	%sp, %bp
++	andb	$~0x01, 8(%bp)	/* Clear CF on return */
++	popw	%bp
+ 	popfw
+-	clc
+-	lret	$2
++	iret
+ 1:	/* INT 1A,other - pass through */
+ 	popfw
+ 	ljmp	*%cs:pxe_int_1a_vector

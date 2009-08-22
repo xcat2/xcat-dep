@@ -1,0 +1,11 @@
+diff -urN gpxe-0.9.7/src/drivers/net/e1000/e1000.c gpxe-0.9.7-e1000fix/src/drivers/net/e1000/e1000.c
+--- gpxe-0.9.7/src/drivers/net/e1000/e1000.c	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-e1000fix/src/drivers/net/e1000/e1000.c	2009-08-21 21:13:59.000000000 -0400
+@@ -586,6 +586,7 @@
+ 
+ 	/* Write new tail to NIC, making packet available for transmit
+ 	 */
++	wmb();
+ 	E1000_WRITE_REG ( hw, TDT, adapter->tx_tail );
+ 
+ 	return 0;
