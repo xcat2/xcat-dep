@@ -1,6 +1,6 @@
 Name:           xnba-undi
 Version:        0.9.7
-Release:        11
+Release:        12
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
 Obsoletes:	gpxe-undi
 
@@ -43,14 +43,14 @@ The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides
 rm -rf %{buildroot}
 
 cd src
-make bin/undionly.kpxe
+make bin/undionly.kkpxe
 
 
 %install
 
 mkdir -p  %{buildroot}/tftpboot/xcat
 #Rename to avoid conflicting with potential vanilla undionly.kpxe that user may be using
-cp src/bin/undionly.kpxe %{buildroot}/tftpboot/xcat/xnba.kpxe
+cp src/bin/undionly.kkpxe %{buildroot}/tftpboot/xcat/xnba.kpxe
 
 
 %post 
