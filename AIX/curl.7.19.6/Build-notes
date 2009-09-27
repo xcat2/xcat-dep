@@ -1,0 +1,11 @@
+Build Notes
+
+
+1. Download curl-7.19.6.tar.bz2 from http://curl.haxx.se/download.html
+2. Copy curl-7.19.6.tar.bz2 into /opt/freeware/src/packages/SOURCES/ directory
+3. Copy curl.7.19.6.spec to /opt/freeware/src/packages/SPECS/
+4. cd to /opt/freeware/src/packages/SPECS
+5. Run "rpm -bb curl.7.19.6.spec", which creates:
+  /opt/freeware/src/packages/RPMS/ppc/curl-7.19.6-1ssl.aix5.3.ppc.rpm and /opt/freeware/src/packages/RPMS/ppc/curl-devel-7.19.6-1ssl.aix5.3.ppc.rpm
+
+
