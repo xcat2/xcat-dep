@@ -13,10 +13,10 @@ you don't do this you could get dependency errors when installing some of
 the RPM packages.
 
 The rest of the required software listed below is provided in the
-dep-aix-2.2-snap*.tar.gz tar file.
+dep-aix-*.tar.gz tar file.
 
 The optional MySQL packages are provided in a separate tar file 
-(xcat-mysql-2.2-snap*.tar.gz) as a convenience for when you wish
+(xcat-mysql-*.tar.gz) as a convenience for when you wish
 to use the xCAT service node support. The xcat-mysql package contains the
 MySQL 64 bit gz file that was downloaded from
 http://dev.mysql.com/downloads/mysql and included in an xCAT RPM to make
@@ -32,7 +32,7 @@ Available from AIX Expansion pack or http://sourceforge.net.
 1. openssl-0.9.8
 2. openssh-4.5
 
-Available from dep-aix-2.2-snap*.tar.gz.
+Available from dep-aix-*.tar.gz.
 3. tcl-8.4.7-3
 4. tk-8.4.7-3
 5. expect-5.42.1-3
@@ -54,18 +54,24 @@ Available from dep-aix-2.2-snap*.tar.gz.
 21. net-snmp-perl-5.4.2.1-1
 22. bash-3.2-1.aix5.2.ppc.rpm
 23. rsync-2.6.2-1.aix5.1.ppc.rpm
+24. libxml2-2.6.21-4.aix5.2.ppc.rpm
+25. wget-1.9.1-1.aix5.1.ppc.rpm
+26. curl-7.19.6-1ssl.aix5.3.ppc.rpm
+27. unixODBC-2.2.15-32bit.aix5.3.ppc.rpm
+28. expat-2.0.1-2.aix5.1.ppc.rpm
+29. popt-1.7-2.aix5.1.ppc.rpm
 
 Optional
-Available from xcat-mysql-2.2-snap*.tar.gz.
-24. perl-DBD-mysql-4.007-1
-25. xcat-mysql-5.0-1 (mysql-5.0.67)
+Available from xcat-mysql-*.tar.gz.
+30. perl-DBD-mysql-4.007-1
+31. xcat-mysql-5.0-1 (mysql-5.0.67)
+32. xcat-mysql-connector-odbc-3.51-27.aix5.3.ppc.rpm
 
 When you are ready to install the RPM packages contained in the 
 dep-aix-2.2-snap*.tar.gz tar file you can run the "instoss" script, 
 which is included as a convenience.
 
-The tk, tcl, expect, rsync, and bash packages come from the "AIX Toolbox 
-for Linux 
+Many of the packages come from the "AIX Toolbox for Linux Applications"
 Applications" web site. (http://www-03.ibm.com/systems/p/os/aix/linux).  The 
 packages have been included here for your convenience.  For details on 
 the source and licenses etc. please refer to the Toolbox site.
