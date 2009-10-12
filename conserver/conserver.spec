@@ -23,6 +23,7 @@ URL: http://www.conserver.com/
 Source: http://www.conserver.com/%{pkg}-%{ver}.tar.gz
 Patch: certificate-auth.patch
 Patch1: initscript.patch
+Patch2: initscript1.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 BuildRequires: openssl-devel
 Prefix: %{_prefix}
@@ -40,6 +41,7 @@ bells and whistles to accentuate that basic functionality.
 %setup -q
 %patch -p1
 %patch1 -p1
+%patch2 -p1
 
 
 %build

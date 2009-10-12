@@ -1,0 +1,18 @@
+--- stunnel-4.26/tools/stunnel.init.in	2008-09-17 14:53:46.000000000 -0400
++++ stunnel-4.26/tools/stunnel.init.in.new	2009-10-12 05:25:55.000000000 -0400
+@@ -1,6 +1,15 @@
+ #!/bin/sh
+ # Sample stunnel SysV startup file
+ # Copyright by Michal Trojnara 2002,2007,2008
++### BEGIN INIT INFO
++# Provides: stunnel
++# Required-Start: 
++# Required-Stop:
++# Default-Start: 3 4 5
++# Default-stop: 0 1 2 6
++# Short-Description: stunnel
++# Description: stunnel deamon
++### END INIT INFO
+ 
+ PATH=/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+ DAEMON=@prefix@/bin/stunnel

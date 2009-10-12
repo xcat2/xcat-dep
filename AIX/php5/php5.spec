@@ -70,13 +70,20 @@ cp php.ini-recommended %{buildroot}/%{_sysconfdir}
 
 %preun
 rm /usr/IBM/HTTPServer/conf/php.ini
-cp /usr/IBM/HTTPServer/conf/httpd.conf.bak /usr/IBM/HTTPServer/conf/http.conf
+mv /usr/IBM/HTTPServer/conf/httpd.conf.bak /usr/IBM/HTTPServer/conf/http.conf
 /usr/IBM/HTTPServer/bin/apachectl stop
 
 %postun
 /usr/IBM/HTTPServer/bin/apachectl start
 
 %post
+
+if [ "$1" = 2 ] #update to the newer rpm package
+    echo "updating to the newer rpm..."
+    mv /usr/IBM/HTTPServer/conf/httpd.conf.bak /usr/IBM/HTTPServer/conf/httpd.conf
+fi
+
+
 cp %{_sysconfdir}/php.ini-recommended /usr/IBM/HTTPServer/conf/php.ini
 
 cp /usr/IBM/HTTPServer/conf/httpd.conf /usr/IBM/HTTPServer/conf/httpd.conf.bak

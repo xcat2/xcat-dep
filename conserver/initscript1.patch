@@ -1,0 +1,19 @@
+--- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2009-10-12 05:06:44.000000000 -0400
++++ conserver-8.1.16/contrib/redhat-rpm/conserver.init.new	2009-10-12 05:08:29.000000000 -0400
+@@ -6,6 +6,16 @@
+ # description: conserver is a serial-port console daemon
+ # config: /etc/conserver.cf
+ #
++### BEGIN INIT INFO
++# Provides: conserver
++# Required-Start: 
++# Required-Stop:
++# Default-Start: 2 3 4 5
++# Default-stop:
++# Short-Description: conserver
++# Description: Console server
++### END INIT INFO
++
+ RHPassed()
+ {
+     passed

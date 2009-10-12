@@ -8,6 +8,7 @@ Release: 1
 License: GPL
 Group: Applications/Networking
 Source: stunnel-%{version}.tar.gz
+Patch: initscript.patch
 Packager: neeo <neeo@irc.pl>
 Requires: openssl >= 0.9.6g
 BuildRequires: openssl-devel >= 0.9.6g
@@ -26,6 +27,7 @@ changes to the source code.
 
 %prep
 %setup -n stunnel-%{version}
+%patch -p1
 
 
 %build
