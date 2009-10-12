@@ -64,7 +64,11 @@ Available from dep-aix-*.tar.gz.
 Optional
 Available from xcat-mysql-*.tar.gz.
 30. perl-DBD-mysql-4.007-1
-31. xcat-mysql-5.0-1 (mysql-5.0.67)
+31. xcat-mysql-5.0-1 (mysql-5.1-37)
+	NOTE: This is a newer version of MySQL then was shipped in previous 
+	tarballs. If you have an earlier version installed you must follow
+	the migration instructions in the xCAT documentation to upgrade
+	to this newer version!!!
 32. xcat-mysql-connector-odbc-3.51-27.aix5.3.ppc.rpm
 
 When you are ready to install the RPM packages contained in the 
