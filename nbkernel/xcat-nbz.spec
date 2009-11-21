@@ -48,8 +48,7 @@ cd ./%{prefix}/share/xcat/netboot/%{tarch}/nbroot
 rpm2cpio %{SOURCE1} | cpio -ivdum
 mkdir -p ../../../../../../../tftpboot/xcat/
 cp boot/vmlinuz* ../../../../../../../tftpboot/xcat/nbk.%{tarch}
-mv boot/* ../
-rmdir boot
+rm -rf boot
 
 
 
