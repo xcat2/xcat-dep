@@ -6,6 +6,7 @@ kernel/net/sunrpc/sunrpc.ko
 kernel/net/sunrpc/auth_gss/auth_rpcgss.ko
 kernel/net/sunrpc/auth_gss/rpcsec_gss_krb5.ko
 kernel/net/sunrpc/auth_gss/rpcsec_gss_spkm3.ko
+kernel/net/xfrm/xfrm_nalgo.ko
 kernel/net/ipv6/ipv6.ko
 kernel/lib/zlib_deflate/zlib_deflate.ko
 kernel/lib/ts_fsm.ko
