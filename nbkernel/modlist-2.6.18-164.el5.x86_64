@@ -63,6 +63,7 @@ kernel/drivers/char/ipmi/ipmi_poweroff.ko
 kernel/drivers/block/nbd.ko
 kernel/drivers/block/loop.ko
 kernel/drivers/net/netconsole.ko
+kernel/net/8021q/8021q.ko
 kernel/drivers/net/e100.ko
 kernel/drivers/net/igb/igb.ko
 kernel/drivers/net/e1000/e1000.ko
