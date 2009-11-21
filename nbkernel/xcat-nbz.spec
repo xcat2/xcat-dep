@@ -1,23 +1,23 @@
 %ifarch i386 i586 i686 x86
-Source1: kernel-2.6.18-128.el5.i686.rpm 
-Source2: modlist-2.6.18-128.el5.x86
-%define kver 2.6.18-128.el5
-%define version	2.6.18_128
+Source1: kernel-2.6.18-164.el5.i686.rpm 
+Source2: modlist-2.6.18-164.el5.x86
+%define kver 2.6.18-164.el5
+%define version	2.6.18_164
 %define tarch x86
 %endif
 %ifarch x86_64
-Source1: kernel-2.6.18-128.el5.x86_64.rpm
-Source2: modlist-2.6.18-128.el5.x86_64
-%define version	2.6.18_128
-%define kver 2.6.18-128.el5
+Source1: kernel-2.6.18-164.el5.x86_64.rpm
+Source2: modlist-2.6.18-164.el5.x86_64
+%define version	2.6.18_164
+%define kver 2.6.18-164.el5
 %define tarch x86_64
 %endif
 %ifarch ppc ppc64
-Source1: kernel-2.6.18-128.el5.ppc64.rpm
-Source2: modlist-2.6.18-128.el5.ppc64
-%define kver 2.6.18-128.el5
+Source1: kernel-2.6.18-164.el5.ppc64.rpm
+Source2: modlist-2.6.18-164.el5.ppc64
+%define kver 2.6.18-164.el5
 %define tarch ppc64
-%define version	2.6.18_128
+%define version	2.6.18_164
 %endif
 BuildArch: noarch
 %define name	xCAT-nbkernel-%{tarch}
