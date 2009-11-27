@@ -1,0 +1,26 @@
+Build Notes
+
+1)   Download ipmitool-1.8.11.tar.gz from  ://xcat.svn.sourceforge.net/svnroot/xcat/xcat-dep/trunk/ipmitool/pmitool-1.8.11.tar.gz to /tmp/ipmitool directory.
+2)   cd /tmp/ipmitool
+3)   gunzip ipmitool-1.8.11.tar.gz
+4)   tar xvf ipmitool-1.8.11.tar
+5)   Copy ipmitool.spec to /opt/freeware/src/packages/SPECS/
+6)   tar cvf ipmitool-1.8.11.tar ipmitool-1.8.11
+7)   gzip ipmitool-1.8.11.tar
+8)   Copy ipmitool-1.8.11.tar.gz to /opt/freeware/src/packages/SOURCES
+9)   Copy ipmitool-config.h.in.patch, ipmitool-imbapi.patch , and ipmitool-ipmievd.patch to /usr/src/packages/SOURCES
+10)  cd /usr/src/packages/SPECS
+11)  Run "rpm -bb ipmitool.spec", which creates:
+             /opt/freeware/src/packages/RPMS/ppc/ipmitool-1.8.11-1.aix5.3.ppc.rpm 
+
+NOTE #1 
+HOW TO CREATE THESE PATCHES 
+1) cd /tmp/ipmitool-1.8.11
+2) mkdir a (this directory contains the original file)
+3) Copy original file to "a" subdirectory
+4) Repeat above for directory "b" (this directory contains the changed file)
+5) Copy changed file to "b" subdirectory
+6) cd /tmp/ipmitool-1.8.11
+7) diff -uNr a b > ipmitool.patch
+
+

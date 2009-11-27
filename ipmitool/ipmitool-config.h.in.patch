@@ -1,0 +1,8 @@
+--- ipmitool-1.8.11/config.h.in	2009-02-26 05:21:35.000000000 +0800
++++ ipmitool-1.8.11_modify/config.h.in	2009-11-18 12:26:40.000000000 +0800
+@@ -211,4 +211,4 @@
+ #endif
+ 
+ /* Define to rpl_malloc if the replacement function should be used. */
+-#undef malloc
++/*#undef malloc*/
