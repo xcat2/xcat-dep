@@ -1,6 +1,6 @@
 Build Notes
 
-1)   Download ipmitool-1.8.11.tar.gz from  ://xcat.svn.sourceforge.net/svnroot/xcat/xcat-dep/trunk/ipmitool/pmitool-1.8.11.tar.gz to /tmp/ipmitool directory.
+1)   Download ipmitool-1.8.11.tar.gz from https://xcat.svn.sourceforge.net/svnroot/xcat/xcat-dep/trunk/ipmitool/ipmitool-1.8.11.tar.gz to /tmp/ipmitool directory.
 2)   cd /tmp/ipmitool
 3)   gunzip ipmitool-1.8.11.tar.gz
 4)   tar xvf ipmitool-1.8.11.tar
