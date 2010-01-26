@@ -3,8 +3,8 @@ diff -urN gpxe-0.9.7/src/config/general.h gpxe-0.9.7-hdboot/src/config/general.h
 +++ gpxe-0.9.7-hdboot/src/config/general.h	2009-07-20 09:45:33.000000000 -0400
 @@ -100,6 +100,7 @@
  #define IMAGE_CMD		/* Image management commands */
- #define DHCP_CMD		/* DHCP management commands */
- #define SANBOOT_CMD		/* SAN boot commands */
+ #undef DHCP_CMD		/* DHCP management commands */
+ #undef SANBOOT_CMD		/* SAN boot commands */
 +#define HDBOOT_CMD		/* SAN boot commands */
  #undef LOGIN_CMD		/* Login command */
  
