@@ -1,0 +1,128 @@
+--- gpxe_src/src/arch/i386/prefix/romprefix.S	2010-01-18 21:06:58.000000000 -0500
++++ gpxe_src.int18/src/arch/i386/prefix/romprefix.S	2010-01-20 11:19:31.000000000 -0500
+@@ -145,7 +145,7 @@
+  * Determine whether or not this is a PnP system via a signature
+  * check.  If it is PnP, return to the PnP BIOS indicating that we are
+  * a boot-capable device; the BIOS will call our boot execution vector
+- * if it wants to boot us.  If it is not PnP, hook INT 19.
++ * if it wants to boot us.  If it is not PnP, hook INT 18.
+  */
+ init:
+ 	/* Preserve registers, clear direction flag, set %ds=%cs */
+@@ -273,19 +273,17 @@
+ 	testw	%ax, %ax
+ 	je	got_bbs
+ no_pnp:	/* Not PnP-compliant - therefore cannot be BBS-compliant */
+-no_bbs:	/* Not BBS-compliant - must hook INT 19 */
+-	movw	$init_message_int19, %si
++no_bbs:	/* Not BBS-compliant - hooking INT 18 */
++	movw	$init_message_int18, %si
+ 	xorw	%di, %di
+ 	call	print_message
+ 	xorw	%ax, %ax
+ 	movw	%ax, %es
+-	pushl	%es:( 0x19 * 4 )
+-	popl	orig_int19
+ 	pushw	%gs /* %gs contains runtime %cs */
+-	pushw	$int19_entry
+-	popl	%es:( 0x19 * 4 )
++	pushw	$int18_entry
++	popl	%es:( 0x18 * 4 )
+ 	jmp	bbs_done
+-got_bbs: /* BBS compliant - no need to hook INT 19 */
++got_bbs: /* BBS compliant - no need to hook INT 18 */
+ 	movw	$init_message_bbs, %si
+ 	xorw	%di, %di
+ 	call	print_message
+@@ -470,9 +468,9 @@
+ init_message_pmm:
+ 	.asciz	" PMM"
+ 	.size	init_message_pmm, . - init_message_pmm
+-init_message_int19:
+-	.asciz	" INT19"
+-	.size	init_message_int19, . - init_message_int19
++init_message_int18:
++	.asciz	" INT18"
++	.size	init_message_int18, . - init_message_int18
+ init_message_prompt:
+ 	.asciz	"\nPress Ctrl-B to configure "
+ 	.size	init_message_prompt, . - init_message_prompt
+@@ -517,59 +515,30 @@
+ 	lret
+ 	.size	bev_entry, . - bev_entry
+ 
+-/* INT19 entry point
++/* INT18 entry point
+  *
+- * Called via the hooked INT 19 if we detected a non-PnP BIOS.  We
+- * attempt to return via the original INT 19 vector (if we were able
+- * to store it).
++ * Called via the hooked INT 18 if we detected a non-PnP BIOS.  
++ * Use iret to return to firmware
+  */
+-int19_entry:
+-	pushw	%cs
+-	popw	%ds
+-	/* Prompt user to press B to boot */
+-	movw	$int19_message_prompt, %si
+-	xorw	%di, %di
+-	call	print_message
+-	movw	$prodstr, %si
+-	call	print_message
+-	movw	$int19_message_dots, %si
+-	call	print_message
+-	movw	$0xdf4e, %bx
+-	call	wait_for_key
+-	pushf
+-	xorw	%di, %di
+-	call	print_kill_line
+-	movw	$int19_message_done, %si
+-	call	print_message
+-	popf
+-	jz	1f
+-	/* Leave keypress in buffer and start gPXE.  The keypress will
+-	 * cause the usual initial Ctrl-B prompt to be skipped.
+-	 */
++int18_entry:
++    pushfl
++    pushal
++    pushw   %gs
++    pushw   %fs
++    pushw   %es
++    pushw   %ds
++
+ 	pushw	%cs
+ 	call	exec
+-1:	/* Try to call original INT 19 vector */
+-	movl	%cs:orig_int19, %eax
+-	testl	%eax, %eax
+-	je	2f
+-	ljmp	*%cs:orig_int19
+-2:	/* No chained vector: issue INT 18 as a last resort */
+-	int	$0x18
+-	.size	int19_entry, . - int19_entry
+-orig_int19:
+-	.long	0
+-	.size	orig_int19, . - orig_int19
+ 
+-int19_message_prompt:
+-	.asciz	"Press N to skip booting from "
+-	.size	int19_message_prompt, . - int19_message_prompt
+-int19_message_dots:
+-	.asciz	"..."
+-	.size	int19_message_dots, . - int19_message_dots
+-int19_message_done:
+-	.asciz	"\n\n"
+-	.size	int19_message_done, . - int19_message_done
+-	
++    popw    %ds
++    popw    %es
++    popw    %fs
++    popw    %gs
++    popal
++    popfl
++    iret
++
+ /* Execute as a boot device
+  *
+  */

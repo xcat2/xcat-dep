@@ -1,0 +1,48 @@
+From: Stefan Hajnoczi <stefanha@gmail.com>
+Date: Sun, 10 Jan 2010 19:05:17 +0000 (+0000)
+Subject: [tftp] Allow fetching larger files by wrapping block number
+X-Git-Url: http://git.etherboot.org/?p=gpxe.git;a=commitdiff_plain;h=dd99ee95cb513384a13c2be486f684e4a1606ea9
+
+[tftp] Allow fetching larger files by wrapping block number
+
+This patch adds TFTP support for files larger than 65535 blocks by
+wrapping the 16-bit block number.
+
+Reported-by: Mark Johnson <johnson.nh@gmail.com>
+Signed-off-by: Stefan Hajnoczi <stefanha@gmail.com>
+Signed-off-by: Marty Connor <mdc@etherboot.org>
+---
+
+diff --git a/src/net/udp/tftp.c b/src/net/udp/tftp.c
+index bb031ec..82055fc 100644
+--- a/src/net/udp/tftp.c
++++ b/src/net/udp/tftp.c
+@@ -747,7 +747,7 @@ static int tftp_rx_data ( struct tftp_request *tftp,
+ 			  struct io_buffer *iobuf ) {
+ 	struct tftp_data *data = iobuf->data;
+ 	struct xfer_metadata meta;
+-	int block;
++	unsigned int block;
+ 	off_t offset;
+ 	size_t data_len;
+ 	int rc;
+@@ -759,14 +759,17 @@ static int tftp_rx_data ( struct tftp_request *tftp,
+ 		rc = -EINVAL;
+ 		goto done;
+ 	}
+-	if ( data->block == 0 ) {
++
++	/* Calculate block number */
++	block = ( ( bitmap_first_gap ( &tftp->bitmap ) + 1 ) & ~0xffff );
++	if ( data->block == 0 && block == 0 ) {
+ 		DBGC ( tftp, "TFTP %p received data block 0\n", tftp );
+ 		rc = -EINVAL;
+ 		goto done;
+ 	}
++	block += ( ntohs ( data->block ) - 1 );
+ 
+ 	/* Extract data */
+-	block = ( ntohs ( data->block ) - 1 );
+ 	offset = ( block * tftp->blksize );
+ 	iob_pull ( iobuf, sizeof ( *data ) );
+ 	data_len = iob_len ( iobuf );

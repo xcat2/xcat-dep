@@ -1,0 +1,28 @@
+From: Michael Brown <mcb30@etherboot.org>
+Date: Sat, 14 Nov 2009 03:02:16 +0000 (+0000)
+Subject: [ipv4] Ignore non-open net devices when performing routing
+X-Git-Url: http://git.etherboot.org/?p=gpxe.git;a=commitdiff_plain;h=4933ccbf654c27e3260e71bae7ade8286f69193a
+
+[ipv4] Ignore non-open net devices when performing routing
+
+We do not discard routing table entries when closing an interface.  It
+is plausible that multiple interfaces may be on the same physical
+network; if so, then we may end up in a situation whereby outbound
+packets attempt to route via a closed interface.
+
+Fix by ignoring non-open net devices in ipv4_route().
+---
+
+diff --git a/src/net/ipv4.c b/src/net/ipv4.c
+index 6b78ad7..4c1393f 100644
+--- a/src/net/ipv4.c
++++ b/src/net/ipv4.c
+@@ -118,6 +118,8 @@ static struct ipv4_miniroute * ipv4_route ( struct in_addr *dest ) {
+ 
+ 	/* Find first usable route in routing table */
+ 	list_for_each_entry ( miniroute, &ipv4_miniroutes, list ) {
++		if ( ! ( miniroute->netdev->state & NETDEV_OPEN ) )
++			continue;
+ 		local = ( ( ( dest->s_addr ^ miniroute->address.s_addr )
+ 			    & miniroute->netmask.s_addr ) == 0 );
+ 		has_gw = ( miniroute->gateway.s_addr );

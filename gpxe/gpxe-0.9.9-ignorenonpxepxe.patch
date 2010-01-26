@@ -1,0 +1,34 @@
+From: Joshua Oreman <oremanj@rwcr.net>
+Date: Tue, 3 Nov 2009 18:37:57 +0000 (-0500)
+Subject: [dhcp] Assume PXE options are in DHCPOFFER only if boot menu is included
+X-Git-Url: http://git.etherboot.org/?p=gpxe.git;a=commitdiff_plain;h=734061e9c60103439e13d72c68e50ee362f3ba91
+
+[dhcp] Assume PXE options are in DHCPOFFER only if boot menu is included
+
+IBM's Tivoli Provisioning Manager for OS Deployment, when acting as a
+ProxyDHCP server, sends an initial offer with a vendor class of "PXEClient"
+and vendor-encapsulated options that have nothing to do with PXE. To
+differentiate between this case and the case of a ProxyDHCP server that
+sends all PXE options in its initial offer, modify gPXE to check for
+the presence of an encapsulated PXE boot menu option (43.9) instead of
+simply checking for the existence of any encapsulated options at all.
+This is the same check used by the Intel vendor PXE ROM.
+
+Signed-off-by: Marty Connor <mdc@etherboot.org>
+---
+
+diff --git a/src/net/udp/dhcp.c b/src/net/udp/dhcp.c
+index ac4f82c..aba9000 100644
+--- a/src/net/udp/dhcp.c
++++ b/src/net/udp/dhcp.c
+@@ -361,8 +361,8 @@ static void dhcp_discovery_rx ( struct dhcp_session *dhcp,
+ 	has_pxeclient = ( ( vci_len >= ( int ) sizeof ( vci ) ) &&
+ 			  ( strncmp ( "PXEClient", vci, sizeof (vci) ) == 0 ));
+ 
+-	/* Identify presence of vendor-specific options */
+-	pxeopts_len = dhcppkt_fetch ( dhcppkt, DHCP_VENDOR_ENCAP, NULL, 0 );
++	/* Identify presence of PXE-specific options */
++	pxeopts_len = dhcppkt_fetch ( dhcppkt, DHCP_PXE_BOOT_MENU, NULL, 0 );
+ 	has_pxeopts = ( pxeopts_len >= 0 );
+ 	if ( has_pxeclient )
+ 		DBGC ( dhcp, "%s", ( has_pxeopts ? " pxe" : " proxy" ) );

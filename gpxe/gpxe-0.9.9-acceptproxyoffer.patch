@@ -1,0 +1,29 @@
+From: Joshua Oreman <oremanj@rwcr.net>
+Date: Tue, 3 Nov 2009 18:31:12 +0000 (-0500)
+Subject: [dhcp] Accept ProxyDHCP replies of type DHCPOFFER
+X-Git-Url: http://git.etherboot.org/?p=gpxe.git;a=commitdiff_plain;h=04e4a4f69520422d7ff7f02ba0f6d9a9dd084ee2
+
+[dhcp] Accept ProxyDHCP replies of type DHCPOFFER
+
+The PXE standard provides examples of ProxyDHCP responses being encoded both
+as type DHCPOFFER and DHCPACK, but currently we only accept DHCPACKs. Since
+there are PXE servers in existence that respond to ProxyDHCPREQUESTs with
+DHCPOFFERs, modify gPXE's ProxyDHCP pruning logic to treat both types of
+responses equally.
+
+Signed-off-by: Marty Connor <mdc@etherboot.org>
+---
+
+diff --git a/src/net/udp/dhcp.c b/src/net/udp/dhcp.c
+index b0dd952..ac4f82c 100644
+--- a/src/net/udp/dhcp.c
++++ b/src/net/udp/dhcp.c
+@@ -627,7 +627,7 @@ static void dhcp_proxy_rx ( struct dhcp_session *dhcp,
+ 	/* Filter out unacceptable responses */
+ 	if ( peer->sin_port != dhcp->proxy_port )
+ 		return;
+-	if ( msgtype != DHCPACK )
++	if ( ( msgtype != DHCPOFFER ) && ( msgtype != DHCPACK ) )
+ 		return;
+ 	if ( server_id.s_addr /* Linux PXE server omits server ID */ &&
+ 	     ( server_id.s_addr != dhcp->proxy_server.s_addr ) )

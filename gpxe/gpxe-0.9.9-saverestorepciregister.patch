@@ -1,0 +1,42 @@
+From: Bernhard Kohl <bernhard.kohl@nsn.com>
+Date: Thu, 21 Jan 2010 23:13:48 +0000 (-0500)
+Subject: [pci] Save and restore PCI command register
+X-Git-Url: http://git.etherboot.org/?p=gpxe.git;a=commitdiff_plain;h=466d8fc234cf32cb63d9d773e2f92f51860165f9
+
+[pci] Save and restore PCI command register
+
+This seems to be necessary for some types of PCI devices. We had
+problems when using gPXE in KVM virtual machines with direct
+PCI device access.
+
+Signed-off-by: Bernhard Kohl <bernhard.kohl@nsn.com>
+Signed-off-by: Shao Miller <shao.miller@yrdsb.edu.on.ca>
+Modified-by: Marty Connor <mdc@etherboot.org>
+Signed-off-by: Marty Connor <mdc@etherboot.org>
+---
+
+diff --git a/src/drivers/bus/pciextra.c b/src/drivers/bus/pciextra.c
+index 1dd63ee..74c4099 100644
+--- a/src/drivers/bus/pciextra.c
++++ b/src/drivers/bus/pciextra.c
+@@ -60,8 +60,11 @@ int pci_find_capability ( struct pci_device *pci, int cap ) {
+  * function.
+  */
+ unsigned long pci_bar_size ( struct pci_device *pci, unsigned int reg ) {
++	uint16_t cmd;
+ 	uint32_t start, size;
+ 
++	/* Save the original command register */
++	pci_read_config_word ( pci, PCI_COMMAND, &cmd );
+ 	/* Save the original bar */
+ 	pci_read_config_dword ( pci, reg, &start );
+ 	/* Compute which bits can be set */
+@@ -70,6 +73,8 @@ unsigned long pci_bar_size ( struct pci_device *pci, unsigned int reg ) {
+ 	/* Restore the original size */
+ 	pci_write_config_dword ( pci, reg, start );
+ 	/* Find the significant bits */
++	/* Restore the original command register. This reenables decoding. */
++	pci_write_config_word ( pci, PCI_COMMAND, cmd );
+ 	if ( start & PCI_BASE_ADDRESS_SPACE_IO ) {
+ 		size &= PCI_BASE_ADDRESS_IO_MASK;
+ 	} else {
