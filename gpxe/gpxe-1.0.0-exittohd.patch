@@ -1,0 +1,26 @@
+diff -urN gpxe-1.0.0/src/hci/commands/hdboot_cmd.c gpxe-1.0.0-exittohd/src/hci/commands/hdboot_cmd.c
+--- gpxe-1.0.0/src/hci/commands/hdboot_cmd.c	2010-02-06 14:29:55.000000000 -0500
++++ gpxe-1.0.0-exittohd/src/hci/commands/hdboot_cmd.c	2010-02-06 14:32:07.000000000 -0500
+@@ -30,3 +30,7 @@
+ 	.name = "hdboot",
+ 	.exec = hdboot_exec,
+ };
++struct command exit_command __command = {
++	.name = "exit",
++	.exec = hdboot_exec,
++};
+diff -urN gpxe-1.0.0/src/hci/shell.c gpxe-1.0.0-exittohd/src/hci/shell.c
+--- gpxe-1.0.0/src/hci/shell.c	2010-02-02 11:12:44.000000000 -0500
++++ gpxe-1.0.0-exittohd/src/hci/shell.c	2010-02-06 14:31:41.000000000 -0500
+@@ -51,8 +51,8 @@
+ }
+ 
+ /** "exit" command definition */
+-struct command exit_command __command = {
+-	.name = "exit",
++struct command xit_command __command = {
++	.name = "xit",
+ 	.exec = exit_exec,
+ };
+ 
+Binary files gpxe-1.0.0/src/hci/.shell.c.swp and gpxe-1.0.0-exittohd/src/hci/.shell.c.swp differ

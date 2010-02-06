@@ -1,5 +1,5 @@
 Name:           xnba-undi
-Version:        0.9.9
+Version:        1.0.0
 Release:        1
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
 Obsoletes:	gpxe-undi
@@ -18,17 +18,12 @@ BuildArch:	noarch
 Source0: gpxe-%{version}.tar.bz2
 Patch0: gpxe-0.9.7-branding.patch
 Patch1: gpxe-0.9.9-registeriscsionpxe.patch
-Patch2: gpxe-0.9.9-config.patch
+Patch2: gpxe-1.0.0-config.patch
 Patch3: gpxe-0.9.7-ignorepackets.patch
 Patch4: gpxe-0.9.7-kvmworkaround.patch
-Patch5: gpxe-0.9.7-hdboot.patch
+Patch5: gpxe-1.0.0-hdboot.patch
 Patch6: gpxe-0.9.7-xnbauserclass.patch
 Patch7: gpxe-0.9.7-undinet.patch
-Patch8: gpxe-0.9.9-acceptproxyoffer.patch
-Patch9: gpxe-0.9.9-ignorecloseddevs.patch
-Patch10: gpxe-0.9.9-ignorenonpxepxe.patch
-Patch11: gpxe-0.9.9-saverestorepciregister.patch
-Patch12: gpxe-0.9.9-tftpblockwrap.patch
 
 %description
 The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and gPXE script based booting.
@@ -44,11 +39,6 @@ The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides
 %patch5 -p1
 %patch6 -p1
 %patch7 -p1
-%patch8 -p1
-%patch9 -p1
-%patch10 -p1
-%patch11 -p1
-%patch12 -p1
 
 %build
 
