@@ -1,0 +1,60 @@
+diff -urN gpxe-1.0.0/src/config/config.c gpxe-1.0.0-hdboot/src/config/config.c
+--- gpxe-1.0.0/src/config/config.c	2010-02-02 11:12:44.000000000 -0500
++++ gpxe-1.0.0-hdboot/src/config/config.c	2010-02-06 12:10:51.000000000 -0500
+@@ -222,6 +222,9 @@
+ #ifdef SANBOOT_CMD
+ REQUIRE_OBJECT ( sanboot_cmd );
+ #endif
++#ifdef HDBOOT_CMD
++REQUIRE_OBJECT ( hdboot_cmd );
++#endif
+ #ifdef LOGIN_CMD
+ REQUIRE_OBJECT ( login_cmd );
+ #endif
+diff -urN gpxe-1.0.0/src/config/general.h gpxe-1.0.0-hdboot/src/config/general.h
+--- gpxe-1.0.0/src/config/general.h	2010-02-06 12:07:39.000000000 -0500
++++ gpxe-1.0.0-hdboot/src/config/general.h	2010-02-06 12:11:10.000000000 -0500
+@@ -116,6 +116,7 @@
+ #define IMAGE_CMD		/* Image management commands */
+ #undef DHCP_CMD		/* DHCP management commands */
+ #undef SANBOOT_CMD		/* SAN boot commands */
++#define HDBOOT_CMD		/* HD boot commands */
+ #undef LOGIN_CMD		/* Login command */
+ #undef	TIME_CMD		/* Time commands */
+ #undef	DIGEST_CMD		/* Image crypto digest commands */
+diff -urN gpxe-1.0.0/src/hci/commands/hdboot_cmd.c gpxe-1.0.0-hdboot/src/hci/commands/hdboot_cmd.c
+--- gpxe-1.0.0/src/hci/commands/hdboot_cmd.c	1969-12-31 19:00:00.000000000 -0500
++++ gpxe-1.0.0-hdboot/src/hci/commands/hdboot_cmd.c	2010-02-06 12:10:51.000000000 -0500
+@@ -0,0 +1,32 @@
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <getopt.h>
++#include <int13.h>
++#include <gpxe/command.h>
++#include <usr/autoboot.h>
++
++/**
++ * The "hdboot" command
++ *
++ * @v argc		Argument count
++ * @v argv		Argument list
++ * @ret rc		Exit code
++ */
++static int hdboot_exec ( int argc, char **argv ) {
++	if (argc != 1) {
++		printf ( "Usage:\n"
++		 "  %s\n"
++		 "\n"
++		 "Boot from the first HD\n",
++		 argv[0] );
++		return 1;
++	}
++        int13_boot ( 0x80 );
++	return 1;
++}
++
++struct command hdboot_command __command = {
++	.name = "hdboot",
++	.exec = hdboot_exec,
++};
