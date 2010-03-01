@@ -89,7 +89,7 @@ fi
 # Remove any existing entry, then add the current one
 #
  rmitab "conserver" > /dev/null 2>&1
- mkitab "conserver:2:once:/opt/conserver/bin/conserver -d -i -m 64"
+ mkitab "conserver:2:once:/usr/bin/startsrc -s conserver > /dev/console 2>&1" > /dev/null 2>&1
 
 # If the pid file exists, the daemon may be running
 #
@@ -108,7 +108,7 @@ if [[ -s /var/run/conserver.pid ]]; then
         if [[ $OLD_FORMAT = "0" ]]; then
             # 8.0 style config file, OK to try and start the daemon
             #
-            /opt/conserver/bin/conserver -d -i -m 64
+            /usr/bin/startsrc -s conserver > /dev/console 2>&1
         fi
     fi
 fi
