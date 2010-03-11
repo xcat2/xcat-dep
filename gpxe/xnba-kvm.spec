@@ -1,6 +1,6 @@
 Name:           xnba-kvm
 Version:        1.0.0
-Release:        2
+Release:        3
 Summary:        xNBA loader for virtual guests
 Obsoletes:      etherboot-zroms-kvm
 Provides:      etherboot-zroms-kvm
@@ -21,7 +21,7 @@ ExclusiveArch:  i386 x86_64
 
 Source0: gpxe-%{version}.tar.bz2
 Patch0: gpxe-0.9.7-branding.patch
-Patch1: gpxe-0.9.9-registeriscsionpxe.patch
+Patch1: gpxe-1.0.0-registeriscsionpxe.patch
 Patch2: gpxe-1.0.0-config.patch
 Patch3: gpxe-0.9.7-ignorepackets.patch
 Patch4: gpxe-0.9.7-kvmworkaround.patch
