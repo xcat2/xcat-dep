@@ -1,4 +1,4 @@
-Name: atftp
+Name: atftp-xcat
 Summary: Advanced Trivial File Transfer Protocol (ATFTP) - TFTP server
 Group: System Environment/Daemons
 Version: 0.7
@@ -15,6 +15,7 @@ Patch4: dfsg-3-mclistfix.diff
 Buildroot: /var/tmp/atftp-buildroot
 Packager: Allen Reese <areese@lnxi.com>
 Conflicts: tftp-server
+Obsoletes: atftp
 
 
 %description
