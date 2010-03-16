@@ -16,7 +16,7 @@ Buildroot: /var/tmp/atftp-buildroot
 Packager: Allen Reese <areese@lnxi.com>
 Conflicts: tftp-server
 Obsoletes: atftp
-
+Provides: atftp
 
 %description
 Multithreaded TFTP server implementing all options (option extension and
@@ -55,7 +55,6 @@ make
 %makeinstall
 mkdir -p "$RPM_BUILD_ROOT"/etc/init.d
 cp %{SOURCE1} "$RPM_BUILD_ROOT"/etc/init.d
-
 
 
 %files
