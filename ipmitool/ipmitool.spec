@@ -1,12 +1,11 @@
-Name:         ipmitool
+Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
-Conflicts:    OpenIPMI-tools
 Version:      1.8.11
-Release:      2
+Release:      1
 License:      BSD
 Group:        Utilities
-Packager:     Duncan Laurie <duncan@iceblink.org>
-Source:       %{name}-%{version}.tar.gz
+Packager:     Jarrod Johnson <jbjohnso@us.ibm.com>
+Source:       ipmitool-%{version}.tar.gz
 Patch:        ipmitool-saneretry.patch
 Patch2:       ipmitool-spdfix.patch
 Buildroot:    /var/tmp/ipmitool-root
@@ -31,7 +30,7 @@ if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
     rm -rf $RPM_BUILD_ROOT
 fi
 
-%setup
+%setup -n ipmitool-%{version}
 %patch -p1
 %patch2 -p1
 
@@ -49,7 +48,9 @@ fi
 make
 
 %install
-make DESTDIR=$RPM_BUILD_ROOT install-strip
+strip src/ipmitool
+mkdir -p $RPM_BUILD_ROOT/opt/xcat/bin
+cp src/ipmitool $RPM_BUILD_ROOT/opt/xcat/bin/ipmitool-xcat
 
 %clean
 if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
@@ -57,12 +58,7 @@ if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
 fi
 
 %files
-%defattr(755,root,root)
-%attr(755,root,root) %{_bindir}/*
-%attr(755,root,root) %{_sbindir}/*
-%{_datadir}/ipmitool/*
-%{_mandir}/man*/*
-%doc %{_datadir}/doc/ipmitool
+%attr(755,root,root) /opt/xcat/bin/ipmitool-xcat
 
 
 %changelog
