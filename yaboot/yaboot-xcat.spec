@@ -1,16 +1,16 @@
 %define pkg yaboot-xcat
-%define ver 1.3.14
+%define ver 1.3.15
 
 Summary: yaboot binary for tftp server
 Name: %{pkg}
 Version: %{ver}
-Release: 2
+Release: 05122010
 Group: System/Administration
 License: GPL2
 URL: http://yaboot.ozlabs.org/
-Source: http://yaboot.ozlabs.org/releases/yaboot-1.3.14.tar.gz
-Patch0: yaboot-fixes.patch
-Patch1: yaboot-buf-expand.patch
+Source: yaboot-%{ver}-%{release}.tar.gz
+Patch0: yaboot-skipmac.patch
+Patch1: yaboot-32bitbuild.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 Prefix: %{_prefix}
 BuildArch: noarch
@@ -22,7 +22,7 @@ ppc nodes.
 
 %prep
 %{__rm} -rf %{buildroot}
-%setup -q -n yaboot-%{ver}
+%setup -q -n yaboot-%{ver}-%{release}
 %patch0 -p1
 %patch1 -p1
 
