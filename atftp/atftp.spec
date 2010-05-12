@@ -2,7 +2,7 @@ Name: atftp-xcat
 Summary: Advanced Trivial File Transfer Protocol (ATFTP) - TFTP server
 Group: System Environment/Daemons
 Version: 0.7
-Release: 9
+Release: 10 
 License: GPL
 Vendor: Linux Networx Inc.
 Source: atftp_0.7.dfsg.orig.tar.gz
@@ -46,7 +46,7 @@ files using the TFTP protocol.
 
 
 %build
-%configure
+%configure --disable-libwrap
 make
 
 
