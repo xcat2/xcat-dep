@@ -1,0 +1,56 @@
+diff -urN syslinux-3.86/com32/mboot/mboot.c syslinux-3.86-multibootif/com32/mboot/mboot.c
+--- syslinux-3.86/com32/mboot/mboot.c	2010-03-31 12:24:25.000000000 -0400
++++ syslinux-3.86-multibootif/com32/mboot/mboot.c	2010-05-14 17:08:13.898848924 -0400
+@@ -93,9 +93,18 @@
+     char **argp, **argx;
+     struct module_data *mp;
+     int rv;
++    int firstmod = 1;
+     int module_count = 1;
+     int arglen;
+     const char module_separator[] = "---";
++    com32sys_t reg;
++    char *bootifstr;
++    reg.eax.w[0] = 0x000f; /* Get IPAPPEND strings */
++    __intcall(0x22,&reg,&reg);
++    if (!(reg.eflags.l & EFLAGS_CF)) {
++	bootifstr = MK_PTR(reg.es,
++		*(uint16_t *) MK_PTR(reg.es, reg.ebx.w[0] + 2));
++    }   
+ 
+     for (argp = argv; *argp; argp++) {
+ 	if (!strcmp(*argp, module_separator))
+@@ -128,9 +137,17 @@
+ 	arglen = 0;
+ 	for (argx = argp; *argx && strcmp(*argx, module_separator); argx++)
+ 	    arglen += strlen(*argx) + 1;
++        if (firstmod) { 
++           arglen += strlen(bootifstr) + 1;
++        }
+ 
+ 	if (arglen == 0) {
+-	    mp->cmdline = strdup("");
++	    if (firstmod) { /* first module, let's add BOOTIF for fun */
++		firstmod=0;
++                mp->cmdline = strdup(bootifstr);
++           } else {
++	        mp->cmdline = strdup("");
++           }
+ 	} else {
+ 	    char *p;
+ 	    mp->cmdline = p = malloc(arglen);
+@@ -138,7 +155,13 @@
+ 		p = strpcpy(p, *argp);
+ 		*p++ = ' ';
+ 	    }
+-	    *--p = '\0';
++            if (firstmod) { /* first module, let's add BOOTIF for fun */
++		firstmod=0;
++		p = strpcpy(p,bootifstr);
++		*p = '\0';
++	   } else {
++	    	*--p = '\0';
++	   }
+ 	}
+ 	mp++;
+ 	if (*argp)
