@@ -56,26 +56,28 @@ Available from dep-aix-*.tar.gz.
 23. net-snmp-devel-5.4.2.1-1
 24. net-snmp-perl-5.4.2.1-1
 25. bash-3.2-1.aix5.2.ppc.rpm
-26. rsync-2.6.2-1.aix5.1.ppc.rpm
+26. rsync-3.0.6-1.aix5.3.ppc.rpm
 27. libxml2-2.6.21-4.aix5.2.ppc.rpm
 28. wget-1.9.1-1.aix5.1.ppc.rpm
 29. curl-7.19.6-1ssl.aix5.3.ppc.rpm
 30. unixODBC-2.2.15-32bit.aix5.3.ppc.rpm
 31. expat-2.0.1-2.aix5.1.ppc.rpm
 32. popt-1.7-2.aix5.1.ppc.rpm
+33. perl-Net-IP-1.25-1
+34. perl-Net-DNS-0.66-1
 
 Optional
 Available from xcat-mysql-*.tar.gz.
-33. perl-DBD-mysql-4.007-1
-34. xcat-mysql-5.0-1 (mysql-5.1-37)
+35. perl-DBD-mysql-4.007-1
+36. xcat-mysql-5.0-1 (mysql-5.1-37)
 	NOTE: This is a newer version of MySQL then was shipped in previous 
 	tarballs. If you have an earlier version installed you must follow
 	the migration instructions in the xCAT documentation to upgrade
 	to this newer version!!!
-35. xcat-mysql-connector-odbc-3.51-27.aix5.3.ppc.rpm
+37. xcat-mysql-connector-odbc-3.51-27.aix5.3.ppc.rpm
 
 When you are ready to install the RPM packages contained in the 
-dep-aix-2.2-snap*.tar.gz tar file you can run the "instoss" script, 
+dep-aix-*.tar.gz tar file you can run the "instoss" script, 
 which is included as a convenience.
 
 Many of the packages come from the "AIX Toolbox for Linux Applications"
