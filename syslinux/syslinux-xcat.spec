@@ -4,7 +4,7 @@
 Summary: Kernel loader which uses a FAT, ext2/3 or iso9660 filesystem or a PXE network
 Name: syslinux
 Version: %{RPMVERSION}
-Release: 1
+Release: 2
 License: GPL
 Group: System/Boot
 Source0: ftp://ftp.kernel.org/pub/linux/utils/boot/syslinux/%{name}-%{VERSION}.tar.bz2
@@ -61,6 +61,7 @@ booting in the /opt/xcat/share/xcat/netboot/syslinux directory.
 
 %build
 make CC='%{my_cc}' clean
+make CC='%{my_cc}' -C com32
 make CC='%{my_cc}' installer
 make CC='%{my_cc}' -C sample tidy
 
