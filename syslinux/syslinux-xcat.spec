@@ -1,6 +1,6 @@
 # -*- rpm -*-
-%define RPMVERSION 3.82
-%define VERSION    3.82
+%define RPMVERSION 3.86
+%define VERSION    3.86
 Summary: Kernel loader which uses a FAT, ext2/3 or iso9660 filesystem or a PXE network
 Name: syslinux
 Version: %{RPMVERSION}
@@ -8,6 +8,7 @@ Release: 1
 License: GPL
 Group: System/Boot
 Source0: ftp://ftp.kernel.org/pub/linux/utils/boot/syslinux/%{name}-%{VERSION}.tar.bz2
+Patch0: syslinux-3.86-multibootif.patch
 ExclusiveArch: i386 i486 i586 i686 athlon pentium4 x86_64
 Packager: H. Peter Anvin <hpa@zytor.com>
 Buildroot: %{_tmppath}/%{name}-%{VERSION}-root
@@ -56,6 +57,7 @@ booting in the /opt/xcat/share/xcat/netboot/syslinux directory.
 
 %prep
 %setup -q -n syslinux-%{VERSION}
+%patch0 -p1
 
 %build
 make CC='%{my_cc}' clean
@@ -69,6 +71,9 @@ make CC='%{my_cc}' install-all \
 	LIBDIR=%{_libdir} DATADIR=%{_datadir} \
 	MANDIR=%{_mandir} INCDIR=%{_includedir} \
 	TFTPBOOT=/opt/xcat/share/xcat/netboot/syslinux EXTLINUXDIR=/boot/extlinux
+rm %{buildroot}/usr/share/syslinux/dosutil/copybs.com
+rm %{buildroot}/usr/share/syslinux/dosutil/eltorito.sys
+rm %{buildroot}/usr/share/syslinux/dosutil/mdiskchk.com
 make CC='%{my_cc}' -C sample tidy
 mkdir -p %{buildroot}/etc
 ( cd %{buildroot}/etc && ln -s ../boot/extlinux/extlinux.conf . )
