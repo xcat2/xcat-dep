@@ -1,0 +1,118 @@
+diff --git a/Makefile b/Makefile
+index 8f2b1c4..3603c7d 100644
+--- a/Makefile
++++ b/Makefile
+@@ -121,6 +121,9 @@ mkofboot:
+ 		false; 									\
+ 	fi
+ 
++%.i: %.c
++	$(CC) $(YBCFLAGS) -E -o $@ $<
++
+ %.o: %.c
+ 	$(CC) $(YBCFLAGS) -c -o $@ $<
+ 
+diff --git a/include/file.h b/include/file.h
+index b2d9c63..9990f4b 100644
+--- a/include/file.h
++++ b/include/file.h
+@@ -68,6 +68,7 @@ struct boot_file_t {
+ 	ino_t		inode;
+ 	__u64           pos;
+ 	unsigned char*	buffer;
++	__u64		buffer_sz;
+ 	__u64   	len;
+ //	unsigned int	dev_blk_size;
+ //	unsigned int	part_start;
+diff --git a/second/fs_of.c b/second/fs_of.c
+index 1f48f4f..d2e7434 100644
+--- a/second/fs_of.c
++++ b/second/fs_of.c
+@@ -214,6 +214,7 @@ of_net_open(struct boot_file_t* file,
+ 	  DEBUG_LEAVE(FILE_IOERR);
+ 	  return FILE_IOERR;
+      }
++     file->buffer_sz = LOAD_BUFFER_SIZE;
+      memset(file->buffer, 0, LOAD_BUFFER_SIZE);
+ 
+      DEBUG_F("TFP...\n");
+diff --git a/second/yaboot.c b/second/yaboot.c
+index 0ccfed5..1241eec 100644
+--- a/second/yaboot.c
++++ b/second/yaboot.c
+@@ -1052,6 +1052,7 @@ yaboot_text_ui(void)
+      static struct boot_param_t	params;
+      void		*initrd_base;
+      unsigned long	initrd_size;
++     unsigned long	initrd_end;
+      void                *sysmap_base;
+      unsigned long	sysmap_size;
+      kernel_entry_t      kernel_entry;
+@@ -1227,8 +1228,67 @@ yaboot_text_ui(void)
+ 			      initrd_read = file.fs->read(&file, INITRD_CHUNKSIZE, initrd_more);
+ 			      DEBUG_F("  block at %p rc=%lu\n",initrd_more,initrd_read);
+ 			      initrd_size += initrd_read;
++			      initrd_end = initrd_more+INITRD_CHUNKSIZE;
+ 			 }
+ 		    }
++		    /* If we netbooted and got this far, we may have filled the
++		     * RMA.  We're about the free the TFTP load buffer to we
++		     * can "shuffle" things around so that the booted kernel
++		     * has some memory to run with */
++                    if (!is_elf64(&loadinfo)) {
++                         DEBUG_F("Not running a 64-kernel\n");
++                    /* Is this check enough? */
++                    } else if (loadinfo.base == file.buffer + file.buffer_sz) {
++                         DEBUG_F("file->buffer %lx -> %lx (%lx)\n",
++                                 (unsigned long)(file.buffer),
++                                 (unsigned long)(file.buffer+file.buffer_sz),
++                                 (unsigned long)(file.buffer_sz));
++                         DEBUG_F("vmlinux %lx -> %lx (%lx)\n",
++                                 (unsigned long)(loadinfo.base),
++                                 (unsigned long)(loadinfo.base+loadinfo.memsize),
++                                 (unsigned long)(loadinfo.memsize));
++                         DEBUG_F("initrd %lx -> %lx (%lx)\n",
++                                 (unsigned long)(initrd_base),
++                                 (unsigned long)(initrd_base+initrd_size),
++                                 (unsigned long)(initrd_size));
++
++                         /* Check to see if we're near the top of the RMA */
++                         /* Cheat and assume the RMA == 128Mb */
++                         if (initrd_end > 0x7000000) {
++                              unsigned long new_initrd_end, free_len;
++                              unsigned long initrd_claim_len = initrd_end - (unsigned long)initrd_base;
++
++                              memmove(file.buffer, loadinfo.base,
++                                      loadinfo.memsize+initrd_size);
++                              loadinfo.base = file.buffer;
++                              initrd_base = loadinfo.base+loadinfo.memsize;
++
++                              new_initrd_end = (unsigned long)initrd_base+initrd_claim_len;
++                              free_len = initrd_end - (unsigned long)new_initrd_end;
++                              file.buffer = NULL;
++                              file.buffer_sz = 0;
++                              memset((void*)new_initrd_end, 0x0, free_len);
++                              prom_release((void*)new_initrd_end, free_len);
++
++                              DEBUG_F("Releaseing from 0x%08lx -> 0x%08lx\n",
++                                      new_initrd_end, free_len);
++
++                              DEBUG_F("file->buffer %lx -> %lx (%lx)\n",
++                                      (unsigned long)(file.buffer),
++                                      (unsigned long)(file.buffer+file.buffer_sz),
++                                      (unsigned long)(file.buffer_sz));
++                              DEBUG_F("vmlinux %lx -> %lx (%lx)\n",
++                                      (unsigned long)(loadinfo.base),
++                                      (unsigned long)(loadinfo.base+loadinfo.memsize),
++                                      (unsigned long)(loadinfo.memsize));
++                              DEBUG_F("initrd %lx -> %lx (%lx)\n",
++                                      (unsigned long)(initrd_base),
++                                      (unsigned long)(initrd_base+initrd_size),
++                                      (unsigned long)(initrd_size));
++                         } else {
++                              DEBUG_F("Looks like we do not need to move the kernel\n");
++                         }
++                    }
+ 		    file.fs->close(&file);
+ 		    memset(&file, 0, sizeof(file));
+ 	       }
