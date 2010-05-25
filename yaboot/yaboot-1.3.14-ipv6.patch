@@ -1,0 +1,129 @@
+diff -up yaboot-1.3.14/include/file.h.ipv6 yaboot-1.3.14/include/file.h
+--- yaboot-1.3.14/include/file.h.ipv6	2010-02-12 07:57:43.000000000 +0100
++++ yaboot-1.3.14/include/file.h	2010-02-12 07:57:43.000000000 +0100
+@@ -46,6 +46,11 @@ struct boot_fspec_t {
+ 	char*	bootp_retries;	/* Bootp retries */
+ 	char*	tftp_retries;	/* TFTP retries */
+ 	char*	addl_params;	/* copy all additional parameters */
++
++	/* Following fields are used only in ipv6 format */
++	int	is_ipv6;	/* is ipv6 specified ? */
++	char*	dhcpv6;		/* dhcpv6 string */
++	char*	blksize;	/* blksize string */
+ };
+ 
+ struct boot_file_t {
+diff -up yaboot-1.3.14/include/prom.h.ipv6 yaboot-1.3.14/include/prom.h
+--- yaboot-1.3.14/include/prom.h.ipv6	2010-02-12 07:57:42.000000000 +0100
++++ yaboot-1.3.14/include/prom.h	2010-02-12 08:01:12.000000000 +0100
+@@ -40,6 +40,7 @@ typedef void *phandle;
+ #define PROM_CLAIM_MAX_ADDR	0x8000000
+ #define BOOTLASTSZ		1024
+ #define FW_NBR_REBOOTSZ		4
++#define	TOK_IPV6		"ipv6"
+ 
+ struct prom_args;
+ typedef int (*prom_entry)(struct prom_args *);
+diff -up yaboot-1.3.14/second/file.c.ipv6 yaboot-1.3.14/second/file.c
+--- yaboot-1.3.14/second/file.c.ipv6	2010-02-12 07:57:43.000000000 +0100
++++ yaboot-1.3.14/second/file.c	2010-02-12 07:57:43.000000000 +0100
+@@ -193,6 +193,50 @@ extract_netinfo_args(struct boot_fspec_t
+ }
+ 
+ /*
++ * Extract all the ipv6 arguments from the bootpath provided and fill result
++ * Syntax: ipv6,[dhcpv6[=diaddr,]]ciaddr=c_iaddr,giaddr=g_iaddr,siaddr=s_iaddr,
++ *      filename=file_name,tftp-retries=tftp_retries,blksize=block_size
++ * Returns 1 on success, 0 on failure.
++ */
++static int
++extract_ipv6_args(char *imagepath, struct boot_fspec_t *result)
++{
++     char *str, *tmp;
++     int total_len;
++
++     result->is_ipv6 = 1;
++
++     /* Just allocate the max required size */
++     total_len = strlen(imagepath) + 1;
++     str = malloc(total_len);
++     if (!str)
++	return 0;
++
++     if ((tmp = strstr(imagepath, "dhcpv6=")) != NULL)
++	result->dhcpv6 = scopy(&str, &tmp);
++
++     if ((tmp = strstr(imagepath, "ciaddr=")) != NULL)
++	result->ciaddr = scopy(&str, &tmp);
++
++     if ((tmp = strstr(imagepath, "giaddr=")) != NULL)
++	result->giaddr = scopy(&str, &tmp);
++
++     if ((tmp = strstr(imagepath, "siaddr=")) != NULL)
++	result->siaddr = scopy(&str, &tmp);
++
++     if ((tmp = strstr(imagepath, "filename=")) != NULL)
++	result->file = scopy(&str, &tmp);
++
++     if ((tmp = strstr(imagepath, "tftp-retries=")) != NULL)
++	result->tftp_retries = scopy(&str, &tmp);
++
++     if ((tmp = strstr(imagepath, "blksize=")) != NULL)
++	result->blksize = scopy(&str, &tmp);
++
++     return 1;
++}
++
++/*
+  * Extract all the arguments provided in the imagepath and fill it in result.
+  * Returns 1 on success, 0 on failure.
+  */
+@@ -206,9 +250,14 @@ extract_netboot_args(char *imagepath, st
+      if (!imagepath)
+ 	  return 1;
+ 
+-     ret = extract_ipv4_args(imagepath, result);
++     if (strstr(imagepath, TOK_IPV6))
++	  ret = extract_ipv6_args(imagepath, result);
++     else
++	  ret = extract_ipv4_args(imagepath, result);
++ 
+      ret |= extract_netinfo_args(result);
+ 
++     DEBUG_F("ipv6 = <%d>\n", result->is_ipv6);
+      DEBUG_F("siaddr = <%s>\n", result->siaddr);
+      DEBUG_F("file = <%s>\n", result->file);
+      DEBUG_F("ciaddr = <%s>\n", result->ciaddr);
+@@ -216,6 +265,8 @@ extract_netboot_args(char *imagepath, st
+      DEBUG_F("bootp_retries = <%s>\n", result->bootp_retries);
+      DEBUG_F("tftp_retries = <%s>\n", result->tftp_retries);
+      DEBUG_F("addl_params = <%s>\n", result->addl_params);
++     DEBUG_F("dhcpv6 = <%s>\n", result->dhcpv6);
++     DEBUG_F("blksize = <%s>\n", result->blksize);
+    
+      return ret;
+ }
+diff -up yaboot-1.3.14/second/fs_of.c.ipv6 yaboot-1.3.14/second/fs_of.c
+--- yaboot-1.3.14/second/fs_of.c.ipv6	2010-02-12 07:57:43.000000000 +0100
++++ yaboot-1.3.14/second/fs_of.c	2010-02-12 07:57:43.000000000 +0100
+@@ -148,14 +148,18 @@ of_net_open(struct boot_file_t* file,
+ 		    *p = '\\';
+      }
+ 
+-     DEBUG_F("siaddr <%s>; filename <%s>; ciaddr <%s>; giaddr <%s>;\n",
+-		fspec->siaddr, filename, fspec->ciaddr, fspec->giaddr);
++     DEBUG_F("siaddr <%s>; filename <%s>; ciaddr <%s>; giaddr <%s>; ipv6 <%d>\n",
++		fspec->siaddr, filename, fspec->ciaddr, fspec->giaddr, fspec->is_ipv6);
+      strncpy(buffer, fspec->dev, 768);
++     if (fspec->is_ipv6)
++	  strcat(buffer, TOK_IPV6 ",");
+      /* If we didn't get a ':' include one */
+      if (fspec->dev[strlen(fspec->dev)-1] != ':')
+           strcat(buffer, ":");
+      strcat(buffer, fspec->siaddr);
+      strcat(buffer, ",");
++     if (fspec->is_ipv6 && (strstr(filename, "filename=") == NULL))
++	  strcat(buffer, "filename=");
+      strcat(buffer, filename);
+      strcat(buffer, ",");
+      strcat(buffer, fspec->ciaddr);

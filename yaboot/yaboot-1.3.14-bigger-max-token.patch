@@ -1,0 +1,12 @@
+diff -up yaboot-1.3.14/second/cfg.c.bigger-max-token yaboot-1.3.14/second/cfg.c
+--- yaboot-1.3.14/second/cfg.c.bigger-max-token	2008-11-12 14:39:11.000000000 -0500
++++ yaboot-1.3.14/second/cfg.c	2008-11-12 14:39:17.000000000 -0500
+@@ -41,7 +41,7 @@ typedef struct {
+      void *data;
+ } CONFIG;
+ 
+-#define MAX_TOKEN 200
++#define MAX_TOKEN 511
+ #define MAX_VAR_NAME MAX_TOKEN
+ #define EOF -1
+ 

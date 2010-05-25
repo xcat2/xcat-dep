@@ -1,0 +1,715 @@
+diff -pur yaboot-1.3.14.orig/include/debug.h yaboot-1.3.14/include/debug.h
+--- yaboot-1.3.14.orig/include/debug.h	2007-08-18 00:29:26.000000000 +1000
++++ yaboot-1.3.14/include/debug.h	2010-02-08 13:07:31.954223039 +1100
+@@ -32,8 +32,8 @@
+     prom_printf( fmt, ## args );\
+ }
+ # define DEBUG_OPEN DEBUG_F( "dev=%s, part=0x%p (%d), file_name=%s\n",\
+-                             dev_name, part, part ? part->part_number : -1,\
+-                             file_name)
++                             fspec->dev, part, part ? part->part_number : -1,\
++                             fspec->file)
+ # define DEBUG_SLEEP prom_sleep(3)
+ #else
+ #define DEBUG_ENTER
+diff -pur yaboot-1.3.14.orig/include/file.h yaboot-1.3.14/include/file.h
+--- yaboot-1.3.14.orig/include/file.h	2007-08-18 00:29:26.000000000 +1000
++++ yaboot-1.3.14/include/file.h	2010-02-08 13:07:31.955220185 +1100
+@@ -39,7 +39,13 @@ struct boot_file_t;
+ struct boot_fspec_t {
+ 	char*	dev;		/* OF device path */
+ 	int	part;		/* Partition number or -1 */
++	char*	siaddr;		/* Server address */
+ 	char*	file;		/* File path */
++	char*	ciaddr;		/* Client address */
++	char*	giaddr;		/* Gateway address */
++	char*	bootp_retries;	/* Bootp retries */
++	char*	tftp_retries;	/* TFTP retries */
++	char*	addl_params;	/* copy all additional parameters */
+ };
+ 
+ struct boot_file_t {
+@@ -63,7 +69,7 @@ struct boot_file_t {
+ };
+ 
+ extern int
+-open_file(const struct boot_fspec_t*	spec,
++open_file(struct boot_fspec_t*	spec,
+ 	  struct boot_file_t*		file);
+ 
+ extern int
+diff -pur yaboot-1.3.14.orig/include/fs.h yaboot-1.3.14/include/fs.h
+--- yaboot-1.3.14.orig/include/fs.h	2007-08-18 00:29:26.000000000 +1000
++++ yaboot-1.3.14/include/fs.h	2010-02-08 13:07:31.958474719 +1100
+@@ -27,14 +27,14 @@
+ #include "file.h"
+ 
+ int fserrorno;
++struct boot_fspec_t;
+ 
+ struct fs_t {
+ 	const char* name;
+ 
+ 	int (*open)(	struct boot_file_t*	file,
+-			const char*		dev_name,
+ 			struct partition_t*	part,
+-			const char*		file_name);
++			struct boot_fspec_t*	fspec);
+ 
+ 	int (*read)(	struct boot_file_t*	file,
+ 			unsigned int		size,
+@@ -49,7 +49,7 @@ struct fs_t {
+ extern const struct fs_t *fs_of;
+ extern const struct fs_t *fs_of_netboot;
+ 
+-const struct fs_t *fs_open(struct boot_file_t *file, const char *dev_name,
+-			  struct partition_t *part, const char *file_name);
++const struct fs_t *fs_open(struct boot_file_t *file,
++			  struct partition_t *part, struct boot_fspec_t *fspec);
+ 
+ #endif
+diff -pur yaboot-1.3.14.orig/second/file.c yaboot-1.3.14/second/file.c
+--- yaboot-1.3.14.orig/second/file.c	2007-08-18 00:29:26.000000000 +1000
++++ yaboot-1.3.14/second/file.c	2010-02-08 13:07:31.960189430 +1100
+@@ -38,19 +38,56 @@
+ 
+ extern char bootdevice[];
+ 
+-static char *netdev_path_to_filename(const char *path)
++/* Convert __u32 into std, dotted quad string, leaks like a sive :( */
++static char *
++ipv4_to_str(__u32 ip)
+ {
+-     char *tmp, *args, *filename;
+-     size_t len;
++     char *buf = malloc(sizeof("000.000.000.000"));
+ 
+-     DEBUG_F("path = %s\n", path);
++     sprintf(buf,"%u.%u.%u.%u",
++             (ip & 0xff000000) >> 24, (ip & 0x00ff0000) >> 16,
++             (ip & 0x0000ff00) >>  8, (ip & 0x000000ff));
+ 
+-     if (!path)
++     return buf;
++}
++
++/*
++ * Copy the string from source to dest till newline or comma(,) is seen
++ * in the source.
++ * Move source and dest pointers respectively.
++ * Returns pointer to the start of the string that has just been copied.
++ */
++static char *
++scopy(char **dest, char **source)
++{
++     char *ret = *dest;
++
++     if (!**source)
+ 	  return NULL;
+ 
+-     args = strrchr(path, ':');
++     while (**source != ',' && **source != '\0')
++	  *(*dest)++ = *(*source)++;
++     if (**source != '\0')
++	  *(*source)++;
++     **dest = '\0';
++     *(*dest)++;
++     return ret;
++}
++
++/*
++ * Extract all the ipv4 arguments from the bootpath provided and fill result
++ * Returns 1 on success, 0 on failure.
++ */
++static int
++extract_ipv4_args(char *imagepath, struct boot_fspec_t *result)
++{
++     char *tmp, *args, *str, *start;
++
++     args = strrchr(imagepath, ':');
+      if (!args)
+-	  return NULL;
++	  return 1;
++
++     start = args; /* used to see if we read any optional parameters */
+ 
+      /* The obp-tftp device arguments should be at the end of
+       * the argument list.  Skip over any extra arguments (promiscuous,
+@@ -77,46 +114,110 @@ static char *netdev_path_to_filename(con
+      if (tmp && tmp > args)
+ 	  args = tmp + strlen("rarp");
+ 
+-     args = strchr(args, ',');
++     if (args != start) /* we read some parameters, so go past the next comma(,) */
++	  args = strchr(args, ',');
+      if (!args)
+-	  return NULL;
++	  return 1;
++
++     str = malloc(strlen(args) + 1); /*long enough to hold all strings */
++     if (!str)
++	  return 0;
++
++     if (args[-1] != ':')
++	  args++; /* If comma(,) is not immediately followed by ':' then go past the , */
+ 
+-     tmp = args;
+-     tmp--;
+-     /* If the preceding character is ':' then there were no
+-      * non-obp-tftp arguments and we know we're right up to the
+-      * filename.  Otherwise, we must advance args once more.
++     /*
++      * read the arguments in order: siaddr,filename,ciaddr,giaddr,
++      * bootp-retries,tftp-retries,addl_prameters
+       */
+-     args++;
+-     if (*tmp != ':') {
+-	  args = strchr(args, ',');
+-	  if (!args)
+-	       return NULL;
+-	  args++;
++     result->siaddr = scopy(&str, &args);
++     result->file = scopy(&str, &args);
++     result->ciaddr = scopy(&str, &args);
++     result->giaddr = scopy(&str, &args);
++     result->bootp_retries = scopy(&str, &args);
++     result->tftp_retries = scopy(&str, &args);
++     if (*args) {
++	  result->addl_params = strdup(args);
++	  if (!result->addl_params)
++		return 0;
+      }
++     return 1;
++}
+ 
+-     /* filename may be empty; e.g. enet:192.168.1.1,,192.168.1.2 */
+-     if (*args == ',') {
+-	  DEBUG_F("null filename\n");
+-	  return NULL;
++/*
++ * Check netinfo for ipv4 parameters and add them to the fspec iff the
++ * fspec has no existing value.
++ *
++ * Returns 1 on success, 0 on failure.
++ */
++static int
++extract_netinfo_args(struct boot_fspec_t *result)
++{
++     struct bootp_packet *packet;
++
++     /* Check to see if we can get the [scyg]iaddr fields from netinfo */
++     packet = prom_get_netinfo();
++     if (packet == NULL)
++          return 0;
++
++     DEBUG_F("We have a boot packet\n");
++     DEBUG_F(" siaddr = <%x>\n", packet->siaddr);
++     DEBUG_F(" ciaddr = <%x>\n", packet->ciaddr);
++     DEBUG_F(" yiaddr = <%x>\n", packet->yiaddr);
++     DEBUG_F(" giaddr = <%x>\n", packet->giaddr);
++
++     /* Try to fallback to yiaddr if ciaddr is empty. Broken? */
++     if (packet->ciaddr == 0 && packet->yiaddr != 0)
++          packet->ciaddr = packet->yiaddr;
++
++     if ((result->siaddr == NULL || *(result->siaddr) == NULL)
++         && packet->siaddr != 0)
++          result->siaddr = ipv4_to_str(packet->siaddr);
++     if ((result->ciaddr == NULL || *(result->ciaddr) == NULL)
++         && packet->ciaddr != 0)
++          result->ciaddr = ipv4_to_str(packet->ciaddr);
++     if ((result->giaddr == NULL || *(result->giaddr) == NULL)
++         && packet->giaddr != 0)
++          result->giaddr = ipv4_to_str(packet->giaddr);
++
++     /* FIXME: Yck! if we /still/ do not have a gateway then "cheat" and use
++      *        the server.  This will be okay if the client and server are on
++      *        the same IP network, if not then lets hope the server does ICMP
++      *        redirections */
++     if (result->giaddr == NULL) {
++          result->giaddr = ipv4_to_str(packet->siaddr);
++          DEBUG_F("Forcing giaddr to siaddr <%s>\n", result->giaddr);
+      }
+ 
+-     /* Now see whether there are more args following the filename. */
+-     tmp = strchr(args, ',');
+-     if (!tmp)
+-	  len = strlen(args) + 1;
+-     else
+-	  len = tmp - args + 1;
++     return 1;
++}
+ 
+-     filename = malloc(len);
+-     if (!filename)
+-	  return NULL;
++/*
++ * Extract all the arguments provided in the imagepath and fill it in result.
++ * Returns 1 on success, 0 on failure.
++ */
++static int
++extract_netboot_args(char *imagepath, struct boot_fspec_t *result)
++{
++     int ret;
++
++     DEBUG_F("imagepath = %s\n", imagepath);
+ 
+-     strncpy(filename, args, len);
+-     filename[len - 1] = '\0';
++     if (!imagepath)
++	  return 1;
+ 
+-     DEBUG_F("filename = %s\n", filename);
+-     return filename;
++     ret = extract_ipv4_args(imagepath, result);
++     ret |= extract_netinfo_args(result);
++
++     DEBUG_F("siaddr = <%s>\n", result->siaddr);
++     DEBUG_F("file = <%s>\n", result->file);
++     DEBUG_F("ciaddr = <%s>\n", result->ciaddr);
++     DEBUG_F("giaddr = <%s>\n", result->giaddr);
++     DEBUG_F("bootp_retries = <%s>\n", result->bootp_retries);
++     DEBUG_F("tftp_retries = <%s>\n", result->tftp_retries);
++     DEBUG_F("addl_params = <%s>\n", result->addl_params);
++   
++     return ret;
+ }
+ 
+ static char *netdev_path_to_dev(const char *path)
+@@ -163,6 +264,10 @@ static char *netdev_path_to_dev(const ch
+     - enet:,/tftpboot/vmlinux
+     - enet:bootp
+     - enet:0
++    - arguments for obp-tftp open as specified in section 4.1 of
++      http://playground.sun.com/1275/practice/obp-tftp/tftp1_0.pdf
++      [bootp,]siaddr,filename,ciaddr,giaddr,bootp-retries,tftp-retries
++      ex: enet:bootp,10.0.0.11,bootme,10.0.0.12,10.0.0.1,5,5
+    Supported only if defdevice == NULL
+     - disc
+     - any other device path lacking a :
+@@ -179,6 +284,9 @@ parse_device_path(char *imagepath, char 
+      char *defdev = NULL;
+      int device_kind = -1;
+ 
++     DEBUG_F("imagepath = %s; defdevice %s; defpart %d, deffile %s\n",
++		imagepath, defdevice, defpart, deffile);
++
+      result->dev = NULL;
+      result->part = -1;
+      result->file = NULL;
+@@ -247,10 +355,15 @@ parse_device_path(char *imagepath, char 
+      }
+ 
+      if (device_kind == FILE_DEVICE_NET) {
+-	  if (strchr(ipath, ':'))
+-	       result->file = netdev_path_to_filename(ipath);
+-	  else
++	  if (strchr(ipath, ':')) {
++	       if (extract_netboot_args(ipath, result) == 0)
++		   return 0;
++	  } else {
++               /* If we didn't get a ':' then look only in netinfo */
++	       if (extract_netinfo_args(result) == 0)
++		   return 0;
+ 	       result->file = strdup(ipath);
++          }
+ 
+ 	  if (!defdev)
+ 	       result->dev = netdev_path_to_dev(ipath);
+@@ -287,15 +400,14 @@ parse_device_path(char *imagepath, char 
+ 
+ static int
+ file_block_open(	struct boot_file_t*	file,
+-			const char*		dev_name,
+-			const char*		file_name,
++			struct boot_fspec_t*	fspec,
+ 			int			partition)
+ {
+      struct partition_t*	parts;
+      struct partition_t*	p;
+      struct partition_t*	found;
+ 
+-     parts = partitions_lookup(dev_name);
++     parts = partitions_lookup(fspec->dev);
+      found = NULL;
+ 
+ #if DEBUG
+@@ -308,7 +420,7 @@ file_block_open(	struct boot_file_t*	fil
+ 	  DEBUG_F("number: %02d, start: 0x%08lx, length: 0x%08lx\n",
+ 		  p->part_number, p->part_start, p->part_size );
+ 	  if (partition == -1) {
+-	       file->fs = fs_open( file, dev_name, p, file_name );
++	       file->fs = fs_open( file, p, fspec );
+ 	       if (file->fs == NULL || fserrorno != FILE_ERR_OK)
+ 		    continue;
+ 	       else {
+@@ -328,7 +440,7 @@ file_block_open(	struct boot_file_t*	fil
+       * cases, let OF figure out a default partition.
+       */
+      DEBUG_F( "Using OF defaults.. (found = %p)\n", found );
+-     file->fs = fs_open( file, dev_name, found, file_name );
++     file->fs = fs_open( file, found, fspec );
+ 
+ done:
+      if (parts)
+@@ -338,12 +450,10 @@ done:
+ }
+ 
+ static int
+-file_net_open(	struct boot_file_t*	file,
+-		const char*		dev_name,
+-		const char*		file_name)
++file_net_open(struct boot_file_t* file, struct boot_fspec_t *fspec)
+ {
+      file->fs = fs_of_netboot;
+-     return fs_of_netboot->open(file, dev_name, NULL, file_name);
++     return fs_of_netboot->open(file, NULL, fspec);
+ }
+ 
+ static int
+@@ -380,7 +490,7 @@ static struct fs_t fs_default =
+ };
+ 
+ 
+-int open_file(const struct boot_fspec_t* spec, struct boot_file_t* file)
++int open_file(struct boot_fspec_t* spec, struct boot_file_t* file)
+ {
+      int result;
+ 
+@@ -399,10 +509,10 @@ int open_file(const struct boot_fspec_t*
+      switch(file->device_kind) {
+      case FILE_DEVICE_BLOCK:
+ 	  DEBUG_F("device is a block device\n");
+-	  return file_block_open(file, spec->dev, spec->file, spec->part);
++	  return file_block_open(file, spec, spec->part);
+      case FILE_DEVICE_NET:
+ 	  DEBUG_F("device is a network device\n");
+-	  return file_net_open(file, spec->dev, spec->file);
++	  return file_net_open(file, spec);
+      }
+      return 0;
+ }
+diff -pur yaboot-1.3.14.orig/second/fs.c yaboot-1.3.14/second/fs.c
+--- yaboot-1.3.14.orig/second/fs.c	2007-08-18 00:29:26.000000000 +1000
++++ yaboot-1.3.14/second/fs.c	2010-02-08 13:07:31.963189318 +1100
+@@ -56,12 +56,12 @@ const struct fs_t *fs_of = &of_filesyste
+ const struct fs_t *fs_of_netboot = &of_net_filesystem;  /* needed by file.c */
+ 
+ const struct fs_t *
+-fs_open(struct boot_file_t *file, const char *dev_name,
+-	struct partition_t *part, const char *file_name)
++fs_open(struct boot_file_t *file,
++	struct partition_t *part, struct boot_fspec_t *fspec)
+ {
+      const struct fs_t **fs;
+      for (fs = block_filesystems; *fs; fs++)
+-	  if ((fserrorno = (*fs)->open(file, dev_name, part, file_name)) != FILE_ERR_BAD_FSYS)
++	  if ((fserrorno = (*fs)->open(file, part, fspec)) != FILE_ERR_BAD_FSYS)
+ 	       break;
+ 
+      return *fs;
+diff -pur yaboot-1.3.14.orig/second/fs_ext2.c yaboot-1.3.14/second/fs_ext2.c
+--- yaboot-1.3.14.orig/second/fs_ext2.c	2010-02-08 13:06:21.083438946 +1100
++++ yaboot-1.3.14/second/fs_ext2.c	2010-02-08 13:07:31.964188908 +1100
+@@ -46,9 +46,8 @@ typedef int FILE;
+ #include "ext2fs/ext2fs.h"
+ 
+ static int ext2_open(	struct boot_file_t*	file,
+-			const char*		dev_name,
+ 			struct partition_t*	part,
+-			const char*		file_name);
++			struct boot_fspec_t*	fspec);
+ static int ext2_read(	struct boot_file_t*	file,
+ 			unsigned int		size,
+ 			void*			buffer);
+@@ -123,14 +122,15 @@ void com_err (const char *a, long i, con
+ 
+ static int
+ ext2_open(	struct boot_file_t*	file,
+-		const char*		dev_name,
+ 		struct partition_t*	part,
+-		const char*		file_name)
++		struct boot_fspec_t*	fspec)
+ {
+      int result = 0;
+      int error = FILE_ERR_NOTFOUND;
+      static char buffer[1024];
+      int ofopened = 0;
++     char *dev_name = fspec->dev;
++     char *file_name = fspec->file;
+ 
+      DEBUG_ENTER;
+      DEBUG_OPEN;
+diff -pur yaboot-1.3.14.orig/second/fs_iso.c yaboot-1.3.14/second/fs_iso.c
+--- yaboot-1.3.14.orig/second/fs_iso.c	2007-08-18 00:29:26.000000000 +1000
++++ yaboot-1.3.14/second/fs_iso.c	2010-02-08 13:07:31.965185705 +1100
+@@ -29,9 +29,8 @@
+ #include "errors.h"
+ 
+ static int iso_open(	struct boot_file_t*	file,
+-			const char*		dev_name,
+ 			struct partition_t*	part,
+-			const char*		file_name);
++			struct boot_fspec_t*	fspec);
+ static int iso_read(	struct boot_file_t*	file,
+ 			unsigned int		size,
+ 			void*			buffer);
+@@ -50,9 +49,8 @@ struct fs_t iso_filesystem =
+ 
+ static int
+ iso_open(	struct boot_file_t*	file,
+-		const char*		dev_name,
+ 		struct partition_t*	part,
+-		const char*		file_name)
++		struct boot_fspec_t*	fspec)
+ {
+      return FILE_ERR_BAD_FSYS;
+ }
+diff -pur yaboot-1.3.14.orig/second/fs_of.c yaboot-1.3.14/second/fs_of.c
+--- yaboot-1.3.14.orig/second/fs_of.c	2010-02-08 13:06:21.058435316 +1100
++++ yaboot-1.3.14/second/fs_of.c	2010-02-08 13:08:27.845210705 +1100
+@@ -45,17 +45,17 @@
+ #include "debug.h"
+ 
+ #define LOAD_BUFFER_POS		0x00000000
+-#define LOAD_BUFFER_SIZE	0x01000000
++#define LOAD_BUFFER_SIZE	0x02000000
+ 
+-static int of_open(struct boot_file_t* file, const char* dev_name,
+-		   struct partition_t* part, const char* file_name);
++static int of_open(struct boot_file_t* file,
++                   struct partition_t* part, struct boot_fspec_t* fspec);
+ static int of_read(struct boot_file_t* file, unsigned int size, void* buffer);
+ static int of_seek(struct boot_file_t* file, unsigned int newpos);
+ static int of_close(struct boot_file_t* file);
+ 
+ 
+-static int of_net_open(struct boot_file_t* file, const char* dev_name,
+-		       struct partition_t* part, const char* file_name);
++static int of_net_open(struct boot_file_t* file,
++                        struct partition_t* part, struct boot_fspec_t* fspec);
+ static int of_net_read(struct boot_file_t* file, unsigned int size, void* buffer);
+ static int of_net_seek(struct boot_file_t* file, unsigned int newpos);
+ 
+@@ -79,8 +79,8 @@ struct fs_t of_net_filesystem =
+ };
+ 
+ static int
+-of_open(struct boot_file_t* file, const char* dev_name,
+-	struct partition_t* part, const char* file_name)
++of_open(struct boot_file_t* file,
++	struct partition_t* part, struct boot_fspec_t* fspec)
+ {
+      static char	buffer[1024];
+      char               *filename;
+@@ -89,7 +89,7 @@ of_open(struct boot_file_t* file, const 
+      DEBUG_ENTER;
+      DEBUG_OPEN;
+ 
+-     strncpy(buffer, dev_name, 768);
++     strncpy(buffer, fspec->dev, 768);
+      strcat(buffer, ":");
+      if (part) {
+           if (part->sys_ind == LINUX_RAID) {
+@@ -101,10 +101,10 @@ of_open(struct boot_file_t* file, const 
+ 	  sprintf(pn, "%02d", part->part_number);
+ 	  strcat(buffer, pn);
+      }
+-     if (file_name && strlen(file_name)) {
++     if (fspec->file && strlen(fspec->file)) {
+ 	  if (part)
+ 	       strcat(buffer, ",");
+-	  filename = strdup(file_name);
++	  filename = strdup(fspec->file);
+ 	  for (p = filename; *p; p++)
+ 	       if (*p == '/')
+ 		    *p = '\\';
+@@ -131,25 +131,47 @@ of_open(struct boot_file_t* file, const 
+ }
+ 
+ static int
+-of_net_open(struct boot_file_t* file, const char* dev_name,
+-	    struct partition_t* part, const char* file_name)
++of_net_open(struct boot_file_t* file,
++	    struct partition_t* part, struct boot_fspec_t* fspec)
+ {
+      static char	buffer[1024];
+-     char               *filename;
++     char               *filename = NULL;
+      char               *p;
+ 
+      DEBUG_ENTER;
+      DEBUG_OPEN;
+ 
+-     strncpy(buffer, dev_name, 768);
+-     if (file_name && strlen(file_name)) {
+-	  strcat(buffer, ",");
+-	  filename = strdup(file_name);
++     if (fspec->file && strlen(fspec->file)) {
++	  filename = strdup(fspec->file);
+ 	  for (p = filename; *p; p++)
+ 	       if (*p == '/')
+ 		    *p = '\\';
+-	  strcat(buffer, filename);
+-	  free(filename);
++     }
++
++     DEBUG_F("siaddr <%s>; filename <%s>; ciaddr <%s>; giaddr <%s>;\n",
++		fspec->siaddr, filename, fspec->ciaddr, fspec->giaddr);
++     strncpy(buffer, fspec->dev, 768);
++     /* If we didn't get a ':' include one */
++     if (fspec->dev[strlen(fspec->dev)-1] != ':')
++          strcat(buffer, ":");
++     strcat(buffer, fspec->siaddr);
++     strcat(buffer, ",");
++     strcat(buffer, filename);
++     strcat(buffer, ",");
++     strcat(buffer, fspec->ciaddr);
++     strcat(buffer, ",");
++     strcat(buffer, fspec->giaddr);
++
++     /* If /packages/cas exists the we have a "new skool" tftp */
++     if (prom_finddevice("/packages/cas") != PROM_INVALID_HANDLE) {
++          strcat(buffer, ",");
++          strcat(buffer, fspec->bootp_retries);
++          strcat(buffer, ",");
++          strcat(buffer, fspec->tftp_retries);
++          strcat(buffer, ",");
++          strcat(buffer, fspec->addl_params);
++     } else {
++          DEBUG_F("No \"/packages/cas\" using simple args\n")
+      }
+ 
+      DEBUG_F("Opening: \"%s\"\n", buffer);
+diff -pur yaboot-1.3.14.orig/second/fs_reiserfs.c yaboot-1.3.14/second/fs_reiserfs.c
+--- yaboot-1.3.14.orig/second/fs_reiserfs.c	2010-02-08 13:06:21.058435316 +1100
++++ yaboot-1.3.14/second/fs_reiserfs.c	2010-02-08 13:07:31.970189661 +1100
+@@ -33,8 +33,8 @@
+ #include "reiserfs/reiserfs.h"
+ 
+ /* Exported in struct fs_t */
+-static int reiserfs_open( struct boot_file_t *file, const char *dev_name,
+-			  struct partition_t *part, const char *file_name );
++static int reiserfs_open( struct boot_file_t *file, struct partition_t *part,
++			  struct boot_fspec_t *fspec);
+ static int reiserfs_read( struct boot_file_t *file, unsigned int size,
+ 
+ 			  void *buffer );
+@@ -63,10 +63,12 @@ int errnum;
+ 
+ 
+ static int
+-reiserfs_open( struct boot_file_t *file, const char *dev_name,
+-               struct partition_t *part, const char *file_name )
++reiserfs_open( struct boot_file_t *file, struct partition_t *part,
++		struct boot_fspec_t *fspec)
+ {
+      static char buffer[1024];
++     char *dev_name = fspec->dev;
++     char *file_name = fspec->file;
+ 
+      DEBUG_ENTER;
+      DEBUG_OPEN;
+@@ -74,7 +76,7 @@ reiserfs_open( struct boot_file_t *file,
+      memset( INFO, 0, sizeof(struct reiserfs_state) );
+      INFO->file = file;
+ 
+-     if (part)
++     if (fspec->part)
+      {
+ 	  DEBUG_F( "Determining offset for partition %d\n", part->part_number );
+ 	  INFO->partition_offset = ((uint64_t)part->part_start) * part->blocksize;
+diff -pur yaboot-1.3.14.orig/second/fs_xfs.c yaboot-1.3.14/second/fs_xfs.c
+--- yaboot-1.3.14.orig/second/fs_xfs.c	2010-02-08 13:06:21.059432320 +1100
++++ yaboot-1.3.14/second/fs_xfs.c	2010-02-08 13:07:31.972189749 +1100
+@@ -39,8 +39,8 @@ int xfs_read_data (char *buf, int len);
+ int xfs_dir (char *dirname);
+ 
+ /* Exported in struct fs_t */
+-static int xfs_open(struct boot_file_t *file, const char *dev_name,
+-		    struct partition_t *part, const char *file_name);
++static int xfs_open(struct boot_file_t *file,
++		    struct partition_t *part, struct boot_fspec_t *fspec);
+ static int xfs_read(struct boot_file_t *file, unsigned int size, void *buffer);
+ static int xfs_seek(struct boot_file_t *file, unsigned int newpos);
+ static int xfs_close(struct boot_file_t *file);
+@@ -59,8 +59,8 @@ uint64_t partition_offset;
+ int errnum;
+ 
+ static int
+-xfs_open(struct boot_file_t *file, const char *dev_name,
+-	 struct partition_t *part, const char *file_name)
++xfs_open(struct boot_file_t *file,
++	 struct partition_t *part, struct boot_fspec_t *fspec)
+ {
+ 	static char buffer[1024];
+ 
+@@ -78,11 +78,11 @@ xfs_open(struct boot_file_t *file, const
+ 	else
+ 		partition_offset = 0;
+ 
+-	strncpy(buffer, dev_name, 1020);
++	strncpy(buffer, fspec->dev, 1020);
+ 	if (_machine != _MACH_bplan)
+ 		strcat(buffer, ":0");  /* 0 is full disk in (non-buggy) OF */
+ 	DEBUG_F("Trying to open dev_name=%s; filename=%s; partition offset=%Lu\n",
+-		buffer, file_name, partition_offset);
++		buffer, fspec->file, partition_offset);
+ 	file->of_device = prom_open(buffer);
+ 
+ 	if (file->of_device == PROM_INVALID_HANDLE || file->of_device == NULL)
+@@ -105,8 +105,8 @@ xfs_open(struct boot_file_t *file, const
+ 		return FILE_ERR_BAD_FSYS;
+ 	}
+ 
+-	DEBUG_F("Attempting to open %s\n", file_name);
+-	strcpy(buffer, file_name); /* xfs_dir modifies argument */
++	DEBUG_F("Attempting to open %s\n", fspec->file);
++	strcpy(buffer, fspec->file); /* xfs_dir modifies argument */
+ 	if(!xfs_dir(buffer))
+ 	{
+ 		DEBUG_F("xfs_dir() failed. errnum = %d\n", errnum);
+@@ -116,7 +116,7 @@ xfs_open(struct boot_file_t *file, const
+ 		return errnum;
+ 	}
+ 
+-	DEBUG_F("Successfully opened %s\n", file_name);
++	DEBUG_F("Successfully opened %s\n", fspec->file);
+ 
+ 	DEBUG_LEAVE(FILE_ERR_OK);
+ 	return FILE_ERR_OK;
+diff -pur yaboot-1.3.14.orig/second/yaboot.c yaboot-1.3.14/second/yaboot.c
+--- yaboot-1.3.14.orig/second/yaboot.c	2010-02-08 13:06:21.115436698 +1100
++++ yaboot-1.3.14/second/yaboot.c	2010-02-08 13:07:31.975188101 +1100
+@@ -300,6 +300,7 @@ void print_message_file(char *filename)
+ 	  }
+ 
+      strncpy(msgpath, filename, sizeof(msgpath));
++     msgfile = boot; /* Copy all the original paramters */
+      if (!parse_device_path(msgpath, defdev, defpart, "/etc/yaboot.msg", &msgfile)) {
+ 	  prom_printf("%s: Unable to parse\n", msgpath);
+ 	  goto done;
+@@ -988,6 +989,7 @@ int get_params(struct boot_param_t* para
+      if (!label && password)
+ 	  check_password ("To boot a custom image you must enter the password.");
+ 
++     params->kernel = boot; /* Copy all the original paramters */
+      if (!parse_device_path(imagepath, defdevice, defpart,
+ 			    "/vmlinux", &params->kernel)) {
+ 	  prom_printf("%s: Unable to parse\n", imagepath);
+@@ -1009,6 +1011,7 @@ int get_params(struct boot_param_t* para
+                strncpy(initrdpath, p, 1024);
+ 
+ 	       DEBUG_F("Parsing initrd path <%s>\n", initrdpath);
++	       params->rd = boot; /* Copy all the original paramters */
+ 	       if (!parse_device_path(initrdpath, defdevice, defpart,
+ 				      "/root.bin", &params->rd)) {
+ 		    prom_printf("%s: Unable to parse\n", imagepath);
+@@ -1019,6 +1022,7 @@ int get_params(struct boot_param_t* para
+ 	  if (p && *p) {
+ 	       DEBUG_F("Parsing sysmap path <%s>\n", p);
+ 	       strncpy(sysmappath, p, 1024);
++	       params->sysmap = boot; /* Copy all the original paramters */
+ 	       if (!parse_device_path(sysmappath, defdevice, defpart,
+ 				      "/boot/System.map", &params->sysmap)) {
+ 		    prom_printf("%s: Unable to parse\n", imagepath);
