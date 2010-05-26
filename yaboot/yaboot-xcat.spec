@@ -5,7 +5,7 @@ Summary: yaboot binary for tftp server
 %define _binary_payload w9.bzdio
 Name: %{pkg}
 Version: %{ver}
-Release: 05172010
+Release: 05262010
 Group: System/Administration
 License: GPL2
 URL: http://yaboot.ozlabs.org/
@@ -17,6 +17,7 @@ Patch3: yaboot-1.3.14-better_netboot.patch
 Patch4: yaboot-1.3.14-ipv6.patch
 Patch5: yaboot-1.3.14-move_kernel.patch
 Patch6: yaboot-1.3.14-better_netboot2.patch
+Patch7: yaboot-1.3.15-05122010-sanedhcppriority.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 Prefix: %{_prefix}
 BuildArch: noarch
@@ -36,6 +37,7 @@ ppc nodes.
 %patch3 -p1
 %patch4 -p1
 %patch6 -p1
+%patch7 -p1
 
 
 %build
