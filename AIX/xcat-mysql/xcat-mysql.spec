@@ -43,10 +43,10 @@ ln -s /usr/local/mysql-5.1.37-aix5.3-powerpc-64bit mysql
 rm -rf /usr/local/mysql-5.1.37-aix5.3-powerpc-64bit.tar
 
 # set PATH??
-echo "PATH=\$PATH:/usr/local/mysql:/usr/local/mysql/bin:/usr/local/mysql/lib:/usr/local/mysql/include
-export PATH" >>/etc/profile
+#echo "PATH=\$PATH:/usr/local/mysql:/usr/local/mysql/bin:/usr/local/mysql/lib:/usr/local/mysql/include
+#export PATH" >>/etc/profile
 
-echo "The PATH environment variable has been updated in /etc/profile."
+#echo "The PATH environment variable has been updated in /etc/profile."
 
 %clean
 
