@@ -1,0 +1,22 @@
+Build Notes  for the perl-DBD-Pg on AIX 6.1
+
+Need  cc_r compiler installed on AIX build system and in /bin. 
+
+Download DBD-Pg-2.17.1.tar.gz from CPAN.
+Unwrap the tar file. (gunzip & tar -xvf  ) in some directory
+
+Go to the subdirectory containing the Makefile of the unwrapped tar file,
+ and run "/usr/opt/perl5/bin/cpan2rpm --author xcat --version 2 ."
+
+This will eventually fail but it does produce a spec file in /opt/freeware/src/packages/SPECS. 
+Modify the spec file as needed.   Change the name.  See DBD-Pg.spec.
+
+
+Put the DBD-Pg-2.17.1.tar.gz file in /opt/freeware/src/packages/SOURCES.
+
+Go to /opt/freeware/src/packages/SPECS and run
+"rpm -bb DBD-Pg.spec", which creates:
+
+/opt/freeware/src/packages/RPMS/ppc/perl-DBD-Pg-2.17.1-1.aix6.1.ppc.rpm
+
+
