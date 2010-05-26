@@ -1,10 +1,10 @@
 Build Notes
 
-Download mysql-5.1.26-rc-aix5.3-powerpc.tar.gz.
+Download mysql-5.1.37-rc-aix5.3-powerpc.tar.gz.
 (See http://dev.mysql.com/downloads/mysql/5.1.html#aix)
 
 Copy the gz file to the SOURCES directory.
-cp mysql-5.0.67-aix5.3-powerpc-64bit.tar.gz  /opt/freeware/src/packages/SOURCES
+cp mysql-5.1.37-aix5.3-powerpc-64bit.tar.gz  /opt/freeware/src/packages/SOURCES
 
 Remove any old RPMs
 rm -f /opt/freeware/src/packages/SRPMS/xcat-mysql*rpm /opt/freeware/src/packages/RPMS/ppc/xcat-mysql*rpm
@@ -16,5 +16,5 @@ a different version etc.
 rpm -ba xcat-mysql.spec
 
 Creates:
-/opt/freeware/src/packages/SRPMS/xcat-mysql-5.0-1.src.rpm
-/opt/freeware/src/packages/RPMS/ppc/xcat-mysql-5.0-1.aix5.3.ppc.rpm
+/opt/freeware/src/packages/SRPMS/xcat-mysql-5.1-37.src.rpm
+/opt/freeware/src/packages/RPMS/ppc/xcat-mysql-5.1-37.aix5.3.ppc.rpm
