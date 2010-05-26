@@ -1,0 +1,66 @@
+Notes to build, install and create rpms for  Postgresql for AIX 6.1
+
+Get from the Linux toolbox and install:
+zlib-1.2.3-4.aix5.2.ppc.rpm
+zlib-devel-1.2.3-4.aix5.2.ppc.rpm
+gcc-4.2.0-3.aix6.1.ppc.rpm
+make-3.80-1.aix5.1.ppc.rpm
+readline*  ( did not work for me)
+
+Download postgresql source tarball recent release  ( we had 8.4.4)
+/www.postgresql.com 
+put in /postgres directory  ( make sure you have plenty of / and /var space)
+cd /postgres
+
+unzip and untar the file
+gunzip postgresql-8.4.4.tar*
+tar -xvf postgresql-8.4.4.tar
+cd postgresql-8.4.4
+read INSTALL for all instructions, what follows is from that file
+  
+Setup to build on the machine and install in /var/lib/pgsql directory
+./configure --prefix=/var/lib/pgsql --with-openssl --without-readline
+gmake
+
+If the build complete ok then:
+
+su - lissa ( any non-root user)
+cd /postgres/postgresql-8.4.4
+gmake check 
+
+Should come back with:
+
+============== shutting down postmaster               ==============
+server stopped
+
+=======================
+ All 120 tests passed.
+=======================
+
+If check is ok, then return to root
+
+As root:
+cd /postgres/postgresql-8.4.4
+gmake install
+
+When the install is complete,  build a tarball out of the compiles installed pg 
+tar -cvf postgresql-8.4.4-aix6.1.tar.gz /var/lib/pgsql
+
+Build the rpm
+
+Remove any old RPMs
+rm -f /opt/freeware/src/packages/SRPMS/postgresql*rpm /opt/freeware/src/packages/RPMS/ppc/postgresql*rpm
+
+
+
+Put the tarball in 
+/opt/freeware/src/packages/SOURCES/postgresql-8.4.4-aix6.1.tar.gz
+
+Get the shipped xCAT spec file : xcat-Pg.spec
+
+Run rpm -ba xcat-Pg.spec
+
+Should build the following rpm:
+
+/opt/freeware/src/packages/RPMS/ppc/xcat-Pg-8.4.4.aix6.1.ppc.rpm
+
