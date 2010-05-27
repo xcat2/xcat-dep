@@ -43,8 +43,9 @@ As root:
 cd /postgres/postgresql-8.4.4
 gmake install
 
-When the install is complete,  build a tarball out of the compiles installed pg 
-tar -cvf postgresql-8.4.4-aix6.1.tar.gz /var/lib/pgsql
+When the install is complete,  build a tarball out of the compiled installed pg 
+cd /var/lib
+tar -cvf postgresql-8.4.4-aix6.1.tar.gz pgsql
 
 Build the rpm
 
