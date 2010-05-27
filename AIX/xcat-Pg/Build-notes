@@ -49,7 +49,7 @@ tar -cvf postgresql-8.4.4-aix6.1.tar.gz /var/lib/pgsql
 Build the rpm
 
 Remove any old RPMs
-rm -f /opt/freeware/src/packages/SRPMS/postgresql*rpm /opt/freeware/src/packages/RPMS/ppc/postgresql*rpm
+rm -f /opt/freeware/src/packages/SRPMS/xcat-postgresql*rpm /opt/freeware/src/packages/RPMS/ppc/xcat-postgresql*rpm
 
 
 
