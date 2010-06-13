@@ -1,0 +1,21 @@
+Build notes
+The fping version 2.4b2_1-1 is compiled from the fping-2.4b2_to-ipv6.tar.gz,
+to vaoid confusions with IPv4 support, changed the version to 2.4b2_1-1. 
+This fping package ships two binary: fping and fping6, the fping is the IPv4 version,
+and fping6 is the IPv6 version.
+
+1. download fping-2.4b2_to-ipv6.tar.gz from http://unfix.org/projects/ipv6/fping-2.4b2_to-ipv6.tar.gz, 
+   and copy it to /tmp/fping directory.
+2. cd to /tmp/fping.
+3. un-tar the files
+4. patch the fping.c using fping.patch.ipv6
+5. run ./fping-2.4b2_1-1/configure to create a Makefile.
+6. tar -cvf fping.tar fping-2.4b2_1-1
+7. gzip fping.tar to create a new fping.tar.gz
+8. copy fping.tar.gz to /opt/freeware/src/packages/SOURCES/ directory
+9. copy fping.spec to /opt/freeware/src/packages/SPECS/ directory
+10. cd to  /opt/freeware/src/packages/SPECS 
+11. run rpm -bb fping.spec
+
+
+* patch was created using "diff -r -C 3 fping-2.4b2_1/fping.c fping-2.4b2_to-ipv6/fping.c" command

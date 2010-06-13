@@ -1,0 +1,182 @@
+diff -r -C 3 fping-2.4b2_1/fping.c fping-2.4b2_to-ipv6/fping.c  
+*** fping-2.4b2_1/fping.c       Sat Jun 12 00:58:29 2010
+--- fping-2.4b2_to-ipv6/fping.c Sat Jun 12 01:05:19 2010
+***************
+*** 125,131 ****
+--- 125,133 ----
+  
+  extern char *optarg;
+  extern int optind,opterr;
++ #ifndef h_errno
+  extern int h_errno;
++ #endif
+  
+  #ifdef __cplusplus
+  }
+***************
+*** 456,499 ****
+         */
+  #ifdef IPV6_RECVHOPOPTS
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVHOPOPTS, &opton, sizeof(opton)))
+!               err(1, "setsockopt(IPV6_RECVHOPOPTS)");
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_HOPOPTS, &opton, sizeof(opton)))
+!               err(1, "setsockopt(IPV6_HOPOPTS)");
+  #endif
+  #ifdef IPV6_RECVDSTOPTS
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVDSTOPTS, &opton, sizeof(opton)))
+!               err(1, "setsockopt(IPV6_RECVDSTOPTS)");
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_DSTOPTS, &opton, sizeof(opton)))
+!               err(1, "setsockopt(IPV6_DSTOPTS)");
+  #endif
+  #ifdef IPV6_RECVRTHDRDSTOPTS
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVRTHDRDSTOPTS, &opton, sizeof(opton)))
+!               err(1, "setsockopt(IPV6_RECVRTHDRDSTOPTS)");
+  #endif
+  #ifdef IPV6_RECVRTHDR
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVRTHDR, &opton, sizeof(opton)))
+!               err(1, "setsockopt(IPV6_RECVRTHDR)");
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RTHDR, &opton, sizeof(opton)))
+!               err(1, "setsockopt(IPV6_RTHDR)");
+  #endif
+  #ifndef USE_SIN6_SCOPE_ID
+  #ifdef IPV6_RECVPKTINFO
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVPKTINFO, &opton, sizeof(opton)) < 0)
+!               warn("setsockopt(IPV6_RECVPKTINFO)"); /* XXX err? */
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_PKTINFO, &opton, sizeof(opton)) < 0)
+!               warn("setsockopt(IPV6_PKTINFO)"); /* XXX err? */
+  #endif
+  #endif /* USE_SIN6_SCOPE_ID */
+  #ifdef IPV6_RECVHOPLIMIT
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &opton, sizeof(opton)) < 0)
+!               warn("setsockopt(IPV6_RECVHOPLIMIT)"); /* XXX err? */
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_HOPLIMIT, &opton, sizeof(opton)) < 0)
+!               warn("setsockopt(IPV6_HOPLIMIT)"); /* XXX err? */
+  #endif
+  #ifdef IPV6_CHECKSUM
+  #ifndef SOL_RAW
+--- 458,501 ----
+         */
+  #ifdef IPV6_RECVHOPOPTS
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVHOPOPTS, &opton, sizeof(opton)))
+!               /*err(1, "setsockopt(IPV6_RECVHOPOPTS)");*/
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_HOPOPTS, &opton, sizeof(opton)))
+!               /*err(1, "setsockopt(IPV6_HOPOPTS)");*/
+  #endif
+  #ifdef IPV6_RECVDSTOPTS
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVDSTOPTS, &opton, sizeof(opton)))
+!               /*err(1, "setsockopt(IPV6_RECVDSTOPTS)");*/
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_DSTOPTS, &opton, sizeof(opton)))
+!               /*err(1, "setsockopt(IPV6_DSTOPTS)");*/
+  #endif
+  #ifdef IPV6_RECVRTHDRDSTOPTS
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVRTHDRDSTOPTS, &opton, sizeof(opton)))
+!               /*err(1, "setsockopt(IPV6_RECVRTHDRDSTOPTS)");*/
+  #endif
+  #ifdef IPV6_RECVRTHDR
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVRTHDR, &opton, sizeof(opton)))
+!               /*err(1, "setsockopt(IPV6_RECVRTHDR)");*/
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RTHDR, &opton, sizeof(opton)))
+!               /*err(1, "setsockopt(IPV6_RTHDR)");*/
+  #endif
+  #ifndef USE_SIN6_SCOPE_ID
+  #ifdef IPV6_RECVPKTINFO
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVPKTINFO, &opton, sizeof(opton)) < 0)
+!               /*warn("setsockopt(IPV6_RECVPKTINFO)");*/ /* XXX err? */
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_PKTINFO, &opton, sizeof(opton)) < 0)
+!               /*warn("setsockopt(IPV6_PKTINFO)");*/ /* XXX err? */
+  #endif
+  #endif /* USE_SIN6_SCOPE_ID */
+  #ifdef IPV6_RECVHOPLIMIT
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_RECVHOPLIMIT, &opton, sizeof(opton)) < 0)
+!               /*warn("setsockopt(IPV6_RECVHOPLIMIT)");*/ /* XXX err? */
+  #else  /* old adv. API */
+        if (setsockopt(s, IPPROTO_IPV6, IPV6_HOPLIMIT, &opton, sizeof(opton)) < 0)
+!               /*warn("setsockopt(IPV6_HOPLIMIT)");*/ /* XXX err? */
+  #endif
+  #ifdef IPV6_CHECKSUM
+  #ifndef SOL_RAW
+***************
+*** 501,507 ****
+  #endif
+        opton = 2;
+        if (setsockopt(s, SOL_RAW, IPV6_CHECKSUM, &opton, sizeof(opton)) < 0)
+!               err(1, "setsockopt(SOL_RAW,IPV6_CHECKSUM)");
+  #endif
+  #endif
+  
+--- 503,509 ----
+  #endif
+        opton = 2;
+        if (setsockopt(s, SOL_RAW, IPV6_CHECKSUM, &opton, sizeof(opton)) < 0)
+!               /*err(1, "setsockopt(SOL_RAW,IPV6_CHECKSUM)");*/
+  #endif
+  #endif
+  
+***************
+*** 824,831 ****
+                hints.ai_family = AF_INET6;
+  #endif
+                ret_ga = getaddrinfo(sourceip, NULL, &hints, &res);
+!               if (ret_ga) errx(1, "%s: %s", gai_strerror(ret_ga), sourceip);
+!               if (!res->ai_addr) errx(2, "invalid source address %s; getaddrinfo failed", sourceip);
+                (void)memcpy(&src, res->ai_addr, res->ai_addrlen < sizeof(FPING_SOCKADDR) ? res->ai_addrlen : sizeof(FPING_SOCKADDR));
+                if (bind(s, (struct sockaddr *)&src, sizeof(FPING_SOCKADDR)) == 0)
+                {
+--- 826,833 ----
+                hints.ai_family = AF_INET6;
+  #endif
+                ret_ga = getaddrinfo(sourceip, NULL, &hints, &res);
+!               if (ret_ga) printf("%s: %s", gai_strerror(ret_ga), sourceip);
+!               if (!res->ai_addr) printf("invalid source address %s; getaddrinfo failed", sourceip);
+                (void)memcpy(&src, res->ai_addr, res->ai_addrlen < sizeof(FPING_SOCKADDR) ? res->ai_addrlen : sizeof(FPING_SOCKADDR));
+                if (bind(s, (struct sockaddr *)&src, sizeof(FPING_SOCKADDR)) == 0)
+                {
+***************
+*** 840,846 ****
+                                printf("Pinging from %s (%s)\n", sourceip, buf);
+                        }
+                }
+!               else errx(2, "Couldn't bind to interface %s...", sourceip);
+        }
+  
+        /* handle host names supplied on command line or in a file */
+--- 842,848 ----
+                                printf("Pinging from %s (%s)\n", sourceip, buf);
+                        }
+                }
+!               else printf("Couldn't bind to interface %s...", sourceip);
+        }
+  
+        /* handle host names supplied on command line or in a file */
+***************
+*** 2232,2241 ****
+        hints.ai_protocol = IPPROTO_ICMPV6;
+  
+        ret_ga = getaddrinfo(name, NULL, &hints, &res);
+!       if (ret_ga) errx(1, "%s", gai_strerror(ret_ga));
+        if (res->ai_canonname) hostname = res->ai_canonname;
+        else hostname = name;
+!       if (!res->ai_addr) errx(1, "getaddrinfo failed");
+        (void)memcpy(&dst, res->ai_addr, res->ai_addrlen < sizeof(FPING_SOCKADDR) ? res->ai_addrlen : sizeof(FPING_SOCKADDR));
+        add_addr(name, name, &dst);
+  #endif
+--- 2234,2243 ----
+        hints.ai_protocol = IPPROTO_ICMPV6;
+  
+        ret_ga = getaddrinfo(name, NULL, &hints, &res);
+!       if (ret_ga) printf("%s", gai_strerror(ret_ga));
+        if (res->ai_canonname) hostname = res->ai_canonname;
+        else hostname = name;
+!       if (!res->ai_addr) printf("getaddrinfo failed");
+        (void)memcpy(&dst, res->ai_addr, res->ai_addrlen < sizeof(FPING_SOCKADDR) ? res->ai_addrlen : sizeof(FPING_SOCKADDR));
+        add_addr(name, name, &dst);
+  #endif
