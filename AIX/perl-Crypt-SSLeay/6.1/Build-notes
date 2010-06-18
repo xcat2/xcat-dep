@@ -3,7 +3,7 @@ Build Notes
 Need cc_r compiler installed on AIX build system.
 Use the Crypt-SSLeay.spec in this directory 
 ( it was created by running a modified cpan2rpm to support AIX)
-
+Get Crypt-SSLeay-0.57.tar.gz from CPAN
 cp Crypt-SSLeay-0.57.tar.gz /opt/freeware/src/packages/SOURCES
 cp Crypt-SSLeay.spec /opt/freeware/src/packages/SPECS
 
