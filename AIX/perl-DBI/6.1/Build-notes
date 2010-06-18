@@ -2,7 +2,7 @@ Build Notes
 
 Need cc_r compiler installed on AIX build system.
 
-Use DBI-1.611.tar.gz in this directory 
+Get DBI-1.611.tar.gz from CPAN 
 Use the DBI.spec in this directory ( it was created by running a modified   
  cpan2rpm to support AIX)
 
