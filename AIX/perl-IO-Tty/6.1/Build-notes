@@ -2,7 +2,7 @@ Build Notes
 
 Need cc_r compiler installed on AIX build system.
 
-Use IO-Tty-1.08.tar.gz in this directory 
+Get IO-Tty-1.08.tar.gz  from CPAN
 se the  IO-Tty.spec in this directory ( it was created by running a modified   
  cpan2rpm to support AIX)
 
