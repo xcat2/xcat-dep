@@ -1,0 +1,15 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the Digest-SHA-PurePerl.spec  in this directory.
+( it was created by running a modified cpan2rpm to support AIX)
+Get  Digest-SHA-PurePerl-5.48.tar.gz from CPAN
+cp Digest-SHA-PurePerl-5.48.tar.gz /opt/freeware/src/packages/SOURCES
+cp Digest-SHA-PurePerl.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb DBD-Pg.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Digest-SHA-PurePerl-5.48-1.aix6.1.ppc.rpm
+
+
+
