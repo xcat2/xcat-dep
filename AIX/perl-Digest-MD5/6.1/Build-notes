@@ -1,0 +1,14 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the  Digest-MD5.spec   in this directory 
+( it was created by running a modified cpan2rpm to support AIX)
+Get Digest-MD5-2.39.tar.gz from cpan.
+cp  Digest-MD5-2.39.tar.gz /opt/freeware/src/packages/SOURCES
+cp  Digest-MD5.spec   /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb Digest-MD5.spec ".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Digest-MD5-2.39-1.aix6.1.ppc.rpm
+
+
