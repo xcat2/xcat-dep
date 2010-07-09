@@ -8,7 +8,7 @@ Get  Digest-SHA1-2.12.tar.gz from CPAN
 cp Digest-SHA1-2.12.tar.gz /opt/freeware/src/packages/SOURCES
 cp Digest-SHA1.spec /opt/freeware/src/packages/SPECS
 
-Run "rpm -bb DBD-Pg.spec".
+Run "rpm -bb Digest-SHA1.spec".
  - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Digest-SHA1-2.12-1.aix6.1.ppc.rpm
 
 
