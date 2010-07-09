@@ -8,7 +8,7 @@ Get DBD-SQLite-1.13.tar.gz from CPAN
 cp DBD-SQLite-1.13.tar.gz /opt/freeware/src/packages/SOURCES
 cp DBD-SQLite.spec /opt/freeware/src/packages/SPECS
 
-Run "rpm -bb DBD-Pg.spec".
+Run "rpm -bb DBD-SQLite.spec".
  - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-DBD-SQLite-1.13.aix6.1.ppc.rpm
 
 
