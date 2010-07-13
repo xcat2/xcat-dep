@@ -10,6 +10,4 @@ cp IO-Tty-1.08.tar.gz /opt/freeware/src/packages/SOURCES
 cp IO-Tty.spec /opt/freeware/src/packages/SPECS
 
 Run "rpm -bb IO-Tty.spec".
- - which creates: /opt/freeware/src/packages/RPMS/ppc/IO-Tty-1.08.aix6.1.ppc.rpm
-
-
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/IO-Tty-1.08-1.aix6.1.ppc.rpm
