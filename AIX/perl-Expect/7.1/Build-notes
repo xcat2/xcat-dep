@@ -1,0 +1,12 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the Expect.spec in this directory 
+( it was created by running a modified cpan2rpm to support AIX)
+Get Expect-1.21.tar.gz from CPAN
+cp Expect-1.21.tar.gz  /opt/freeware/src/packages/SOURCES
+cp Expect.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb Expect.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Expect-1.21-3.aix7.1.ppc.rpm
