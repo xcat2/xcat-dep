@@ -7,3 +7,8 @@ cp net-snmp-find-requires.patch  /opt/freeware/src/packages/SOURCES
  run rpm -bb net-snmp.5.4.2.1.spec
 
 * patch was created using "diff -c net-snmp-5.4.2.1.orig/net-snmp-5.4.2.1/dist/find-requires net-snmp-5.4.2.1/dist/find-requires" command
+
+Will build the following rpms:
+net-snmp-5.4.2.1-2.aix6.1.ppc.rpm
+net-snmp-devel-5.4.2.1-2.aix6.1.ppc.rpm
+net-snmp-perl-5.4.2.1-2.aix6.1.ppc.rpm
