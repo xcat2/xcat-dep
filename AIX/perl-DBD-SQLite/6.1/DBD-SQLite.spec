@@ -14,7 +14,7 @@
 name:      perl-DBD-SQLite
 summary:   DBD-SQLite - Self Contained RDBMS in a DBI Driver
 version:   1.13
-release:   1
+release:   2 
 vendor:    Matt Sergeant <matt@sergeant.org>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
