@@ -1,0 +1,16 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use Net_SSLeay.pm-1.30.tar.gz in this directory 
+Use the Net_SSLeay.pm.spec in this directory 
+( it was created by running a modified   
+ cpan2rpm to support AIX)
+
+cp  Net_SSLeay.pm-1.30.tar.gz /opt/freeware/src/packages/SOURCES
+cp Net_SSLeay.pm.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb Net_SSLeay.pm.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net_SSLeay.pm-1.30-3.aix7.1.ppc.rpm
+
+
