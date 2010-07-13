@@ -10,6 +10,6 @@ cp DBI-1.611.tar.gz /opt/freeware/src/packages/SOURCES
 cp DBI.spec /opt/freeware/src/packages/SPECS
 
 Run "rpm -bb DBI.spec".
- - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-DBI-1.611-1.aix6.1.ppc.rpm
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-DBI-1.611-2.aix6.1.ppc.rpm
 
 

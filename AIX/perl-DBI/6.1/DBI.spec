@@ -14,7 +14,7 @@
 name:      perl-DBI
 summary:   DBI - Database independent interface for Perl
 version:   1.611
-release:   1
+release:   2 
 vendor:    Tim Bunce (dbi-users@perl.org)
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
