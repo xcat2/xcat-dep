@@ -14,7 +14,7 @@
 name:      perl-Expect
 summary:   Expect - Perl module
 version:   1.21
-release:   1
+release:   2 
 vendor:    xCAT
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
