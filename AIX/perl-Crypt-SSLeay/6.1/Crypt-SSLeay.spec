@@ -14,7 +14,7 @@
 name:      perl-Crypt-SSLeay
 summary:   Crypt-SSLeay - OpenSSL support for LWP
 version:   0.57
-release:   1
+release:   2 
 vendor:    David Landgren
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
