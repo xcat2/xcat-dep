@@ -1,0 +1,12 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the Digest-SHA.spec  in this directory.
+( it was created by running a modified cpan2rpm to support AIX)
+Get  Digest-SHA-5.48.tar.gz from CPAN
+cp Digest-SHA-5.48.tar.gz /opt/freeware/src/packages/SOURCES
+cp Digest-SHA.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb Digest-SHA.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Digest-SHA-5.48-3.aix7.1.ppc.rpm
