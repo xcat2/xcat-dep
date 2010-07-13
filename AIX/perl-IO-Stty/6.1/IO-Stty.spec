@@ -15,6 +15,7 @@ name:      perl-IO-Stty
 summary:   IO-Stty - Perl module
 version:   0.03
 release:   1
+Epoch:     1 
 vendor:    xCAT
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
