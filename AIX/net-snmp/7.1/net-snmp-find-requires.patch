@@ -1,0 +1,14 @@
+diff -c net-snmp-5.4.2.1.orig/net-snmp-5.4.2.1/dist/find-requires net-snmp-5.4.2.1/dist/find-requires
+*** net-snmp-5.4.2.1.orig/net-snmp-5.4.2.1/dist/find-requires	Sat Jun 14 06:16:40 2008
+--- net-snmp-5.4.2.1/dist/find-requires	Thu Jan 15 23:14:27 2009
+***************
+*** 2,5 ****
+  # This is rpmbuild helper script used to filter out perl(Tk) and 
+  # perl(Term::ReadKey) dependencies.
+  
+! /usr/lib/rpm/find-requires | grep -v "perl(Tk)\|perl(Term::ReadKey)
+--- 2,5 ----
+  # This is rpmbuild helper script used to filter out perl(Tk) and 
+  # perl(Term::ReadKey) dependencies.
+  
+! /usr/lib/rpm/find-requires | grep -v "perl(Tk)\|perl(Term::ReadKey)"
