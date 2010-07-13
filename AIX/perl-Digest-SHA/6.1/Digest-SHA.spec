@@ -14,7 +14,7 @@
 name:      perl-Digest-SHA
 summary:   Digest-SHA - Perl extension for SHA-1/224/256/384/512
 version:   5.48
-release:   1
+release:   2 
 vendor:    Mark Shelor <mshelor@cpan.org>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic

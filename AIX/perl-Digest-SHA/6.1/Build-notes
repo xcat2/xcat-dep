@@ -9,7 +9,7 @@ cp Digest-SHA-5.48.tar.gz /opt/freeware/src/packages/SOURCES
 cp Digest-SHA.spec /opt/freeware/src/packages/SPECS
 
 Run "rpm -bb Digest-SHA.spec".
- - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Digest-SHA-5.48-1.aix6.1.ppc.rpm
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Digest-SHA-5.48-2.aix6.1.ppc.rpm
 
 
 
