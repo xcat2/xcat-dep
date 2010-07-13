@@ -14,7 +14,7 @@
 name:      perl-Net_SSLeay.pm
 summary:   Net_SSLeay.pm - Perl extension for using OpenSSL
 version:   1.30
-release:   1
+release:   2 
 vendor:    by Sampo Kellomki <sampo@symlabs.com>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
