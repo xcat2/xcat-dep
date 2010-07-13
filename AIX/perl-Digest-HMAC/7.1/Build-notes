@@ -1,0 +1,13 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the Digest-HMAC.spec in this directory 
+( it was created by running a modified cpan2rpm to support AIX)
+Get Digest-HMAC-1.02.tar.gz from CPAN
+cp Digest-HMAC-1.02.tar.gz /opt/freeware/src/packages/SOURCES
+cp Digest-HMAC.spec  /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb Digest-HMAC.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Digest-HMAC-1.02-2.aix7.1.ppc.rpm
+
