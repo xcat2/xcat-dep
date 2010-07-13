@@ -14,7 +14,7 @@
 name:      perl-Net-DNS
 summary:   Net-DNS - Perl DNS resolver module
 version:   0.66
-release:   1
+release:   2 
 vendor:    Olaf Kolkman <olaf@net-dns.org>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic

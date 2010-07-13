@@ -9,4 +9,4 @@ cp  Net-DNS-0.66.tar.gz /opt/freeware/src/packages/SOURCES
 cp  Net-DNS.spec /opt/freeware/src/packages/SPECS
 
 Run "rpm -bb  Net-DNS.spec".
- - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net-DNS-0.66-1.aix6.1.ppc.rpm
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net-DNS-0.66-2.aix6.1.ppc.rpm
