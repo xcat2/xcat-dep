@@ -1,0 +1,12 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the version.spec in this directory 
+( it was created by running a modified cpan2rpm to support AIX)
+Get  version-0.82.tar.gz from CPAN
+cp  version-0.82.tar.gz  /opt/freeware/src/packages/SOURCES
+cp version.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb version.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-version-0.82-2.aix7.1.ppc.rpm
