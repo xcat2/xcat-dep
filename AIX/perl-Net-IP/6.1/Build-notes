@@ -9,6 +9,6 @@ cp Net-IP-1.25.tar.gz /opt/freeware/src/packages/SOURCES
 cp Net-IP.spec /opt/freeware/src/packages/SPECS
 
 Run "rpm -bb Net-IP.spec".
- - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net-IP-1.25-1.aix6.1.ppc.rpm
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net-IP-1.25-2.aix6.1.ppc.rpm
 
 

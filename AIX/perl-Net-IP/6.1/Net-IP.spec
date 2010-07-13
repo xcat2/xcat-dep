@@ -14,7 +14,7 @@
 name:      perl-Net-IP
 summary:   Net-IP - Perl extension for manipulating IPv4/IPv6 addresses
 version:   1.25
-release:   1
+release:   2 
 vendor:    Manuel Valente <manuel.valente@gmail.com>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
