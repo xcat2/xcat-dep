@@ -1,0 +1,12 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the Net-Telnet.spec  in this directory 
+( it was created by running a modified cpan2rpm to support AIX)
+Get Net-Telnet-3.03.tar.gz from CPAN
+cp Net-Telnet-3.03.tar.gz /opt/freeware/src/packages/SOURCES
+cp Net-Telnet.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb Net-Telnet.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net-Telnet-3.03-3.aix7.1.ppc.rpm
