@@ -14,7 +14,7 @@
 name:      perl-Net-Telnet
 summary:   Net-Telnet - Interact with TELNET port or other TCP ports
 version:   3.03
-release:   1
+release:   2 
 vendor:    Jay Rogers <jay@rgrs.com>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
