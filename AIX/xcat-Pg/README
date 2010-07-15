@@ -1,0 +1,14 @@
+This xCAT-Postgresql tarball contains the two rpms necessary to install
+the Postgresql Database and perl DBD on AIX 61J (AIX61 TL5) or later
+for xCAT to use as it's database.
+This support is available on AIX for the xCAT2.5 release or later.  There is a 
+automated setup script pgsqlsetup in that release that will aid in the
+migration to Postgresql on AIX or Linux.  
+
+See the latest xCAT PostgeSQL install and setup instructions at
+http://xcat.svn.sourceforge.net/viewvc/xcat/xcat-core/trunk/xCAT-client/share/doc/xCAT2SetupPostgresql.pdf. 
+
+To install
+ rpm -Uvh xcat-postgresql-8.4-4.aix6.1.ppc.rpm
+ rpm -Uvh 6.1/perl-DBD-Pg-2-17.1.aix6.1.ppc.rpm
+
