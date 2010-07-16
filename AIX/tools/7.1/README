@@ -1,0 +1,2 @@
+Rename Config.pm.5.10.1 and replace   /usr/opt/perl5/lib/5.10.1/aix-thread-multi/Config.pm
+to be able to build perl dependencies unless fixed by AIX

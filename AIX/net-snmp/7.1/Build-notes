@@ -1,6 +1,12 @@
 Build notes
 
-download net-snmp-5.4.2.1.tar.gz from http://www.net-snmp.org/download.html
+The original source is from http://www.net-snmp.org/download.html
+The source had to be modified to support AIX 71 because it had
+coded compiler directives only through aix5 in the
+/net-snmp-5.5/agent/mibgroup/host/* files.  Search for aix6.
+
+Use the modified  net-snmp-5.4.2.1.tar.gz in this directory
+
 cp net-snmp-5.4.2.1.tar.gz /opt/freeware/src/packages/SOURCES
 cp net-snmp.5.4.2.1.spec  /opt/freeware/src/packages/SPECS
 cp net-snmp-find-requires.patch  /opt/freeware/src/packages/SOURCES
