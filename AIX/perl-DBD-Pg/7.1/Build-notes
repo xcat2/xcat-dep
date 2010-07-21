@@ -1,0 +1,14 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+Need PostgreSQL installed
+Use the DBD-Pg.spec in this directory 
+( it was created by running a modified cpan2rpm to support AIX)
+Get DBD-Pg-2.17.1.tar.gz from CPAN
+cp DBD-Pg-2.17.1.tar.gz /opt/freeware/src/packages/SOURCES
+cp DBD-Pg.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb DBD-Pg.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-DBD-Pg-2-17.2.aix7.1.ppc.rpm
+
+
