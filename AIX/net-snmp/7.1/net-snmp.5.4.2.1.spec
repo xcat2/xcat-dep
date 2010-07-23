@@ -12,7 +12,7 @@ Summary: Tools and servers for the SNMP protocol
 Name: net-snmp
 Version: 5.4.2.1
 # update release for vendor release. (eg 1.fc6, 1.rh72, 1.ydl3, 1.ydl23)
-Release: 3 
+Release: 3
 URL: http://www.net-snmp.org/
 License: BSDish
 Group: System Environment/Daemons
@@ -62,6 +62,9 @@ Install the net-snmp-perl package, if you want to use mib2c or SNMP with perl.
 %patch -p1
 
 %build
+
+cp configure configure.org
+cp /build/net-snmp/configure.fix configure
 export CC=cc_r
 export PATH=/usr/vac/bin:$PATH
 ./configure \
@@ -77,11 +80,11 @@ export PATH=/usr/vac/bin:$PATH
 	--with-sys-location="Unknown" \
 	--with-sys-contact="root@localhost" \
 	--with-default-snmp-version="3" \
+	--with-cflags="-Daix6=aix6 -D_ALL_SOURCE -D_ANSI_C_SOURCE -D_POSIX_SOURCE -qmaxmem=16384 -qnoansialias -DUSE_NATIVE_DLOPEN -DNEED_PTHREAD_INIT -D_LARGE_FILES -qlonglong -q32 -I/usr/opt/perl5/lib/5.10.1/aix-thread-multi/CORE" \
 	--libdir="/opt/freeware/lib"
 
 cp libtool libtool.orig
 sed -e "s/hardcode_direct=yes/hardcode_direct=no/" libtool.orig > libtool
-	
 chmod +x %{__find_requires}
 make %{?smp_mflags}
 
@@ -176,7 +179,7 @@ rm -rf $RPM_BUILD_ROOT
 %defattr(-,root,root)
 %{_bindir}/mib2c
 %{_bindir}/tkmib
-%{_perl_dir}/lib/site_perl/5.8.8/aix-thread-multi/*
+%{_perl_dir}/lib/site_perl/5.10.1/aix-thread-multi/*
 %attr(0644,root,root) %{_mandir}/man1/mib2c.1
 %attr(0644,root,root) %{_mandir}/man1/tkmib.1
 %attr(0644,root,root) /usr/share/man/man3/*SNMP*.3

@@ -1,11 +1,13 @@
 Build notes
 
-The original source is from http://www.net-snmp.org/download.html
-The source had to be modified to support AIX 71 because it had
-coded compiler directives only through aix5 in the
-/net-snmp-5.5/agent/mibgroup/host/* files.  Search for aix6.
+Note the net-snmp "configure" script did not work on AIX 7.1.  
+We have modified it to work and put it in configure.fix
+The Spec file copies this script over the shipped configure script in the
+build directory before it is run.  See the net-snmp.5.4.2.1.spec in this directory.
 
-Use the modified  net-snmp-5.4.2.1.tar.gz in this directory
+The configproblems file  shows where the configuration was failing before
+we modified this script.   If a new release is picked up, the new release 
+"configure" script will also have to be modified.  
 
 cp net-snmp-5.4.2.1.tar.gz /opt/freeware/src/packages/SOURCES
 cp net-snmp.5.4.2.1.spec  /opt/freeware/src/packages/SPECS
