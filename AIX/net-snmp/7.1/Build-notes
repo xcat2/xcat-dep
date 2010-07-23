@@ -1,5 +1,7 @@
 Build notes
 
+Note you must have a C compiler and a fortran compiler installed from AIX 
+
 Note the net-snmp "configure" script did not work on AIX 7.1.  
 We have modified it to work and put it in configure.fix
 The Spec file copies this script over the shipped configure script in the
