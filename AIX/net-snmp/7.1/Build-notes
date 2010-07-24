@@ -11,6 +11,8 @@ The configproblems file  shows where the configuration was failing before
 we modified this script.   If a new release is picked up, the new release 
 "configure" script will also have to be modified.  
 
+mkdir -p /build/net-snmp
+cp configure.fix /build/net-snmp/configure.fix 
 cp net-snmp-5.4.2.1.tar.gz /opt/freeware/src/packages/SOURCES
 cp net-snmp.5.4.2.1.spec  /opt/freeware/src/packages/SPECS
 cp net-snmp-find-requires.patch  /opt/freeware/src/packages/SOURCES
