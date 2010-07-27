@@ -1,0 +1,18 @@
+#!/bin/ksh
+# IBM(c) 2007 EPL license http://www.eclipse.org/legal/epl-v10.html
+# xCAT on AIX - prerequisite install script
+cd `dirname $0`
+rpm -Uvh xcat-mysql-5.1-37.aix5.3.ppc.rpm
+PERLVER=`perl -v|grep 'This is perl'|cut -d' ' -f 4`
+if [ "$PERLVER" == "v5.8.2" ]; then
+      rpm -Uvh perl-DBD-mysql-4.007-1.aix5.3.ppc.rpm
+elif [ "$PERLVER" == "v5.8.8" ]; then
+      rpm -Uvh perl-DBD-mysql-4.007-1.aix5.3.ppc.rpm
+elif [ "$PERLVER" == "v5.10.1" ]; then
+      rpm -Uvh perl-DBD-mysql-4.007-2.aix7.1.ppc.rpm
+		OSVER='7.1'
+else
+  echo "Error: the perl version of '$PERLVER' is not one that instoss understands.  Exiting..."
+			exit 2
+fi
+
