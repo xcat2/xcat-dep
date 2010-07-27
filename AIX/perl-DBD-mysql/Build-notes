@@ -13,14 +13,13 @@ Need cc_r compiler installed on AIX build system.
 
 Download DBD-mysql-4.007.tar.gz from CPAN.
 
-Put the gz file in /opt/freeware/src/packages/BUILD directory and unwrap 
-it (gunzip & tar -xvf ).
+cp DBD-mysql-4.007.tar.gz /opt/freeware/src/packages/BUILD directory 
 
-Put the DBD-mysql.spec file provided by xCAT in the 
-/opt/freeware/src/packages/SPECS directory.
+Use the DBD-mysql.spec provided in this directory and
+cp DBD-mysql.spec /opt/freeware/src/packages/SPECS 
 
-Go to the subdirectory DBD-mysql-4.007 and run "cpan2rpm ." 
-(cpan2rpm is available from CPAN)
+cd /opt/freeware/src/packages/SPECS
+rpm -bb DBD-mysql.spec
 
 Creates:
 /opt/freeware/src/packages/RPMS/ppc/perl-DBD-mysql-4.007-1.aix5.3.ppc.rpm
