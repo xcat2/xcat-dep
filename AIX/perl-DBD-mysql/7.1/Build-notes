@@ -1,0 +1,26 @@
+Build Notes
+The 32 bit version of the MySQL database must be installed on the system
+on which you will build.   The DBD-mysql will run with either the 64 bit or
+32 bit version,  but must be built with the 32 bit version.
+
+For example:  Download mysql-5.1.37-aix5.3-powerpc.tar.gz ( 32bit version) or
+the latest release (See http://dev.mysql.com/downloads/mysql/5.1.html#aix)
+ and untar on the build machine in the /usr/local directory.   
+cd /usr/local/mysql   
+ln -s mysql-5.1.37-aix5.3-powerpc mysql 
+
+Need cc_r compiler installed on AIX build system. 
+
+Download DBD-mysql-4.007.tar.gz from CPAN.
+
+cp DBD-mysql-4.007.tar.gz /opt/freeware/src/packages/BUILD directory 
+
+Use the DBD-mysql.spec provided in this directory and
+cp DBD-mysql.spec /opt/freeware/src/packages/SPECS 
+
+cd /opt/freeware/src/packages/SPECS
+rpm -bb DBD-mysql.spec
+
+Creates:
+/opt/freeware/src/packages/RPMS/ppc/perl-DBD-mysql-4.007-2.aix7.1.ppc.rpm
+
