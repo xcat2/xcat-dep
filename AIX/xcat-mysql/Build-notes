@@ -1,6 +1,6 @@
 Build Notes
 
-Download mysql-5.1.37-rc-aix5.3-powerpc.tar.gz.
+Download  mysql-5.1.37-aix5.3-powerpc-64bit.tar.gz
 (See http://dev.mysql.com/downloads/mysql/5.1.html#aix)
 
 Copy the gz file to the SOURCES directory.
