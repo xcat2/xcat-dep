@@ -25,6 +25,7 @@ buildarch: ppc
 prefix:    %(echo %{_prefix})
 source:    DBD-DB2-1.78.tar.gz
 
+AutoReqProv: no
 %description
 None.
 
