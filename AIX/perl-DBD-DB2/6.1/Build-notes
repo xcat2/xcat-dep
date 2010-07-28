@@ -1,0 +1,25 @@
+Build Notes  for the perl-DBD-DB2 on AIX 6.1
+
+Need  cc_r compiler installed on AIX build system and in /bin.
+ 
+DB2 must be installed on the machine to build the DBD
+ 
+export DB2_HOME to the install path of DB2.
+IF this path is differenct the DBD-DB2.spec file must change.
+export DB2_HOME=/opt/IBM/db2/V9.7
+ 
+Download DBD-DB2-1.78.tar.gz from CPAN.
+ 
+cp DBD-DB2-1.78.tar.gz /opt/freeware/src/packages/SOURCES
+Use the DBD-DB2.spec file in this directory
+cp DBD-DB2.spec /opt/freeware/src/packages/SPECS
+
+Go to /opt/freeware/src/packages/SPECS and run
+"rpm -bb DBD-DB2.spec", which creates:
+
+/opt/freeware/src/packages/RPMS/ppc/perl-DBD-DB2.aix6.1.ppc.rpm
+
+Note this rpm must be installed with --nodeps, since DB2 does not provide an
+rpm or installp to satisfy the generated requirements. 
+
+
