@@ -59,7 +59,7 @@ The xNBA network bootloader provides network boot capability for virtual machine
 rm -rf %{buildroot}
 
 cd src
-make bin/e1000.rom
+make bin/8086100e.rom
 make bin/virtio-net.rom
 make bin/rtl8139.rom
 make bin/pcnet32.rom
@@ -72,7 +72,7 @@ make bin/rtl8029.rom
 mkdir -p  %{buildroot}/usr/share/qemu/
 mkdir -p  %{buildroot}/usr/share/gpxe
 mkdir -p  %{buildroot}/usr/share/etherboot
-cp src/bin/e1000.rom %{buildroot}/usr/share/etherboot/e1000-82542.zrom
+cp src/bin/8086100e.rom %{buildroot}/usr/share/etherboot/e1000-82542.zrom
 cp src/bin/pcnet32.rom %{buildroot}/usr/share/etherboot/pcnet32.zrom
 cp src/bin/ne.rom %{buildroot}/usr/share/etherboot/ne.zrom
 cp src/bin/rtl8139.rom %{buildroot}/usr/share/etherboot/rtl8139.zrom
