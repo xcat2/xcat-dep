@@ -13,7 +13,7 @@ Download DBD-DB2-1.78.tar.gz from CPAN.
 cp DBD-DB2-1.78.tar.gz /opt/freeware/src/packages/SOURCES
 Use the DBD-DB2.spec file in this directory
 cp DBD-DB2.spec /opt/freeware/src/packages/SPECS
-
+cp Makefile.db2 from this directory to /tmp
 Go to /opt/freeware/src/packages/SPECS and run
 "rpm -bb DBD-DB2.spec", which creates:
 
