@@ -1,6 +1,6 @@
 Name:           xnba-kvm
 Version:        1.0.1
-Release:        1
+Release:        2
 Summary:        xNBA loader for virtual guests
 Obsoletes:      etherboot-zroms-kvm
 Provides:      etherboot-zroms-kvm
@@ -31,7 +31,7 @@ Patch5: gpxe-1.0.0-hdboot.patch
 Patch6: gpxe-1.0.1-xnbauserclass.patch
 Patch7: gpxe-0.9.7-undinet.patch
 Patch8: gpxe-1.0.0-int18boot.patch
-Patch9: gpxe-1.0.0-exittohd.patch
+#Patch9: gpxe-1.0.0-exittohd.patch
 Patch10: gpxe-1.0.0-cmdlinesize.patch
 Patch11: gpxe-1.0.0-expandfilename.patch
 
@@ -50,7 +50,7 @@ The xNBA network bootloader provides network boot capability for virtual machine
 %patch6 -p1
 %patch7 -p1
 %patch8 -p1
-%patch9 -p1
+#%patch9 -p1
 %patch10 -p1
 %patch11 -p1
 
