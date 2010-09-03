@@ -1,6 +1,6 @@
 Name:           xnba-undi
-Version:        1.0.0
-Release:        5
+Version:        1.0.1
+Release:        2
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
 Obsoletes:	gpxe-undi
 
@@ -22,7 +22,7 @@ Patch2: gpxe-1.0.0-config.patch
 Patch3: gpxe-0.9.7-ignorepackets.patch
 Patch4: gpxe-0.9.7-kvmworkaround.patch
 Patch5: gpxe-1.0.0-hdboot.patch
-Patch6: gpxe-0.9.7-xnbauserclass.patch
+Patch6: gpxe-1.0.1-xnbauserclass.patch
 Patch7: gpxe-0.9.7-undinet.patch
 Patch8: gpxe-1.0.0-cmdlinesize.patch
 Patch9: gpxe-1.0.0-expandfilename.patch
