@@ -18,7 +18,5 @@ Go to /opt/freeware/src/packages/SPECS and run
 
 /opt/freeware/src/packages/RPMS/ppc/perl-DBD-DB2-1-2.aix7.1.ppc.rpm
 
-Note this rpm must be installed with --nodeps, since DB2 does not provide an
-rpm or installp to satisfy the generated requirements. 
 
 
