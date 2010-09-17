@@ -2,7 +2,7 @@
 1. Download Crypt-SSLeay-0.57.tar.gz from CPAN to /tmp directory.
 2. Unwrap the tar file in a temporary directory. (tar -zxvf)
 3. Copy Crypt-SSLeay.spec to /tmp/Crypt-SSLeay-0.57 (.spec taken from AIX version)
-4. Modify the spec file.
+4. Modify the spec file, if needed.
 	a. Change buildarch to ppc64 for ppc64 platform, and x84_64 for x86_64 platform
 	b. Add option --default when "%{__perl} Makefile.PL"
 	c. Un-comment following script

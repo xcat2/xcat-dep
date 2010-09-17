@@ -1,0 +1,14 @@
+Build Notes  for the perl-DBD-DB2 on RedHat5.x  p-Series
+ 
+DB2 must be installed on the linux machine to build the DBD
+install  rpm_build
+install cpan2rpm 
+run cpan2rpm DBD-DB2-1.78.tar.gz --author xCAT  --version 1
+export DB2_HOME=/opt/IBM/db2/V9.7
+export DB2LIB=/opt/ibm/db2/V9.7/lib32 
+cd /usr/src/redhat/SPECS
+Use the DBD-DB2.spec supplied in this directory
+cp DBD-DB2.spec /usr/src/redhat/SPECS
+rpmbuild -ba DBD-DB2.spec
+This creates
+/usr/src/redhat/RPMS/ppc64/perl-DBD-DB2-1-1.ppc64.rpm
