@@ -13,7 +13,7 @@
 
 name:      perl-DBD-Pg
 summary:   DBD-Pg - Self Contained RDBMS in a DBI Driver 
-version:   2
+version:   2 
 release:   17.2
 vendor:    xCAT
 packager:  Arix International <cpan2rpm@arix.com>
@@ -24,7 +24,7 @@ buildroot: %{_tmppath}/%{name}-%{version}-%(id -u -n)
 buildarch: ppc
 prefix:    %(echo %{_prefix})
 source:    DBD-Pg-2.17.1.tar.gz
-
+AutoReqProv: no
 %description
 None.
 
