@@ -24,7 +24,7 @@ buildroot: %{_tmppath}/%{name}-%{version}-%(id -u -n)
 buildarch: ppc
 prefix:    %(echo %{_prefix})
 source:    DBD-Pg-2.17.1.tar.gz
-
+AutoReqProv: no
 %description
 None.
 
