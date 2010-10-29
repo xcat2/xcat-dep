@@ -2,15 +2,17 @@
 
 Summary: zhcp
 Name: %{name}
-Version: 1
+Version: 1.1
 Release: 1
 Source: zhcp-build.tar.gz
 Vendor: IBM
-License: Licensed materials - Property of IBM
+License: IBM (C) Copyright 2010 Eclipse Public License
 Group: System/tools
 Prefix: %{_prefix}
 
 %description
+The System z hardware control point (zHCP) is C program API to interface with 
+z/VM SMAPI.
 
 %prep
 cd /opt/zhcpbuild/SOURCES/
@@ -23,6 +25,10 @@ make
 make install
 make post
 make clean
+
+%post
+echo "/opt/zhcp/lib" > /etc/ld.so.conf.d/zhcp.conf
+/sbin/ldconfig
 
 %files
 %defattr(-,root,root,755)
