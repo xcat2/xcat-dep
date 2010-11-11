@@ -1,0 +1,53 @@
+diff -urN ipxe/src/usr/autoboot.c ipxe-registersan/src/usr/autoboot.c
+--- ipxe/src/usr/autoboot.c	2010-11-11 14:09:48.142334824 -0500
++++ ipxe-registersan/src/usr/autoboot.c	2010-11-11 14:52:39.403583954 -0500
+@@ -150,6 +150,37 @@
+  * @v root_path		Root path
+  * @ret rc		Return status code
+  */
++int reg_root_path ( const char *root_path ) {
++	struct uri *uri;
++	int drive;
++	int rc;
++
++	/* Parse URI */
++	uri = parse_uri ( root_path );
++	if ( ! uri ) {
++		return 0; // Not necessarily an error in this case, since this is PXE and FreeBSD may have it's own thing to say, as an example
++	}
++	if ( ( drive = san_hook ( uri, 0 ) ) < 0 ) {
++		rc = drive;
++		printf ( "Could not open SAN device: %s\n",
++			 strerror ( rc ) );
++		uri_put ( uri );
++		return 0;
++	}
++	printf ( "Registered as SAN device %#02x\n", drive );
++	/* Describe SAN device */
++	if ( ( rc = san_describe ( drive ) ) != 0 ) {
++		printf ( "Could not describe SAN device %#02x: %s\n",
++			 drive, strerror ( rc ) );
++		uri_put(uri);
++		return 0;
++	}
++	//If still in function, we registered fine.  
++	//Unclear whether uri should have it's refcnt decremented in this case
++        //in boot_root_path, it would not be, so matching that behavior for now
++	return rc;
++  
++}
+ int boot_root_path ( const char *root_path ) {
+ 	struct uri *uri;
+ 	int drive;
+@@ -259,6 +290,11 @@
+ 	fetch_ipv4_setting ( NULL, &next_server_setting, &next_server );
+ 	fetch_string_setting ( NULL, &filename_setting, buf, sizeof ( buf ) );
+ 	if ( buf[0] ) {
++		fetch_string_setting ( NULL, &root_path_setting, buf, sizeof ( buf ) );
++		if ( buf[0] ) {
++			printf ( "SAN registering from root path \"%s\"\n", buf );
++			reg_root_path ( buf );
++		}
+ 		printf ( "Booting from filename \"%s\"\n", buf );
+ 		return boot_next_server_and_filename ( next_server, buf );
+ 	}
