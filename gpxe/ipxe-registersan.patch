@@ -1,7 +1,7 @@
-diff -urN ipxe/src/usr/autoboot.c ipxe-registersan/src/usr/autoboot.c
---- ipxe/src/usr/autoboot.c	2010-11-11 14:09:48.142334824 -0500
-+++ ipxe-registersan/src/usr/autoboot.c	2010-11-11 14:52:39.403583954 -0500
-@@ -150,6 +150,37 @@
+diff -urN ipxe-branded/src/usr/autoboot.c ipxe-registersan/src/usr/autoboot.c
+--- ipxe-branded/src/usr/autoboot.c	2010-11-11 14:09:48.142334824 -0500
++++ ipxe-registersan/src/usr/autoboot.c	2010-11-12 10:31:31.972972171 -0500
+@@ -150,6 +150,38 @@
   * @v root_path		Root path
   * @ret rc		Return status code
   */
@@ -13,6 +13,7 @@ diff -urN ipxe/src/usr/autoboot.c ipxe-registersan/src/usr/autoboot.c
 +	/* Parse URI */
 +	uri = parse_uri ( root_path );
 +	if ( ! uri ) {
++		printf("Unrecognized root path, ignoring\n");
 +		return 0; // Not necessarily an error in this case, since this is PXE and FreeBSD may have it's own thing to say, as an example
 +	}
 +	if ( ( drive = san_hook ( uri, 0 ) ) < 0 ) {
@@ -39,14 +40,22 @@ diff -urN ipxe/src/usr/autoboot.c ipxe-registersan/src/usr/autoboot.c
  int boot_root_path ( const char *root_path ) {
  	struct uri *uri;
  	int drive;
-@@ -259,6 +290,11 @@
+@@ -228,6 +260,7 @@
+ 	struct setting pxe_boot_menu_setting
+ 		= { .tag = DHCP_PXE_BOOT_MENU };
+ 	char buf[256];
++	char rbuf[256];
+ 	struct in_addr next_server;
+ 	unsigned int pxe_discovery_control;
+ 	int rc;
+@@ -259,6 +292,11 @@
  	fetch_ipv4_setting ( NULL, &next_server_setting, &next_server );
  	fetch_string_setting ( NULL, &filename_setting, buf, sizeof ( buf ) );
  	if ( buf[0] ) {
-+		fetch_string_setting ( NULL, &root_path_setting, buf, sizeof ( buf ) );
-+		if ( buf[0] ) {
-+			printf ( "SAN registering from root path \"%s\"\n", buf );
-+			reg_root_path ( buf );
++		fetch_string_setting ( NULL, &root_path_setting, rbuf, sizeof ( buf ) );
++		if ( rbuf[0] ) {
++			printf ( "Attempting SAN registration per root path \"%s\"\n", rbuf );
++			reg_root_path ( rbuf );
 +		}
  		printf ( "Booting from filename \"%s\"\n", buf );
  		return boot_next_server_and_filename ( next_server, buf );
