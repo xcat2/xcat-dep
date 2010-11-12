@@ -1,0 +1,12 @@
+diff -urN ipxe-droppackets/src/net/udp/dhcp.c ipxe-xnbaclass/src/net/udp/dhcp.c
+--- ipxe-droppackets/src/net/udp/dhcp.c	2010-11-11 14:09:48.142334824 -0500
++++ ipxe-xnbaclass/src/net/udp/dhcp.c	2010-11-12 10:35:08.482334675 -0500
+@@ -79,7 +79,7 @@
+ 	DHCP_CLIENT_ARCHITECTURE, DHCP_ARCH_CLIENT_ARCHITECTURE,
+ 	DHCP_CLIENT_NDI, DHCP_ARCH_CLIENT_NDI,
+ 	DHCP_VENDOR_CLASS_ID, DHCP_ARCH_VENDOR_CLASS_ID,
+-	DHCP_USER_CLASS_ID, DHCP_STRING ( 'i', 'P', 'X', 'E' ),
++	DHCP_USER_CLASS_ID, DHCP_STRING ( 'x', 'N', 'B', 'A' ),
+ 	DHCP_PARAMETER_REQUEST_LIST,
+ 	DHCP_OPTION ( DHCP_SUBNET_MASK, DHCP_ROUTERS, DHCP_DNS_SERVERS,
+ 		      DHCP_LOG_SERVERS, DHCP_HOST_NAME, DHCP_DOMAIN_NAME,

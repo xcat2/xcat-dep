@@ -1,0 +1,16 @@
+Allegedly some UNDI stacks don't cope well with interrupts.  This patch pretty 
+much turns the world into a polling world.  This is relatively hideous, but a 
+fairly short lifetime.
+
+diff -urN ipxe-xnbaclass/src/arch/i386/drivers/net/undinet.c ipxe-undinetchange/src/arch/i386/drivers/net/undinet.c
+--- ipxe-xnbaclass/src/arch/i386/drivers/net/undinet.c	2010-11-11 14:09:48.042334268 -0500
++++ ipxe-undinetchange/src/arch/i386/drivers/net/undinet.c	2010-11-12 10:37:01.332334042 -0500
+@@ -258,7 +258,7 @@
+ 							   "nop\n\t"
+ 							   "nop\n\t"
+ 							   "cli\n\t" ) : : );
+-			return;
++			//return;
+ 		}
+ 
+ 		/* Start ISR processing */

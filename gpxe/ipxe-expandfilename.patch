@@ -1,0 +1,33 @@
+diff -urN ipxe-undinetchange/src/core/exec.c ipxe-expandfilename/src/core/exec.c
+--- ipxe-undinetchange/src/core/exec.c	2010-11-11 14:09:48.062345190 -0500
++++ ipxe-expandfilename/src/core/exec.c	2010-11-12 10:40:03.943584358 -0500
+@@ -94,7 +94,7 @@
+  * The expanded command line is allocated with malloc() and the caller
+  * must eventually free() it.
+  */
+-static char * expand_command ( const char *command ) {
++char * expand_command ( const char *command ) {
+ 	char *expcmd;
+ 	char *start;
+ 	char *end;
+diff -urN ipxe-undinetchange/src/usr/autoboot.c ipxe-expandfilename/src/usr/autoboot.c
+--- ipxe-undinetchange/src/usr/autoboot.c	2010-11-12 10:31:31.972972171 -0500
++++ ipxe-expandfilename/src/usr/autoboot.c	2010-11-12 10:44:23.972334241 -0500
+@@ -33,6 +33,8 @@
+ #include <usr/dhcpmgmt.h>
+ #include <usr/imgmgmt.h>
+ #include <usr/autoboot.h>
++char * expand_command ( const char *command );
++
+ 
+ /** @file
+  *
+@@ -97,6 +99,8 @@
+ 		uri_encode ( filename, buf + strlen ( buf ),
+ 			     sizeof ( buf ) - strlen ( buf ), URI_PATH );
+ 		filename = buf;
++	} else { /* I don't think it could hurt the tftp case, but might as well stay out of a codepath I don't intend to rigorously test */
++		filename = expand_command(filename);
+ 	}
+ 
+ 	/* Download and boot image */
