@@ -1,12 +1,12 @@
 Name:           xnba-undi
-Version:        1.0.1
-Release:        2
+Version:        1.0.2
+Release:        1
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
 Obsoletes:	gpxe-undi
 
 Group:          System Environment/Kernel
 License:        GPL
-URL:            http://etherboot.org/wiki/index.php
+URL:            http://ipxe.org
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}
 BuildArch:	noarch
 
@@ -15,25 +15,23 @@ BuildArch:	noarch
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: gpxe-%{version}.tar.bz2
-Patch0: gpxe-0.9.7-branding.patch
-Patch1: gpxe-1.0.0-registeriscsionpxe.patch
-Patch2: gpxe-1.0.0-config.patch
-Patch3: gpxe-0.9.7-ignorepackets.patch
-Patch4: gpxe-0.9.7-kvmworkaround.patch
-Patch5: gpxe-1.0.0-hdboot.patch
-Patch6: gpxe-1.0.1-xnbauserclass.patch
-Patch7: gpxe-0.9.7-undinet.patch
-Patch8: gpxe-1.0.0-cmdlinesize.patch
-Patch9: gpxe-1.0.0-expandfilename.patch
-Patch10: gpxe-1.0.0-hyphenatedmachyp.patch
+Source0: ipxe-20101112.tar.bz2
+Patch0: ipxe-branding.patch
+Patch1: ipxe-registersan.patch
+Patch2: ipxe-config.patch
+Patch3: ipxe-droppackets.patch
+Patch4: ipxe-xnbaclass.patch
+Patch5: ipxe-undinetchange.patch
+Patch6: ipxe-expandfilename.patch
+Patch7: ipxe-cmdlinesize.patch
+Patch8: ipxe-machyp.patch
 
 %description
 The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and gPXE script based booting.
 
 %prep
 
-%setup  -n gpxe-%{version}
+%setup  -n ipxe
 %patch -p1
 %patch1 -p1
 %patch2 -p1
@@ -43,8 +41,6 @@ The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides
 %patch6 -p1
 %patch7 -p1
 %patch8 -p1
-%patch9 -p1
-%patch10 -p1
 
 %build
 
