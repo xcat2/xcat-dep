@@ -1,13 +1,14 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.11
-Release:      2
+Release:      3
 License:      BSD
 Group:        Utilities
 Packager:     Jarrod Johnson <jbjohnso@us.ibm.com>
 Source:       ipmitool-%{version}.tar.gz
 Patch:        ipmitool-saneretry.patch
 Patch2:       ipmitool-spdfix.patch
+Patch3:       ipmitool-eventfix.patch
 Buildroot:    /var/tmp/ipmitool-root
 
 %description
@@ -33,6 +34,7 @@ fi
 %setup -n ipmitool-%{version}
 %patch -p1
 %patch2 -p1
+%patch3 -p1
 
 %build
 ./configure --with-kerneldir \
@@ -62,6 +64,8 @@ fi
 
 
 %changelog
+* Wed Apr 27 2011 <andywray@us.ibm.com> 1.8.11-3
+- Add event fix
 * Wed Mar 11 2009 <jbjohnso@us.ibm.com> 1.8.11-2
 - Back off conflicting retry mechanisms
 - Add patch from ipmitool tracker for DDR3 SPD decode
