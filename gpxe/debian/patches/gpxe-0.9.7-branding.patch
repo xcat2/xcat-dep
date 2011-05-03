@@ -1,0 +1,14 @@
+diff -urN gpxe-0.9.7/src/config/general.h gpxe-0.9.7-branded/src/config/general.h
+--- gpxe-0.9.7/src/config/general.h	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-branded/src/config/general.h	2009-06-23 06:24:54.000000000 -0400
+@@ -22,8 +22,8 @@
+  * "gPXE".
+  *
+  */
+-#define PRODUCT_NAME ""
+-#define PRODUCT_SHORT_NAME "gPXE"
++#define PRODUCT_NAME "xCAT Network Boot Agent"
++#define PRODUCT_SHORT_NAME "xCAT NBA"
+ 
+ /*
+  * Timer configuration

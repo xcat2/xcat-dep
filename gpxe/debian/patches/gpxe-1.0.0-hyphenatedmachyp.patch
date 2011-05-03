@@ -1,0 +1,141 @@
+diff -urN gpxe-1.0.0/src/core/settings.c gpxe-1.0.0-hyphenatedmachyp/src/core/settings.c
+--- gpxe-1.0.0/src/core/settings.c	2010-02-02 11:12:44.000000000 -0500
++++ gpxe-1.0.0-hyphenatedmachyp/src/core/settings.c	2010-06-02 14:15:26.000000000 -0400
+@@ -1314,6 +1314,72 @@
+ }
+ 
+ /**
++ * Parse and store value of hex string setting, hyphen delimited
++ *
++ * @v settings		Settings block
++ * @v setting		Setting to store
++ * @v value		Formatted setting data
++ * @ret rc		Return status code
++ */
++static int storef_hexhyp ( struct settings *settings, struct setting *setting,
++			const char *value ) {
++	char *ptr = ( char * ) value;
++	uint8_t bytes[ strlen ( value ) ]; /* cannot exceed strlen(value) */
++	unsigned int len = 0;
++
++	while ( 1 ) {
++		bytes[len++] = strtoul ( ptr, &ptr, 16 );
++		switch ( *ptr ) {
++		case '\0' :
++			return store_setting ( settings, setting, bytes, len );
++		case '-' :
++			ptr++;
++			break;
++		default :
++			return -EINVAL;
++		}
++	}
++}
++/**
++ * Fetch and format value of hex string setting with hypphen delimiter
++ *
++ * @v settings		Settings block, or NULL to search all blocks
++ * @v setting		Setting to fetch
++ * @v buf		Buffer to contain formatted value
++ * @v len		Length of buffer
++ * @ret len		Length of formatted value, or negative error
++ */
++static int fetchf_hexhyp ( struct settings *settings, struct setting *setting,
++			char *buf, size_t len ) {
++	int raw_len;
++	int check_len;
++	int used = 0;
++	int i;
++
++	raw_len = fetch_setting_len ( settings, setting );
++	if ( raw_len < 0 )
++		return raw_len;
++
++	{
++		uint8_t raw[raw_len];
++
++		check_len = fetch_setting ( settings, setting, raw,
++					    sizeof ( raw ) );
++		if ( check_len < 0 )
++			return check_len;
++		assert ( check_len == raw_len );
++		
++		if ( len )
++			buf[0] = 0; /* Ensure that a terminating NUL exists */
++		for ( i = 0 ; i < raw_len ; i++ ) {
++			used += ssnprintf ( ( buf + used ), ( len - used ),
++					    "%s%02x", ( used ? "-" : "" ),
++					    raw[i] );
++		}
++		return used;
++	}
++}
++/**
+  * Fetch and format value of hex string setting
+  *
+  * @v settings		Settings block, or NULL to search all blocks
+@@ -1359,6 +1425,12 @@
+ 	.storef = storef_hex,
+ 	.fetchf = fetchf_hex,
+ };
++/** A hex-string setting, hyphen delimited */
++struct setting_type setting_type_hexhyp __setting_type = {
++	.name = "hexhyp",
++	.storef = storef_hexhyp,
++	.fetchf = fetchf_hexhyp,
++};
+ 
+ /**
+  * Parse and store value of UUID setting
+diff -urN gpxe-1.0.0/src/include/gpxe/settings.h gpxe-1.0.0-hyphenatedmachyp/src/include/gpxe/settings.h
+--- gpxe-1.0.0/src/include/gpxe/settings.h	2010-02-02 11:12:44.000000000 -0500
++++ gpxe-1.0.0-hyphenatedmachyp/src/include/gpxe/settings.h	2010-06-02 14:15:26.000000000 -0400
+@@ -226,6 +226,7 @@
+ extern struct setting_type setting_type_uint16 __setting_type;
+ extern struct setting_type setting_type_uint32 __setting_type;
+ extern struct setting_type setting_type_hex __setting_type;
++extern struct setting_type setting_type_hexhyp __setting_type;
+ extern struct setting_type setting_type_uuid __setting_type;
+ 
+ extern struct setting ip_setting __setting;
+@@ -242,6 +243,7 @@
+ extern struct setting uuid_setting __setting;
+ extern struct setting next_server_setting __setting;
+ extern struct setting mac_setting __setting;
++extern struct setting machyp_setting __setting;
+ extern struct setting busid_setting __setting;
+ extern struct setting user_class_setting __setting;
+ 
+diff -urN gpxe-1.0.0/src/net/netdev_settings.c gpxe-1.0.0-hyphenatedmachyp/src/net/netdev_settings.c
+--- gpxe-1.0.0/src/net/netdev_settings.c	2010-02-02 11:12:44.000000000 -0500
++++ gpxe-1.0.0-hyphenatedmachyp/src/net/netdev_settings.c	2010-06-02 14:17:09.000000000 -0400
+@@ -38,6 +38,11 @@
+ 	.description = "MAC address",
+ 	.type = &setting_type_hex,
+ };
++struct setting machyp_setting __setting = {
++	.name = "machyp",
++	.description = "MAC address",
++	.type = &setting_type_hexhyp,
++};
+ struct setting busid_setting __setting = {
+ 	.name = "busid",
+ 	.description = "Bus ID",
+@@ -58,7 +63,7 @@
+ 	struct net_device *netdev = container_of ( settings, struct net_device,
+ 						   settings.settings );
+ 
+-	if ( setting_cmp ( setting, &mac_setting ) == 0 ) {
++	if (( setting_cmp ( setting, &mac_setting ) == 0 ) || ( setting_cmp ( setting, &machyp_setting ) == 0 )) {
+ 		if ( len != netdev->ll_protocol->ll_addr_len )
+ 			return -EINVAL;
+ 		memcpy ( netdev->ll_addr, data, len );
+@@ -84,7 +89,7 @@
+ 	struct device_description *desc = &netdev->dev->desc;
+ 	struct dhcp_netdev_desc dhcp_desc;
+ 
+-	if ( setting_cmp ( setting, &mac_setting ) == 0 ) {
++	if (( setting_cmp ( setting, &mac_setting ) == 0 ) || ( setting_cmp ( setting, &machyp_setting ) == 0 )) {
+ 		if ( len > netdev->ll_protocol->ll_addr_len )
+ 			len = netdev->ll_protocol->ll_addr_len;
+ 		memcpy ( data, netdev->ll_addr, len );

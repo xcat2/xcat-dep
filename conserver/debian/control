@@ -1,0 +1,19 @@
+Source: conserver
+Section: admin
+Priority: extra
+Maintainer: Arif Ali <aali@ocf.co.uk>
+Build-Depends: debhelper (>= 7.0.50~), autotools-dev
+Standards-Version: 3.8.4
+Homepage: http://www.conserver.com/
+#Vcs-Git: git://git.debian.org/collab-maint/conserver.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/conserver.git;a=summary
+
+Package: conserver
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Serial console server daemon/client
+ Conserver is an application that allows multiple users to watch a
+ serial console at the same time.  It can log the data, allows users to
+ take write-access of a console (one at a time), and has a variety of
+ bells and whistles to accentuate that basic functionality.
+

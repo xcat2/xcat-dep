@@ -1,0 +1,11 @@
+diff -urN gpxe-1.0.0/src/arch/i386/include/bzimage.h gpxe-1.0.0-cmdlinefix/src/arch/i386/include/bzimage.h
+--- gpxe-1.0.0/src/arch/i386/include/bzimage.h	2010-02-02 11:12:44.000000000 -0500
++++ gpxe-1.0.0-cmdlinefix/src/arch/i386/include/bzimage.h	2010-03-04 13:52:13.000000000 -0500
+@@ -137,6 +137,6 @@
+ #define BZI_STACK_SIZE 0x1000
+ 
+ /** Maximum size of command line */
+-#define BZI_CMDLINE_SIZE 0x100
++#define BZI_CMDLINE_SIZE 0x7FF
+ 
+ #endif /* _BZIMAGE_H */

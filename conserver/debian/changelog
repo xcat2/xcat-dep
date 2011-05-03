@@ -1,0 +1,11 @@
+conserver (8.1.16-2) unstable; urgency=low
+
+  * Initial Debian build
+
+ -- Mark Hamzy <hamzy@us.ibm.com>  Mon, 02 May 2011 13:05:49 -0500
+
+conserver (8.1.16-1) unstable; urgency=low
+
+  * Initial release 
+
+ -- OCF xCAT <xcat@ocf.co.uk>  Thu, 28 Oct 2010 01:04:00 +0100

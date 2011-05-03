@@ -1,0 +1,12 @@
+gpxe-0.9.7-branding.patch
+gpxe-1.0.0-registeriscsionpxe.patch
+gpxe-1.0.0-config.patch
+gpxe-0.9.7-ignorepackets.patch
+gpxe-0.9.7-kvmworkaround.patch
+gpxe-1.0.0-hdboot.patch
+gpxe-1.0.1-xnbauserclass.patch
+gpxe-0.9.7-undinet.patch
+gpxe-1.0.0-cmdlinesize.patch
+gpxe-1.0.0-expandfilename.patch
+gpxe-1.0.0-hyphenatedmachyp.patch
+

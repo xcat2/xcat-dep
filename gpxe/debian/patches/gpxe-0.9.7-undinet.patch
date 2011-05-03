@@ -1,0 +1,12 @@
+diff -urN gpxe-0.9.7/src/arch/i386/drivers/net/undinet.c gpxe-0.9.7-undinet/src/arch/i386/drivers/net/undinet.c
+--- gpxe-0.9.7/src/arch/i386/drivers/net/undinet.c	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-undinet/src/arch/i386/drivers/net/undinet.c	2010-01-26 10:06:31.000000000 -0500
+@@ -427,7 +427,7 @@
+ 							   "nop\n\t"
+ 							   "nop\n\t"
+ 							   "cli\n\t" ) : : );
+-			return;
++			//return;
+ 		}
+ 
+ 		/* Start ISR processing */

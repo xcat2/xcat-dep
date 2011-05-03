@@ -1,0 +1,48 @@
+diff -urN gpxe-0.9.7/src/net/arp.c gpxe-0.9.7-ignorepackets/src/net/arp.c
+--- gpxe-0.9.7/src/net/arp.c	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-ignorepackets/src/net/arp.c	2009-07-02 13:58:19.000000000 -0400
+@@ -238,7 +238,7 @@
+ 		goto done;
+ 	
+ 	/* Create new ARP table entry if necessary */
+-	if ( ! merge ) {
++	if ( ( arphdr->ar_op == htons ( ARPOP_REPLY ) ) && ( ! merge ) ) {
+ 		arp = &arp_table[next_new_arp_entry++ % NUM_ARP_ENTRIES];
+ 		arp->ll_protocol = ll_protocol;
+ 		arp->net_protocol = net_protocol;
+diff -urN gpxe-0.9.7/src/net/icmp.c gpxe-0.9.7-ignorepackets/src/net/icmp.c
+--- gpxe-0.9.7/src/net/icmp.c	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-ignorepackets/src/net/icmp.c	2009-07-02 14:04:53.000000000 -0400
+@@ -67,11 +67,14 @@
+ 	}
+ 
+ 	/* We respond only to pings */
+-	if ( icmp->type != ICMP_ECHO_REQUEST ) {
++	/* Always discard, responding to pings is more than most systems do in this state and 
++	 * gPXE is in a relatively precarious position, resource management wise, and thus it is
++         * easier just to disable this function. */
++	/* if ( icmp->type != ICMP_ECHO_REQUEST ) { */
+ 		DBG ( "ICMP ignoring type %d\n", icmp->type );
+ 		rc = 0;
+ 		goto done;
+-	}
++	/* } */
+ 
+ 	DBG ( "ICMP responding to ping\n" );
+ 
+diff -urN gpxe-0.9.7/src/net/tcp.c gpxe-0.9.7-ignorepackets/src/net/tcp.c
+--- gpxe-0.9.7/src/net/tcp.c	2009-03-01 21:23:42.000000000 -0500
++++ gpxe-0.9.7-ignorepackets/src/net/tcp.c	2009-07-02 14:00:46.000000000 -0400
+@@ -904,7 +904,11 @@
+ 
+ 	/* If no connection was found, send RST */
+ 	if ( ! tcp ) {
+-		tcp_xmit_reset ( tcp, st_src, tcphdr );
++		/* We simply drop unrecognized TCP connections.  Hopefully, this is no worse than I typically set up a firewall.
++		 * If we try to even remotely respond to random TCP streams, it can exhaust gPXE resources easily in a very large
++		 * environment */
++		/* tcp_xmit_reset ( tcp, st_src, tcphdr ); Don't consume precious outbound resource for irrelevant communication. */
++		
+ 		rc = -ENOTCONN;
+ 		goto discard;
+ 	}

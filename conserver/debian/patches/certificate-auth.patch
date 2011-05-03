@@ -1,0 +1,269 @@
+diff -ur conserver-8.1.16/conserver/main.c conserver-8.1.16-ssl/conserver/main.c
+--- conserver-8.1.16/conserver/main.c	2007-04-02 13:59:16.000000000 -0400
++++ conserver-8.1.16-ssl/conserver/main.c	2008-01-09 12:46:30.000000000 -0500
+@@ -357,7 +357,7 @@
+ 	} else {
+ 	    ciphers = "ALL:!LOW:!EXP:!MD5:@STRENGTH";
+ 	}
+-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, SSLVerifyCallback);
++	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSLVerifyCallback);
+ 	SSL_CTX_set_options(ctx,
+ 			    SSL_OP_ALL | SSL_OP_NO_SSLv2 |
+ 			    SSL_OP_SINGLE_DH_USE);
+@@ -365,6 +365,9 @@
+ 			 SSL_MODE_ENABLE_PARTIAL_WRITE |
+ 			 SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+ 			 SSL_MODE_AUTO_RETRY);
++	if (config->sslauthority != (char *)0) {
++	    SSL_CTX_load_verify_locations(ctx,config->sslauthority,"");
++	}
+ 	SSL_CTX_set_tmp_dh_callback(ctx, TmpDHCallback);
+ 	if (SSL_CTX_set_cipher_list(ctx, ciphers) != 1) {
+ 	    Error("SetupSSL(): setting SSL cipher list failed");
+@@ -1190,6 +1193,12 @@
+ 		if ((optConf->secondaryport = StrDup(optarg)) == (char *)0)
+ 		    OutOfMem();
+ 		break;
++	    case 'A':
++#if HAVE_OPENSSL
++		if ((optConf->sslauthority = StrDup(optarg)) == (char*)0) 
++		    OutOfMem();
++#endif
++		break;
+ 	    case 'c':
+ #if HAVE_OPENSSL
+ 		if ((optConf->sslcredentials =
+@@ -1529,6 +1538,12 @@
+     else
+ 	config->sslrequired = defConfig.sslrequired;
+ 
++    if (optConf->sslauthority != (char *)0)
++	config->sslauthority = StrDup(optConf->sslauthority);
++    else if (pConfig->sslauthority != (char *)0)
++	config->sslauthority = StrDup(pConfig->sslauthority);
++    else
++	config->sslauthority = StrDup(defConfig.sslauthority);
+     if (optConf->sslcredentials != (char *)0)
+ 	config->sslcredentials = StrDup(optConf->sslcredentials);
+     else if (pConfig->sslcredentials != (char *)0)
+diff -ur conserver-8.1.16/conserver/readcfg.c conserver-8.1.16-ssl/conserver/readcfg.c
+--- conserver-8.1.16/conserver/readcfg.c	2007-04-02 13:59:16.000000000 -0400
++++ conserver-8.1.16-ssl/conserver/readcfg.c	2008-01-09 12:41:08.000000000 -0500
+@@ -4385,6 +4385,8 @@
+ #if HAVE_OPENSSL
+     if (c->sslcredentials != (char *)0)
+ 	free(c->sslcredentials);
++    if (c->sslauthority != (char *)0)
++	free(c->sslauthority);
+ #endif
+     free(c);
+ }
+@@ -4474,6 +4476,12 @@
+ 		parserConfigTemp->secondaryport = (char *)0;
+ 	    }
+ #if HAVE_OPENSSL
++	    if (parserConfigTemp->sslauthority != (char *)0) {
++		if (pConfig->sslauthority != (char *)0)
++		    free(pConfig->sslauthority);
++		pConfig->sslauthority = parserConfigTemp->sslauthority;
++		parserConfigTemp->sslauthority = (char *)0;
++	    }
+ 	    if (parserConfigTemp->sslcredentials != (char *)0) {
+ 		if (pConfig->sslcredentials != (char *)0)
+ 		    free(pConfig->sslcredentials);
+@@ -4786,6 +4794,33 @@
+ 
+ void
+ #if PROTOTYPES
++ConfigItemSslauthority(char *id)
++#else
++ConfigItemSslauthority(id)
++    char *id;
++#endif
++{
++    CONDDEBUG((1, "ConfigItemSslauthority(%s) [%s:%d]", id, file, line));
++#if HAVE_OPENSSL
++    if (parserConfigTemp->sslauthority != (char *)0)
++	free(parserConfigTemp->sslauthority);
++
++    if ((id == (char *)0) || (*id == '\000')) {
++	parserConfigTemp->sslauthority = (char *)0;
++	return;
++    }
++    if ((parserConfigTemp->sslauthority = StrDup(id)) == (char *)0)
++	OutOfMem();
++#else
++    if (isMaster)
++	Error
++	    ("sslauthority ignored - encryption not compiled into code [%s:%d]",
++	     file, line);
++#endif
++}
++
++void
++#if PROTOTYPES
+ ConfigItemSslcredentials(char *id)
+ #else
+ ConfigItemSslcredentials(id)
+@@ -4962,6 +4997,7 @@
+     {"secondaryport", ConfigItemSecondaryport},
+     {"setproctitle", ConfigItemSetproctitle},
+     {"sslcredentials", ConfigItemSslcredentials},
++    {"sslauthority", ConfigItemSslauthority},
+     {"sslrequired", ConfigItemSslrequired},
+     {"unifiedlog", ConfigItemUnifiedlog},
+     {(char *)0, (void *)0}
+@@ -5250,6 +5286,27 @@
+ 	}
+ #endif
+ #if HAVE_OPENSSL
++	if (optConf->sslauthority == (char *)0) {
++	    if (pConfig->sslauthority == (char *)0) {
++		if (config->sslauthority != (char *)0) {
++		    free(config->sslauthority);
++		    config->sslauthority = (char *)0;
++		    Msg("warning: `sslauthority' config option changed - you must restart for it to take effect");
++		}
++	    } else {
++		if (config->sslauthority == (char *)0 ||
++		    strcmp(pConfig->sslauthority,
++			   config->sslauthority) != 0) {
++		    if (config->sslauthority != (char *)0)
++			free(config->sslauthority);
++		    if ((config->sslauthority =
++			 StrDup(pConfig->sslauthority))
++			== (char *)0)
++			OutOfMem();
++		    Msg("warning: `sslauthority' config option changed - you must restart for it to take effect");
++		}
++	    }
++	}
+ 	if (optConf->sslcredentials == (char *)0) {
+ 	    if (pConfig->sslcredentials == (char *)0) {
+ 		if (config->sslcredentials != (char *)0) {
+diff -ur conserver-8.1.16/conserver/readcfg.h conserver-8.1.16-ssl/conserver/readcfg.h
+--- conserver-8.1.16/conserver/readcfg.h	2005-06-10 22:30:31.000000000 -0400
++++ conserver-8.1.16-ssl/conserver/readcfg.h	2008-01-09 08:10:54.000000000 -0500
+@@ -27,6 +27,7 @@
+ #endif
+ #if HAVE_OPENSSL
+     char *sslcredentials;
++    char *sslauthority;
+     FLAG sslrequired;
+ #endif
+ } CONFIG;
+diff -ur conserver-8.1.16/console/console.c conserver-8.1.16-ssl/console/console.c
+--- conserver-8.1.16/console/console.c	2006-06-14 23:01:05.000000000 -0400
++++ conserver-8.1.16-ssl/console/console.c	2008-01-09 12:49:39.000000000 -0500
+@@ -105,7 +105,7 @@
+ 	} else {
+ 	    ciphers = "ALL:!LOW:!EXP:!MD5:@STRENGTH";
+ 	}
+-	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, SSLVerifyCallback);
++	SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER|SSL_VERIFY_FAIL_IF_NO_PEER_CERT, SSLVerifyCallback);
+ 	SSL_CTX_set_options(ctx,
+ 			    SSL_OP_ALL | SSL_OP_NO_SSLv2 |
+ 			    SSL_OP_SINGLE_DH_USE);
+@@ -113,6 +113,9 @@
+ 			 SSL_MODE_ENABLE_PARTIAL_WRITE |
+ 			 SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+ 			 SSL_MODE_AUTO_RETRY);
++	if (config->sslauthority != (char *)0) {
++	    SSL_CTX_load_verify_locations(ctx, config->sslauthority,"");
++	}
+ 	if (SSL_CTX_set_cipher_list(ctx, ciphers) != 1) {
+ 	    Error("Setting SSL cipher list failed");
+ 	    Bye(EX_UNAVAILABLE);
+@@ -2204,6 +2207,14 @@
+ 	config->playback = 0;
+ 
+ #if HAVE_OPENSSL
++    if (optConf->sslauthority != (char *)0 &&
++	optConf->sslauthority[0] != '\000')
++	config->sslauthority = StrDup(optConf->sslauthority);
++    else if (pConfig->sslauthority != (char *)0 &&
++	     pConfig->sslauthority[0] != '\000')
++	config->sslauthority = StrDup(pConfig->sslauthority);
++    else
++	config->sslauthority = (char *)0;
+     if (optConf->sslcredentials != (char *)0 &&
+ 	optConf->sslcredentials[0] != '\000')
+ 	config->sslcredentials = StrDup(optConf->sslcredentials);
+diff -ur conserver-8.1.16/console/readconf.c conserver-8.1.16-ssl/console/readconf.c
+--- conserver-8.1.16/console/readconf.c	2006-04-03 09:32:12.000000000 -0400
++++ conserver-8.1.16-ssl/console/readconf.c	2008-01-09 11:14:20.000000000 -0500
+@@ -37,6 +37,8 @@
+     if (c->escape != (char *)0)
+ 	free(c->escape);
+ #if HAVE_OPENSSL
++    if (c->sslauthority != (char *)0)
++	free(c->sslauthority);
+     if (c->sslcredentials != (char *)0)
+ 	free(c->sslcredentials);
+ #endif
+@@ -86,6 +88,13 @@
+     if (parserConfigDefault->playback != FLAGUNKNOWN)
+ 	c->playback = parserConfigDefault->playback;
+ #if HAVE_OPENSSL
++    if (parserConfigDefault->sslauthority != (char *)0) {
++	if (c->sslauthority != (char *)0)
++	    free(c->sslauthority);
++	if ((c->sslauthority =
++	     StrDup(parserConfigDefault->sslauthority)) == (char *)0)
++	    OutOfMem();
++    }
+     if (parserConfigDefault->sslcredentials != (char *)0) {
+ 	if (c->sslcredentials != (char *)0)
+ 	    free(c->sslcredentials);
+@@ -480,6 +489,32 @@
+ 
+ void
+ #if PROTOTYPES
++ConfigItemSslauthority(char *id)
++#else
++ConfigItemSslauthority(id)
++    char *id;
++#endif
++{
++    CONDDEBUG((1, "ConfigItemSslauthority(%s) [%s:%d]", id, file, line));
++#if HAVE_OPENSSL
++    if (parserConfigTemp->sslauthority != (char *)0)
++	free(parserConfigTemp->sslauthority);
++
++    if ((id == (char *)0) || (*id == '\000')) {
++	parserConfigTemp->sslauthority = (char *)0;
++	return;
++    }
++    if ((parserConfigTemp->sslauthority = StrDup(id)) == (char *)0)
++	OutOfMem();
++#else
++    Error
++	("sslauthority ignored - encryption not compiled into code [%s:%d]",
++	 file, line);
++#endif
++}
++
++void
++#if PROTOTYPES
+ ConfigItemSslcredentials(char *id)
+ #else
+ ConfigItemSslcredentials(id)
+@@ -712,6 +747,7 @@
+     {"port", ConfigItemPort},
+     {"replay", ConfigItemReplay},
+     {"sslcredentials", ConfigItemSslcredentials},
++    {"sslauthority", ConfigItemSslauthority},
+     {"sslrequired", ConfigItemSslrequired},
+     {"sslenabled", ConfigItemSslenabled},
+     {"striphigh", ConfigItemStriphigh},
+diff -ur conserver-8.1.16/console/readconf.h conserver-8.1.16-ssl/console/readconf.h
+--- conserver-8.1.16/console/readconf.h	2006-04-03 09:32:12.000000000 -0400
++++ conserver-8.1.16-ssl/console/readconf.h	2008-01-09 11:07:41.000000000 -0500
+@@ -18,6 +18,7 @@
+     unsigned short playback;
+ #if HAVE_OPENSSL
+     char *sslcredentials;
++    char *sslauthority;
+     FLAG sslrequired;
+     FLAG sslenabled;
+ #endif

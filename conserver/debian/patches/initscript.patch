@@ -1,0 +1,116 @@
+diff -urN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init
+--- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2003-02-27 21:06:50.000000000 -0500
++++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2008-06-27 12:05:28.000000000 -0400
+@@ -6,15 +6,53 @@
+ # description: conserver is a serial-port console daemon
+ # config: /etc/conserver.cf
+ #
++RHPassed()
++{
++    passed
++    echo
++}
++RHSuccess()
++{
++    success
++    echo
++}
++RHFailure()
++{
++    failure
++    echo
++}
++MStatus()
++{
++  ps ax|grep -v grep|grep /usr/sbin/conserver >& /dev/null
++  if [ "$?" = "0" ]; then
++    RVAL=0
++    echo "conserver is running"
++  else
++    RVAL=3
++    echo "consever is not running"
++  fi
++  return $RVAL
++}
+ 
+-# Source function library.
+-. /etc/rc.d/init.d/functions
+-
+-# Source networking configuration.
+-. /etc/sysconfig/network
+ 
+-# Check that networking is up.
+-[  ${NETWORKING} = "no" ] && exit 0
++# Source function library.
++if [ -f /etc/rc.d/init.d/functions ]; then
++    . /etc/rc.d/init.d/functions
++    DAEMON=daemon
++    SUCCESS=RHSuccess
++    FAILURE=RHFailure
++    PASSED=RHPassed
++    STATUS=status
++elif [ -f /lib/lsb/init-functions ]; then
++    . /lib/lsb/init-functions
++    DAEMON=start_daemon
++    SUCCESS=log_success_msg
++    FAILURE=log_failure_msg
++    PASSED=log_warning_msg
++    STATUS=MStatus
++else
++    echo "Error, not RedHat and not lsb, do not know how to run this platform"
++fi
+ 
+ # make sure conserver is installed and executable
+ [ -x /usr/sbin/conserver  ] || exit 1
+@@ -24,23 +62,44 @@
+ case "$1" in
+   start)
+     echo -n "Starting conserver: "
+-    daemon conserver -d
+-    echo
++    $DAEMON /usr/sbin/conserver -o -O1 -d
+     touch /var/lock/subsys/conserver
++    $STATUS conserver >& /dev/null
++    if [ "$?" != "0" ]; then
++        $FAILURE
++        exit 1
++    fi
++    $SUCCESS
+     ;;
+   stop)
++    $STATUS conserver >& /dev/null
++    if [ "$?" != "0" ]; then
++        echo -n "conserver not running, not stopping "
++        $PASSED
++        exit 1
++    fi
+     echo -n "Shutting down conserver: "
+     killproc conserver
+-    echo
+     rm -f /var/lock/subsys/conserver
++    $STATUS conserver >& /dev/null
++    if [ "$?" == "0" ]; then
++        $FAILURE
++        exit 1
++    fi
++    $SUCCESS
+     ;;
+   status)
+-    status conserver
++    $STATUS conserver
+     ;;
+   restart)
+-    echo -n "Restarting conserver: "
+-    killproc conserver -HUP
+-    echo
++    $STATUS conserver >& /dev/null
++    if [ "$?" != "0" ]; then
++        exec $0 start
++    else
++        echo -n "Restarting conserver: "
++        killproc conserver -HUP
++    fi
++    $SUCCESS
+     ;;
+   *)
+     echo "Usage: conserver {start|stop|restart|status}"

@@ -1,0 +1,11 @@
+syslinux (3.86-2) unstable; urgency=low
+
+  * Initial Debian build
+
+ -- Mark Hamzy <hamzy@us.ibm.com>  Mon, 02 May 2011 13:05:49 -0500
+
+syslinux (3.86-1) unstable; urgency=low
+
+  * Initial release for xCAT
+
+ -- OCF xCAT <xcat@ocf.co.uk>  Fri, 29 Oct 2010 13:15:02 +0100

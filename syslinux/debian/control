@@ -1,0 +1,32 @@
+Source: syslinux
+Section: admin
+Priority: extra
+Maintainer: Arif Ali <aali@ocf.co.uk>
+Build-Depends: debhelper (>= 7.0.50~)
+Standards-Version: 3.8.4
+#Homepage: <insert the upstream URL, if relevant>
+#Vcs-Git: git://git.debian.org/collab-maint/syslinux.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/syslinux.git;a=summary
+
+Package: syslinux
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Kernel loader which uses a FAT, ext2/3 or iso9660 filesystem or a PXE network
+ SYSLINUX is a suite of bootloaders, currently supporting DOS FAT
+ filesystems, Linux ext2/ext3 filesystems (EXTLINUX), PXE network boots
+ (PXELINUX), or ISO 9660 CD-ROMs (ISOLINUX).  It also includes a tool,
+ MEMDISK, which loads legacy operating systems from these media.
+
+Package: syslinux-xcat
+Architecture: all
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: SYSLINUX modules in /opt/xcat/share/xcat/netboot/syslinux, available for network booting
+ All the SYSLINUX/PXELINUX modules directly available for network
+ booting in the /opt/xcat/share/xcat/netboot/syslinux directory.
+
+Package: syslinux-extlinux
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: The EXTLINUX bootloader, for booting the local system.
+ The EXTLINUX bootloader, for booting the local system, as well as all
+ the SYSLINUX/PXELINUX modules in /boot
