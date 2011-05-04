@@ -23,4 +23,7 @@ HOW TO CREATE THESE PATCHES
 6) cd /tmp/ipmitool-1.8.11
 7) diff -uNr a b > ipmitool.patch
 
-
+NOTE #2
+ENABLE THE SSL
+Before running the build operation, the openssl-devel should be installed on the build env to make sure the ssl can be enabled for the generated ipmitool package.
+You can run the 'ldd ipmitool' to see whether the 'libcrypto.so.x' has been added as a dependency to check whether the ssl has been enabled.
