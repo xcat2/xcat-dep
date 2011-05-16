@@ -78,6 +78,9 @@ kernel/drivers/net/cxgb3/cxgb3.ko
 kernel/drivers/net/mlx4/mlx4_core.ko
 kernel/drivers/net/mlx4/mlx4_en.ko
 kernel/drivers/net/qlge/qlge.ko
+kernel/drivers/net/bnx2x.ko
+kernel/drivers/net/benet/be2net.ko
+kernel/drivers/net/ixgbe/ixgbe.ko
 kernel/drivers/edac/k8_edac.ko
 kernel/drivers/edac/edac_mc.ko
 kernel/drivers/edac/e752x_edac.ko
