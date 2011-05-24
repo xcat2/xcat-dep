@@ -1,5 +1,5 @@
 Name:           xnba-kvm
-Version:        1.0.1
+Version:        1.0.2
 Release:        2
 Summary:        xNBA loader for virtual guests
 Obsoletes:      etherboot-zroms-kvm
@@ -21,38 +21,14 @@ ExclusiveArch:  i386 x86_64
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: gpxe-%{version}.tar.bz2
-Patch0: gpxe-0.9.7-branding.patch
-Patch1: gpxe-1.0.0-registeriscsionpxe.patch
-Patch2: gpxe-1.0.0-config.patch
-Patch3: gpxe-0.9.7-ignorepackets.patch
-Patch4: gpxe-0.9.7-kvmworkaround.patch
-Patch5: gpxe-1.0.0-hdboot.patch
-Patch6: gpxe-1.0.1-xnbauserclass.patch
-Patch7: gpxe-0.9.7-undinet.patch
-Patch8: gpxe-1.0.0-int18boot.patch
-#Patch9: gpxe-1.0.0-exittohd.patch
-Patch10: gpxe-1.0.0-cmdlinesize.patch
-Patch11: gpxe-1.0.0-expandfilename.patch
+Source0: ipxe-%{version}-%{release}.tar.bz2
 
 %description
 The xNBA network bootloader provides network boot capability for virtual machines with e1000 and virtio network devices. This includes iSCSI and PXE with tftp or ftp image download capability.  It is a modified variant of gPXE
 
 %prep
 
-%setup  -n gpxe-%{version}
-%patch -p1
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
-%patch5 -p1
-%patch6 -p1
-%patch7 -p1
-%patch8 -p1
-#%patch9 -p1
-%patch10 -p1
-%patch11 -p1
+%setup  -n ipxe-%{version}-%{release}
 
 %build
 
