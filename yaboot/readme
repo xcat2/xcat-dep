@@ -1,0 +1,34 @@
+use rpmbuild -bb yaboot-xcat.spec to make the build yaboot-xcat-1.3.17-rc1.noarch.rpm
+
+
+Patchs overview:
+
+These patches are no use now:
+1. yaboot-skipmac.patch--done
+    This patch is used to skip using mac address in the configuration file.
+    Since the P775 will use the mac address in the configuration file, I think it is no use anymore.
+2. yaboot-1.3.15-promclaim.patch
+    The newest official yaboot build has contained this patch.
+3. yaboot-1.3.14-better_netboot.patch
+    The newest official yaboot build has contained this patch.
+4. yaboot-1.3.14-ipv6.patch
+    The newest official yaboot build has contained this patch.
+5. yaboot-fixes.patch
+    This patch was not used in the last xcat-yaboot build.
+6. yaboot-1.3.14-better_netboot2.patch
+    The newest official yaboot build has contained this patch.
+7. yaboot-1.3.14-move_kernel.patch
+    Free the TFTP load buffer so the booted kernel has some memory to run with. It is no use for 3.17-rc1 yaboot build.
+
+These patches will be used in the new build.
+1. yaboot-32bitbuild.patch   
+    Add the "-m32" compiler switch to tell GCC to compile user code as 32-bit.
+2. yaboot-sanedhcppriority.patch 
+    Use the mask and gateway from bootp package to overwrite the existed boot-path. 
+    I've no idea about the reason of this patch, and don't think it is a necessary patch but still leave it here.    
+   
+New patches:
+1. yaboot-promclaim.patch
+    Claime big size on pROM for the large initrd file.
+2. yaboot-debug.patch
+    This patch adds some print and enable the debug information in yaboot, used to debug problems.    
