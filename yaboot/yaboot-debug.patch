@@ -1,0 +1,62 @@
+diff -ur yaboot-1.3.17-rc1/Makefile yaboot-1.3.17-rc1-debug/Makefile
+--- yaboot-1.3.17-rc1/Makefile  2010-08-05 01:04:46.000000000 -0400
++++ yaboot-1.3.17-rc1-debug/Makefile    2011-06-01 02:37:32.954818187 -0400
+@@ -4,7 +4,7 @@
+
+ VERSION = 1.3.16
+ # Debug mode (spam/verbose)
+-DEBUG = 0
++DEBUG = 1
+ # make install vars
+ ROOT =
+ PREFIX = usr/local
+diff -ur yaboot-1.3.17-rc1/second/yaboot.c yaboot-1.3.17-rc1-debug/second/yaboot.c
+--- yaboot-1.3.17-rc1/second/yaboot.c   2010-08-05 01:04:46.000000000 -0400
++++ yaboot-1.3.17-rc1-debug/second/yaboot.c     2011-06-01 02:16:24.234812132 -0400
+@@ -1025,6 +1025,8 @@
+          if (!params.kernel.file)
+               continue;
+
++          prom_printf("the paramskernel is %s\n",params.kernel.file);
++
+          prom_printf("Please wait, loading kernel...\n");
+
+          memset(&file, 0, sizeof(file));
+@@ -1101,7 +1103,12 @@
+                    params.rd.file=loc;
+               }
+               prom_printf("Loading ramdisk...\n");
++               prom_printf("params.rd is %s and %s\n",&params.rd,&file);
++
++               prom_printf("Now begin with open_file \n");
+               result = open_file(&params.rd, &file);
++               prom_printf("Now return from open_file\n the rewult is %08x \n",result);
++
+               if (result != FILE_ERR_OK) {
+                    prom_printf("%s:%d,", params.rd.dev, params.rd.part);
+                    prom_perror(result, params.rd.file);
+@@ -1115,8 +1122,13 @@
+                     */
+                    if (file.fs->ino_size && file.fs->ino_size(&file) > 0)
+                         len = file.fs->ino_size(&file) + 0x1000;
+-
+                    initrd_base = prom_claim_chunk(loadinfo.base+loadinfo.memsize, len, 0);
++ prom_printf("file size  is %08x \n", file.fs->ino_size);
++prom_printf("len is %08x \n", len);
++ prom_printf("initrd_base  is %08x \n", initrd_base);
++prom_printf("base address is %08x \n", loadinfo.base+loadinfo.memsize);
++
++                    prom_printf(" Now return from prom_claim_chunk \n");
+                    if (initrd_base == (void *)-1) {
+                         prom_printf("Claim failed for initrd memory\n");
+                         initrd_base = 0;
+@@ -1129,6 +1141,7 @@
+                         while (initrd_read == len ) { /* need to read more? */
+                              initrd_want = (void *)((unsigned long)initrd_more+len);
+                              initrd_more = prom_claim(initrd_want, len, 0);
++                              prom_printf(" Now retrun from prom_claim \n");
+                              if (initrd_more != initrd_want) {
+                                   prom_printf("Claim failed for initrd memory at %p rc=%p\n",initrd_want,initrd_more);
+                                   prom_pause();
+Only in yaboot-1.3.17-rc1-debug/second: yaboot-debug.patch
+Only in yaboot-1.3.17-rc1-debug: yaboot-debug.patch
