@@ -1,0 +1,264 @@
+diff -urN efiboot/configure esxboot-xcat/configure
+--- efiboot/configure	2011-08-04 14:30:15.000000000 -0400
++++ esxboot-xcat/configure	2011-08-18 10:04:50.025299093 -0400
+@@ -43,23 +43,23 @@
+ #
+ 
+ # Delete this line once the tool chain is setup.
+-$(error Please setup your toolchain in env/toolchain.mk)
++#$(error Please setup your toolchain in env/toolchain.mk)
+ 
+ # Known to work with gcc 4.4.3.
+-CC         := <Path to gcc>
+-GCCINC     := <Path to gcc headers>
++CC         := gcc
++GCCINC     := /usr/lib/gcc/x86_64-redhat-linux/4.4.4/include
+ 
+ # Known to work with binutils 2.20.1.
+-LD         := <Path to ld>
+-AR         := <Path to ar>
+-OBJCOPY    := <Path to objcopy>
++LD         := ld
++AR         := ar
++OBJCOPY    := objcopy
+ 
+ # Known to work with nasm 2.01.
+-AS         := <Path to nasm>
++AS         := nasm
+ 
+ # Known to work with libbfd 2.17.50.
+-LIBBFD     := <Path to libbfd.a>
+-LIBBFDINC  := <Path to bfd.h>'
++LIBBFD     := /usr/lib/libbfd.a -lz
++LIBBFDINC  := /usr/include'
+ 
+ makfile='#
+ # Master Makefile
+diff -urN efiboot/env/common.mk esxboot-xcat/env/common.mk
+--- efiboot/env/common.mk	2011-08-04 14:30:15.000000000 -0400
++++ esxboot-xcat/env/common.mk	2011-08-18 10:03:05.448299277 -0400
+@@ -43,7 +43,7 @@
+    APP_EXT    := .efi
+ 
+    ifeq ($(BUILDENV),uefi64)
+-      ARCH       := em64t
++      ARCH       := x64
+    else
+       ifeq ($(BUILDENV),uefi32)
+          ARCH       := ia32
+@@ -66,7 +66,7 @@
+ ifeq ($(FIRMWARE),bios)
+    RELOCS     := $(TOOLS_DIR)/relocs
+ else
+-   ifeq ($(ARCH),em64t)
++   ifeq ($(ARCH),x64)
+       ELF2EFI    := $(TOOLS_DIR)/elf2efi32
+    endif
+ 
+@@ -78,7 +78,7 @@
+ #
+ #-- Compilation flags ----------------------------------------------------------
+ #
+-ifeq ($(ARCH),em64t)
++ifeq ($(ARCH),x64)
+    AFLAGS     := -f elf64
+    CFLAGS     := -m64 -mno-red-zone
+    LDFLAGS    := -m elf_x86_64
+@@ -137,11 +137,11 @@
+ EDK2INC    := $(TOPDIR)/uefi/edk2/MdePkg
+ UEFIINC    := $(TOPDIR)/uefi $(EDK2INC)/Include $(EDK2INC)/Include/Protocol
+ 
+-ifeq ($(ARCH),em64t)
++ifeq ($(ARCH),x64)
+    UEFIINC    += $(EDK2INC)/Include/X64
+ endif
+ ifeq ($(ARCH),ia32)
+    UEFIINC    += $(EDK2INC)/Include/Ia32
+ endif
+ 
+-endif # !BUILDENV
+\ No newline at end of file
++endif # !BUILDENV
+diff -urN efiboot/include/efiutils.h esxboot-xcat/include/efiutils.h
+--- efiboot/include/efiutils.h	2011-08-04 14:30:15.000000000 -0400
++++ esxboot-xcat/include/efiutils.h	2011-08-18 10:03:05.450298097 -0400
+@@ -192,6 +192,7 @@
+ EXTERN EFI_STATUS gpxe_file_load(EFI_HANDLE Volume, const char *filepath,
+                                  int (*callback)(size_t), VOID **Buffer,
+                                  UINTN *BufSize);
++EXTERN BOOLEAN gpxe_supported(EFI_HANDLE Volume);
+ 
+ /*
+  * loadfile.c
+@@ -212,13 +213,6 @@
+                                  UINTN *BufSize);
+ 
+ /*
+- * file.c
+- */
+-EXTERN EFI_STATUS efi_file_read(EFI_HANDLE Volume, const CHAR16 *FilePath,
+-                                int (*callback)(size_t), VOID **Buffer,
+-                                UINTN *BufLen);
+-
+-/*
+  * image.c
+  */
+ EXTERN EFI_STATUS image_get_info(EFI_HANDLE Handle, EFI_LOADED_IMAGE **Image);
+diff -urN efiboot/mboot/Makefile esxboot-xcat/mboot/Makefile
+--- efiboot/mboot/Makefile	2011-08-04 14:30:15.000000000 -0400
++++ esxboot-xcat/mboot/Makefile	2011-08-18 10:03:05.453321052 -0400
+@@ -35,7 +35,7 @@
+                system.c         \
+                trampoline.s
+ 
+-BASENAME    := mboot
++BASENAME    := esxboot
+ TARGETTYPE  := app
+ LIBS        := $(BOOTLIB) $(ENV_LIB)
+ 
+diff -urN efiboot/uefi/efiutils/file.c esxboot-xcat/uefi/efiutils/file.c
+--- efiboot/uefi/efiutils/file.c	2011-08-04 14:30:15.000000000 -0400
++++ esxboot-xcat/uefi/efiutils/file.c	2011-08-18 10:03:05.454298458 -0400
+@@ -78,42 +78,6 @@
+    return EFI_SUCCESS;
+ }
+ 
+-/*-- filepath_efi_to_ascii -----------------------------------------------------
+- *
+- *      Convert a formatted UEFI path to an ascii string. Every occurrence of a
+- *      '\\' is replaced with a '/'
+- *
+- * Parameters
+- *      IN  EfiPath:    pointer to the UEFI path UCS-2 string
+- *      OUT ascii_path: pointer to the freshly allocated ascii path
+- *
+- * Results
+- *      EFI_SUCCESS, or an UEFI error status.
+- *----------------------------------------------------------------------------*/
+-static EFI_STATUS filepath_efi_to_ascii(const CHAR16 *EfiPath,
+-                                        char **ascii_path)
+-{
+-   char *ascii;
+-   EFI_STATUS Status;
+-
+-   ascii = NULL;
+-   Status = ucs2_to_ascii(EfiPath, &ascii);
+-   if (EFI_ERROR(Status)) {
+-      return Status;
+-   }
+-
+-   *ascii_path = ascii;
+-
+-   while (*ascii != '\0') {
+-      if (*ascii == '\\') {
+-         *ascii = '/';
+-      }
+-      ascii++;
+-   }
+-
+-   return EFI_SUCCESS;
+-}
+-
+ /*-- efi_file_read -------------------------------------------------------------
+  *
+  *      Read a file.
+@@ -133,17 +97,17 @@
+  * Results
+  *      EFI_SUCCESS, or an UEFI error status.
+  *----------------------------------------------------------------------------*/
+-EFI_STATUS efi_file_read(EFI_HANDLE Volume, const CHAR16 *FilePath,
+-                         int (*callback)(size_t), VOID **Buffer, UINTN *BufLen)
++static EFI_STATUS efi_file_read(EFI_HANDLE Volume, const char *ascii_path,
++                                int (*callback)(size_t), VOID **Buffer,
++                                UINTN *BufLen)
+ {
+-   char *ascii_path;
++   CHAR16 *FilePath;
+    int try;
+    EFI_STATUS Status;
+ 
+-   ascii_path = NULL;
+-   Status = filepath_efi_to_ascii(FilePath, &ascii_path);
++   Status = filepath_unix_to_efi(ascii_path, &FilePath);
+    if (EFI_ERROR(Status)) {
+-      return Status;
++      return error_efi_to_generic(Status);
+    }
+ 
+    for (try = 0; try < 4; try++) {
+@@ -167,7 +131,7 @@
+       }
+    }
+ 
+-   sys_free(ascii_path);
++   sys_free(FilePath);
+ 
+    return Status;
+ }
+@@ -190,7 +154,6 @@
+                        void **buffer, size_t *buflen)
+ {
+    EFI_HANDLE Volume;
+-   CHAR16 *Path;
+    EFI_STATUS Status;
+ 
+    Status = get_boot_volume(&Volume);
+@@ -198,15 +161,7 @@
+       return error_efi_to_generic(Status);
+    }
+ 
+-   Status = filepath_unix_to_efi(filepath, &Path);
+-   if (EFI_ERROR(Status)) {
+-      return error_efi_to_generic(Status);
+-   }
+-
+-   Status = efi_file_read(Volume, Path, callback, buffer, buflen);
+-
+-   sys_free(Path);
+-
++   Status = efi_file_read(Volume, filepath, callback, buffer, buflen);
+    return error_efi_to_generic(Status);
+ }
+ 
+@@ -248,6 +203,10 @@
+       return error_efi_to_generic(Status);
+    }
+ 
++   if (gpxe_supported(Volume)) {
++      return ERR_UNSUPPORTED;
++   }
++
+    for (try = 0; try < 3; try++) {
+       if (try == 0) {
+          Status = simple_file_get_size(Volume, Path, &size);
+diff -urN efiboot/uefi/efiutils/gpxefile.c esxboot-xcat/uefi/efiutils/gpxefile.c
+--- efiboot/uefi/efiutils/gpxefile.c	2011-08-04 14:30:15.000000000 -0400
++++ esxboot-xcat/uefi/efiutils/gpxefile.c	2011-08-18 10:03:05.459297937 -0400
+@@ -171,3 +171,27 @@
+ 
+    return EFI_SUCCESS;
+ }
++
++/*-- gpxe_supported ------------------------------------------------------------
++ *
++ *      Check if the gPXE protocol is supported on the given handle.
++ *
++ * Parameters
++ *      IN  Volume:   handle to the volume
++ *
++ * Results
++ *      TRUE or FALSE
++ *----------------------------------------------------------------------------*/
++BOOLEAN gpxe_supported(EFI_HANDLE Volume)
++{
++   EFI_GUID GpxeDownloadProto = GPXE_DOWNLOAD_PROTOCOL_GUID;
++   GPXE_DOWNLOAD_PROTOCOL *gpxe;
++   EFI_STATUS Status;
++
++   Status = get_protocol_interface(Volume, &GpxeDownloadProto, (void **)&gpxe);
++   if (EFI_ERROR(Status)) {
++      return FALSE;
++   }
++
++   return TRUE;
++}
