@@ -1,6 +1,6 @@
 Name:           xnba-kvm
 Version:        1.0.2
-Release:        2
+Release:        4
 Summary:        xNBA loader for virtual guests
 Obsoletes:      etherboot-zroms-kvm
 Provides:      etherboot-zroms-kvm
@@ -21,14 +21,14 @@ ExclusiveArch:  i386 x86_64
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: ipxe-%{version}-%{release}.tar.bz2
+Source0: xnba-%{version}.tar.bz2
 
 %description
-The xNBA network bootloader provides network boot capability for virtual machines with e1000 and virtio network devices. This includes iSCSI and PXE with tftp or ftp image download capability.  It is a modified variant of gPXE
+The xNBA network bootloader provides network boot capability for virtual machines with e1000 and virtio network devices. This includes iSCSI and PXE with tftp or ftp image download capability.  It is a modified variant of iPXE
 
 %prep
 
-%setup  -n ipxe-%{version}-%{release}
+%setup  -n xnba-%{version}
 
 %build
 
