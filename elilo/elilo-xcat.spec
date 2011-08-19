@@ -1,11 +1,11 @@
-Name:           esxboot-xcat
-Version:        1.0.0
+Name:           elilo-xcat
+Version:        3.14
 Release:        1
-Summary:        xCAT patched variant of vmware's boot loader
+Summary:        xCAT patched variant of elilo
 
 Group:          System Environment/Kernel
 License:        GPL
-URL:           http://www.vmware.com/download/open_source.html
+URL:           http://sourceforge.net/projects/elilo
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}
 BuildArch:	noarch
 
@@ -14,29 +14,28 @@ BuildArch:	noarch
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: efiboot.tgz
-Patch: esxboot-xcat.patch
+Source0: elilo-3.14-source.tar.gz
+Patch: elilo-xcat.patch
 
 %description
-This is the open source of VMware's boot loader, patched with features and fixes appropriate for xCAT's use.
+elilo with patches from the xCAT team.  Most significantly, adds iPXE usage to the network support
 
 %prep
 
-%setup   -n efiboot
+%setup   -n elilo
 %patch -p1
 
 %build
 
 rm -rf %{buildroot}
 
-./configure
-make -f Makefile.main BUILDENV=uefi64
+make
 
 
 %install
 
 mkdir -p  %{buildroot}/tftpboot/xcat
-cp build/uefi64/esxboot/esxboot_x64.efi  %{buildroot}/tftpboot/xcat/esxboot-x64.efi
+cp elilo.efi %{buildroot}/tftpboot/xcat/elilo-x64.efi
 
 
 %post 
@@ -47,5 +46,5 @@ cp build/uefi64/esxboot/esxboot_x64.efi  %{buildroot}/tftpboot/xcat/esxboot-x64.
 %{__rm} -rf %{buildroot}
 
 %files
-/tftpboot/xcat/esxboot-x64.efi
+/tftpboot/xcat/elilo-x64.efi
 %changelog

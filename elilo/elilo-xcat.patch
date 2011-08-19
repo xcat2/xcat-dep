@@ -1,0 +1,259 @@
+diff -ubrN elilo/fs/netfs.c elilo-ipxe/fs/netfs.c
+--- elilo/fs/netfs.c	2009-10-26 16:37:05.000000000 -0400
++++ elilo-ipxe/fs/netfs.c	2011-08-17 09:00:20.751301110 -0400
+@@ -66,6 +66,7 @@
+ 
+ typedef struct {
+ 	EFI_PXE_BASE_CODE *pxe;
++	IPXE_DOWNLOAD_PROTOCOL *ipxe;
+ 	EFI_HANDLE	  dev;		/* handle to device we're attached to */
+ 	BOOLEAN 	  using_pxe;	/* true if downloaded using the PXE protocol vs. regular DHCP */
+ 
+@@ -81,6 +82,13 @@
+ 
+ } netfs_priv_state_t;
+ 
++typedef struct {
++	BOOLEAN xfer_complete;
++	EFI_STATUS	status;
++	IPXE_DOWNLOAD_FILE ipxefile;
++	netfs_fd_t	   *fbuf;
++} ipxe_context_t;
++
+ #define NETFS_F2FD(l,f)		(UINTN)((f)-(l)->fd_tab)
+ #define NETFS_FD2F(l,fd)	((l)->fd_tab+fd)
+ #define NETFS_F_INVALID(f)	((f)->is_valid == FALSE)
+@@ -106,6 +114,8 @@
+ 
+ static EFI_GUID NetFsProtocol = NETFS_PROTOCOL;
+ 
++EFI_GUID iPxeDlProtocol = IPXE_DOWNLOAD_PROTOCOL_GUID;
++
+ 
+ #if 0
+ static EFI_PXE_BASE_CODE_CALLBACK_STATUS
+@@ -280,6 +290,46 @@
+ 	return pxe->Dhcp(pxe, FALSE);
+ }
+ 
++/* This function is called by iPXE to deliver a chunk of data for elilo to place in the correct place */
++static EFI_STATUS EFIAPI ipxe_datahandler(IN ipxe_context_t *context,IN CHAR8* buffer, IN UINTN len, IN UINTN offset) {
++	CHAR8		*newbuffer;
++	UINTN		newmemamount;
++	if (len+offset > context->fbuf->netbuf_maxsize) { /* we have more data than we have room for */
++		if (len == 0) { /* iPXE will, if possible, send a '0' length buffer with offset to indicate total size.. */
++			newmemamount = offset;
++		} else {
++			/* it is also entirely possible iPXE could not deliver that heads up.  Consequently, do what the tftp code did,
++			 * except without having to restart the transfer on the network */
++			newmemamount = context->fbuf->netbuf_maxsize + NETFS_DEFAULT_BUFSIZE_INC;
++		}
++		/* Since we are potentially copying data over, it's less work to do the alloc directly than use the fdalloc convenience function */
++		newbuffer = (CHAR8 *)alloc_pages(EFI_SIZE_TO_PAGES(newmemamount), EfiLoaderData, AllocateAnyPages, 0);
++		if (newbuffer && context->fbuf->netbuf && context->fbuf->netbuf_size > 0) { /* there is data to copy over into the new memory space 
++					* do so since it's much cheaper than redownloading */
++			Memcpy(newbuffer, context->fbuf->netbuf, context->fbuf->netbuf_size);
++		}
++                free(context->fbuf->netbuf); //Done with the old memory, can free and move the pointer
++		context->fbuf->netbuf=newbuffer;
++		context->fbuf->netbuf_maxsize = newmemamount; //rememeber that the buffer is larger now
++	}
++	if (len && (len+offset > context->fbuf->netbuf_size)) { 
++		/* if len is zero, then offset is total size of the file, not size used so far,
++                 * therefore only update the size when len is non-zero.
++                 * if data comes in out of order, previous undefined data counts towards the size,
++                 * but that's no big deal since the only ill-effect is that memcpy copies more memory than it needs to if the buffer exhausts */
++		 context->fbuf->netbuf_size = len+offset;
++	}
++	if (len == 0) { return EFI_SUCCESS; } /* TODO: could use this to power a progress indicator/percentage, for now do no more than Mtftp */
++	Memcpy(context->fbuf->netbuf+offset,buffer,len);
++	return  EFI_SUCCESS;
++}
++
++/* This function is called by iPXE when the transfer either completes successfully or errors out and cannot succeed */
++EFI_STATUS EFIAPI ipxe_finished (ipxe_context_t *context,EFI_STATUS status) {
++	context->xfer_complete = TRUE; /* for better or for worse, we are done with this file */
++	context->status = status; /* iPXE makes no effort to translate it's errors to UEFI errors, but the high bit is set if appropriate */
++	return EFI_SUCCESS; /* we are returning this to iPXE, so we are successful in accepting the status, not indicating the transfer is successful */
++}
+ static EFI_STATUS
+ netfs_open(netfs_interface_t *this, CHAR16 *name, UINTN *fd)
+ {
+@@ -338,7 +388,24 @@
+ 		return status;
+ 	}
+ 
+-/*
++	if (nfs->ipxe) {
++		ipxe_context_t context;
++		context.xfer_complete=FALSE;
++		context.fbuf=f;
++		status = uefi_call_wrapper(nfs->ipxe->Start,6,
++			nfs->ipxe,
++			ascii_name,
++			&ipxe_datahandler,
++			&ipxe_finished,
++			&context,
++			&context.ipxefile);
++		while (context.xfer_complete == FALSE) {
++			uefi_call_wrapper(nfs->ipxe->Poll,1,
++			    	          nfs->ipxe);
++		}
++		status = context.status;
++	} else {
++		/*
+  * netboot bugfix SF tracker 2874380
+  * EFI 1.10 spec
+  * For read operations, the return data will be placed in the buffer specified by BufferPtr. If
+@@ -449,12 +516,12 @@
+ 			retries++;
+ 			goto retry;
+ 		}
+-
+ 	} else if (status == EFI_TIMEOUT) {	//if just a simple timeout, buffers are good just retry
+ 		VERB_PRT(2, Print(L"TFTP returned EFI_TIMEOUT ERROR... %d retries left.\n", (2 - retries)));
+ 		retries++;
+ 		goto retry;
+ 	}
++	}
+ 	if (status == EFI_SUCCESS) {
+ 		/* start at the beginning of the file */
+ 		f->netbuf_pos = 0;
+@@ -706,7 +773,7 @@
+ }
+ 
+ static VOID
+-netfs_init_state(netfs_t *netfs, EFI_HANDLE dev, EFI_PXE_BASE_CODE *pxe)
++netfs_init_state(netfs_t *netfs, EFI_HANDLE dev, EFI_PXE_BASE_CODE *pxe, IPXE_DOWNLOAD_PROTOCOL *ipxe)
+ {
+ 	netfs_priv_state_t *nfs = FS_PRIVATE(netfs);
+ 	UINTN i;
+@@ -726,6 +793,7 @@
+ 
+ 	nfs->dev = dev;
+ 	nfs->pxe = pxe;
++	nfs->ipxe = ipxe;
+ 
+ 	/*
+ 	 * we defer DHCP request until it is really necessary (netfs_open)
+@@ -750,6 +818,7 @@
+ 	EFI_STATUS status;
+ 	netfs_t *netfs;
+ 	EFI_PXE_BASE_CODE *pxe;
++	IPXE_DOWNLOAD_PROTOCOL *ipxe;
+ 
+ 	status = uefi_call_wrapper(BS->HandleProtocol, 3, dev, &NetFsProtocol, (VOID **)&netfs);
+ 	if (status == EFI_SUCCESS) {
+@@ -760,6 +829,9 @@
+ 	status = uefi_call_wrapper(BS->HandleProtocol, 3, dev, &PxeBaseCodeProtocol, (VOID **)&pxe);
+ 	if (EFI_ERROR(status)) return EFI_INVALID_PARAMETER;
+ 
++	status = uefi_call_wrapper(BS->HandleProtocol, 3, dev, &iPxeDlProtocol, (VOID **)&ipxe);
++	if (EFI_ERROR(status)) ipxe=NULL;
++
+ 
+ 	netfs = (netfs_t *)alloc(sizeof(*netfs), EfiLoaderData);
+ 	if (netfs == NULL) {
+@@ -767,7 +839,7 @@
+ 		return EFI_OUT_OF_RESOURCES;
+ 	}
+ 
+-	netfs_init_state(netfs, dev, pxe);
++	netfs_init_state(netfs, dev, pxe, ipxe);
+ 
+ 	status = LibInstallProtocolInterfaces(&dev, &NetFsProtocol, netfs, NULL);
+ 	if (EFI_ERROR(status)) {
+diff -ubrN elilo/fs/netfs.h elilo-ipxe/fs/netfs.h
+--- elilo/fs/netfs.h	2003-08-19 12:45:01.000000000 -0400
++++ elilo-ipxe/fs/netfs.h	2011-08-17 08:38:33.242298708 -0400
+@@ -31,6 +31,74 @@
+ 
+ #define NETFS_BOOTFILE_MAXLEN	256
+ 
++#define IPXE_DOWNLOAD_PROTOCOL_GUID {  0x3eaeaebd, 0xdecf, 0x493b, { 0x9b, 0xd1, 0xcd, 0xb2, 0xde, 0xca, 0xe7, 0x19 } }
++typedef VOID *IPXE_DOWNLOAD_FILE;
++
++/**
++ * iPXE download protocol interface
++ * This will be attached to the DeviceHandle that elilo booted from if iPXE chained it.
++ */
++#ifdef __GNUC__
++#if __x86_64__
++#define EFIAPI __attribute__((ms_abi))
++#elif __i386__
++#define EFIAPI __attribute__((cdecl,regparm(0)))
++#endif
++#endif
++
++typedef struct _IPXE_DOWNLOAD_PROTOCOL IPXE_DOWNLOAD_PROTOCOL;
++typedef
++EFI_STATUS
++(EFIAPI *IPXE_DOWNLOAD_DATA_CALLBACK)(
++  IN VOID *Context,
++  IN VOID *Buffer,
++  IN UINTN BufferLength,
++  IN UINTN FileOffset
++  );
++typedef
++void
++(EFIAPI *IPXE_DOWNLOAD_FINISH_CALLBACK)(
++  IN VOID *Context,
++  IN EFI_STATUS Status
++  );
++typedef
++EFI_STATUS
++(EFIAPI *IPXE_DOWNLOAD_ABORT)(
++  IN IPXE_DOWNLOAD_PROTOCOL *This,
++  IN IPXE_DOWNLOAD_FILE File,
++  IN EFI_STATUS Status
++  );
++
++
++typedef
++EFI_STATUS
++(EFIAPI *IPXE_DOWNLOAD_START)(
++  IN IPXE_DOWNLOAD_PROTOCOL *This,
++  IN CHAR8 *Url,
++  IN IPXE_DOWNLOAD_DATA_CALLBACK DataCallback,
++  IN IPXE_DOWNLOAD_FINISH_CALLBACK FinishCallback,
++  IN VOID *Context,
++  OUT IPXE_DOWNLOAD_FILE *File
++  );
++typedef
++EFI_STATUS
++(EFIAPI *IPXE_DOWNLOAD_POLL)(
++  IN IPXE_DOWNLOAD_PROTOCOL *This
++  );
++
++
++
++struct _IPXE_DOWNLOAD_PROTOCOL {
++   IPXE_DOWNLOAD_START Start;
++   IPXE_DOWNLOAD_ABORT Abort;
++   IPXE_DOWNLOAD_POLL Poll;
++};
++
++
++
++
++
++
+ typedef struct {
+ 	EFI_IP_ADDRESS cln_ipaddr;
+ 	EFI_IP_ADDRESS srv_ipaddr;
+diff -ubrN elilo/Make.defaults elilo-ipxe/Make.defaults
+--- elilo/Make.defaults	2011-01-10 16:05:30.000000000 -0500
++++ elilo-ipxe/Make.defaults	2011-08-15 13:07:17.583298861 -0400
+@@ -55,9 +55,9 @@
+ # They are installed as part of the GNU-EFI package installation
+ #
+ EFIINC	   = /usr/include/efi
+-GNUEFILIB  = /usr/lib
+-EFILIB	   = /usr/lib
+-EFICRT0	   = /usr/lib
++GNUEFILIB  = /usr/lib64
++EFILIB	   = /usr/lib64/gnuefi
++EFICRT0	   = /usr/lib64/gnuefi
+ 
+ CDIR    := $(shell if [ "$$PWD" != "" ]; then echo $$PWD; else pwd; fi)
+ TOPDIR  =
