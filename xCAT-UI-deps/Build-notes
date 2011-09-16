@@ -1,7 +1,6 @@
-Build Notes  for the xCAT-UI-deps build on AIX
+Build notes for the xCAT-UI-deps on AIX
  
-Use the  xCAT-UI-deps.spec supplied in this directory
+Use the xCAT-UI-deps.spec supplied in this directory
 cp xCAT-UI-deps.tar.gz to /opt/freeware/src/packages/SOURCES 
 rpm -ba xCAT-UI-deps.spec 
-This creates
-/opt/freeware/src/packages/RPMS/noarch/xCAT-UI-deps-2.6-1.aix6.1.noarch.rpm
+This creates /opt/freeware/src/packages/RPMS/noarch/xCAT-UI-deps-*.noarch.rpm
