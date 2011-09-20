@@ -1,6 +1,6 @@
 Name:           xnba-kvm
-Version:        1.0.2
-Release:        4
+Version:        1.0.3
+Release:        1
 Summary:        xNBA loader for virtual guests
 Obsoletes:      etherboot-zroms-kvm
 Provides:      etherboot-zroms-kvm
@@ -9,7 +9,7 @@ Provides:      gpxe-roms-qemu
 
 Group:          System Environment/Kernel
 License:        GPL
-URL:            http://etherboot.org/wiki/index.php
+URL:            https://ipxe.org/vendor/xcat/ipxe.git
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}
 Obsoletes:      gpxe-kvm
 

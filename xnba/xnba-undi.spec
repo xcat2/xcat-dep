@@ -1,12 +1,12 @@
 Name:           xnba-undi
-Version:        1.0.2
+Version:        1.0.3
 Release:        4
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
 Obsoletes:	gpxe-undi
 
 Group:          System Environment/Kernel
 License:        GPL
-URL:            http://ipxe.org
+URL:            https://ipxe.org/vendor/xcat/ipxe.git
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}
 BuildArch:	noarch
 
