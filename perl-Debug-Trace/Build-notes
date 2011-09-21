@@ -1,0 +1,8 @@
+Build notes
+
+1. download Debug-Trace-0.04.tar.gz 
+   and copy it to /usr/src/<pkgs>/SOURCES (where <pkgs>="redhat" for RH, and <pkgs>="packages" for SLES)
+2. Build a spec file by runing cpan2rpm Debug-Trace-0.04.tar.gz
+3. copy Debug-Trace.spec to /usr/src/redhat/SPECS 
+4. rpmbuild -bb /usr/src/<pkgs>/Debug-Trace.spec
+5. rpm gets created in /usr/src/redhat/RPMS/noarch/perl-Debug-Trace-0-04.noarch.rpm
