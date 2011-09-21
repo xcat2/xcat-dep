@@ -2,11 +2,13 @@ Build Notes
 
 Need cc_r compiler installed on AIX build system.
 
-Use the DBD-SQLite.spec in this directory 
+Use the Debug-Trace.spec in this directory 
 ( it was created by running a modified cpan2rpm to support AIX)
-Get DBD-SQLite-1.13.tar.gz from CPAN
-cp DBD-SQLite-1.13.tar.gz /opt/freeware/src/packages/SOURCES
-cp DBD-SQLite.spec /opt/freeware/src/packages/SPECS
+Get Debug-Trace-0.04.tar.gz from CPAN
+cp Debug-Trace-0.04.tar.gz /opt/freeware/src/packages/SOURCES
+cp Debug-Trace.spec /opt/freeware/src/packages/SPECS
 
-Run "rpm -bb DBD-SQLite.spec".
- - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-DBD-SQLite-1.13-3.aix7.1.ppc.rpm
+Run "rpm -bb Debug-Trace.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Debug-trace-0.04.aix7.1.ppc.rpm
+
+
