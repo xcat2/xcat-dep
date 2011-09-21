@@ -1,0 +1,19 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system. 
+
+Download Debug-Trace-0.04.tar.gz from CPAN.
+
+Unwrap the tar file. (gunzip & tar -xvf  )
+
+Go to the subdirectory containing the Makefile and run "cpan2rpm ." 
+This will eventually fail but it does produce a spec file. Modify the spec
+file and put it in  /opt/freeware/src/packages/SPECS. Put the gz file in 
+/opt/freeware/src/packages/SOURCES.
+
+Modify the spec file.  (The modified file is in this directory.)
+
+Run "rpm -bb Debug-Trace.spec", which creates:
+ /opt/freeware/src/packages/RPMS/ppc/perl-Debug-Trace*.aix*.ppc.rpm
+
+
