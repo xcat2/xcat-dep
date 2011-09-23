@@ -14,7 +14,7 @@
 %define distver 9
 
 Summary: Serial console server daemon/client
-Name: %{pkg}
+Name: %{pkg}-xcat
 Version: %{ver}
 Release: %{distver}
 License: BSD
@@ -39,7 +39,7 @@ bells and whistles to accentuate that basic functionality.
 
 %prep
 %{__rm} -rf %{buildroot}
-%setup -q
+%setup -n %{pkg}-%{ver}
 %patch -p1
 %patch1 -p1
 %patch2 -p1
