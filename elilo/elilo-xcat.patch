@@ -1,6 +1,17 @@
-diff -urN elilo-orig/elilo/fs/netfs.c elilo-xcat/elilo/fs/netfs.c
---- elilo-orig/elilo/fs/netfs.c	2009-10-26 16:37:05.000000000 -0400
-+++ elilo-xcat/elilo/fs/netfs.c	2011-09-13 10:55:54.713299125 -0400
+diff -urN elilo/elilo.c elilo-xcat/elilo.c
+--- elilo/elilo.c	2010-11-09 18:17:37.000000000 -0500
++++ elilo-xcat/elilo.c	2011-09-29 15:34:52.103299151 -0400
+@@ -346,6 +346,7 @@
+ {
+ 	EFI_STATUS status;
+ 	EFI_PXE_BASE_CODE *pxe;
++	return;
+ 
+ #define FAKE_ELILONAME	L"elilo-forced"
+ 
+diff -urN elilo/fs/netfs.c elilo-xcat/fs/netfs.c
+--- elilo/fs/netfs.c	2009-10-26 16:37:05.000000000 -0400
++++ elilo-xcat/fs/netfs.c	2011-09-29 15:34:52.107299010 -0400
 @@ -66,6 +66,7 @@
  
  typedef struct {
@@ -163,9 +174,9 @@ diff -urN elilo-orig/elilo/fs/netfs.c elilo-xcat/elilo/fs/netfs.c
  
  	status = LibInstallProtocolInterfaces(&dev, &NetFsProtocol, netfs, NULL);
  	if (EFI_ERROR(status)) {
-diff -urN elilo-orig/elilo/fs/netfs.h elilo-xcat/elilo/fs/netfs.h
---- elilo-orig/elilo/fs/netfs.h	2003-08-19 12:45:01.000000000 -0400
-+++ elilo-xcat/elilo/fs/netfs.h	2011-09-13 10:55:54.715293964 -0400
+diff -urN elilo/fs/netfs.h elilo-xcat/fs/netfs.h
+--- elilo/fs/netfs.h	2003-08-19 12:45:01.000000000 -0400
++++ elilo-xcat/fs/netfs.h	2011-09-29 15:34:52.109299525 -0400
 @@ -31,6 +31,74 @@
  
  #define NETFS_BOOTFILE_MAXLEN	256
@@ -241,9 +252,9 @@ diff -urN elilo-orig/elilo/fs/netfs.h elilo-xcat/elilo/fs/netfs.h
  typedef struct {
  	EFI_IP_ADDRESS cln_ipaddr;
  	EFI_IP_ADDRESS srv_ipaddr;
-diff -urN elilo-orig/elilo/glue_netfs.c elilo-xcat/elilo/glue_netfs.c
---- elilo-orig/elilo/glue_netfs.c	2010-11-09 18:18:41.000000000 -0500
-+++ elilo-xcat/elilo/glue_netfs.c	2011-09-13 10:56:27.223300792 -0400
+diff -urN elilo/glue_netfs.c elilo-xcat/glue_netfs.c
+--- elilo/glue_netfs.c	2010-11-09 18:18:41.000000000 -0500
++++ elilo-xcat/glue_netfs.c	2011-09-29 15:35:10.743298070 -0400
 @@ -63,6 +63,7 @@
  #define NETFS_KERNEL_LAYER	2
  
@@ -272,8 +283,14 @@ diff -urN elilo-orig/elilo/glue_netfs.c elilo-xcat/elilo/glue_netfs.c
  convert_ip2hex(UINT8 *ip, INTN l, CHAR16 *str)
  {
  	UINTN i;
-@@ -164,6 +178,9 @@
+@@ -162,8 +176,15 @@
+ 	convert_ip2decstr(ip, m, str);
+ 	set_var(VAR_NETFS_GATEWAY, str);
  
++	ip = info.using_ipv6 ? info.srv_ipaddr.v6.Addr: info.srv_ipaddr.v4.Addr;
++	convert_ip2decstr(ip, m, str);
++	set_var(VAR_NETFS_NEXTSERVER, str);
++
  	set_var(VAR_NETFS_HOSTNAME, info.hostname);
  	set_var(VAR_NETFS_DOMAINAME, info.domainame);
 +	StrCpy(str, L"01-");
@@ -282,9 +299,9 @@ diff -urN elilo-orig/elilo/glue_netfs.c elilo-xcat/elilo/glue_netfs.c
  
  	if (info.using_pxe) {
  		DBG_PRT((L"netfs_setdefaults: using_pxe"));
-diff -urN elilo-orig/elilo/Make.defaults elilo-xcat/elilo/Make.defaults
---- elilo-orig/elilo/Make.defaults	2011-01-10 16:05:30.000000000 -0500
-+++ elilo-xcat/elilo/Make.defaults	2011-09-13 10:55:54.723300721 -0400
+diff -urN elilo/Make.defaults elilo-xcat/Make.defaults
+--- elilo/Make.defaults	2011-01-10 16:05:30.000000000 -0500
++++ elilo-xcat/Make.defaults	2011-09-29 15:34:52.119298670 -0400
 @@ -55,9 +55,9 @@
  # They are installed as part of the GNU-EFI package installation
  #
@@ -298,14 +315,15 @@ diff -urN elilo-orig/elilo/Make.defaults elilo-xcat/elilo/Make.defaults
  
  CDIR    := $(shell if [ "$$PWD" != "" ]; then echo $$PWD; else pwd; fi)
  TOPDIR  =
-diff -urN elilo-orig/elilo/vars.h elilo-xcat/elilo/vars.h
---- elilo-orig/elilo/vars.h	2003-08-19 12:48:14.000000000 -0400
-+++ elilo-xcat/elilo/vars.h	2011-09-13 10:55:54.725298079 -0400
-@@ -45,6 +45,7 @@
+diff -urN elilo/vars.h elilo-xcat/vars.h
+--- elilo/vars.h	2003-08-19 12:48:14.000000000 -0400
++++ elilo-xcat/vars.h	2011-09-29 15:35:02.359299180 -0400
+@@ -45,6 +45,8 @@
  #define VAR_NETFS_GATEWAY	L'G'	/* the gateway obtained by DHCP/PXE */
  #define VAR_NETFS_HOSTNAME	L'H'	/* the hostname obtained by DHCP/PXE */
  #define VAR_NETFS_DOMAINAME	L'D'	/* the domain name obtained by DHCP/PXE */
 +#define VAR_NETFS_BOOTIF	L'B'	/* the hardware address used for DHCP/PXE */
++#define VAR_NETFS_NEXTSERVER	L'N'	/* the next server from DHCP/PXE */
  
  extern INTN set_var(CHAR16 v, CHAR16 *value);
  extern CHAR16 * get_var(CHAR16 v);

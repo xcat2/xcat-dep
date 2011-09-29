@@ -1,6 +1,6 @@
 Name:           elilo-xcat
 Version:        3.14
-Release:        1
+Release:        3
 Summary:        xCAT patched variant of elilo
 
 Group:          System Environment/Kernel
@@ -23,7 +23,7 @@ elilo with patches from the xCAT team.  Most significantly, adds iPXE usage to t
 %prep
 
 %setup   -n elilo
-%patch -p1
+%patch -p2
 
 %build
 
