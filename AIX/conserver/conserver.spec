@@ -15,7 +15,7 @@
 %define distver 2
 
 Summary: Serial console server daemon/client
-Name: %{pkg}-xcat
+Name: %{pkg}
 Version: %{ver}
 Release: %{distver}
 License: BSD
@@ -26,7 +26,6 @@ Patch: certificate-auth.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 Prefix: %{_prefix}
 
-Obsoletes: conserver conserver-client
 
 %description
 Conserver is an application that allows multiple users to watch a
@@ -37,7 +36,7 @@ bells and whistles to accentuate that basic functionality.
 
 %prep
 %{__rm} -rf %{buildroot}
-%setup -n %{pkg}-%{ver}
+%setup -q
 %patch -p1
 
 
