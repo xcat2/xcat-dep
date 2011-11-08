@@ -30,6 +30,7 @@ BuildRequires: openssl-devel
 Prefix: %{_prefix}
 
 Obsoletes: conserver conserver-client
+Provides: conserver conserver-client
 
 %description
 Conserver is an application that allows multiple users to watch a
