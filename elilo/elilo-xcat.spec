@@ -23,7 +23,7 @@ elilo with patches from the xCAT team.  Most significantly, adds iPXE usage to t
 %prep
 
 %setup   -n elilo
-%patch -p2
+%patch -p1
 
 %build
 
