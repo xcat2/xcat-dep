@@ -21,14 +21,15 @@ ExclusiveArch:  i386 x86_64
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: xnba-%{version}.tar.bz2
+#git from 2011/12/15
+Source0: xnba-%{version}-111215.tar.bz2 
 
 %description
 The xNBA network bootloader provides network boot capability for virtual machines with e1000 and virtio network devices. This includes iSCSI and PXE with tftp or ftp image download capability.  It is a modified variant of iPXE
 
 %prep
 
-%setup  -n xnba-%{version}
+%setup  -n xnba
 
 %build
 

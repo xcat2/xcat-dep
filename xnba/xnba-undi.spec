@@ -15,14 +15,15 @@ BuildArch:	noarch
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: xnba-%{version}.tar.bz2
+#git from 2011/12/15
+Source0: xnba-%{version}-111215.tar.bz2 
 
 %description
 The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and gPXE script based booting.
 
 %prep
 
-%setup  -n xnba-%{version}
+%setup  -n xnba
 
 %build
 
