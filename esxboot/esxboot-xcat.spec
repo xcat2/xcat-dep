@@ -1,6 +1,6 @@
 Name:           esxboot-xcat
 Version:        1.0.0
-Release:        1
+Release:        2
 Summary:        xCAT patched variant of vmware's boot loader
 
 Group:          System Environment/Kernel
@@ -14,15 +14,15 @@ BuildArch:	noarch
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: efiboot.tgz
+Source0: efiboot-1.0.0-395084.oss.tgz
 Patch: esxboot-xcat.patch
 
 %description
-This is the open source of VMware's boot loader, patched with features and fixes appropriate for xCAT's use.
+This is the open source VMware boot loader, patched with features and fixes appropriate for xCAT's use.
 
 %prep
 
-%setup   -n efiboot
+%setup -c
 %patch -p1
 
 %build
