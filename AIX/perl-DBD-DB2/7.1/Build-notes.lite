@@ -1,0 +1,22 @@
+Build Notes  for the perl-DBD-DB2 on AIX 6.1
+
+Need  cc_r compiler installed on AIX build system and in /bin.
+ 
+DB2 lite client must be installed on the machine to build the DBD
+ 
+export DB2_HOME to the install path of the lite client.
+IF this path is differenct the DBD-DB2Lite.spec file must change.
+export DB2_HOME=/db2client
+ 
+Download DBD-DB2-1.83.tar.gz from CPAN.  (This was fixed to support lite client)
+ 
+cp DBD-DB2-1.83.tar.gz /opt/freeware/src/packages/SOURCES
+Use the DBD-DB2Lite.spec file in this directory
+cp DBD-DB2Lite.spec /opt/freeware/src/packages/SPECS
+Go to /opt/freeware/src/packages/SPECS and run
+"rpm -bb DBD-DB2Lite.spec", which creates:
+
+/opt/freeware/src/packages/RPMS/ppc/perl-DBD-DB2Lite-1-2.aix7.1.ppc.rpm
+
+
+
