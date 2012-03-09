@@ -2,11 +2,11 @@
 
 Summary: zhcp
 Name: %{name}
-Version: 1.2
+Version: 1.3
 Release: 1
 Source: zhcp-build.tar.gz
 Vendor: IBM
-License: IBM (C) Copyright 2011 Eclipse Public License
+License: IBM (C) Copyright 2012 Eclipse Public License
 Group: System/tools
 Prefix: %{_prefix}
 
