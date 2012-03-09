@@ -15,8 +15,7 @@ The System z hardware control point (zHCP) is C program API to interface with
 z/VM SMAPI.
 
 %prep
-cd /opt/zhcp-build/SOURCES/
-tar -zxvf zhcp-build.tar.gz -C /opt/zhcp-build/BUILD/ --strip 1
+tar -zxvf ../SOURCES/zhcp-build.tar.gz -C ../BUILD/ --strip 1
 
 %build
 make
