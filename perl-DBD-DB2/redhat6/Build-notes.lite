@@ -2,6 +2,8 @@ Build Notes  for the perl-DBD-DB2 on RedHat6.x  p-Series
  
 DB2 must be installed on the linux machine to build the DBD
 install  rpm_build
+install v9.7fp5_linuxppc64_dsdriver.tar.gz
+Build with  DBD-DB2-1.83.tar.gz  from cpan.  Must be this level or later
 export DB2_HOME=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver
 export DB2LIB=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver/lib 
 cd /usr/src/redhat/SPECS
@@ -10,6 +12,7 @@ cp DBD-DB2Lite.spec /usr/src/redhat/SPECS
 rpmbuild -ba DBD-DB2.spec
 This creates
 /root/rpm/RPMS/ppc64/perl-DBD-DB2Lite-1-1.ppc64.rpm
+
 
 Note on Redhat 6
 vi /etc/ld.so.conf
