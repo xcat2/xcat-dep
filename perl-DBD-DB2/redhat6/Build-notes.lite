@@ -1,22 +1,27 @@
 Build Notes  for the perl-DBD-DB2 on RedHat6.x  p-Series
  
 DB2 must be installed on the linux machine to build the DBD
+Download DBD-DB2-1.83.tar.gz from CPAN
+cp into /root/rpmbuild/SOURCES
 install  rpm_build
 install v9.7fp5_linuxppc64_dsdriver.tar.gz
+Setup per instructions in DB2 doc.
 Build with  DBD-DB2-1.83.tar.gz  from cpan.  Must be this level or later
-export DB2_HOME=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver
-export DB2LIB=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver/lib 
-cd /usr/src/redhat/SPECS
+#export DB2_HOME=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver
+export DB2_HOME=/db2client/dsdriver
+#export DB2LIB=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver/lib 
+export DB2LIB=/db2client/dsdriver/lib 
+cd /root/rpmbuild/SPECS
 Use the DBD-DB2Lite.spec supplied in this directory
-cp DBD-DB2Lite.spec /usr/src/redhat/SPECS
-rpmbuild -ba DBD-DB2.spec
+cp DBD-DB2Lite.spec /root/rpmbuild/SPECS
+rpmbuild -ba DBD-DB2Lite.spec
 This creates
-/root/rpm/RPMS/ppc64/perl-DBD-DB2Lite-1-1.ppc64.rpm
+/root/rpmbuild/RPMS/ppc64/perl-DBD-DB2Lite-1-1.ppc64.rpm
 
 
 Note on Redhat 6
 vi /etc/ld.so.conf
 add the following line
-/db2client/dsdriver/odbc_cli_driver/aix32/clidriver/lib
+/db2client/dsdriver/lib
 
 The run ldconfig

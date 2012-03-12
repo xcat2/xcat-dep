@@ -43,7 +43,7 @@ grep -rsl '^#!.*perl' . |
 grep -v '.bak$' |xargs --no-run-if-empty \
 %__perl -MExtUtils::MakeMaker -e 'MY->fixin(@ARGV)'
 CFLAGS="$RPM_OPT_FLAGS"
-DB2_HOME=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver  DB2LIB=/db2client/dsdriver/odbc_cli_driver/aix32/clidriver/lib %{__perl} Makefile.PL `%{__perl} -MExtUtils::MakeMaker -e ' print qq|PREFIX=%{buildroot}%{_prefix}| if \$ExtUtils::MakeMaker::VERSION =~ /5\.9[1-6]|6\.0[0-5]/ '`
+DB2_HOME=/db2client/dsdriver  DB2LIB=/db2client/dsdriver/lib %{__perl} Makefile.PL `%{__perl} -MExtUtils::MakeMaker -e ' print qq|PREFIX=%{buildroot}%{_prefix}| if \$ExtUtils::MakeMaker::VERSION =~ /5\.9[1-6]|6\.0[0-5]/ '`
 %{__make} 
 %if %maketest
 %{__make} test
