@@ -2,6 +2,6 @@ Build Notes
 ===========
 
 1. Place the gunzipped source package into the SOURCES directory, e.g. /usr/src/packages/SOURCES
-2. Place the build SPEC file into the SPECS directory, e.g. /usr/src/SPECS
+2. Place the build SPEC file into the SPECS directory, e.g. /usr/src/packages/SPECS
 3. Invoke the rpmbuild command, i.e. rpmbuild -ba -v SPECS/zhcp.spec
-The RPMs will be placed under the RPMS directory, e.g. /usr/src/packages/RPMS/s390x/zhcp-*.s390x.rpm 
+The RPM will be placed under the RPMS directory, e.g. /usr/src/packages/RPMS/s390x/zhcp-*.s390x.rpm 
