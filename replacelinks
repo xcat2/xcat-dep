@@ -1,0 +1,100 @@
+#!/usr/bin/perl
+
+# Go thru the xcat-dep subdirs and replace sym links to an rpm with a sym link to
+# a later version of that rpm.  Pass in the old rpm and new rpm file names.
+# Run this script at the top dir of xcat-dep.
+# Pass in -d to delete the link
+
+use strict;
+use Data::Dumper;
+use Getopt::Long;
+
+# check we are at the top level of xcat-dep
+if (! -d 'rh6' || ! -d 'sles11') { die "Error: it appears you are not running this script from the top directory of xcat-dep.\n"; }
+
+my $usage = sub {
+   	my $exitcode = shift @_;
+   	print "Usage: replacelinks {-?|-h|--help}\n";
+   	print "Usage: replacelinks [-v|--verbose] <remove-rpm> <add-rpm>\n";
+   	print "Usage: replacelinks --delete [-v|--verbose] <remove-rpm>\n";
+   	print "Usage: replacelinks {-a|--add} [-v|--verbose] <add-rpm> dir [dir ...]\n";
+	exit $exitcode;
+};
+
+# Process the cmd line args
+my ($HELP, $DELETE, $ADD);
+Getopt::Long::Configure("bundling");
+Getopt::Long::Configure("no_pass_through");
+if (!GetOptions('h|?|help'  => \$HELP, 'delete' => \$DELETE, 'a|add' => \$ADD, 'v|verbose' => \$::VERBOSE)) { $usage->(1); }
+
+if ($HELP) { $usage->(0); }
+if (scalar(@ARGV)<1 || (!$DELETE && scalar(@ARGV)<2) )  { $usage->(1); }
+my ($addrpm, $removerpm);
+if ($ADD) { $addrpm = shift @ARGV; }
+else {		# delete or replace
+	$removerpm = shift @ARGV;
+	$addrpm = shift @ARGV;
+}
+
+# Go thru all the existing links
+my @out;
+if ($ADD) { @out = @ARGV; }
+else {
+	print "Finding links...\n";
+	@out = runcmd("find . -name '$removerpm' -type l");
+}
+@out = sort @out;
+foreach my $f (@out) {
+	#print "f=$f\n";
+	if (!$DELETE) {		# add new link
+		# separate the dir and filename and then also get the sym link dir
+		my $dir;
+		if ($ADD) {	# the filename passed in is the dir
+			$dir = $f;
+			if ($dir !~ m|^\./|) { $dir = './' . $dir; }	# this helps parsing later
+			$dir =~ s|/$||;
+		}
+		else { ($dir) = $f =~ m|^(.*)/|; }		# separate the dir from the filename
+		my $linkdir;
+		if ($ADD) {		# derive the linkdir from the orginal dir
+			$linkdir = $dir;
+			$linkdir =~ s|/[^/]+|/\.\.|g;		# change /abc into /..
+			$linkdir =~ s|^\./||;			# remove the preceding ./
+		}
+		else {			# grab the linkdir from the existing sym link
+			my $line = runcmd("ls -l $f");
+			($linkdir) = $line =~ m|->\s+(.*)/|;
+		}
+		print "Creating $dir/$addrpm -> $linkdir/$addrpm\n";
+		runcmd("ln -s $linkdir/$addrpm $dir/");
+	}
+	
+	# Remove existing link.  Do this part whether it was --delete or not.
+	if (!$ADD) {
+		print "Removing $f\n";
+		runcmd("rm -f $f");
+	}
+}
+
+exit;
+
+sub runcmd {
+	my $cmd = shift @_;
+	$cmd .= ' 2>&1';
+	if ($::VERBOSE) { print "Running: $cmd\n"; }
+	my @output = `$cmd`;
+	if ($?) {
+        my $rc = $? >> 8;
+        if ($::VERBOSE) { die "Error: exit code from command is $rc\nCommand output: @output\n"; }
+        else { die "Error running: $cmd\n Exit code from command is $rc\nCommand output: @output\n"; }
+	}
+    if (wantarray) {
+        chomp(@output);
+        return @output;
+    }
+    else {
+        my $line = join('', @output);
+        chomp $line;
+        return $line;
+    }
+}
