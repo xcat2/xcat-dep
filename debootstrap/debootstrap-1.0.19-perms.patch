@@ -1,0 +1,28 @@
+diff -ur debootstrap.orig/Makefile debootstrap/Makefile
+--- debootstrap.orig/Makefile	2009-09-21 11:23:11.000000000 -0400
++++ debootstrap/Makefile	2009-09-30 13:01:27.151069252 -0400
+@@ -13,9 +13,9 @@
+ 	mkdir -p $(DSDIR)/scripts
+ 	mkdir -p $(DESTDIR)/usr/sbin
+ 
+-	install -o root -g root -m 0644 scripts/debian/* $(DSDIR)/scripts/
+-	install -o root -g root -m 0644 scripts/ubuntu/* $(DSDIR)/scripts/
+-	install -o root -g root -m 0644 functions $(DSDIR)/
++	install -m 0644 scripts/debian/* $(DSDIR)/scripts/
++	install -m 0644 scripts/ubuntu/* $(DSDIR)/scripts/
++	install -m 0644 functions $(DSDIR)/
+ 
+         # no special script for etch anymore
+ 	ln -s sid $(DSDIR)/scripts/etch
+@@ -30,10 +30,9 @@
+ 	ln -s gutsy $(DSDIR)/scripts/lucid
+ 
+ 	sed 's/@VERSION@/$(VERSION)/g' debootstrap >$(DESTDIR)/usr/sbin/debootstrap
+-	chown root:root $(DESTDIR)/usr/sbin/debootstrap
+ 	chmod 0755 $(DESTDIR)/usr/sbin/debootstrap
+ 
+-	install -o root -g root -m 0644 devices.tar.gz $(DSDIR)/
++	install -m 0644 devices.tar.gz $(DSDIR)/
+ 
+ devices.tar.gz:
+ 	rm -rf dev
