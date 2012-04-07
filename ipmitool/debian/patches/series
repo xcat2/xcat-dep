@@ -1,0 +1,3 @@
+ipmitool-saneretry.patch
+ipmitool-spdfix.patch
+ipmitool-eventfix.patch
