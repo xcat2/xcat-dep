@@ -18,6 +18,7 @@ endif
 configure: configure-stamp
 configure-stamp:
 	dh_testdir
+	dh --with quilt build
 
 	./configure --prefix=/usr \
 		    --with-kerneldir \
