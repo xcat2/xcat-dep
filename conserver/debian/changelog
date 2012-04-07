@@ -1,3 +1,9 @@
+conserver-xcat (8.1.16-3) unstable; urgency=low
+
+  * Changed to conserver-xcat package
+
+ -- Arif Ali <aali@ocf.co.uk>  Mon, 02 May 2011 13:05:49 -0500
+
 conserver (8.1.16-2) unstable; urgency=low
 
   * Initial Debian build

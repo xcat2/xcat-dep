@@ -1,4 +1,4 @@
-Source: conserver
+Source: conserver-xcat
 Section: admin
 Priority: extra
 Maintainer: Arif Ali <aali@ocf.co.uk>
@@ -8,7 +8,7 @@ Homepage: http://www.conserver.com/
 #Vcs-Git: git://git.debian.org/collab-maint/conserver.git
 #Vcs-Browser: http://git.debian.org/?p=collab-maint/conserver.git;a=summary
 
-Package: conserver
+Package: conserver-xcat
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Serial console server daemon/client
