@@ -1,0 +1,15 @@
+diff -ur dpkg-1.15.5.6.orig/scripts/Dpkg/Arch.pm dpkg-1.15.5.6/scripts/Dpkg/Arch.pm
+--- dpkg-1.15.5.6.orig/scripts/Dpkg/Arch.pm	2010-01-08 08:00:34.000000000 +0000
++++ dpkg-1.15.5.6/scripts/Dpkg/Arch.pm	2010-10-17 12:29:46.916000478 +0100
+@@ -47,8 +47,9 @@
+ 	return $build_arch if defined $build_arch;
+ 
+ 	my $build_arch = `dpkg --print-architecture`;
+-	# FIXME: Handle bootstrapping
+-	syserr("dpkg --print-architecture failed") if $? >> 8;
++    if ($? >> 8 || $build_arch =~ /^\s*$/) {
++        $build_arch = get_raw_host_arch();
++    }
+ 
+ 	chomp $build_arch;
+ 	return $build_arch;

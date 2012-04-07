@@ -1,0 +1,268 @@
+diff -ruN dpkg-1.15.5.6.orig/dselect/Makefile.in dpkg-1.15.5.6/dselect/Makefile.in
+--- dpkg-1.15.5.6.orig/dselect/Makefile.in	2010-01-08 20:02:49.000000000 +0200
++++ dpkg-1.15.5.6/dselect/Makefile.in	2010-02-14 10:11:43.052023614 +0200
+@@ -276,7 +276,7 @@
+ AM_CPPFLAGS = \
+ 	-DLOCALEDIR=\"$(localedir)\" \
+ 	-DADMINDIR=\"$(admindir)\" -DLIBDIR=\"$(pkglibdir)\" \
+-	-DLOCALLIBDIR=\"/usr/local/lib/dpkg\" \
++	-DLOCALLIBDIR=\"/usr/local/share/dpkg\" \
+ 	-idirafter $(top_srcdir)/lib/compat \
+ 	-iquote $(builddir) \
+ 	-I$(top_builddir) \
+diff -ruN dpkg-1.15.5.6.orig/dselect/methods/Debian/Dselect/Ftp.pm dpkg-1.15.5.6/dselect/methods/Debian/Dselect/Ftp.pm
+--- dpkg-1.15.5.6.orig/dselect/methods/Debian/Dselect/Ftp.pm	2010-01-08 10:00:34.000000000 +0200
++++ dpkg-1.15.5.6/dselect/methods/Debian/Dselect/Ftp.pm	2010-02-14 09:16:24.669895188 +0200
+@@ -57,12 +57,12 @@
+ }
+ 
+ sub view_mirrors {
+-  if (-f '/usr/lib/dpkg/methods/ftp/README.mirrors.txt') {
+-    system('/usr/bin/pager', '/usr/lib/dpkg/methods/ftp/README.mirrors.txt');
+-  } elsif (-f '/usr/lib/dpkg/methods/ftp/README.mirrors.txt.gz') {
+-    system('gzip -dc /usr/lib/dpkg/methods/ftp/README.mirrors.txt.gz | pager');
++  if (-f '/usr/share/dpkg/methods/ftp/README.mirrors.txt') {
++    system('/usr/bin/pager', '/usr/share/dpkg/methods/ftp/README.mirrors.txt');
++  } elsif (-f '/usr/share/dpkg/methods/ftp/README.mirrors.txt.gz') {
++    system('gzip -dc /usr/share/dpkg/methods/ftp/README.mirrors.txt.gz | pager');
+   } else {
+-    print "/usr/lib/dpkg/methods/ftp/README.mirrors.txt(.gz): file not found.\n";
++    print "/usr/share/dpkg/methods/ftp/README.mirrors.txt(.gz): file not found.\n";
+   }
+ }
+ 
+diff -ruN dpkg-1.15.5.6.orig/man/de/dpkg-parsechangelog.1 dpkg-1.15.5.6/man/de/dpkg-parsechangelog.1
+--- dpkg-1.15.5.6.orig/man/de/dpkg-parsechangelog.1	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/de/dpkg-parsechangelog.1	2010-02-14 09:22:07.409881825 +0200
+@@ -30,8 +30,8 @@
+ \fB\-L\fP\fIlibverzeichnis\fP
+ Spezifiziere ein zusätzliches Verzeichnis, dass nach Parser\-Skripten
+ durchsucht werden soll. Diese Verzeichnis wird vor den
+-Standardverzeichnissen (derzeit \fB/usr/local/lib/dpkg/parsechangelog\fP und
+-\fB/usr/lib/dpkg/parsechangelog\fP) durchsucht.
++Standardverzeichnissen (derzeit \fB/usr/local/share/dpkg/parsechangelog\fP und
++\fB/usr/share/dpkg/parsechangelog\fP) durchsucht.
+ .TP 
+ \fB\-h\fP, \fB\-\-help\fP
+ Zeige den Bedienungshinweis und beende.
+diff -ruN dpkg-1.15.5.6.orig/man/dpkg-parsechangelog.1 dpkg-1.15.5.6/man/dpkg-parsechangelog.1
+--- dpkg-1.15.5.6.orig/man/dpkg-parsechangelog.1	2010-01-08 10:00:34.000000000 +0200
++++ dpkg-1.15.5.6/man/dpkg-parsechangelog.1	2010-02-14 09:17:34.013861295 +0200
+@@ -28,8 +28,8 @@
+ Specify an additional directory to search for parser scripts.
+ This directory is searched before the default directories
+ which are currently
+-.BR /usr/local/lib/dpkg/parsechangelog " and "
+-.BR /usr/lib/dpkg/parsechangelog .
++.BR /usr/share/dpkg/parsechangelog " and "
++.BR /usr/local/share/dpkg/parsechangelog .
+ .TP
+ .BR \-h ", " \-\-help
+ Show the usage message and exit.
+diff -ruN dpkg-1.15.5.6.orig/man/fr/dpkg-parsechangelog.1 dpkg-1.15.5.6/man/fr/dpkg-parsechangelog.1
+--- dpkg-1.15.5.6.orig/man/fr/dpkg-parsechangelog.1	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/fr/dpkg-parsechangelog.1	2010-02-14 09:22:29.321880079 +0200
+@@ -29,8 +29,8 @@
+ \fB\-L\fP\fIrep_lib\fP
+ Spécifie un répertoire supplémentaire pour la recherche de scripts
+ d'analyse. Ce répertoire est examiné avant les répertoires par défaut qui
+-sont \fB/usr/local/lib/dpkg/parsechangelog\fP et
+-\fB/usr/lib/dpkg/parsechangelog\fP.
++sont \fB/usr/local/share/dpkg/parsechangelog\fP et
++\fB/usr/share/dpkg/parsechangelog\fP.
+ .TP 
+ \fB\-h\fP, \fB\-\-help\fP
+ Affiche un message d'aide puis quitte.
+diff -ruN dpkg-1.15.5.6.orig/man/pl/dpkg-parsechangelog.1 dpkg-1.15.5.6/man/pl/dpkg-parsechangelog.1
+--- dpkg-1.15.5.6.orig/man/pl/dpkg-parsechangelog.1	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/pl/dpkg-parsechangelog.1	2010-02-14 09:21:02.338880496 +0200
+@@ -29,8 +29,8 @@
+ \fB\-L\fP\fIkatalog\-lib\fP
+ Okre¶la dodatkowy katalog, w którym bêd± wyszukiwane skrypty
+ parsera. Katalog ten jest przeszukiwany przed domy¶lnymi katalogami, którymi
+-obecnie s± \fB/usr/local/lib/dpkg/parsechangelog\fP oraz
+-\fB/usr/lib/dpkg/parsechangelog\fP.
++obecnie s± \fB/usr/local/share/dpkg/parsechangelog\fP oraz
++\fB/usr/share/dpkg/parsechangelog\fP.
+ .TP 
+ \fB\-h\fP, \fB\-\-help\fP
+ Wy¶wietla informacjê o u¿ytkowaniu i koñczy dzia³anie.
+diff -ruN dpkg-1.15.5.6.orig/man/po/de.po dpkg-1.15.5.6/man/po/de.po
+--- dpkg-1.15.5.6.orig/man/po/de.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/de.po	2010-02-14 09:26:20.671868793 +0200
+@@ -7747,12 +7747,12 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ "Spezifiziere ein zusätzliches Verzeichnis, dass nach Parser-Skripten "
+ "durchsucht werden soll. Diese Verzeichnis wird vor den "
+-"Standardverzeichnissen (derzeit B</usr/local/lib/dpkg/parsechangelog> und B</"
+-"usr/lib/dpkg/parsechangelog>) durchsucht."
++"Standardverzeichnissen (derzeit B</usr/local/share/dpkg/parsechangelog> und B</"
++"usr/share/dpkg/parsechangelog>) durchsucht."
+ 
+ #. type: SS
+ #: dpkg-parsechangelog.1:39
+diff -ruN dpkg-1.15.5.6.orig/man/po/dpkg-man.pot dpkg-1.15.5.6/man/po/dpkg-man.pot
+--- dpkg-1.15.5.6.orig/man/po/dpkg-man.pot	2010-01-08 19:23:01.000000000 +0200
++++ dpkg-1.15.5.6/man/po/dpkg-man.pot	2010-02-14 09:30:59.909878930 +0200
+@@ -6216,7 +6216,7 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently "
+-"B</usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"B</usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/es.po dpkg-1.15.5.6/man/po/es.po
+--- dpkg-1.15.5.6.orig/man/po/es.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/es.po	2010-02-14 09:30:16.053872999 +0200
+@@ -7517,7 +7517,7 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/fr.po dpkg-1.15.5.6/man/po/fr.po
+--- dpkg-1.15.5.6.orig/man/po/fr.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/fr.po	2010-02-14 09:24:19.351874142 +0200
+@@ -7737,11 +7737,11 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ "SpÃ©cifie un rÃ©pertoire supplÃ©mentaire pour la recherche de scripts "
+ "d'analyse. Ce rÃ©pertoire est examinÃ© avant les rÃ©pertoires par dÃ©faut qui "
+-"sont B</usr/local/lib/dpkg/parsechangelog> et B</usr/lib/dpkg/"
++"sont B</usr/local/share/dpkg/parsechangelog> et B</usr/share/dpkg/"
+ "parsechangelog>."
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/hu.po dpkg-1.15.5.6/man/po/hu.po
+--- dpkg-1.15.5.6.orig/man/po/hu.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/hu.po	2010-02-14 09:26:50.311874455 +0200
+@@ -6542,7 +6542,7 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/ja.po dpkg-1.15.5.6/man/po/ja.po
+--- dpkg-1.15.5.6.orig/man/po/ja.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/ja.po	2010-02-14 09:28:46.064874305 +0200
+@@ -7055,7 +7055,7 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/pl.po dpkg-1.15.5.6/man/po/pl.po
+--- dpkg-1.15.5.6.orig/man/po/pl.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/pl.po	2010-02-14 09:27:38.024873694 +0200
+@@ -7819,11 +7819,11 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ "OkreÅ›la dodatkowy katalog, w ktÃ³rym bÄ™dÄ… wyszukiwane skrypty parsera. "
+ "Katalog ten jest przeszukiwany przed domyÅ›lnymi katalogami, ktÃ³rymi obecnie "
+-"sÄ… B</usr/local/lib/dpkg/parsechangelog> oraz B</usr/lib/dpkg/"
++"sÄ… B</usr/local/share/dpkg/parsechangelog> oraz B</usr/share/dpkg/"
+ "parsechangelog>."
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/pt_BR.po dpkg-1.15.5.6/man/po/pt_BR.po
+--- dpkg-1.15.5.6.orig/man/po/pt_BR.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/pt_BR.po	2010-02-14 09:28:12.583874117 +0200
+@@ -6687,7 +6687,7 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/ru.po dpkg-1.15.5.6/man/po/ru.po
+--- dpkg-1.15.5.6.orig/man/po/ru.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/ru.po	2010-02-14 09:25:17.556873843 +0200
+@@ -6823,7 +6823,7 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ 
+ #. type: SS
+diff -ruN dpkg-1.15.5.6.orig/man/po/sv.po dpkg-1.15.5.6/man/po/sv.po
+--- dpkg-1.15.5.6.orig/man/po/sv.po	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/po/sv.po	2010-02-14 09:29:32.735874132 +0200
+@@ -7552,11 +7552,11 @@
+ msgid ""
+ "Specify an additional directory to search for parser scripts.  This "
+ "directory is searched before the default directories which are currently B</"
+-"usr/local/lib/dpkg/parsechangelog> and B</usr/lib/dpkg/parsechangelog>."
++"usr/local/share/dpkg/parsechangelog> and B</usr/share/dpkg/parsechangelog>."
+ msgstr ""
+ "Ange en ytterligare katalog att sÃ¶ka i efter parserskript. Katalogen sÃ¶ks "
+-"genom innan standardkatalogerna, vilka fÃ¶r nÃ¤rvarande Ã¤r B</usr/local/lib/"
+-"dpkg/parsechangelog> och B</usr/lib/dpkg/parsechangelog>."
++"genom innan standardkatalogerna, vilka fÃ¶r nÃ¤rvarande Ã¤r B</usr/local/share/"
++"dpkg/parsechangelog> och B</usr/share/dpkg/parsechangelog>."
+ 
+ #. type: SS
+ #: dpkg-parsechangelog.1:39
+diff -ruN dpkg-1.15.5.6.orig/man/sv/dpkg-parsechangelog.1 dpkg-1.15.5.6/man/sv/dpkg-parsechangelog.1
+--- dpkg-1.15.5.6.orig/man/sv/dpkg-parsechangelog.1	2010-01-08 20:05:23.000000000 +0200
++++ dpkg-1.15.5.6/man/sv/dpkg-parsechangelog.1	2010-02-14 09:22:54.488880085 +0200
+@@ -29,7 +29,7 @@
+ \fB\-L\fP\fIbibliotekskatalog\fP
+ Ange en ytterligare katalog att söka i efter parserskript. Katalogen söks
+ genom innan standardkatalogerna, vilka för närvarande är
+-\fB/usr/local/lib/dpkg/parsechangelog\fP och \fB/usr/lib/dpkg/parsechangelog\fP.
++\fB/usr/local/share/dpkg/parsechangelog\fP och \fB/usr/share/dpkg/parsechangelog\fP.
+ .TP 
+ \fB\-h\fP, \fB\-\-help\fP
+ Visar hjälpskärm och avslutar.
+diff -ruN dpkg-1.15.5.6.orig/scripts/Dpkg/Changelog/Parse.pm dpkg-1.15.5.6/scripts/Dpkg/Changelog/Parse.pm
+--- dpkg-1.15.5.6.orig/scripts/Dpkg/Changelog/Parse.pm	2010-01-08 10:00:34.000000000 +0200
++++ dpkg-1.15.5.6/scripts/Dpkg/Changelog/Parse.pm	2010-02-14 09:14:27.550879827 +0200
+@@ -50,7 +50,7 @@
+ 
+ The parsing itself is done by an external program (searched in the
+ following list of directories: $opt{libdir},
+-/usr/local/lib/dpkg/parsechangelog, /usr/lib/dpkg/parsechangelog) That
++/usr/local/share/dpkg/parsechangelogusr) That
+ program is named according to the format that it's able to parse. By
+ default it's either "debian" or the format name lookep up in the 40 last
+ lines of the changelog itself (extracted with this perl regular expression
+@@ -70,9 +70,8 @@
+ 
+ sub changelog_parse {
+     my (%options) = @_;
+-    my @parserpath = ("/usr/local/lib/dpkg/parsechangelog",
+-                      "$dpkglibdir/parsechangelog",
+-                      "/usr/lib/dpkg/parsechangelog");
++    my @parserpath = ( "$dpkglibdir/parsechangelog",
++                      "/usr/local/share/dpkg/parsechangelog");
+     my $format = "debian";
+     my $changelogfile = "debian/changelog";
+     my $force = 0;
