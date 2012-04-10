@@ -1,0 +1,60 @@
+#!/bin/bash
+###########
+#
+# This script call make<package>deb and create the deb packages
+# for xCAT
+#
+# Author: Arif Ali <aali@ocf.co.uk>
+#
+# Original Work taken from the xcat-core repo done by Leonardo
+#
+# Input:
+#
+# $1 is the build type/location
+# $2 is the string added to the debian/changelog of each package
+# 
+############
+
+function makedeb {
+	SRC_ROOT=$1
+
+	#
+	# Make DEBs
+	#
+	# build perl-xCAT - deps are libsoap-lite-perl, libdigest-sha1-perl, libdbi-perl
+	#
+
+	find $SRC_ROOT -maxdepth 2 -name make_deb.sh -type f | while read DEBIAN_SCRIPT
+	do
+        	DIR=`echo ${DEBIAN_SCRIPT} | sed -e 's/[/]make_deb.sh$//'`
+        	cd ${DIR}
+                chmod a+x make_deb.sh
+                ./make_deb.sh
+		cd -
+        	RC=$?
+        	if [ ${RC} -gt 0 ]
+        	then
+                	echo "Warning: ${DIR} failed exit code ${RC}"
+        	fi
+	done
+}
+
+packages=`find . -maxdepth 2 -name make_deb.sh | cut -d/ -f 2 | xargs`
+
+# build all debian packages
+for file in `echo $packages`
+do
+  makedeb $file $PKG_LOCATION "$BUILD_STRING" $VERSION
+done
+
+if [ -d debs ]; then
+	rm -rf debs
+fi
+
+mkdir debs
+for file in `echo $packages`
+do
+  mv $file/*.deb debs
+done
+
+exit 0
