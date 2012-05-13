@@ -1,0 +1,13 @@
+Source: elilo-xcat
+Section: net
+Priority: extra
+Maintainer: Arif Ali <aali@ocf.co.uk>
+Build-Depends: debhelper (>= 7.0.50~), gnu-efi
+Standards-Version: 3.8.4
+
+Package: elilo-xcat
+Section: utils
+Priority: extra
+Architecture: any
+Description: Open source implementation of Service Location Protocol V2
+ Open source implementation of Service Location Protocol V2
