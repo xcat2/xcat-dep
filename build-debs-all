@@ -41,6 +41,9 @@ function makedeb {
 
 packages=`find . -maxdepth 2 -name make_deb.sh | cut -d/ -f 2 | xargs`
 
+#fix 'all warnings being treated as errors'
+export NO_WERROR=1
+
 # build all debian packages
 for file in `echo $packages`
 do
