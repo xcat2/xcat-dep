@@ -476,7 +476,7 @@ install -m 755 postgresql-check-db-dir $RPM_BUILD_ROOT%{_bindir}/postgresql-chec
 
 install -d $RPM_BUILD_ROOT/etc/rc.d/init.d
 sed 's/^PGVERSION=.*$/PGVERSION=%{version}/' <%{SOURCE11} >postgresql.init
-install -m 755 %{SOURCE11} $RPM_BUILD_ROOT/etc/rc.d/init.d/postgresql
+install -m 755 postgresql.init $RPM_BUILD_ROOT/etc/rc.d/init.d/postgresql
 
 %if %pam
 install -d $RPM_BUILD_ROOT/etc/pam.d
