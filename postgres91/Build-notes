@@ -1,16 +1,18 @@
 This information is to build postgresql 9.1.X on a Redhat6 machine.  postgresql9.1 will not officially be in a distro until Redhat7 and SLES 12, so for PCM to use it we need to build for the current Redhat6.3 which we will release xCAT/PCM produce.
 
-1) Also need to install rpmbuild from the disto and gcc on  your build machine
-2)Must have uuid_devel, does not see to be in the Redhat6.3 distro soo.....
-So downloaded  from 
+1) Need to install rpmbuild from the disto and gcc on  your build machine
+2)Must have uuid_devel, did  not see to be in the Redhat6.3 distro.  
+I downloaded  from 
   http://pkgs.org/centos-6-rhel-6/centos-rhel-x86_64/uuid-devel-1.6.1-10.el6.x86_64.rpm/download/
-3)used this website to download src rpms
+ rpm -ivn uid-devel-1.6.1-10.el6.x86_64.rpm 
+
+3Use the below website to download src rpms for postgresql91.  I picked the latest
+PTF level 9.1.5.
 http://yum.postgresql.org/srpms/9.1/redhat/rhel-6-x86_64/
 From here I got postgresql91-9.1.5-1PGDG.rhel6.src.rpm
 
-4)Run rpm -ivh postgresql91-9.1.5-1PGDG.rhel6.src.rpm
+4)Run rpm -ivh postgresql91-9.1.5-1PGDG.rhel6.src.rpm to install the source rpms no the build machine. 
 
-uuid-devel-1.6.1-10.el6.x86_64.rpm   and installed.
 
 5)When  you installed the source rpm, it put the data in /root/rpmbuild
 cd /root/rpmbuild/SPECS
@@ -18,7 +20,9 @@ cp postgresql-9.1.spec postgresql-9.1.spec.org
 We have modified the spec that Fedora16 used to build postgresql91, so 
 that all the commands and code will go in the normal locations and provide 
 that spec here
-cp postgresql-9.1.spec in this directory to /root/rpmbuild/SPECS 
+cp postgresql-9.1.spec provided by xCAT  in this directory to /root/rpmbuild/SPECS 
+
+6)If not building 9.1.5-1 then modifiy  /root/rpmbuild/SPECS/postgresql-9.1.spec and change the VERSION:   and RELEASE: line to match your level of postgresql.
 
 6) build  the rpms
 rpmbuild -ba postgresql-9.1.spec
