@@ -475,7 +475,10 @@ install -m 755 postgresql-check-db-dir $RPM_BUILD_ROOT%{_bindir}/postgresql-chec
 #install -m 644 %{SOURCE10} $RPM_BUILD_ROOT%{_unitdir}/postgresql.service
 
 install -d $RPM_BUILD_ROOT/etc/rc.d/init.d
-sed 's/^PGVERSION=.*$/PGVERSION=%{version}/' <%{SOURCE11} >postgresql.init
+sed 's/^PGVERSION=.*$/PGVERSION=%{version}/' <%{SOURCE11} >postgresql.init.tmp
+sed 's/^PGENGINE=.*$/PGENGINE=\/usr\/bin/' <postgresql.init.tmp >postgresql.init.tmp2
+sed 's/^PGDATA=.*$/PGDATA=\/var\/lib\/pgsql\/data/' <postgresql.init.tmp2 >postgresql.init.tmp3
+sed 's/^PGLOG=.*$/PGLOG=\/var\/lib\/pgsql\/pgstartup.log/' <postgresql.init.tmp3 >postgresql.init
 install -m 755 postgresql.init $RPM_BUILD_ROOT/etc/rc.d/init.d/postgresql
 
 %if %pam
