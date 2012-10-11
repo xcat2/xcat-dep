@@ -4,9 +4,9 @@ This information is to build postgresql 9.1.X on a Redhat6 machine.  postgresql9
 2)Must have uuid_devel, did  not see to be in the Redhat6.3 distro.  
 I downloaded  from 
   http://pkgs.org/centos-6-rhel-6/centos-rhel-x86_64/uuid-devel-1.6.1-10.el6.x86_64.rpm/download/
- rpm -ivn uid-devel-1.6.1-10.el6.x86_64.rpm 
+ rpm -ivn uuid-devel-1.6.1-10.el6.x86_64.rpm 
 
-3Use the below website to download src rpms for postgresql91.  I picked the latest
+3) Use the below website to download src rpms for postgresql91.  I picked the latest
 PTF level 9.1.5.
 http://yum.postgresql.org/srpms/9.1/redhat/rhel-6-x86_64/
 From here I got postgresql91-9.1.5-1PGDG.rhel6.src.rpm
