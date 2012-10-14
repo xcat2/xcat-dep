@@ -2,7 +2,7 @@
 
 Summary: zhcp
 Name: %{name}
-Version: 1.3
+Version: 1.4
 Release: 1
 Source: zhcp-build.tar.gz
 Vendor: IBM
@@ -46,7 +46,6 @@ rm -rf /usr/share/man/man1/smcli.1.gz
 # Files provided by this package
 %defattr(-,root,root)
 /opt/zhcp/*
-/etc/ld.so.conf.d/zhcp.conf
 /usr/bin/smcli
 /usr/share/man/man1/smcli.1.gz
 
