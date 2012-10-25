@@ -1,0 +1,14 @@
+
+For rh5: 
+  $Builddir = /usr/src/redhat
+For rh6:
+  $Builddir = /root/rpmbuild
+For sles:
+  $Builddir = /usr/src/packages/
+
+1. Download IO-Socket-SSL-1.77.tar.gz from http://search.cpan.org/CPAN/authors/id/S/SU/SULLR/IO-Socket-SSL-1.77.tar.gz
+2. Copy IO-Socket-SSL-1.77.tar.gz to $Builddir/SOURCES/
+3. Copy IO-Socket-SSL.spec to $Builddir/SPECS/
+4. Run rpmbuild -bb $Builddir/SPECS/IO-Socket-SSL.spec
+5. Then you can get the built rpm here:
+   $Builddir/RPMS/noarch/perl-IO-Socket-SSL-1.77-1.noarch.rpm
