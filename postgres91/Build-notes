@@ -48,6 +48,10 @@ rpmbuild -ba postgresql-9.1.spec
    * Or just add the repository
      zypper ar  http://download.opensuse.org/repositories/server:/database:/postgresql/SLE_11_SP2_Update/  postgresql_build
      zypper install uuid-devel
+   * On ppc64, need to rebuild ossp uuid from the source rpm
+     zypper ar  http://download.opensuse.org/repositories/server:/database:/postgresql/SLE_11_SP2_Update/  postgresql_build
+     zypper si uuid
+     rpmbuild -ba /usr/src/packages/SPECS/uuid.spec
 
 3) Download the src rpms for postgresql from "openSUSE" project on OBS
    * wget http://download.opensuse.org/repositories/openSUSE:/12.2:/Update/standard/src/postgresql-libs-9.1.5-7.8.1.src.rpm

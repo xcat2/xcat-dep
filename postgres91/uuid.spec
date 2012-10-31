@@ -119,9 +119,9 @@ export PGSQL_NAME=$(pwd)/pgsql/libossp-uuid.so
     --disable-static \
     --without-perl \
     --without-php \
-    --with-dce \
-    --with-cxx \
-    --with-pgsql
+    --without-dce \
+    --without-cxx \
+    --without-pgsql
 
 make LIBTOOL=/usr/bin/libtool %{?_smp_mflags}
 
