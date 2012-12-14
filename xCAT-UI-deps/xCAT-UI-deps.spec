@@ -1,6 +1,6 @@
 Summary: Set of dependencies for the xCAT web client
 Name: xCAT-UI-deps
-Version: 2.7
+Version: 2.8
 Release: 1
 License: EPL
 Group: Applications/System
