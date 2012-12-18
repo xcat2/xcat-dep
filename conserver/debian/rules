@@ -17,6 +17,8 @@ master=console
 override_dh_auto_configure:
 	dh_auto_configure -- --with-master=${master} --with-openssl
 
+override_dh_installinit:
+	dh_installinit --name=conserver
 #override_dh_auto_build:
 #	$(MAKE)
 
