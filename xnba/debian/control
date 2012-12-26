@@ -1,0 +1,16 @@
+Source: xnba-undi
+Section: admin
+Priority: extra
+Maintainer: Arif Ali <aali@ocf.co.uk>
+Build-Depends: debhelper (>= 7.0.50~)
+Standards-Version: 1.0.3
+#Homepage: <insert the upstream URL, if relevant>
+#Vcs-Git: git://git.debian.org/collab-maint/gpxe.git
+#Vcs-Browser: http://git.debian.org/?p=collab-maint/gpxe.git;a=summary
+
+Package: xnba-undi
+Architecture: any
+Description: xCAT Network Boot Agent for x86 PXE hosts
+ The xCAT Network Boot Agent is a slightly modified version of gPXE.  
+ It provides enhanced boot features for any UNDI compliant x86 host.  
+ This includes iSCSI, http/ftp downloads, and gPXE script based booting.

@@ -1,0 +1,11 @@
+xnba-undi (1.0.3-7) unstable; urgency=low
+
+  * Initial Debian build
+
+ -- Xu Qing <qxuqxu@cn.ibm.com>  Wed, 26 Dec 2012 15:49:48 +0800
+
+xnba-undi (1.0.1-1) unstable; urgency=low
+
+  * Initial release
+
+ -- OCF xCAT <xcat@ocf.co.uk>  Fri, 29 Oct 2010 18:22:52 +0100
