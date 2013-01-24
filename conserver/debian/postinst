@@ -21,7 +21,8 @@ set -e
 case "$1" in
     configure)
         if [ -x /etc/init.d/conserver ]; then
-           update-rc.d conserver enable
+           update-rc.d conserver start 2 2 3 4 5 .
+           update-rc.d conserver enable 2
         fi
         # make sure /etc/services has a conserver entry
         if [ ! `grep conserver /etc/services > /dev/null` ]; then
