@@ -7,7 +7,7 @@
 # This special exception was added by Craig Small in version 0.37 of dh-make.
 
 # Uncomment this to turn on verbose mode.
-#export DH_VERBOSE=1
+export DH_VERBOSE=1
 
 master=console
 
@@ -21,5 +21,9 @@ override_dh_installinit:
 	dh_installinit --name=conserver
 #override_dh_auto_build:
 #	$(MAKE)
-
+override_dh_install:
+	pwd
+	install -d 0755 debian/conserver-xcat/etc
+	sed -e 's/^/#/' < conserver.cf/conserver.cf > debian/conserver-xcat/etc/conserver.cf
+	sed -e 's/^/#/' < conserver.cf/conserver.passwd > debian/conserver-xcat/etc/conserver.passwd
 override_dh_auto_test:
