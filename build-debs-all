@@ -10,10 +10,16 @@
 #
 # Input:
 #
-# $1 is the build type/location
-# $2 is the string added to the debian/changelog of each package
+# $1 is the xCAT_genesis_build directory path
+# $2 is the xCAT_genesis_base rpm path
+#
+# the build target path is ../../debs, this path can not changed, because the build-ubuntu script will use this fix path
 # 
 ############
+function pingusage()
+{
+    printf "Usage: %s <xCAT_genesis_build directory path> <xCAT_genesis_base rpm path>] \n" $(basename $0) >&2
+}
 
 function makedeb {
 	SRC_ROOT=$1
@@ -39,25 +45,51 @@ function makedeb {
 	done
 }
 
-packages=`find . -maxdepth 2 -name make_deb.sh | cut -d/ -f 2 | xargs`
+#check parameters
+if [ $# -lt 2 ];then
+    pingusage
+    exit 2
+fi
 
+old_pwd=`pwd`
+curdir=`dirname $0`
+#did some prepare for the xcat-genesis
+echo "prepare building gensis_base_amd64 as a special case"
+
+#copy the debian_dir and rpm for xcat-genesia-base to the tem directory
+mkdir -p $curdir/genesis_tmp/genesis-base-amd64
+cp -rL ${1}/debian $curdir/genesis_tmp/genesis-base-amd64
+cp ${2} $curdir/genesis_tmp/genesis-base-amd64
+cd $curdir
+cat << __EOF__ > genesis_tmp/make_deb.sh
+        cd genesis-base-amd64/
+        rpm2cpio *.rpm | cpio -id
+        rm -f *.rpm
+        dpkg-buildpackage
+        cd -
+__EOF__
+
+#update to the loatest code
+svn --quiet update
+packages=`find . -maxdepth 2 -name make_deb.sh | cut -d/ -f 2 | xargs`
 #fix 'all warnings being treated as errors'
 export NO_WERROR=1
 
 # build all debian packages
+#for file in `echo $packages`
 for file in `echo $packages`
 do
   makedeb $file $PKG_LOCATION "$BUILD_STRING" $VERSION
 done
 
-if [ -d debs ]; then
-	rm -rf debs
+if [ ! -d ../../debs ]; then
+    mkdir -p ../../debs/
 fi
 
-mkdir debs
 for file in `echo $packages`
 do
-  mv $file/*.deb debs
+  mv $file/*.deb ../../debs/
 done
 
+rm -rf genesis_tmp
 exit 0
