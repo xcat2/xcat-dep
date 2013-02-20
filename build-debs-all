@@ -65,7 +65,7 @@ cat << __EOF__ > genesis_tmp/make_deb.sh
         cd genesis-base-amd64/
         rpm2cpio *.rpm | cpio -id
         rm -f *.rpm
-        dpkg-buildpackage
+        dpkg-buildpackage -uc -us
         cd -
 __EOF__
 
