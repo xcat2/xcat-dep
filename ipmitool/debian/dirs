@@ -1,4 +1,1 @@
-usr/bin
-usr/sbin
-usr/share/ipmitool
-usr/share/doc/ipmitool
+/opt/xcat/bin/

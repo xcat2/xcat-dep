@@ -73,6 +73,7 @@ install-arch:
 # debian/tmp.
 	$(MAKE) install DESTDIR=$(CURDIR)/debian/ipmitool-xcat
 
+	cp $(CURDIR)/debian/ipmitool-xcat/usr/bin/ipmitool $(CURDIR)/debian/ipmitool-xcat/opt/xcat/bin/ipmitool-xcat
 	# No need to have two copies of the license text in the package.
 	$(RM) $(CURDIR)/debian/ipmitool-xcat/usr/share/doc/ipmitool/COPYING
 
@@ -96,6 +97,7 @@ binary-common:
 	dh_installinit --name ipmievd
 	dh_link
 	dh_strip
+	rm -rf $(CURDIR)/debian/ipmitool-xcat/usr
 	dh_compress 
 	dh_fixperms
 	dh_makeshlibs
