@@ -3,6 +3,6 @@
 tar xvfz elilo-3.14-source.tar.gz
 cd elilo
 cp -rL ../debian .
-dpkg-buildpackage
+dpkg-buildpackage -uc -us
 cd -
 rm -rf elilo
