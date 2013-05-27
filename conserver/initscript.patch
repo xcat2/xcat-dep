@@ -1,19 +1,11 @@
---- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2003-02-28 10:06:50.000000000 +0800
-+++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2013-05-24 14:36:21.006320225 +0800
-@@ -6,15 +6,63 @@
- # description: conserver is a serial-port console daemon
- # config: /etc/conserver.cf
- #
-+### BEGIN INIT INFO
-+# Provides: conserver
-+# Required-Start: 
-+# Required-Stop:
-+# Default-Start: 2 3 4 5
-+# Default-stop:
-+# Short-Description: conserver
-+# Description: Console server
-+### END INIT INFO
-+
+--- conserver-8.1.16/contrib/redhat-rpm/conserver.init	2013-05-27 10:53:15.541680201 +0800
++++ conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init	2013-05-27 10:42:14.414593578 +0800
+@@ -16,14 +16,53 @@
+ # Description: Console server
+ ### END INIT INFO
+ 
+-# Source function library.
+-. /etc/rc.d/init.d/functions
 +RHPassed()
 +{
 +    passed
@@ -42,9 +34,6 @@
 +  return $RVAL
 +}
  
--# Source function library.
--. /etc/rc.d/init.d/functions
--
 -# Source networking configuration.
 -. /etc/sysconfig/network
  
@@ -71,7 +60,7 @@
  
  # make sure conserver is installed and executable
  [ -x /usr/sbin/conserver  ] || exit 1
-@@ -24,23 +72,45 @@
+@@ -33,23 +72,45 @@
  case "$1" in
    start)
      echo -n "Starting conserver: "
