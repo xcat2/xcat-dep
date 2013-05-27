@@ -78,7 +78,7 @@ $cmd = "cp -rf ./conserver.spec $blddir/SPECS/";
 $cmd = "rpmbuild -bb $blddir/SPECS/conserver.spec";
 &runcmd($cmd);
 
-my $objrpm = "$blddir/RPMS/$arch/conserver-xcat-8.1.16-9.$arch.rpm";
+my $objrpm = "$blddir/RPMS/$arch/conserver-xcat-8.1.16-10.$arch.rpm";
 my $dstdir = "/tmp/build/$os/$arch";
 
 # check the build result
