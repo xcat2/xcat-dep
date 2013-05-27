@@ -1,0 +1,33 @@
+To make the conserver-xcat rpm, run:
+
+./bldconserver.pl
+
+To update the initscript.patch or initscript1.patch:
+
+1. Copy conserver-8.1.16.tar.gz to a directory, say /root/conserverstar
+  mkdir /root/conservertar
+  cp conserver-8.1.16.tar.gz /root/conserverstar
+
+2. Copy the initscript.patch or initscript1.patch to the same directory
+  cp initscript.patch /root/conserverstar
+
+3. Uncompress the conserver-8.1.16.tar.gz into two copies:
+  tar zxvf conserver-8.1.16.tar.gz
+  mv conserver-8.1.16 conserver-8.1.16-diffinit
+  tar zxvf conserver-8.1.16.tar.gz
+
+4. Patch the conserver.init with the original patch copied from SVN repository
+  cd /root/conservertar
+  cat initscript.patch | /usr/bin/patch -s -p1 --fuzz=0
+  select conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init as the file to patch
+
+5. Update the conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init with whatever changes that are needed
+
+6. Generate the new patch:
+  cd /root/conserverstart
+  diff -ruN conserver-8.1.16/contrib/redhat-rpm/conserver.init conserver-8.1.16-diffinit/contrib/redhat-rpm/conserver.init > initscript.patch
+
+7. Copy the new patch to the xcat-dep SVN repository and checkin
+  cp initscript.patch ~/xcat/xcat-dep/trunk/conserver/
+  cd ~/xcat/xcat-dep/trunk/conserver/
+  svn commit -m "blah blah blah"
