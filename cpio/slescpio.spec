@@ -51,6 +51,13 @@ and can read archives created on machines with a different byte-order.
 
 Install cpio if you need a program to manage file archives.
 
+%package cpio-lang
+Summary: Languages for package cpio
+Group: System/Localization
+Requires: %{name} = %{version}
+%description cpio-lang
+Provides translations to the package cpio
+
 %prep
 %setup -q
 %patch1 -p1 -b .rh
@@ -111,7 +118,7 @@ fi
 %doc %{_mandir}/man1/mt.1.gz
 #/usr/share/locale/*/LC_MESSAGES/cpio.mo
 
-%exclude /usr/share/locale
+%files cpio-lang  -f %{name}.lang
 
 %changelog
 * Wed Mar 27 2013 Pavel Raiskup <praiskup@redhat.com> - 2.11-20
