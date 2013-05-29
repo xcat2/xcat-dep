@@ -63,7 +63,7 @@ Install cpio if you need a program to manage file archives.
 %patch8 -p1 -b .sum32-fips
 %patch9 -p1 -b .arm-config-guess-sub
 
-autoreconf -v
+#autoreconf -v
 
 %build
 
