@@ -66,21 +66,21 @@ Install cpio if you need a program to manage file archives.
 #autoreconf -v
 
 %build
-
-CFLAGS="$RPM_OPT_FLAGS -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -D_LARGEFILE64_SOURCE -pedantic -fno-strict-aliasing -Wall" %configure --with-rmt="%{_sysconfdir}/rmt"
-make %{?_smp_mflags}
+CFLAGS="$RPM_OPT_FLAGS -D_FILE_OFFSET_BITS=64 -D_LARGEFILE_SOURCE" \
+./configure  \
+    --with-rmt="%{_sysconfdir}/rmt" \
+    --enable-mt \
+    --prefix=/usr \
+    --mandir=%{_mandir} \
+    --infodir=%{_infodir} \
+    --libdir=%{_libdir}
+make 
 
 %install
-rm -rf ${RPM_BUILD_ROOT}
-
-make DESTDIR=$RPM_BUILD_ROOT INSTALL="install -p" install
-
-
-rm -f $RPM_BUILD_ROOT%{_libexecdir}/rmt
-rm -f $RPM_BUILD_ROOT%{_infodir}/dir
-rm -f $RPM_BUILD_ROOT%{_mandir}/man1/*.1*
-install -c -p -m 0644 %{SOURCE1} ${RPM_BUILD_ROOT}%{_mandir}/man1
-
+mkdir -p $RPM_BUILD_ROOT/{usr/bin,bin}
+make prefix=$RPM_BUILD_ROOT/usr infodir=$RPM_BUILD_ROOT/%_infodir mandir=$RPM_BUILD_ROOT/%_mandir INSTALL="install -p" install
+mv $RPM_BUILD_ROOT/usr/bin/cpio $RPM_BUILD_ROOT/bin
+ln -sf ../../bin/cpio $RPM_BUILD_ROOT/usr/bin/cpio
 %find_lang %{name}
 
 %clean
@@ -88,8 +88,6 @@ rm -rf ${RPM_BUILD_ROOT}
 
 %check
 rm -f ${RPM_BUILD_ROOT}/test/testsuite
-make check
-
 
 %post
 if [ -f %{_infodir}/cpio.info.gz ]; then
@@ -103,11 +101,17 @@ if [ $1 = 0 ]; then
 	fi
 fi
 
-%files -f %{name}.lang
-%doc AUTHORS ChangeLog NEWS README THANKS TODO COPYING
-%{_bindir}/*
-%{_mandir}/man*/*
-%{_infodir}/*.info*
+%files 
+%defattr(-,root,root)
+/bin/cpio
+/usr/bin/cpio
+/usr/bin/mt
+%doc %{_infodir}/cpio.info.gz
+%doc %{_mandir}/man1/cpio.1.gz
+%doc %{_mandir}/man1/mt.1.gz
+#/usr/share/locale/*/LC_MESSAGES/cpio.mo
+
+%exclude /usr/share/locale
 
 %changelog
 * Wed Mar 27 2013 Pavel Raiskup <praiskup@redhat.com> - 2.11-20
