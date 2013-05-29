@@ -88,11 +88,9 @@ if ( @rpm == 0 ) {
   print "The rpm file was not generated successfully\n";
   exit 1;
 } else {
-  $objrpm = $rpm[0];
-  chomp $objrpm;
   $cmd = "mkdir -p $dstdir";
   &runcmd ($cmd);
-  $cmd = "cp -rf  $objrpm $dstdir";
+  $cmd = "cp -rf  $blddir/RPMS/$arch/cpio*rpm $dstdir";
   &runcmd ($cmd);
   print "The obj file has been built successfully, you can get it here: $dstdir\n";
   exit 0;
