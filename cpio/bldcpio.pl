@@ -38,12 +38,14 @@ if (! -f "$pwd/cpio-2.11.tar.bz2"){
 }
 
 my $blddir;
+my $specprefix;
 if ($os eq "rh5") {
   $blddir = "/usr/src/redhat";
 } elsif ($os eq "rh6" || $os eq "fedora") {
   $blddir = "/root/rpmbuild";
 } elsif ($os =~ /sles1\d/) {
   $blddir = "/usr/src/packages";
+  $specprefix = "sles";
 }
 
 #&runcmd("mkdir -p $blddir/SOURCES");
@@ -71,7 +73,7 @@ $cmd = "cp -rf ./*.patch $blddir/SOURCES/";
 $cmd = "cp -rf ./*.1 $blddir/SOURCES/";
 &runcmd($cmd);
 
-$cmd = "cp -rf ./cpio.spec $blddir/SPECS/";
+$cmd = "cp -rf ./${specprefix}cpio.spec $blddir/SPECS/cpio.spec";
 &runcmd($cmd);
 
 $cmd = "rpmbuild -bb $blddir/SPECS/cpio.spec";
