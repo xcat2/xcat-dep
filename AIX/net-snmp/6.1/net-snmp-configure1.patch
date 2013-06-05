@@ -1,0 +1,16 @@
+*** net-snmp-5.7.2/configure.orig	Fri Apr 19 12:35:50 2013
+--- net-snmp-5.7.2/configure	Fri Apr 19 12:45:53 2013
+***************
+*** 6500,6510 ****
+  
+  { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether the Perl function system() invokes a POSIX shell" >&5
+  $as_echo_n "checking whether the Perl function system() invokes a POSIX shell... " >&6; }
+- if test "x$PERLPROG" != 'x' && test -x "$PERLPROG" && test "x`$PERLPROG -e 'system('"'"'echo $OSTYPE'"'"');'`" != 'x$OSTYPE'; then
+      PERL_SYSTEM_INVOKES_POSIX_SHELL=yes
+- else
+-     PERL_SYSTEM_INVOKES_POSIX_SHELL=no
+- fi
+  
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes" >&5
+  $as_echo "yes" >&6; }
+--- 6500,6506 ----
