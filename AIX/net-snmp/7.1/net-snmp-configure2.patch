@@ -1,0 +1,19 @@
+*** net-snmp-5.7.2/configure.orig	Fri Apr 19 16:58:08 2013
+--- net-snmp-5.7.2/configure	Fri Apr 19 16:59:02 2013
+***************
+*** 13836,13842 ****
+      else
+        # We preserve .a as extension for shared libraries through AIX4.2
+        # and later when we are not doing run time linking.
+!       library_names_spec='${libname}${release}.a $libname.a'
+        soname_spec='${libname}${release}${shared_ext}$major'
+      fi
+      shlibpath_var=LIBPATH
+--- 13836,13842 ----
+      else
+        # We preserve .a as extension for shared libraries through AIX4.2
+        # and later when we are not doing run time linking.
+!       library_names_spec='${libname}${release}.a $libname.so $libname.a'
+        soname_spec='${libname}${release}${shared_ext}$major'
+      fi
+      shlibpath_var=LIBPATH
