@@ -1,8 +1,7 @@
 Source: ipmitool-xcat
 Section: utils
 Priority: optional
-Maintainer: Petter Reinholdtsen <pere@debian.org>
-Uploaders: Duncan Laurie <duncan@iceblink.org>
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
 Build-Depends: debhelper (>> 4.0.0), libreadline-dev, libssl-dev, quilt, autotools-dev
 Standards-Version: 3.6.2.1
 

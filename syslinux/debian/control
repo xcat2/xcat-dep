@@ -1,7 +1,7 @@
 Source: syslinux
 Section: admin
 Priority: extra
-Maintainer: Arif Ali <aali@ocf.co.uk>
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
 Build-Depends: debhelper (>= 7.0.50~)
 Standards-Version: 3.8.4
 #Homepage: <insert the upstream URL, if relevant>

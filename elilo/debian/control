@@ -1,7 +1,7 @@
 Source: elilo-xcat
 Section: net
 Priority: extra
-Maintainer: Arif Ali <aali@ocf.co.uk>
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
 Build-Depends: debhelper (>= 7.0.50~), gnu-efi
 Standards-Version: 3.8.4
 

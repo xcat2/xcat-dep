@@ -1,7 +1,7 @@
 Source: conserver-xcat
 Section: admin
 Priority: extra
-Maintainer: Arif Ali <aali@ocf.co.uk>
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
 Build-Depends: debhelper (>= 7.0.50~), autotools-dev
 Standards-Version: 3.8.4
 Homepage: http://www.conserver.com/
