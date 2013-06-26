@@ -18,7 +18,7 @@
 ############
 function pingusage()
 {
-    printf "Usage: %s <xCAT_genesis_build directory path> <xCAT_genesis_base rpm path>] \n" $(basename $0) >&2
+    printf "Usage: [BUILDPKGS=\"pkgname1 pkgname2 ...\"] %s <xCAT_genesis_build directory path> <xCAT_genesis_base rpm path>] \n" $(basename $0) >&2
 }
 
 function makedeb {
@@ -71,7 +71,12 @@ __EOF__
 
 #update to the loatest code
 svn --quiet update
-packages=`find . -maxdepth 2 -name make_deb.sh | cut -d/ -f 2 | xargs`
+packages=""
+if [ $BUILDPKGS ];then
+    packages=$BUILDPKGS
+else
+    packages=`find . -maxdepth 2 -name make_deb.sh | cut -d/ -f 2 | xargs`
+fi
 #fix 'all warnings being treated as errors'
 export NO_WERROR=1
 
