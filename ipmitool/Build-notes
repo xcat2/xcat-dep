@@ -1,5 +1,9 @@
 Build Notes
 
+Option #1 Run the script bldipmi.pl
+
+Option #2 Use the manual steps listed below:
+
 1)   Download ipmitool-1.8.11.tar.gz from https://xcat.svn.sourceforge.net/svnroot/xcat/xcat-dep/trunk/ipmitool/ipmitool-1.8.11.tar.gz to /tmp/ipmitool directory.
 2)   cd /tmp/ipmitool
 3)   gunzip ipmitool-1.8.11.tar.gz

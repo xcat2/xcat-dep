@@ -2,12 +2,13 @@ Build Notes
 
 1) Copy stunnel.spec to /usr/src/packages/SPECS
 2) Copy stunnel-4.26.tar.gz to /usr/src/packages/SOURCES
-3) RUN "rpmbuild -ba /usr/src/packages/SPECS/stunnel.spec"
-4) You will get the binary rpm package stunnel-4.26-1.<arch>.rpm in the directory /usr/src/packages/
+3) Copy initscript.patch to /usr/src/packages/SOURCES
+4) RUN "rpmbuild -ba /usr/src/packages/SPECS/stunnel.spec"
+5) You will get the binary rpm package stunnel-4.26-1.<arch>.rpm in the directory /usr/src/packages/
 
 NOTE #1: 
 This is only neccessary for SLES11 or higher version. stunnel is shipped with RHEL and SLES10.x.
 NOTE #2:
-It requires openssl-devel package to build this package. For SLES11, libopenssl-devel and its related packages can be found in SLES-11-SDK DVDs or repositories. 
+It requires libopenssl-devel package to build this package. For SLES11, libopenssl-devel and its related packages can be found in SLES-11-SDK DVDs or repositories. 
 
 
