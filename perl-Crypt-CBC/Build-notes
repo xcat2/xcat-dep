@@ -1,0 +1,4 @@
+# The steps below are verified on x86_64 SLES 12
+1. Copy Crypt-CBC-2.33.tar.gz to /usr/src/packages/SOURCES/.
+2. Copy perl-Crypt-CBC.spec to /usr/src/packages/SPECS/
+3. Run "rpmbuild -ba /usr/src/packages/SPECS/perl-Crypt-CBC.spec" which creates /usr/src/packages/RPMS/noarch/perl-Crypt-CBC-2.33-3.7.noarch.rpm
