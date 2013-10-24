@@ -1,0 +1,4 @@
+# The steps below are verified on x86_64 SLES 12
+1. Copy pyodbc-3.0.7.zip to /usr/src/packages/SOURCES/.
+2. Copy pyodbc.spec to /usr/src/packages/SPECS/
+3. Run "rpmbuild -ba /usr/src/packages/SPECS/pyodbc.spec" which creates /usr/src/packages/RPMS/x86_64/pyodbc-3.0.7-1.x86_64.rpm
