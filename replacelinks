@@ -15,20 +15,21 @@ if (! -d 'rh6' || ! -d 'sles11') { die "Error: it appears you are not running th
 my $usage = sub {
    	my $exitcode = shift @_;
    	print "Usage: replacelinks {-?|-h|--help}\n";
-   	print "Usage: replacelinks [-v|--verbose] <remove-rpm> <add-rpm>\n";
-   	print "Usage: replacelinks --delete [-v|--verbose] <remove-rpm>\n";
-   	print "Usage: replacelinks {-a|--add} [-v|--verbose] <add-rpm> dir [dir ...]\n";
+   	print "Usage: replacelinks [-v|--verbose] [--trial] <remove-rpm> <add-rpm>\n";
+   	print "Usage: replacelinks --delete [--archive <dir>] [-v|--verbose] [--trial] <remove-rpm>\n";
+   	print "Usage: replacelinks {-a|--add} [-v|--verbose] [--trial] <add-rpm> dir [dir ...]\n";
 	exit $exitcode;
 };
 
 # Process the cmd line args
-my ($HELP, $DELETE, $ADD);
+my ($HELP, $DELETE, $ADD, $ARCHIVE);
 Getopt::Long::Configure("bundling");
 Getopt::Long::Configure("no_pass_through");
-if (!GetOptions('h|?|help'  => \$HELP, 'delete' => \$DELETE, 'a|add' => \$ADD, 'v|verbose' => \$::VERBOSE)) { $usage->(1); }
+if (!GetOptions('h|?|help'  => \$HELP, 'delete' => \$DELETE, 'a|add' => \$ADD, 'archive=s' => \$ARCHIVE, 'v|verbose' => \$::VERBOSE, 'trial' => \$::TRIAL)) { $usage->(1); }
 
 if ($HELP) { $usage->(0); }
 if (scalar(@ARGV)<1 || (!$DELETE && scalar(@ARGV)<2) )  { $usage->(1); }
+if ($ARCHIVE && !$DELETE)  { $usage->(1); }
 my ($addrpm, $removerpm);
 if ($ADD) { $addrpm = shift @ARGV; }
 else {		# delete or replace
@@ -40,8 +41,14 @@ else {		# delete or replace
 my @out;
 if ($ADD) { @out = @ARGV; }
 else {
-	print "Finding links...\n";
-	@out = runcmd("find . -name '$removerpm' -type l");
+	if ($ARCHIVE) {			# find all files - the archive option is the only time we deal with real files
+		print "Finding files...\n";
+		@out = runcmd("find . -name '$removerpm'");
+	}
+	else {					# find just links
+		print "Finding links...\n";
+		@out = runcmd("find . -name '$removerpm' -type l");
+	}
 }
 @out = sort @out;
 foreach my $f (@out) {
@@ -71,8 +78,16 @@ foreach my $f (@out) {
 	
 	# Remove existing link.  Do this part whether it was --delete or not.
 	if (!$ADD) {
-		print "Removing $f\n";
-		runcmd("rm -f $f");
+		if ($ARCHIVE && !(-l $f)) {		# archive the file
+			my ($dir, $file) = $f =~ m|^(.*)/(.*?)$|;		# separate the dir from the filename
+			print "Moving $dir/$file to $ARCHIVE/$dir\n";
+			runcmd("mkdir -p $ARCHIVE/$dir");
+			runcmd("mv -f $dir/$file $ARCHIVE/$dir");
+		}
+		else {		# just remove the link
+			print "Removing $f\n";
+			runcmd("rm -f $f");
+		}
 	}
 }
 
@@ -81,6 +96,7 @@ exit;
 sub runcmd {
 	my $cmd = shift @_;
 	$cmd .= ' 2>&1';
+	if ($::TRIAL && !defined(wantarray)) { print "Would run: $cmd\n"; return; }
 	if ($::VERBOSE) { print "Running: $cmd\n"; }
 	my @output = `$cmd`;
 	if ($?) {
