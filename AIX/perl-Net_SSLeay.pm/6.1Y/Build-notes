@@ -1,0 +1,16 @@
+Build Notes
+
+#This version of rpm is used for AIX61Y and higher which is using openssl 1.x
+
+Need cc_r compiler installed on AIX build system.
+
+Use Net-SSLeay-1.55.tar.gz in this directory 
+Use Net-SSLeay-1.55-3.spec in this directory. It is changed from 7.1L/Net_SSLeay.spec 
+
+cp Net-SSLeay-1.55.tar.gz /opt/freeware/src/packages/SOURCES
+cp Net-SSLeay-1.55-3.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb Net-SSLeay-1.55-3.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net_SSLeay.pm-1.55-3.aix6.1.ppc.rpm
+
+
