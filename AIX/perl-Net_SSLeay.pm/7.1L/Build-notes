@@ -11,6 +11,6 @@ cp Net-SSLeay-1.55.tar.gz /opt/freeware/src/packages/SOURCES
 cp Net-SSLeay-1.55-3.spec /opt/freeware/src/packages/SPECS
 
 Run "rpm -bb Net-SSLeay-1.55-3.spec".
- - which creates: perl-Net_SSLeay.pm-1.55-3.aix7.1.ppc.rpm
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-Net_SSLeay.pm-1.55-3.aix7.1.ppc.rpm
 
 
