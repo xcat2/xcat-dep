@@ -53,7 +53,8 @@ tar -xf grub2-res.tar
 
 
 %post
-ln -s -f %{prefix}/powerpc-ieee1275/core.elf %{prefix}/grub2.ppc
+rm -f %{prefix}/grub2.ppc
+cp  %{prefix}/powerpc-ieee1275/core.elf %{prefix}/grub2.ppc
 exit 0
 
 %clean
