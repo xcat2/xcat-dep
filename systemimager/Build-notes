@@ -1,0 +1,57 @@
+Rebuild systemimager RPMs
+1. Prepare a rhels6.3 server, you could use other redhat version, but the RPMs listed in step3 come from the result in rhels6.3.
+    if you use other os version, maybe you need to find dependent RPMs by yourself 
+
+2. Make sure your build server can access internet
+
+3. Install following dependent RPMs. RPMs listed in first part shipped in rhels6.3. RPMs listed in second part could be found in extra-dep-rpm directory.
+yum install -y make
+yum install -y gcc-c++
+yum install -y ncurses-devel
+yum install -y readline-devel
+yum install -y rpm-build
+yum install -y docbook-utils
+yum install -y dos2unix
+yum install -y flex
+yum install -y libtool
+yum install -y openssl-devel
+yum install -y libuuid-devel
+yum install -y python-devel
+yum install -y gettext
+yum install -y lzop
+
+yum install -y device-mapper-devel
+yum install -y gperf
+yum install -y glibc-static
+
+4. Copy systemimager_sourcecode.tar to any directory of your server and untar
+tar xvf systemimager_sourcecode.tar
+
+5. If you need to change systemimager RPM's version, refer to below information
+change main version:       vi ~/trunk/VERSION
+change secondary verion: vi ~/trunk/systemimager.spec  line13
+
+6. Build rpm, run the below 3 commands one by one
+ (1). cd  ~/trunk/
+ (2). make source_tarball
+
+--------------maybe you will see the following error, just ignore it---------------
+gpg: directory `/root/.gnupg' created
+gpg: new configuration file `/root/.gnupg/gpg.conf' created
+gpg: WARNING: options in `/root/.gnupg/gpg.conf' are not yet active during this run
+gpg: keyring `/root/.gnupg/secring.gpg' created
+gpg: keyring `/root/.gnupg/pubring.gpg' created
+gpg: no default secret key: No secret key
+gpg: signing failed: No secret key
+make: *** [/systemimager/trunk/tmp/systemimager-4.3.0.tar.bz2.sign] Error 2
+-------------------------------------------------------------------------------------------
+
+ (3). make rpm
+
+RPMs will be created in  /root/rpmbuild/RPMS/noarch/
+
+
+
+
+
+
