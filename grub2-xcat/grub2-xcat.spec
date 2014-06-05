@@ -3,7 +3,7 @@ Name: grub2-xcat
 Version: 1.0
 #Release: snap%(date +"%Y%m%d%H%M")
 Release: 1
-License: EPL
+License: GPLv3+
 Group: Applications/System
 Vendor: IBM Corp.
 Packager: IBM Corp.
