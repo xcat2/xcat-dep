@@ -3,6 +3,9 @@
 #export DH_VERBOSE=1
 export DH_COMPAT=4
 export DH_OPTIONS
+ifndef TARGET_ARCH
+	TARGET_ARCH=amd64
+endif
 
 CFLAGS = -Wall -g
 
@@ -20,9 +23,17 @@ configure-stamp:
 	dh_testdir
 	dh --with quilt build
 
+ifneq ($(TARGET_ARCH),ppc64el)
 	./configure --prefix=/usr \
-		    --with-kerneldir \
-		    --mandir=/usr/share/man
+                    --with-kerneldir \
+                    --mandir=/usr/share/man
+
+else
+	./configure --prefix=/usr \
+		    --mandir=/usr/share/man \
+		    --build=powerpc64le-linux-gnu
+
+endif
 	touch configure-stamp
 
 #Architecture 

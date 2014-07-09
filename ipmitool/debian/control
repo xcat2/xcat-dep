@@ -6,7 +6,7 @@ Build-Depends: debhelper (>> 4.0.0), libreadline-dev, libssl-dev, quilt, autotoo
 Standards-Version: 3.6.2.1
 
 Package: ipmitool-xcat
-Architecture: i386 amd64 ia64
+Architecture: i386 amd64 ia64 ppc64el
 Depends: ${shlibs:Depends}, lsb-base
 Suggests: openipmi
 Description: utility for IPMI control with kernel driver or LAN interface
