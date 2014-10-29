@@ -1,0 +1,6 @@
+1. The spec file is included in the cpan2rpm-2.028.tar.gz, you can just untar 
+it and extract out the cpan2rpm.spec.
+2. Since the cpan2rpm uses a subroutine interpolate from POD::Text but it is 
+not supported in the latest build of POD::Text. The fix is to replace the
+'POD::Text' with 'POK::PlainText' in the two places of file 'cpan2rpm'.
+3. Generate the cpan2rpm-2.028-1.noarch.rpm as general rpm package.
