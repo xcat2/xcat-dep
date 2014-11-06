@@ -1,0 +1,4 @@
+#!/bin/bash
+
+cp ./grub2-res.tar.gz /root/rpmbuild/SOURCES/grub2-res.tar.gz 
+rpmbuild -bb ./grub2-xcat.spec
