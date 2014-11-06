@@ -3,4 +3,4 @@ How to build the perl-Net-DNS
 1. cp the Net-DNS-0.80.tar.gz to the rpmbuild/SOURCES/
 2. cp the Net-DNS.spec to the rpmbuild/SPECS/
 3. cd rpmbuild/SPECS/
-4. rpmbuild -bb Net-DNS.spec
+4. rpmbuild -bb Net-DNS.spec (The default buildarch in Net-DNS.spec is x86_64, needs to modify buildarch if the build arch is not x86_64)
