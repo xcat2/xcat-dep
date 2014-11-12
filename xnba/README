@@ -1,0 +1,9 @@
+xNBA for Debian
+---------------
+
+./make_deb.sh: build the package from the binaries under "binary" directory
+./rebuild.sh : build the package from source code, this should only run on amd64/x86_64 platform, it will update the files under "binary" directory after compilation
+
+
+
+
