@@ -1,5 +1,11 @@
+grub2-xcat (1.0-2) unstable; urgency=low
+
+  * update core.elf to support ppc64le
+
+ -- XCAT <xcat-user@lists.sourceforge.net>  Thu, 13 Nov 2014 06:35:44 -0700
 grub2-xcat (1.0-1) unstable; urgency=low
 
   * Initial release (Closes: #nnnn)  <nnnn is the bug number of your ITP>
 
  -- XCAT <xcat-user@lists.sourceforge.net>  Thu, 20 Mar 2014 06:35:44 -0700
+
