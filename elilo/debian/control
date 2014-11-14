@@ -8,6 +8,6 @@ Standards-Version: 3.8.4
 Package: elilo-xcat
 Section: utils
 Priority: extra
-Architecture: any
+Architecture: all
 Description: Open source implementation of Service Location Protocol V2
  Open source implementation of Service Location Protocol V2
