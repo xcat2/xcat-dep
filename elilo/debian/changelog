@@ -1,3 +1,9 @@
+elilo-xcat (3.14-4) UNRELEASED; urgency=low
+
+  * modify the package to be arch indep 
+
+ -- xCAT <https://sourceforge.net/projects/xcat/>  Thu, 13 Nov 2014 23:16:56 -0800
+
 elilo-xcat (1.2.1-1) unstable; urgency=low
 
   * Initial release for xCAT
