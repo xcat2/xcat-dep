@@ -1,0 +1,12 @@
+The latest source rpm file of grub2 can be obtained from the source codes of
+the Red Hat Enterprse Linux. The current source rpm file,
+grub2-2.02-0.16.xcat.src.rpm, was obtained from RHEL 7.1 Alpha with a little
+modification. When a new source rpm file is available, please update the
+Makefile accordingly. And the Version and Release sections in the template
+of the spec file, grub2-xcat.spec.template should also be updated.
+
+For rpm package compling, a RHEL 7 environment on powerpc64 is needed.
+
+For deb package generating, a Debian or Ubunutu environment on any architecture
+should work. It will re-pack the grub2-xcat.noarch.rpm to deb package. Thus,
+the rpm package must be compiled at first.
