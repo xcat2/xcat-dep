@@ -67,4 +67,4 @@ clean:
 	$(RM) alien.out
 	$(RM) grub2-xcat_*_all.deb grub2-xcat.all.deb
 
-.PHONY: build clean rpm
+.PHONY: build clean deb rpm
