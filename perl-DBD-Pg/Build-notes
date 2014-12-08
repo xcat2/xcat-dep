@@ -1,0 +1,4 @@
+# The steps below are verified on x86_64 SLES 12
+1. Copy DBD-Pg-3.4.1.tar.gz to /usr/src/packages/SOURCES/.
+2. Copy perl-DBD-Pg.spec to /usr/src/packages/SPECS/
+3. Run "rpmbuild -ba /usr/src/packages/SPECS/perl-DBD-Pg.spec" which creates /usr/src/packages/RPMS/x86_64/perl-DBD-Pg-3.4.1-3.1.x86_64.rpm 
