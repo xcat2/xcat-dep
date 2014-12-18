@@ -1,0 +1,7 @@
+# The steps below are verified on RHEL7.1 ppc64le
+1. Copy Crypt-Rijndael-1.09.tar.gz to /root/rpmbuild/SOURCES/.
+2. Copy perl-Crypt-Rijndael.spec to /root/rpmbuild/SPECS/
+3. Run "rpmbuild -bb /root/rpmbuild/SPECS/perl-Crypt-Rijndael.spec" which creates /root/rpmbuild/RPMS/ppc64le/perl-Crypt-Rijndael-1.09-2.ael7a.ppc64le.rpm
+
+
+Note: the build of perl-Crypt-Rijndael needs perl-Test-Manifest, which is not shipped with RHEL. Could build perl-Test-Manifest from source code, or download binary from internet.
