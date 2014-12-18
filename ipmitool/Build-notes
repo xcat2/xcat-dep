@@ -31,3 +31,7 @@ NOTE #2
 ENABLE THE SSL
 Before running the build operation, the openssl-devel should be installed on the build env to make sure the ssl can be enabled for the generated ipmitool package.
 You can run the 'ldd ipmitool' to see whether the 'libcrypto.so.x' has been added as a dependency to check whether the ssl has been enabled.
+
+
+Note #3
+On RHEL 7.1 ppc64le, probably because of the beta version of toolchain, needs to add "--build=powerpc64le-redhat-linux-gnu" with the ./configure in ipmitool.spec

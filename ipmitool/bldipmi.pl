@@ -8,6 +8,8 @@ if (grep /Red Hat Enterprise Linux Server release 5\.\d/, @output) {
   $os = "rh5";
 } elsif (grep /Red Hat Enterprise Linux Server release 6\.\d/, @output) {
   $os = "rh6";
+} elsif (grep /Red Hat Enterprise Linux Server release 7\.\d/, @output) {
+  $os = "rh7";
 } elsif (grep /SUSE Linux Enterprise Server 10/, @output) {
   $os = "sles10";
 } elsif (grep /SUSE Linux Enterprise Server 11/, @output) {
@@ -48,7 +50,7 @@ if ( (! -f "$pwd/ipmitool-1.8.11.tar.gz")
 my $blddir;
 if ($os eq "rh5") {
   $blddir = "/usr/src/redhat";
-} elsif ($os eq "rh6") {
+} elsif (($os eq "rh6") || ($os eq "rh7")) {
   $blddir = "/root/rpmbuild";
 } elsif ($os =~ /sles1\d/) {
   $blddir = "/usr/src/packages";
