@@ -1,3 +1,3 @@
 1.(Optional) Get the right version of net-snmp source RPM from internet, i.e., from RHEL source tree.
-2. rpm -Uvh net-snmp-5.7.2-18.ael7a.src.rpm
-3. rpmbuild -bb /root/rpmbuild/SPECS/net-snmp.spec, which creates the /root/rpmbuild/RPMS/ppc64le/net-snmp-perl-5.7.2-18.ael7a.ppc64le.rpm
+2. rpm -Uvh net-snmp-5.7.2-20.ael7b.src.rpm
+3. rpmbuild -bb /root/rpmbuild/SPECS/net-snmp.spec, which creates the /root/rpmbuild/RPMS/ppc64le/net-snmp-perl-5.7.2-20.ael7b.ppc64le.rpm
