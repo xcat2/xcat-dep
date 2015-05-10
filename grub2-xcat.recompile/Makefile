@@ -2,7 +2,7 @@
 # Maintainer: GONG Jie <gongjie@linux.vnet.ibm.com>
 #
 
-SRC_RPM = grub2-2.02-0.16.xcat.src.rpm
+SRC_RPM = grub2-2.02-0.16.ael7b.src.rpm
 SPEC_TEMPLATE = grub2-xcat.spec.template
 
 BUILD_NUMBER_FILE = build-number.txt
@@ -34,8 +34,13 @@ grub2-xcat.spec: $(SPEC_TEMPLATE) $(BUILD_NUMBER_FILE) timestamp.grub2.mknetdir
 	umask 0022
 	( cd grub2-xcat ; find tftpboot -type d -exec echo '%dir "/{}"' ';' ) >filelist
 	( cd grub2-xcat ; find tftpboot -type f -exec echo '"/{}"' ';' ) >>filelist
+	#cat $(SPEC_TEMPLATE) | sed -e \
+	#	's@###<<<BUILD>>>###@build'$$(cat $(BUILD_NUMBER_FILE))'.xcat@g' \
+	#	-e '/%files/ r filelist' >$@
 	cat $(SPEC_TEMPLATE) | sed -e \
-		's@###<<<BUILD>>>###@build'$$(cat $(BUILD_NUMBER_FILE))'.xcat@g' \
+		's@###<<<BUILD>>>###@build'$$(date +"%Y%m%d%H%M")'@g' \
+		-e 's@###<<<GRUB2RELEASE>>>###@'$$(rpm -qpf --qf "%{RELEASE}" $(SRC_RPM) )'@g' \
+		-e 's@###<<<GRUB2VERSION>>>###@'$$(rpm -qpf --qf "%{VERSION}" $(SRC_RPM) )'@g' \
 		-e '/%files/ r filelist' >$@
 	$(RM) filelist
 
