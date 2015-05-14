@@ -24,7 +24,7 @@ SRC_RPM = <the name of your grub2 source rpm file>
 
 2. build grub2-deb rpm  
 
-For deb package generating, a Debian or Ubunutu environment on any architecture should work. 
+For deb package generating, a Debian or Ubunutu environment on any architecture wilth alien installed should work. 
 running "./makedeb" will convert the grub2-xcat rpm generated above to deb package. 
 
 Finally, upload the deb package to the build server.
