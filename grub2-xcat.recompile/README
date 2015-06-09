@@ -1,12 +1,32 @@
-The latest source rpm file of grub2 can be obtained from the source codes of
-the Red Hat Enterprse Linux. The current source rpm file,
-grub2-2.02-0.16.xcat.src.rpm, was obtained from RHEL 7.1 Alpha with a little
-modification. When a new source rpm file is available, please update the
-Makefile accordingly. And the Version and Release sections in the template
-of the spec file, grub2-xcat.spec.template should also be updated.
+The grub2-xcat rpm/deb package can be built from the grub2 source package shipped in Redhat/Fedora/CentOS...
 
-For rpm package compling, a RHEL 7 environment on powerpc64 is needed.
+The steps:
 
-For deb package generating, a Debian or Ubunutu environment on any architecture
-should work. It will re-pack the grub2-xcat.noarch.rpm to deb package. Thus,
-the rpm package must be compiled at first.
+1.build grub2-xcat rpm
+
+For rpm package compling, a RHEL 7 environment on powerpc64 is required. Please make sure all the necessary build tools are installed, the list of the build tools can be showed by:
+==================================================
+rpm -qpR <the name of your grub2 source rpm file>
+==================================================
+
+(1)obtain the grub2 source rpm 
+The latest source rpm file of grub2 can be obtained from the source codes of the Red Hat Enterprse Linux. The current source rpm file, grub2-2.02-0.16.ael7b.src.rpm, was obtained from RHEL 7.1. 
+
+(2)update the Makefile
+When a new source rpm file is available, please update the following line in the Makefile accordingly. 
+==================================================
+SRC_RPM = <the name of your grub2 source rpm file>
+==================================================
+
+(3)run "./makerpm" to generate the grub2-xcat rpm, which can be found in current dir.
+
+(4)upload the grub2-xcat rpm to the build server and checkin the modified Makefile to xcat-dep git code base.
+
+2. build grub2-deb rpm  
+
+For deb package generating, a Debian or Ubunutu environment on any architecture wilth alien installed should work. 
+running "./makedeb" will convert the grub2-xcat rpm generated above to deb package. 
+
+Finally, upload the deb package to the build server.
+
+
