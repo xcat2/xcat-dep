@@ -8,6 +8,7 @@ Distribution: Slackware/tarball
 Group: Applications/System
 Packager: IBM Corp.
 Vendor: IBM Corp.
+URL:http://www.gnu.org/software/grub/
 
 %define _rpmdir ../
 %define _rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm
