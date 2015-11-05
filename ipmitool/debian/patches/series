@@ -1,3 +1,2 @@
-ipmitool-saneretry.patch
-ipmitool-spdfix.patch
-ipmitool-eventfix.patch
+ipmitool-1.8.15-saneretry.patch
+ipmitool-1.8.15-rflash.patch

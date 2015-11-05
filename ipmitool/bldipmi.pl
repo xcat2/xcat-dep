@@ -37,12 +37,12 @@ if ( ! grep /openssl-devel|libopenssl/, @output ) {
 
 # check the source files
 my $pwd = `pwd`;
+my $version = "1.8.15";
 chomp($pwd);
-if ( (! -f "$pwd/ipmitool-1.8.11.tar.gz")
+if ( (! -f "$pwd/ipmitool-$version.tar.gz")
   || (! -f "$pwd/ipmitool.spec")
-  || (! -f "$pwd/ipmitool-saneretry.patch")
-  || (! -f "$pwd/ipmitool-spdfix.patch")
-  || (! -f "$pwd/ipmitool-eventfix.patch")) {
+  || (! -f "$pwd/ipmitool-$version-saneretry.patch")
+  || (! -f "$pwd/ipmitool-$version-rflash.patch")) {  
   print "missed some necessary files for building.\n";
   exit 1;
 }
@@ -72,7 +72,7 @@ $cmd = "rm -rf $blddir/RPMS/$arch/ipmitool*";
 &runcmd($cmd);
 
 # copy the build files
-$cmd = "cp -rf ./ipmitool-1.8.11.tar.gz $blddir/SOURCES/";
+$cmd = "cp -rf ./ipmitool-$version.tar.gz $blddir/SOURCES/";
 &runcmd($cmd);
 
 $cmd = "cp -rf ./*.patch $blddir/SOURCES/";
@@ -85,7 +85,7 @@ $cmd = "rpmbuild -bb $blddir/SPECS/ipmitool.spec";
 &runcmd($cmd);
 
 #check whether the ssl has been enabled
-my $binfile = "$blddir/BUILD/ipmitool-1.8.11/src/ipmitool";
+my $binfile = "$blddir/BUILD/ipmitool-$version/src/ipmitool";
 $cmd = "ldd $binfile";
 @output = `$cmd`;
 if (! grep /libcrypto.so/, @output) {
@@ -93,7 +93,7 @@ if (! grep /libcrypto.so/, @output) {
   exit 1;
 }
 
-my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-1.8.11-3.$arch.rpm";
+my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-$version-1.$arch.rpm";
 my $dstdir = "/tmp/build/$os/$arch";
 
 # check the build result
