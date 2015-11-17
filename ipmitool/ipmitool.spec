@@ -1,14 +1,13 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
-Version:      1.8.11
-Release:      3
+Version:      1.8.15
+Release:      1
 License:      BSD
 Group:        Utilities
-Packager:     Jarrod Johnson <jbjohnso@us.ibm.com>
+Packager:     IBM Corp.
 Source:       ipmitool-%{version}.tar.gz
-Patch:        ipmitool-saneretry.patch
-Patch2:       ipmitool-spdfix.patch
-Patch3:       ipmitool-eventfix.patch
+Patch:        ipmitool-%{version}-saneretry.patch
+Patch2:       ipmitool-%{version}-rflash.patch
 Buildroot:    /var/tmp/ipmitool-root
 
 %description
@@ -34,7 +33,6 @@ fi
 %setup -n ipmitool-%{version}
 %patch -p1
 %patch2 -p1
-%patch3 -p1
 
 %build
 ./configure --with-kerneldir \
@@ -64,6 +62,8 @@ fi
 
 
 %changelog
+* Wed Nov 04 2015 <chenglch@cn.ibm.com> 1.8.15
+  Delete rflash verification prompt
 * Wed Apr 27 2011 <andywray@us.ibm.com> 1.8.11-3
 - Add event fix
 * Wed Mar 11 2009 <jbjohnso@us.ibm.com> 1.8.11-2

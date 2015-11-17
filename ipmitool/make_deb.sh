@@ -1,7 +1,8 @@
 #!/bin/bash
+VERSION=1.8.15
 
-tar xvfz ipmitool-1.8.11.tar.gz
-cd ipmitool-1.8.11
+tar xvfz ipmitool-$VERSION.tar.gz
+cd ipmitool-$VERSION
 cp -rL ../debian .
 HOST_ARCH=`uname -m`
 if [ "$HOST_ARCH" = "ppc64le" ]; then
@@ -13,4 +14,5 @@ else
 fi
 TARGET_ARCH=$HOST_ARCH dpkg-buildpackage -uc -us
 cd -
-rm -rf ipmitool-1.8.11
+rm -rf ipmitool-$VERSION
+
