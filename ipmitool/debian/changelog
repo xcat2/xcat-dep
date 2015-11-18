@@ -1,5 +1,5 @@
-ipmitool-xcat (1.8.15) unstable; urgency=low
-  * Changed to ipmitool-xcat
+ipmitool-xcat (1.8.15-1) unstable; urgency=low
+  * Delete user prompt to upgrade firmware
 
  -- chenglch <chenglch@cn.ibm.com>  Web, 4 Nov 2015 23:08:00 +0100
 
