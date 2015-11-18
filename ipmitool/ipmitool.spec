@@ -63,7 +63,7 @@ fi
 
 %changelog
 * Wed Nov 04 2015 <chenglch@cn.ibm.com> 1.8.15
-  Delete rflash verification prompt
+  Delete user prompt to upgrade firmware
 * Wed Apr 27 2011 <andywray@us.ibm.com> 1.8.11-3
 - Add event fix
 * Wed Mar 11 2009 <jbjohnso@us.ibm.com> 1.8.11-2
