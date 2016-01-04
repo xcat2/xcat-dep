@@ -1,0 +1,15 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Get DBI-1.634.tar.gz from CPAN 
+Use the DBI.spec in this directory ( it was created by running a modified   
+ cpan2rpm to support AIX)
+
+cp DBI-1.634.tar.gz /opt/freeware/src/packages/SOURCES
+cp DBI.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb DBI.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-DBI-1.634-1.aix7.2.ppc.rpm
+
+
