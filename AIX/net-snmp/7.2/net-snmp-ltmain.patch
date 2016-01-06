@@ -1,0 +1,104 @@
+*** net-snmp-5.7.2/ltmain.sh.orig	Thu Apr 11 11:20:03 2013
+--- net-snmp-5.7.2/ltmain.sh	Thu Apr 11 11:19:46 2013
+***************
+*** 3011,3017 ****
+  	    for linkname
+  	    do
+  	      test "$linkname" != "$realname" \
+! 		&& func_show_eval "(cd $destdir && { $LN_S -f $realname $linkname || { $RM $linkname && $LN_S $realname $linkname; }; })"
+  	    done
+  	  fi
+  
+--- 3011,3017 ----
+  	    for linkname
+  	    do
+  	      test "$linkname" != "$realname" \
+! 		&& func_show_eval "(cd $destdir && { $LN_S -f $realname $linkname || { $RM -f $linkname && $LN_S $realname $linkname; }; })"
+  	    done
+  	  fi
+  
+***************
+*** 8262,8268 ****
+  
+  	# Make a backup of the uninstalled library when relinking
+  	if test "$opt_mode" = relink; then
+! 	  $opt_dry_run || eval '(cd $output_objdir && $RM ${realname}U && $MV $realname ${realname}U)' || exit $?
+  	fi
+  
+  	# Do each of the archive commands.
+--- 8262,8268 ----
+  
+  	# Make a backup of the uninstalled library when relinking
+  	if test "$opt_mode" = relink; then
+! 	  $opt_dry_run || eval '(cd $output_objdir && $RM -f ${realname}U && $MV $realname ${realname}U)' || exit $?
+  	fi
+  
+  	# Do each of the archive commands.
+***************
+*** 8528,8534 ****
+  	    # Restore the uninstalled library and exit
+  	    if test "$opt_mode" = relink; then
+  	      ( cd "$output_objdir" && \
+! 	        $RM "${realname}T" && \
+  		$MV "${realname}U" "$realname" )
+  	    fi
+  
+--- 8528,8534 ----
+  	    # Restore the uninstalled library and exit
+  	    if test "$opt_mode" = relink; then
+  	      ( cd "$output_objdir" && \
+! 	        $RM -f "${realname}T" && \
+  		$MV "${realname}U" "$realname" )
+  	    fi
+  
+***************
+*** 8539,8545 ****
+  
+  	# Restore the uninstalled library and exit
+  	if test "$opt_mode" = relink; then
+! 	  $opt_dry_run || eval '(cd $output_objdir && $RM ${realname}T && $MV $realname ${realname}T && $MV ${realname}U $realname)' || exit $?
+  
+  	  if test -n "$convenience"; then
+  	    if test -z "$whole_archive_flag_spec"; then
+--- 8539,8545 ----
+  
+  	# Restore the uninstalled library and exit
+  	if test "$opt_mode" = relink; then
+! 	  $opt_dry_run || eval '(cd $output_objdir && $RM -f ${realname}T && $MV $realname ${realname}T && $MV ${realname}U $realname)' || exit $?
+  
+  	  if test -n "$convenience"; then
+  	    if test -z "$whole_archive_flag_spec"; then
+***************
+*** 8553,8559 ****
+  	# Create links to the real library.
+  	for linkname in $linknames; do
+  	  if test "$realname" != "$linkname"; then
+! 	    func_show_eval '(cd "$output_objdir" && $RM "$linkname" && $LN_S "$realname" "$linkname")' 'exit $?'
+  	  fi
+  	done
+  
+--- 8553,8559 ----
+  	# Create links to the real library.
+  	for linkname in $linknames; do
+  	  if test "$realname" != "$linkname"; then
+! 	    func_show_eval '(cd "$output_objdir" && $RM -f "$linkname" && $LN_S "$realname" "$linkname")' 'exit $?'
+  	  fi
+  	done
+  
+***************
+*** 9410,9416 ****
+  
+        # Do a symbolic link so that the libtool archive can be found in
+        # LD_LIBRARY_PATH before the program is installed.
+!       func_show_eval '( cd "$output_objdir" && $RM "$outputname" && $LN_S "../$outputname" "$outputname" )' 'exit $?'
+        ;;
+      esac
+      exit $EXIT_SUCCESS
+--- 9410,9416 ----
+  
+        # Do a symbolic link so that the libtool archive can be found in
+        # LD_LIBRARY_PATH before the program is installed.
+!       func_show_eval '( cd "$output_objdir" && $RM -f "$outputname" && $LN_S "../$outputname" "$outputname" )' 'exit $?'
+        ;;
+      esac
+      exit $EXIT_SUCCESS
