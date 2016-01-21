@@ -12,7 +12,7 @@ Summary: Tools and servers for the SNMP protocol
 Name: net-snmp
 Version: 5.7.3
 # update release for vendor release. (eg 1.fc6, 1.rh72, 1.ydl3, 1.ydl23)
-Release: 2
+Release: 3
 URL: http://www.net-snmp.org/
 License: BSDish
 Group: System Environment/Daemons
@@ -94,7 +94,7 @@ export PATH=/usr/vac/bin:$PATH
 #cp libtool libtool.orig
 #sed -e "s/hardcode_direct=yes/hardcode_direct=no/" libtool.orig > libtool
 chmod +x %{__find_requires}
-env -i PATH=$PATH make -j8 %{?smp_mflags}
+make -j8 %{?smp_mflags}
 
 %install
 #export CC=cc_r
@@ -103,7 +103,7 @@ env -i PATH=$PATH make -j8 %{?smp_mflags}
 # ----------------------------------------------------------------------
 rm -rf $RPM_BUILD_ROOT
 
-env -i PATH=$PATH make -j8 DESTDIR=%{buildroot} install
+make -j8 DESTDIR=%{buildroot} install
 
 # Remove 'snmpinform' from the temporary directory because it is a
 # symbolic link, which cannot be handled by the rpm installation process.
@@ -115,7 +115,7 @@ perl -i -p -e 's@/usr/local/share/snmp/@/etc/snmp/@g;s@usr/local@%{_prefix}@g' d
 cp local/mib2c.*.conf ${RPM_BUILD_ROOT}%{_datadir}/snmp
 
 cd perl
-env -i PATH=$PATH make -j8 DESTDIR=%{_perl_dir} install
+make -j8 DESTDIR=%{_perl_dir} install
 # remove special files
 find $RPM_BUILD_ROOT -name perllocal.pod \
         -o -name .packlist \
@@ -207,9 +207,6 @@ rm -rf $RPM_BUILD_ROOT
 echo "No additional verification is done for net-snmp"
 
 %changelog
-* Tue Jan 12 2016 Jan GONG Jie <gongjie@linux.vnet.ibm.com>
-- Clear environment variables while make is running
-
 * Wed Jan  6 2016 Jan GONG Jie <gongjie@linux.vnet.ibm.com>
 - Upgrade to net-snmp 5.7.3
 - Rebuild on AIX 7.2
