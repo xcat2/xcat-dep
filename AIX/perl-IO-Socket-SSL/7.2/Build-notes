@@ -1,0 +1,12 @@
+Build Notes
+
+Need cc_r compiler installed on AIX build system.
+
+Use the IO-Socket-SSL.spec in this directory 
+( it was created by running a modified cpan2rpm to support AIX)
+Get IO-Socket-SSL-1.38.tar.gz from CPAN
+cp IO-Socket-SSL-1.38.tar.gz /opt/freeware/src/packages/SOURCES
+cp  IO-Socket-SSL.spec /opt/freeware/src/packages/SPECS
+
+Run "rpm -bb IO-Socket-SSL.spec".
+ - which creates: /opt/freeware/src/packages/RPMS/ppc/perl-IO-Socket-SSL-1.38-1.aix7.2.ppc.rpm

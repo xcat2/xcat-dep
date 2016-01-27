@@ -1,0 +1,19 @@
+*** net-snmp-5.7.2/m4/libtool.m4.orig	Fri Apr 19 16:20:43 2013
+--- net-snmp-5.7.2/m4/libtool.m4	Fri Apr 19 16:26:16 2013
+***************
+*** 2230,2236 ****
+      else
+        # We preserve .a as extension for shared libraries through AIX4.2
+        # and later when we are not doing run time linking.
+!       library_names_spec='${libname}${release}.a $libname.a'
+        soname_spec='${libname}${release}${shared_ext}$major'
+      fi
+      shlibpath_var=LIBPATH
+--- 2230,2236 ----
+      else
+        # We preserve .a as extension for shared libraries through AIX4.2
+        # and later when we are not doing run time linking.
+!       library_names_spec='${libname}${release}.a $libname.so $libname.so.${release} $libname.so.$major $libname.a'
+        soname_spec='${libname}${release}${shared_ext}$major'
+      fi
+      shlibpath_var=LIBPATH
