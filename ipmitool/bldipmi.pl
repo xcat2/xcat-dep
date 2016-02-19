@@ -56,10 +56,10 @@ if ($os eq "rh5") {
   $blddir = "/usr/src/packages";
 }
 
-#&runcmd("mkdir -p $blddir/SOURCES");
-#&runcmd("mkdir -p $blddir/SPECS");
-#&runcmd("mkdir -p $blddir/BUILD");
-#&runcmd("mkdir -p $blddir/RPMS");
+&runcmd("mkdir -p $blddir/SOURCES");
+&runcmd("mkdir -p $blddir/SPECS");
+&runcmd("mkdir -p $blddir/BUILD");
+&runcmd("mkdir -p $blddir/RPMS");
 
 # clean the env
 $cmd = "rm -rf $blddir/SOURCES/ipmitool*";
