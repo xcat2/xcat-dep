@@ -1,0 +1,1584 @@
+diff -Nur HTTP-Async-0.30/Makefile.PL HTTP-Async-0.30_mod/Makefile.PL
+--- HTTP-Async-0.30/Makefile.PL	2015-06-02 02:27:03.000000000 -0400
++++ HTTP-Async-0.30_mod/Makefile.PL	2016-03-14 00:27:17.000000000 -0400
+@@ -7,26 +7,6 @@
+     'NAME'         => 'HTTP::Async',
+     'VERSION_FROM' => 'lib/HTTP/Async.pm',
+     LICENSE        => 'perl',
+-    'PREREQ_PM'    => {
+-        'Carp'                       => 0,
+-        'Data::Dumper'               => 0,
+-        'HTTP::Request'              => 0,
+-        'HTTP::Response'             => 0,
+-        'HTTP::Server::Simple::CGI'  => 0,
+-        'HTTP::Status'               => 0,
+-        'IO::Select'                 => 0,
+-        'LWP::UserAgent'             => 0,
+-        'Net::HTTP'                  => 0,
+-        'Net::HTTP::NB'              => 0,
+-        'Net::HTTPS::NB'             => 0.13,
+-        'Test::HTTP::Server::Simple' => 0,
+-        'Test::More'                 => 0,
+-        'Test::Fatal'                => 0,
+-        'Time::HiRes'                => 0,
+-        'URI'                        => 0,
+-        'URI::Escape'                => 0,
+-        'Net::EmptyPort'             => 0,
+-    },
+     META_MERGE    => {
+         resources => {
+             repository => 'https://github.com/evdb/HTTP-Async',
+diff -Nur HTTP-Async-0.30/MANIFEST HTTP-Async-0.30_mod/MANIFEST
+--- HTTP-Async-0.30/MANIFEST	2015-09-28 12:13:01.000000000 -0400
++++ HTTP-Async-0.30_mod/MANIFEST	2016-03-14 00:26:47.000000000 -0400
+@@ -5,34 +5,6 @@
+ Makefile.PL
+ MANIFEST			This list of files
+ README.md
+-t/bad-connections.t
+-t/bad-headers.t
+-t/bad-hosts.t
+-t/cookies.t
+-t/dead-connection.t
+-t/headers.t
+-t/invalid-options.t
+-t/key_aliases.t
+-t/local-addr.t
+-t/make-url-absolute.t
+-t/not-modified.t
+-t/peer-addr.t
+-t/pod-coverage.t
+-t/pod.t
+-t/polite.t
+-t/poll-interval.t
+-t/proxy-with-https.t
+-t/proxy.t
+-t/real-servers.t
+-t/redirects.t
+-t/release-cpan-changes.t
+-t/remove.t
+-t/setup.t
+-t/strip-host-from-uri.t
+-t/template.t
+-t/test-utils.pl
+-t/TestServer.pm
+-t/timeout.t
+ TODO
+ META.yml                                 Module YAML meta-data (added by MakeMaker)
+ META.json                                Module JSON meta-data (added by MakeMaker)
+diff -Nur HTTP-Async-0.30/META.json HTTP-Async-0.30_mod/META.json
+--- HTTP-Async-0.30/META.json	2015-09-28 12:13:01.000000000 -0400
++++ HTTP-Async-0.30_mod/META.json	2016-03-14 00:28:28.000000000 -0400
+@@ -29,28 +29,6 @@
+          "requires" : {
+             "ExtUtils::MakeMaker" : "0"
+          }
+-      },
+-      "runtime" : {
+-         "requires" : {
+-            "Carp" : "0",
+-            "Data::Dumper" : "0",
+-            "HTTP::Request" : "0",
+-            "HTTP::Response" : "0",
+-            "HTTP::Server::Simple::CGI" : "0",
+-            "HTTP::Status" : "0",
+-            "IO::Select" : "0",
+-            "LWP::UserAgent" : "0",
+-            "Net::EmptyPort" : "0",
+-            "Net::HTTP" : "0",
+-            "Net::HTTP::NB" : "0",
+-            "Net::HTTPS::NB" : "0.13",
+-            "Test::Fatal" : "0",
+-            "Test::HTTP::Server::Simple" : "0",
+-            "Test::More" : "0",
+-            "Time::HiRes" : "0",
+-            "URI" : "0",
+-            "URI::Escape" : "0"
+-         }
+       }
+    },
+    "release_status" : "stable",
+diff -Nur HTTP-Async-0.30/META.yml HTTP-Async-0.30_mod/META.yml
+--- HTTP-Async-0.30/META.yml	2015-09-28 12:13:01.000000000 -0400
++++ HTTP-Async-0.30_mod/META.yml	2016-03-14 00:28:52.000000000 -0400
+@@ -15,27 +15,7 @@
+ name: HTTP-Async
+ no_index:
+   directory:
+-    - t
+     - inc
+-requires:
+-  Carp: '0'
+-  Data::Dumper: '0'
+-  HTTP::Request: '0'
+-  HTTP::Response: '0'
+-  HTTP::Server::Simple::CGI: '0'
+-  HTTP::Status: '0'
+-  IO::Select: '0'
+-  LWP::UserAgent: '0'
+-  Net::EmptyPort: '0'
+-  Net::HTTP: '0'
+-  Net::HTTP::NB: '0'
+-  Net::HTTPS::NB: '0.13'
+-  Test::Fatal: '0'
+-  Test::HTTP::Server::Simple: '0'
+-  Test::More: '0'
+-  Time::HiRes: '0'
+-  URI: '0'
+-  URI::Escape: '0'
+ resources:
+   repository: https://github.com/evdb/HTTP-Async
+ version: '0.30'
+diff -Nur HTTP-Async-0.30/t/bad-connections.t HTTP-Async-0.30_mod/t/bad-connections.t
+--- HTTP-Async-0.30/t/bad-connections.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/bad-connections.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,25 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 5;
+-use HTTP::Request;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-my %tests = (
+-    "$url_root/foo/bar?break_connection=before_headers" => 504,
+-    "$url_root/foo/bar?break_connection=before_content" => 200,
+-);
+-
+-while ( my ( $url, $code ) = each %tests ) {
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue - $url";
+-    my $res = $q->wait_for_next_response;
+-    is $res->code, $code, "Got a '$code' response";
+-}
+diff -Nur HTTP-Async-0.30/t/bad-headers.t HTTP-Async-0.30_mod/t/bad-headers.t
+--- HTTP-Async-0.30/t/bad-headers.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/bad-headers.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,23 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 3;
+-use HTTP::Request;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-# Check that a couple of redirects work.
+-my $url = "$url_root/foo/bar?bad_header=1";
+-
+-my $req = HTTP::Request->new( 'GET', $url );
+-ok $q->add($req), "Added request to the queue";
+-$q->poke while !$q->to_return_count;
+-
+-my $res = $q->next_response;
+-is $res->code, 200, "Got a response";
+diff -Nur HTTP-Async-0.30/t/bad-hosts.t HTTP-Async-0.30_mod/t/bad-hosts.t
+--- HTTP-Async-0.30/t/bad-hosts.t	2015-03-15 11:17:52.000000000 -0400
++++ HTTP-Async-0.30_mod/t/bad-hosts.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,52 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-
+-use HTTP::Request;
+-use LWP::UserAgent;
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-# Some weird ISPs or DNS providers take an address like http://i.dont.exist/
+-# and resolve it to something "useful" such as
+-# http://navigationshilfe1.t-online.de/dnserror?url=http://i.dont.exist/
+-#
+-# If that's happening then let's just give up on this test entirely.
+-{
+-    my $ua = LWP::UserAgent->new;
+-    if ($ua->get('http://i.dont.exist/foo/bar')->is_success) {
+-        plan skip_all => 'http://i.dont.exist/foo/bar resolved to something!';
+-        exit;
+-    }
+-}
+-
+-# Try to add some requests for bad hosts. HTTP::Async should not fail
+-# but should return HTTP::Responses with the correct status code etc.
+-
+-plan tests => 9;
+-
+-my @bad_requests =
+-  map { HTTP::Request->new( GET => $_ ) }
+-  ( 'http://i.dont.exist/foo/bar', 'ftp://wrong.protocol.com/foo/bar' );
+-
+-ok $q->add(@bad_requests), "Added bad requests";
+-
+-while ( $q->not_empty ) {
+-    my $res = $q->next_response || next;
+-
+-    my $request_uri = $res->request->uri;
+-
+-    isa_ok($res, 'HTTP::Response', "$request_uri - Got a proper response")
+-        || diag sprintf("ref: %s", ref $res);
+-
+-    ok(!$res->is_success, "$request_uri - Response was not a success")
+-        || diag sprintf("%s: %s", $res->code, $res->decoded_content);
+-
+-    ok($res->is_error, "$request_uri - Response was an error")
+-        || diag sprintf("%s: %s", $res->code, $res->decoded_content);
+-
+-    ok $res->request,  "$request_uri - Response has a request attached";
+-}
+diff -Nur HTTP-Async-0.30/t/cookies.t HTTP-Async-0.30_mod/t/cookies.t
+--- HTTP-Async-0.30/t/cookies.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/cookies.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,32 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 4;
+-use HTTP::Request;
+-use HTTP::Cookies;
+-use HTTP::Async;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-my $q = HTTP::Async->new;
+-
+-my $cookie_jar = HTTP::Cookies->new({});
+-$q->cookie_jar($cookie_jar);
+-
+-# Receive a cookie and store it in a cookie jar
+-{
+-    my $url = "$url_root/foo/bar?cookie=1";
+-
+-    my $req = HTTP::Request->new('GET', $url);
+-    ok $q->add($req), "Added request to the queue";
+-    $q->poke while !$q->to_return_count;
+-
+-    my $res = $q->next_response;
+-    my $response_cookie = $res->header('Set-Cookie');
+-    ok $response_cookie =~ m/x=test/, "Got cookie in response '$response_cookie'";
+-
+-    my $jar_cookie = $cookie_jar->as_string();
+-    ok $jar_cookie =~ m/x=test/, "Got cookie from cookie jar '$jar_cookie'";
+-}
+diff -Nur HTTP-Async-0.30/t/dead-connection.t HTTP-Async-0.30_mod/t/dead-connection.t
+--- HTTP-Async-0.30/t/dead-connection.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/dead-connection.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,67 +0,0 @@
+-# Hello Edmund,
+-#
+-# Thanks for HTTP::Async! I have a question about it, that I cannot figure out
+-# myself. I'm playing with HTTP::Async in various corner cases, and there's one
+-# particular error I'm getting:
+-#
+-#  HTTP::Async object destroyed but still in use at a.pl line 0
+-#  HTTP::Async INTERNAL ERROR: 'id_opts' not empty at a.pl line 0
+-#
+-# and the code is
+-
+-use strict;
+-use warnings;
+-use HTTP::Async;
+-use HTTP::Request;
+-use IO::Socket::INET;
+-use Time::HiRes;
+-use Net::EmptyPort ();
+-
+-use Test::More tests => 10;
+-
+-my $port         = Net::EmptyPort::empty_port();
+-my $abort_period = 3;
+-
+-foreach my $arg_key (qw(timeout max_request_time)) {
+-
+-    # open a socket that will accept connections but never respond
+-    my $sock = IO::Socket::INET->new(
+-        Listen    => 5,
+-        LocalAddr => 'localhost',
+-        LocalPort => $port,
+-        Proto     => 'tcp'
+-    ) || die "Could not open a socket on port '$port' - maybe in use?";
+-    ok $sock, "opened socket on port '$port'";
+-
+-    my $async = HTTP::Async->new( $arg_key => $abort_period );
+-    ok $async, "creating async using $arg_key => $abort_period";
+-
+-    my $req = HTTP::Request->new( GET => "http://localhost:$port/" );
+-    my $id = $async->add($req);
+-    ok $id, "Added request, given id '$id'";
+-
+-    # set up time started and when it should end. Add one second to be generous.
+-    my $added_time      = time;
+-    my $should_end_time = $added_time + $abort_period + 1;
+-
+-    my $res = undef;
+-
+-    while (!$res) {
+-        $res = $async->wait_for_next_response(1);
+-        
+-        # Check that we have not been waiting too long.
+-        last if time > $should_end_time;
+-    }
+-    
+-    ok $res, "got a response";
+-    is $res->code, 504, "got faked up timeout response";
+-}
+-
+-# I expected that $response should be defined and contain a fake 504 error.
+-# It's either I'm doing something wrong or ..?
+-#
+-#
+-# --
+-# Sincerely,
+-#
+-#        Dmitry Karasik
+diff -Nur HTTP-Async-0.30/t/headers.t HTTP-Async-0.30_mod/t/headers.t
+--- HTTP-Async-0.30/t/headers.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/headers.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,21 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 3;
+-use HTTP::Request;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-my $req = HTTP::Request->new( 'GET', "$url_root?delay=0" );
+-$req->header( 'Cookie', 'foo=bar' );
+-
+-ok $q->add($req), "Added request to the queue";
+-$q->poke while !$q->to_return_count;
+-
+-my $res = $q->next_response;
+-is $res->code, 200, "Got a response";
+diff -Nur HTTP-Async-0.30/t/invalid-options.t HTTP-Async-0.30_mod/t/invalid-options.t
+--- HTTP-Async-0.30/t/invalid-options.t	2015-06-02 02:27:03.000000000 -0400
++++ HTTP-Async-0.30_mod/t/invalid-options.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,40 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 2;
+-use Test::Fatal;
+-
+-use HTTP::Async;
+-use HTTP::Request;
+-
+-{
+-    like(
+-        exception {
+-            HTTP::Async->new(
+-                proxy_addr => "localhost",
+-                proxy_port => 12345,
+-            )
+-        },
+-        qr/proxy_addr not valid/,
+-        'new dies on invalid option.'
+-    );
+-}
+-
+-{
+-    my $q = HTTP::Async->new;
+-    my $r = HTTP::Request->new;
+-
+-    like(
+-        exception {
+-            $q->add_with_opts($r, {
+-                proxy_addr => "localhost",
+-                proxy_port => 12345,
+-            })
+-        },
+-        qr/proxy_addr not valid/,
+-        'add_with_opts dies on invalid option.'
+-    );
+-}
+-
+-1;
+-
+diff -Nur HTTP-Async-0.30/t/key_aliases.t HTTP-Async-0.30_mod/t/key_aliases.t
+--- HTTP-Async-0.30/t/key_aliases.t	2015-09-28 12:02:27.000000000 -0400
++++ HTTP-Async-0.30_mod/t/key_aliases.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,13 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 4;
+-
+-use HTTP::Async;
+-
+-foreach my $number ( 0, 3 ) {
+-    my $q2 = HTTP::Async->new( max_redirects => $number );
+-    ok $q2, "created object";
+-    is $q2->max_redirect, $number, "got $number";
+-}
+diff -Nur HTTP-Async-0.30/t/local-addr.t HTTP-Async-0.30_mod/t/local-addr.t
+--- HTTP-Async-0.30/t/local-addr.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/local-addr.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,38 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-use HTTP::Request;
+-use Net::EmptyPort;
+-
+-unless(eval("require Sys::HostIP;") && !$@) {
+-    plan skip_all => "test requires Sys::HostIP to be installed";
+-    exit;
+-}
+-
+-my $ips = Sys::HostIP->new->ips || [];
+-
+-plan tests => 1 + 2*@$ips;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-use HTTP::Async;
+-
+-for my $ip (@$ips) {
+-    my $q = HTTP::Async->new;
+-
+-    my $req = HTTP::Request->new( 'GET', "$url_root?delay=0" );
+-
+-    my %opts = (
+-        local_addr => $ip,
+-        local_port => Net::EmptyPort::empty_port(),
+-    );
+-    ok $q->add_with_opts($req, \%opts), "Added request to the queue with local_addr ($ip) set";
+-#   note `lsof -p $$`;
+-    $q->poke while !$q->to_return_count;
+-
+-    my $res = $q->next_response;
+-    is $res->code, 200, "Got a response";
+-}
+diff -Nur HTTP-Async-0.30/t/make-url-absolute.t HTTP-Async-0.30_mod/t/make-url-absolute.t
+--- HTTP-Async-0.30/t/make-url-absolute.t	2013-03-28 13:33:43.000000000 -0400
++++ HTTP-Async-0.30_mod/t/make-url-absolute.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,24 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 4;
+-
+-use HTTP::Async;
+-use URI;
+-
+-my $full_url = URI->new('http://www.test.com:8080/foo/bar?baz=bundy');
+-
+-my @tests = (
+-    'http://www.test.com:8080/foo/bar?baz=bundy', '/foo/bar?baz=bundy',
+-    'bar?baz=bundy',                              '?baz=bundy',
+-);
+-
+-foreach my $test (@tests) {
+-    my $url = HTTP::Async::_make_url_absolute(
+-        url => $test,
+-        ref => $full_url,
+-    );
+-
+-    is "$url", "$full_url", "$test -> $full_url";
+-}
+diff -Nur HTTP-Async-0.30/t/not-modified.t HTTP-Async-0.30_mod/t/not-modified.t
+--- HTTP-Async-0.30/t/not-modified.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/not-modified.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,26 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 4;
+-use HTTP::Request;
+-use HTTP::Async;
+-
+-require 't/TestServer.pm';
+-
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-my $q = HTTP::Async->new;
+-
+-{
+-    my $url = "$url_root/?not_modified=1";
+-
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue";
+-    my $res = $q->wait_for_next_response;
+-
+-    is $res->code, 304, "304 Not modified";
+-    ok !$res->previous, "does not have a previous reponse";
+-}
+-
+-1;
+diff -Nur HTTP-Async-0.30/t/peer-addr.t HTTP-Async-0.30_mod/t/peer-addr.t
+--- HTTP-Async-0.30/t/peer-addr.t	2015-06-02 02:27:03.000000000 -0400
++++ HTTP-Async-0.30_mod/t/peer-addr.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,30 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-use HTTP::Request;
+-
+-plan tests => 4;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-$url_root =~ s/localhost/example.org/;
+-
+-use HTTP::Async;
+-
+-my $q = HTTP::Async->new;
+-
+-my $req = HTTP::Request->new( 'GET', "$url_root?delay=0" );
+-
+-my %opts = (
+-    peer_addr => 'localhost',
+-);
+-ok $q->add_with_opts($req, \%opts), "Added request to $url_root to the queue with peer_addr set to 'localhost'";
+-
+-$q->poke while !$q->to_return_count;
+-
+-my $res = $q->next_response;
+-is $res->code, 200, "Got a response";
+-like $res->content, qr/Delayed for/, "Got expected response";
+diff -Nur HTTP-Async-0.30/t/pod-coverage.t HTTP-Async-0.30_mod/t/pod-coverage.t
+--- HTTP-Async-0.30/t/pod-coverage.t	2013-03-28 13:33:43.000000000 -0400
++++ HTTP-Async-0.30_mod/t/pod-coverage.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,14 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-
+-eval "use Test::Pod::Coverage 1.00;";
+-plan skip_all => "Test::Pod::Coverage > 1.00 required" if $@;
+-
+-if ( $] >= 5.009 ) {
+-    eval "use Pod::Coverage 0.19;";
+-    plan skip_all => "Pod::Coverage >= 0.19 required for perls >= 5.9" if $@;
+-}
+-
+-all_pod_coverage_ok();
+diff -Nur HTTP-Async-0.30/t/pod.t HTTP-Async-0.30_mod/t/pod.t
+--- HTTP-Async-0.30/t/pod.t	2013-03-28 13:33:43.000000000 -0400
++++ HTTP-Async-0.30_mod/t/pod.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,7 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-eval "use Test::Pod 1.00";
+-plan skip_all => "Test::Pod 1.00 required for testing POD" if $@;
+-all_pod_files_ok();
+diff -Nur HTTP-Async-0.30/t/polite.t HTTP-Async-0.30_mod/t/polite.t
+--- HTTP-Async-0.30/t/polite.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/polite.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,87 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 14;
+-use HTTP::Request;
+-use Data::Dumper;
+-
+-use HTTP::Async::Polite;
+-my $q = HTTP::Async::Polite->new;
+-
+-# Check that we can set and get the interval.
+-is $q->send_interval, 5, "default interval is 5 seconds";
+-ok $q->send_interval(3), "change interval to 3 seconds";
+-is $q->send_interval, 3, "new interval is 3 seconds";
+-
+-require 't/TestServer.pm';
+-
+-my @servers   = map { TestServer->new() } 1 .. 2;
+-my @url_roots = ();
+-
+-foreach my $s (@servers) {
+-    push @url_roots, $s->started_ok("starting a test server");
+-}
+-
+-# Fire off three requests to two different servers. Check that the correct
+-# interval is observed between each request and that the two different servers
+-# were scaped in parallel. Also add another request so that the lists are not
+-# balanced.
+-my @urls =
+-  map {
+-    my $url_root = $_;
+-    my ($port) = $url_root =~ m/\d+$/g;
+-    my $number = $_ eq $url_roots[0] ? 3 : 4;
+-    my @ret = map { "$url_root/?set_time=$port-$_" } 1 .. $number;
+-    @ret;
+-  } @url_roots;
+-
+-my @requests = map { HTTP::Request->new( GET => $_ ) } @urls;
+-ok $q->add(@requests), "Add the requests";
+-
+-is $q->to_send_count, 5, "Got correct to_send count";
+-is $q->total_count,   7, "Got correct total count";
+-
+-# Get all the responses.
+-my @responses = ();
+-while ( my $res = $q->wait_for_next_response ) {
+-    push @responses, $res;
+-}
+-
+-is scalar(@responses), 7, "got six responses back";
+-
+-# Extract the url and the timestamp from the responses;
+-my %data = ();
+-foreach my $res (@responses) {
+-    my ( $id, $timestamp ) = split /\n/, $res->content, 2;
+-    my ( $port, $number ) = split /-/, $id, 2;
+-    
+-    # Skip if the number is greater than 3 - extra req to test unbalanced list
+-    next if $number > 3;
+-
+-    s/\s+//g for $port, $number, $timestamp;
+-    $data{$port}{$number} = $timestamp;
+-}
+-
+-# diag Dumper \%data;
+-
+-# Check that the requests did not come too close together.
+-my @first_times = ();
+-foreach my $port ( sort keys %data ) {
+-
+-    my @times = sort { $a <=> $b } values %{ $data{$port} };
+-
+-    my $last_time = shift @times;
+-    push @first_times, $last_time;
+-
+-    foreach my $time (@times) {
+-
+-        cmp_ok $time - $last_time, ">", 3,
+-          "at least three seconds between requests to same domain";
+-
+-        $last_time = $time;
+-    }
+-}
+-
+-# check that the first two requests were near each other.
+-cmp_ok abs( $first_times[0] - $first_times[1] ), "<", 1,
+-  "at most 1 second between first two requests";
+diff -Nur HTTP-Async-0.30/t/poll-interval.t HTTP-Async-0.30_mod/t/poll-interval.t
+--- HTTP-Async-0.30/t/poll-interval.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/poll-interval.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,85 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 24;
+-use HTTP::Request;
+-use Time::HiRes 'time';
+-
+-BEGIN {
+-    require 't/test-utils.pl';
+-}
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-# Send off a long request - check that next_response returns at once
+-# but that wait_for_next_response returns only when the response has arrived.
+-
+-# Check that the poll interval is at a sensible default.
+-is $q->poll_interval, 0.05, "\$q->poll_interval == 0.05";
+-
+-# Check that the poll interval is changeable.
+-is $q->poll_interval(0.1), 0.1, "set poll_interval to 0.1";
+-is $q->poll_interval, 0.1, "\$q->poll_interval == 0.1";
+-
+-{
+-
+-    # Get the time since the request was made.
+-    reset_timer();
+-
+-    my $url = "$url_root?delay=3";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue - $url";
+-
+-    # Does next_response return immediately
+-    ok !$q->next_response, "next_response returns at once";
+-    delay_lt_ok 0.4, "Returned quickly (less than 0.4 secs)";
+-
+-    ok !$q->wait_for_next_response(0),
+-      "wait_for_next_response(0) returns at once";
+-    delay_lt_ok 0.4, "Returned quickly (less than 0.4 secs)";
+-
+-    ok !$q->wait_for_next_response(1),
+-      "wait_for_next_response(1) returns after 1 sec without a response";
+-
+-    delay_ge_ok 1,   "Returned after 1 sec delay";
+-    delay_lt_ok 1.4, "Returned before 1.4 sec delay";
+-
+-    my $response = $q->wait_for_next_response();
+-    ok $response, "wait_for_next_response got the response";
+-    delay_gt_ok 3, "Returned after 3 sec delay";
+-
+-    is $response->code, 200, "good response (200)";
+-    ok $response->is_success, "is a success";
+-}
+-
+-{
+-    reset_timer();
+-
+-    my $url = "$url_root?delay=1";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue - $url";
+-
+-    my $response = $q->wait_for_next_response;
+-
+-    ok $response, "wait_for_next_response got the response";
+-
+-    delay_gt_ok 1, "Returned after 1 sec delay";
+-    delay_lt_ok 2, "Returned before 2 sec delay";
+-
+-    is $response->code, 200, "good response (200)";
+-    ok $response->is_success, "is a success";
+-}
+-
+-{    # Check that wait_for_next_response does not hang if there is nothing
+-        # to wait for.
+-    reset_timer();
+-    ok !$q->wait_for_next_response, "Did not get a response";
+-    delay_lt_ok 1, "Returned in less than 1 sec";
+-}
+-
+diff -Nur HTTP-Async-0.30/t/proxy.t HTTP-Async-0.30_mod/t/proxy.t
+--- HTTP-Async-0.30/t/proxy.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/proxy.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,52 +0,0 @@
+-
+-use strict;
+-use warnings;
+-use URI::Escape;
+-
+-use Test::More tests => 16;
+-use HTTP::Request;
+-
+-require 't/TestServer.pm';
+-my $s1          = TestServer->new();
+-my $s1_url_root = $s1->started_ok("starting a test server");
+-
+-my $s2          = TestServer->new();
+-$s2->{is_proxy} = 1;
+-my $s2_url_root = $s2->started_ok("starting a test server");
+-
+-ok( $_, "got $_" ) for $s1_url_root, $s2_url_root;
+-
+-my %tests = (
+-    "$s1_url_root/foo/bar?redirect=2" => 200,
+-    "$s1_url_root/foo/bar?delay=1"    => 200,
+-);
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-foreach my $via_proxy ( 0, 1 ) {
+-
+-    while ( my ( $url, $code ) = each %tests ) {
+-
+-        my $req = HTTP::Request->new( 'GET', $url );
+-
+-        my %opts = ( proxy_host => '127.0.0.1', proxy_port => $s2->port, );
+-
+-        my $id =
+-            $via_proxy
+-          ? $q->add_with_opts( $req, \%opts )
+-          : $q->add($req);
+-
+-        ok $id, "Added request to the queue - $url";
+-
+-        my $res = $q->wait_for_next_response;
+-        is( $res->code, $code, "Got a '$code' response" )
+-          || diag $res->as_string;
+-
+-        # check that the proxy header was found if this was a proxy request.
+-        my $proxy_header = $res->header('WasProxied') || '';
+-        my $expected = $via_proxy ? 'yes' : '';
+-        is($proxy_header, $expected, "check for proxy header '$expected'")
+-            || diag $res->as_string;
+-    }
+-}
+diff -Nur HTTP-Async-0.30/t/proxy-with-https.t HTTP-Async-0.30_mod/t/proxy-with-https.t
+--- HTTP-Async-0.30/t/proxy-with-https.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/proxy-with-https.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,52 +0,0 @@
+-use strict;
+-use warnings;
+-use URI::Escape;
+-
+-use Test::More;
+-
+-plan skip_all => "enable these tests by setting REAL_SERVERS"
+-  unless $ENV{REAL_SERVERS};
+-
+-use HTTP::Request;
+-
+-require 't/TestServer.pm';
+-
+-eval "require LWP::Protocol::https";
+-if ($@) {
+-    plan skip_all => "LWP::Protocol::https required";
+-    exit 0;
+-}
+-
+-plan tests => 5;
+-
+-my $s1          = TestServer->new();
+-$s1->{is_proxy} = 1;
+-my $s1_url_root = $s1->started_ok("starting a test server");
+-
+-ok( $s1_url_root, "got $s1_url_root" );
+-
+-my %tests = (
+-    "https://www.google.co.uk/images/srpr/logo4w.png" => 200,
+-);
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-while ( my ( $url, $code ) = each %tests ) {
+-
+-    my $req = HTTP::Request->new( 'GET', $url );
+-
+-    my %opts = ( proxy_host => '127.0.0.1', proxy_port => $s1->port, );
+-
+-    my $id = $q->add_with_opts( $req, \%opts );
+-
+-    ok $id, "Added request to the queue - $url";
+-
+-    my $res = $q->wait_for_next_response;
+-    is( $res->code, $code, "Got a '$code' response" )
+-        || diag $res->as_string;
+-
+-    # check that the proxy header was found if this was a proxy request.
+-    my $proxy_header = $res->header('WasProxied') || '';
+-    is $proxy_header, 'yes', "check for proxy header 'yes'";
+-}
+diff -Nur HTTP-Async-0.30/t/real-servers.t HTTP-Async-0.30_mod/t/real-servers.t
+--- HTTP-Async-0.30/t/real-servers.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/real-servers.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,64 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-
+-plan skip_all => "enable these tests by setting REAL_SERVERS"
+-  unless $ENV{REAL_SERVERS};
+-
+-use HTTP::Request;
+-use Time::HiRes 'usleep';
+-
+-my $https_ok;
+-eval "use Net::HTTPS::NB";
+-if ($@) {
+-    note "Install Net::HTTPS::NB to test https";
+-}
+-else {
+-    $https_ok = 1;
+-}
+-
+-# Create requests for a few well known sites.
+-my @requests =
+-  map { HTTP::Request->new( GET => $_ ) }
+-  grep { $https_ok || $_ !~ m{^https://} }
+-  sort qw( http://www.google.com http://www.yahoo.com https://www.google.com );
+-
+-my $tests_per_request = 4;
+-plan tests => 3 + $tests_per_request * scalar @requests;
+-
+-use_ok 'HTTP::Async';
+-
+-my $q = HTTP::Async->new(ssl_options => { SSL_verify_mode => 0 });
+-isa_ok $q, 'HTTP::Async';
+-
+-# Put all of these onto the queue.
+-ok( $q->add($_), "Added request for " . $_->uri ) for @requests;
+-
+-# Process the queue until they all complete.
+-my @responses = ();
+-
+-while ( $q->not_empty ) {
+-
+-    my $res = $q->next_response;
+-    my $uri;
+-    if ($res) {
+-        $uri = $res->request->uri;
+-        pass "Got the response from $uri";
+-        push @responses, $res;
+-    }
+-    else {
+-        usleep( 1_000_000 * 0.1 );    # 0.1 seconds
+-        next;
+-    }
+-
+-    ok $res->is_success, "is success for $uri"
+-        or diag $res->status_line;
+-}
+-
+-# Check that we got the number needed and that all the responses are
+-# HTTP::Response objects.
+-is scalar @responses, scalar @requests, "Got the expected number of responses";
+-isa_ok( $_, 'HTTP::Response', "Got a HTTP::Response object" ) for @responses;
+-
+-# print $_->content for @responses;
+diff -Nur HTTP-Async-0.30/t/redirects.t HTTP-Async-0.30_mod/t/redirects.t
+--- HTTP-Async-0.30/t/redirects.t	2015-09-28 12:02:27.000000000 -0400
++++ HTTP-Async-0.30_mod/t/redirects.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,105 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-use HTTP::Request;
+-
+-my $tests = 21;
+-if ($ENV{'REAL_SERVERS'}) {
+-    $tests += 4;
+-}
+-plan tests => $tests;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-# Check that the max_redirect is at a sensible level.
+-is $q->max_redirect, 7, "max_redirect == 7";
+-
+-# Send a request to somewhere that will redirect a certain number of
+-# times:
+-#
+-# ?redirect=$num - if $num is > 0 then it redirects to $num - 1;
+-
+-{    # Check that a couple of redirects work.
+-    my $url = "$url_root/foo/bar?redirect=3";
+-
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue";
+-    $q->poke while !$q->to_return_count;
+-
+-    my $res = $q->next_response;
+-    is $res->code, 200, "No longer a redirect";
+-    ok $res->previous, "Has a previous reponse";
+-    is $res->previous->code, 302, "previous request was a redirect";
+-}
+-
+-{    # check that 20 redirects stop after the expected number.
+-    my $url = "$url_root?redirect=20";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue";
+-    $q->poke while !$q->to_return_count;
+-
+-    my $res = $q->next_response;
+-    is $res->code, 302, "Still a redirect";
+-    ok $res->previous, "Has a previous reponse";
+-    is $res->previous->code, 302, "previous request was a redirect";
+-    is $res->request->uri->as_string, "$url_root?redirect=13",
+-      "last request url correct";
+-}
+-
+-{    # Set the max_redirect higher and try again.
+-
+-    ok $q->max_redirect(30), "Set the max_redirect higher.";
+-
+-    my $url = "$url_root?redirect=20";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue";
+-    $q->poke while !$q->to_return_count;
+-
+-    my $res = $q->next_response;
+-    is $res->code, 200, "No longer a redirect";
+-    ok $res->previous, "Has a previous reponse";
+-    is $res->previous->code, 302, "previous request was a redirect";
+-}
+-
+-{    # Set the max_redirect to zero and check that none happen.
+-
+-    is $q->max_redirect(0), 0, "Set the max_redirect to zero.";
+-    is $q->max_redirect, 0, "max_redirect is set to zero.";
+-
+-    my $url = "$url_root?redirect=20";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue";
+-    $q->poke while !$q->to_return_count;
+-
+-    my $res = $q->next_response;
+-    is $res->code, 302, "No longer a redirect";
+-    ok !$res->previous, "Have no previous reponse";
+-}
+-
+-if ($ENV{'REAL_SERVERS'}) {
+-    # Check that redirects have their headers repeated
+-    # Exmaple from kloevschall (https://github.com/evdb/HTTP-Async/issues/8)
+-
+-    is $q->max_redirect(1), 1, "Set the max_redirect to one.";
+-    is $q->max_redirect, 1, "max_redirect is set to one.";
+-
+-    my $headers = HTTP::Headers->new(Accept => 'application/x-research-info-systems');
+-
+-    my $error = $q->add(HTTP::Request->new(GET => 'http://dx.doi.org/10.1126/science.169.3946.635', $headers));
+-    my $ok = $q->add(HTTP::Request->new(GET => 'http://data.crossref.org/10.1126%2Fscience.169.3946.635', $headers));
+-
+-    while (my ($response, $req_id) = $q->wait_for_next_response) {
+-        ok $response->is_success, sprintf("Got good response (%s, %s) for %s",
+-            $response->code,
+-            $response->message,
+-            $response->base
+-        );
+-    }
+-}
+diff -Nur HTTP-Async-0.30/t/release-cpan-changes.t HTTP-Async-0.30_mod/t/release-cpan-changes.t
+--- HTTP-Async-0.30/t/release-cpan-changes.t	2013-07-18 04:44:00.000000000 -0400
++++ HTTP-Async-0.30_mod/t/release-cpan-changes.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,14 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More 0.96;
+-
+-eval "use Test::CPAN::Changes";
+-if ($@) {
+-    plan skip_all =>
+-        "install Test::CPAN::Changes to run this test";
+-}
+-
+-changes_file_ok('Changes');
+-
+-done_testing();
+diff -Nur HTTP-Async-0.30/t/remove.t HTTP-Async-0.30_mod/t/remove.t
+--- HTTP-Async-0.30/t/remove.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/remove.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,105 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 21;
+-
+-use Data::Dumper;
+-
+-use HTTP::Request;
+-use HTTP::Async;
+-
+-## Set up - create an Async object with ten items in its queue
+-
+-require 't/TestServer.pm';
+-# To ensure that remove and remove_all work on all three states, we need to
+-# have items in all three states when we call them.
+-#
+-# The three states are: to_send, in_progress, and to_return.
+-#
+-# We can create them by adding items which will run quickly, items which will
+-# trickle data slowly, and items which are not running.
+-#
+-# XXX we currently only test in_progress and to_return as items are hard to
+-# keep in the to_send queue, HTTP::Async is too good at moving them into the
+-# to_progress queue!
+-{
+-    my $s        = TestServer->new();
+-    my $url_root = $s->started_ok("starting a test server");
+-
+-    my $q = HTTP::Async->new;
+-
+-    is $q->total_count, 0, "total_count starts at zero";
+-
+-    my %type_to_id = populate_queues($q, $url_root);
+-
+-    ## Remove - test remove() to remove a single item
+-
+-    for my $type (sort keys %type_to_id) {
+-        my $id = $type_to_id{$type};
+-        ok $q->remove($id), "removed '$type' item with id '$id'";
+-    }
+-
+-    ok !$q->remove(123456), "removal of bad id '123456' returns false";
+-
+-    is $q->total_count, 0, "total_count is now zero";
+-}
+-
+-{
+-    my $s        = TestServer->new();
+-    my $url_root = $s->started_ok("starting a test server");
+-
+-    my $q = HTTP::Async->new;
+-
+-    is $q->total_count, 0, "total_count starts at zero";
+-
+-    my %type_to_id = populate_queues($q, $url_root);
+-
+-    ## Remove All - test remove_all() removes all queued items
+-
+-    ok $q->remove_all, "removed all items";
+-
+-    ok !$q->remove_all, "remove_all() on empty queue returns false";
+-
+-    is $q->total_count, 0, "total_count is now zero";
+-}
+-
+-##############################################################################
+-
+-sub populate_queues {
+-    my $q = shift;
+-    my $url_root = shift;
+-
+-    my %type_to_id;
+-
+-    # fast / to_return
+-    {
+-        my $url = "$url_root?trickle=1";
+-        my $req = HTTP::Request->new('GET', $url);
+-        ok $type_to_id{'fast'} = $q->add($req), "added fast / to_return item";
+-
+-        for (1 .. 10) {
+-            $q->poke;
+-            last if $q->to_return_count;
+-            sleep 1;
+-        }
+-
+-        if (!$q->to_return_count) {
+-            diag Dumper $q;
+-        }
+-
+-        is $q->to_return_count, 1, "to_return_count is one";
+-    }
+-
+-    # slow / in_progress
+-    {
+-        my $url = "$url_root?trickle=1000";
+-        my $req = HTTP::Request->new('GET', $url);
+-        ok $type_to_id{'slow'} = $q->add($req), "added slow / in_progress item";
+-        $q->poke;
+-        is $q->in_progress_count, 1, "in_progress_count is one";
+-    }
+-
+-    is $q->total_count, 2, "total_count is now two";
+-
+-    return %type_to_id;
+-}
+diff -Nur HTTP-Async-0.30/t/setup.t HTTP-Async-0.30_mod/t/setup.t
+--- HTTP-Async-0.30/t/setup.t	2015-09-28 12:02:27.000000000 -0400
++++ HTTP-Async-0.30_mod/t/setup.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,21 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 16;
+-
+-use HTTP::Async;
+-use HTTP::Async::Polite;
+-
+-foreach my $class ( 'HTTP::Async', 'HTTP::Async::Polite' ) {
+-    foreach my $number ( 0, 3 ) {
+-
+-        my $q1 = $class->new;
+-        is $q1->max_redirect($number), $number, "set to $number";
+-        is $q1->max_redirect, $number, "got $number";
+-
+-        my $q2 = $class->new( max_redirect => $number );
+-        ok $q2, "created object";
+-        is $q2->max_redirect, $number, "got $number";
+-    }
+-}
+diff -Nur HTTP-Async-0.30/t/strip-host-from-uri.t HTTP-Async-0.30_mod/t/strip-host-from-uri.t
+--- HTTP-Async-0.30/t/strip-host-from-uri.t	2013-07-18 04:41:46.000000000 -0400
++++ HTTP-Async-0.30_mod/t/strip-host-from-uri.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,28 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Test::More;
+-use HTTP::Async;
+-use URI;
+-
+-my %tests = (
+-'http://www.w3.org:8080/Protocols/rfc2616/rfc2616-sec5.html?foo=bar#sec5.1.2'
+-      => '/Protocols/rfc2616/rfc2616-sec5.html?foo=bar#sec5.1.2',
+-
+-    'http://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html?foo=bar#sec5.1.2' =>
+-      '/Protocols/rfc2616/rfc2616-sec5.html?foo=bar#sec5.1.2',
+-
+-    'https://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html?foo=bar#sec5.1.2' =>
+-      '/Protocols/rfc2616/rfc2616-sec5.html?foo=bar#sec5.1.2',
+-
+-    'https://www.w3.org:80/Protocols' => '/Protocols',
+-
+-    'http://localhost:8080?delay=3' => '/?delay=3'
+-);
+-
+-plan tests => scalar keys %tests;
+-
+-while ( my ( $in, $expected ) = each %tests ) {
+-    my $out = HTTP::Async::_strip_host_from_uri( URI->new($in) );
+-    is $out, $expected, "correctly stripped $in to $out";
+-}
+diff -Nur HTTP-Async-0.30/t/template.t HTTP-Async-0.30_mod/t/template.t
+--- HTTP-Async-0.30/t/template.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/template.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,20 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More skip_all => 'just a template to base other tests on';
+-
+-use Test::More tests => 5;
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-require 't/TestServer.pm';
+-
+-# my $s = TestServer->new;
+-# my $url_root = $s->started_ok("starting a test server");
+-
+-my @servers = map { TestServer->new() } 1 .. 4;
+-foreach my $s (@servers) {
+-    my $url_root = $s->started_ok("starting a test server");
+-}
+diff -Nur HTTP-Async-0.30/t/TestServer.pm HTTP-Async-0.30_mod/t/TestServer.pm
+--- HTTP-Async-0.30/t/TestServer.pm	2015-06-02 02:27:03.000000000 -0400
++++ HTTP-Async-0.30_mod/t/TestServer.pm	1969-12-31 19:00:00.000000000 -0500
+@@ -1,203 +0,0 @@
+-use strict;
+-use warnings;
+-
+-# Provide a simple server that can be used to test the various bits.
+-package TestServer;
+-use base qw/Test::HTTP::Server::Simple HTTP::Server::Simple::CGI/;
+-
+-use Time::HiRes qw(sleep time);
+-use Data::Dumper;
+-use Test::More;
+-use LWP::UserAgent;
+-use Net::EmptyPort ();
+-
+-sub new {
+-    my ($class, $port) = @_;
+-
+-    if (!$port) {
+-        $port = Net::EmptyPort::empty_port();
+-    }
+-    
+-    # Require a port parameter to be passed in.
+-    # Any default here would mean the tests don't run properly in parallel.
+-    if (!$port) {
+-        die "Missing positional parameter 'port' required";
+-    }
+-    
+-    return $class->SUPER::new($port);
+-}
+-
+-sub handle_request {
+-    my ( $self, $cgi ) = @_;
+-    my $params = $cgi->Vars;
+-
+-    # If we should act as a proxy then the handle_request() behaviour is
+-    # handled by act_as_proxy.
+-    return act_as_proxy(@_) if $self->{is_proxy};
+-
+-    # We should act as a final destination server and so expect an absolute URL.
+-    my $request_uri = $ENV{REQUEST_URI};
+-    if ( $request_uri !~ m!^/! ) {
+-        warn "ERROR - not absolute request_uri '$request_uri'";
+-        return;
+-    }
+-
+-    # Flush the output so that it goes straight away. Needed for the timeout
+-    # trickle tests.
+-    $self->stdout_handle->autoflush(1);
+-
+-    # Do the right thing depending on what is asked of us.
+-    if ( exists $params->{redirect} ) {
+-        my $num = $params->{redirect} || 0;
+-        $num--;
+-
+-        if ( $num > 0 ) {
+-            print $cgi->redirect( -uri => "?redirect=$num", -nph => 1, );
+-            print "You are being redirected...";
+-        }
+-        else {
+-            print $cgi->header( -nph => 1 );
+-            print "No longer redirecting";
+-        }
+-    }
+-
+-    elsif ( exists $params->{delay} ) {
+-        sleep( $params->{delay} );
+-        print $cgi->header( -nph => 1 );
+-        print "Delayed for '$params->{delay}'.\n";
+-    }
+-
+-    elsif ( exists $params->{trickle} ) {
+-
+-        print $cgi->header( -nph => 1 );
+-
+-        my $trickle_for = $params->{trickle};
+-        my $finish_at   = time + $trickle_for;
+-
+-        local $| = 1;
+-
+-        while ( time <= $finish_at ) {
+-            print time . " trickle $$\n";
+-            sleep 0.1;
+-        }
+-
+-        print "Trickled for '$trickle_for'.\n";
+-    }
+-
+-    elsif ( exists $params->{cookie} ) {
+-        print $cgi->header(
+-            -nph => 1,
+-            -cookie => $cgi->cookie(-name => "x", value => "test"),
+-        );
+-
+-        print "Sent test cookie\n";
+-    }
+-
+-    elsif ( exists $params->{bad_header} ) {
+-        my $headers = $cgi->header( -nph => 1, );
+-
+-        # trim trailing whitspace to single newline.
+-        $headers =~ s{ \s* \z }{\n}xms;
+-
+-        # Add a bad header:
+-        $headers .= "Bad header: BANG!\n";
+-
+-        print $headers . "\n\n";
+-        print "Produced some bad headers.";
+-    }
+-
+-    elsif ( my $when = $params->{break_connection} ) {
+-
+-        for (1) {
+-            last if $when eq 'before_headers';
+-            print $cgi->header( -nph => 1 );
+-
+-            last if $when eq 'before_content';
+-            print "content\n";
+-        }
+-    }
+-
+-    elsif ( my $id = $params->{set_time} ) {
+-        my $now = time;
+-        print $cgi->header( -nph => 1 );
+-        print "$id\n$now\n";
+-    }
+-
+-    elsif ( exists $params->{not_modified} ) {
+-        my $last_modified = HTTP::Date::time2str( time - 60 * 60 * 24 );
+-        print $cgi->header(
+-            -status         => '304',
+-            -nph            => 1,
+-            'Last-Modified' => $last_modified,
+-        );
+-        print "content\n";
+-    }
+-
+-    else {
+-        warn "DON'T KNOW WHAT TO DO: " . Dumper $params;
+-    }
+-
+-    # warn "STOP REQUEST  - " . time;
+-
+-}
+-
+-sub act_as_proxy {
+-    my ( $self, $cgi ) = @_;
+-
+-    my $request_uri = $ENV{REQUEST_URI};
+-
+-    # According to the RFC the request_uri must be fully qualified if the
+-    # request is to a proxy and absolute if it is to a destination server. CHeck
+-    # that this is the case.
+-    #
+-    #   http://www.w3.org/Protocols/rfc2616/rfc2616-sec5.html#sec5.1.2
+-    if ( $request_uri !~ m!^https?://! ) {
+-        warn "ERROR - not fully qualified request_uri '$request_uri'";
+-        return;
+-    }
+-
+-    my $response = LWP::UserAgent->new( max_redirect => 0 )->get($request_uri);
+-
+-    # Add a header so that we know that this was proxied.
+-    $response->header( WasProxied => 'yes' );
+-
+-    print $response->as_string;
+-    return 1;
+-}
+-
+-# To allow act_as_proxy to work with HTTP::Server::Simple::CGI versions above
+-# 0.41_1, where better support for RFC1616 was added, we have to override the
+-# parse_request() method to match the pre-0.45_1 version of the method. Lame
+-# and hacky but it works.
+-sub parse_request {
+-    my $self = shift;
+-    my $chunk;
+-    while ( sysread( STDIN, my $buff, 1 ) ) {
+-        last if $buff eq "\n";
+-        $chunk .= $buff;
+-    }
+-    defined($chunk) or return undef;
+-    $_ = $chunk;
+-
+-    m/^(\w+)\s+(\S+)(?:\s+(\S+))?\r?$/;
+-    my $method   = $1 || '';
+-    my $uri      = $2 || '';
+-    my $protocol = $3 || '';
+-
+-    return ( $method, $uri, $protocol );
+-}
+-
+-# Change print() to note() in HTTP::Server::Simple::print_banner
+-sub print_banner {
+-    my $self = shift;
+-
+-    note(
+-        ref($self)
+-        . ": You can connect to your server at "
+-        . "http://localhost:"
+-        . $self->port
+-        . "/"
+-    );
+-}
+-
+-1;
+diff -Nur HTTP-Async-0.30/t/test-utils.pl HTTP-Async-0.30_mod/t/test-utils.pl
+--- HTTP-Async-0.30/t/test-utils.pl	2013-07-18 04:41:46.000000000 -0400
++++ HTTP-Async-0.30_mod/t/test-utils.pl	1969-12-31 19:00:00.000000000 -0500
+@@ -1,26 +0,0 @@
+-use strict;
+-use warnings;
+-
+-use Time::HiRes qw(time);
+-
+-{
+-    my $start_time = undef;
+-
+-    sub reset_timer { return $start_time = time; }
+-
+-    sub delay_lt_ok ($$) { return delay_ok( '<',  @_ ); }
+-    sub delay_le_ok ($$) { return delay_ok( '<=', @_ ); }
+-    sub delay_ge_ok ($$) { return delay_ok( '>=', @_ ); }
+-    sub delay_gt_ok ($$) { return delay_ok( '>',  @_ ); }
+-
+-    sub delay_ok ($$$) {
+-        my ( $cmp, $delay, $message ) = @_;
+-
+-        my $timer = time - $start_time;
+-
+-        my $display_test = sprintf '%.2f %s %.2f', $timer, $cmp, $delay;
+-        return cmp_ok $timer, $cmp, $delay, "$message ($display_test)";
+-    }
+-}
+-
+-1;
+diff -Nur HTTP-Async-0.30/t/timeout.t HTTP-Async-0.30_mod/t/timeout.t
+--- HTTP-Async-0.30/t/timeout.t	2014-11-17 10:59:35.000000000 -0500
++++ HTTP-Async-0.30_mod/t/timeout.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,67 +0,0 @@
+-
+-use strict;
+-use warnings;
+-
+-use Test::More tests => 20;
+-use HTTP::Request;
+-
+-require 't/TestServer.pm';
+-my $s        = TestServer->new();
+-my $url_root = $s->started_ok("starting a test server");
+-
+-use HTTP::Async;
+-my $q = HTTP::Async->new;
+-
+-# Check that the timeout is at a sensible default.
+-is $q->timeout, 180, "\$q->timeout == 180";
+-
+-{    # Send a request that should return quickly
+-    my $url = "$url_root?delay=0";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added request to the queue - $url";
+-    my $res = $q->wait_for_next_response;
+-    is $res->code, 200, "Not timed out (200)";
+-}
+-
+-is $q->timeout(2), 2, "Set the timeout really low";
+-
+-{    # Send a request that should timeout
+-    my $url = "$url_root?delay=3";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added delayed request to the queue - $url";
+-    my $res = $q->wait_for_next_response;
+-    is $res->code, 504, "timed out (504)";
+-    ok $res->is_error, "is an error";
+-}
+-
+-{    # Send a request that should not timeout as it is trickling back data.
+-    my $url = "$url_root?trickle=4";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added trickle request to the queue - $url";
+-    my $res = $q->wait_for_next_response;
+-    is $res->code, 200, "response ok (200)";
+-    ok !$res->is_error, "is not an error";
+-}
+-
+-is $q->timeout(1),          1, "Set the timeout really low";
+-is $q->max_request_time(1), 1, "Set the max_request_time really low";
+-
+-{    # Send a request that should timeout despite trickling back data.
+-    my $url = "$url_root?trickle=3";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added trickle request to the queue - $url";
+-    my $res = $q->wait_for_next_response;
+-    is $res->code, 504, "timed out (504)";
+-    ok $res->is_error, "is an error";
+-}
+-
+-is $q->timeout(10),           10,  "Lengthen the timeout";
+-is $q->max_request_time(300), 300, "Lengthen the max_request_time";
+-
+-{    # Send same request that should now be ok
+-    my $url = "$url_root?delay=3";
+-    my $req = HTTP::Request->new( 'GET', $url );
+-    ok $q->add($req), "Added delayed request to the queue - $url";
+-    my $res = $q->wait_for_next_response;
+-    is $res->code, 200, "Not timed out (200)";
+-}
