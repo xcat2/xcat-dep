@@ -1,0 +1,16 @@
+Build Notes
+
+1. To build rpm
+1) copy Net-HTTPS-NB-0.14.patch and Net-HTTPS-NB-0.14.tar.gz into /root/rpmbuild/SOURCES
+2) copy perl-Net-HTTPS-NB.spec into /root/rpmbuild/SPECS 
+3) rpmbuild -ba /root/rpmbuild/SPECS/perl-Net-HTTPS-NB.spec
+4) The rpm package is located at /root/rpmbuild/RPMS/noarch/perl-Net-HTTPS-NB-0.14-2.noarch.rpm
+
+2. To build .deb package
+1) Install 'alien' on the build machine
+2) Create a temparary directory such as /tmp/perl-Net-HTTPS-NB, and copy the perl-Net-HTTPS-NB-0.14-2.noarch.rpm package into it
+3) Use the command "alien -k --scripts -s perl-Net-HTTPS-NB-0.14-2.noarch.rpm" to generate debian packaging related files.
+ It will generate a directory like ./perl-Net-HTTPS-NB-0.14
+3) cd perl-Net-HTTPS-NB-0.14; mv usr/local/share/ usr/; rmdir usr/local/
+4) dpkg-buildpackage -uc -us
+5) The .deb package perl-net-https-nb_0.14-2_all.deb will be located at /tmp/perl-Net-HTTPS-NB 

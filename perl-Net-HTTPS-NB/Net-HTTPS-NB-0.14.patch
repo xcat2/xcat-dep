@@ -1,0 +1,197 @@
+diff -Nru Net-HTTPS-NB-0.14/examples/google_multi.pl Net-HTTPS-NB-0.14_mod/examples/google_multi.pl
+--- Net-HTTPS-NB-0.14/examples/google_multi.pl	2015-10-14 09:05:46.000000000 -0400
++++ Net-HTTPS-NB-0.14_mod/examples/google_multi.pl	1969-12-31 19:00:00.000000000 -0500
+@@ -1,112 +0,0 @@
+-#!/usr/bin/env perl
+-
+-use strict;
+-use warnings;
+-use AnyEvent;
+-use Errno qw/EWOULDBLOCK EAGAIN/;
+-use lib '../lib';
+-use Net::HTTPS::NB;
+-
+-# Get number of the search results for each specified language in parallel via encrypted google
+-# Make it easier with AnyEvent
+-
+-my $loop = AnyEvent->condvar;
+-$loop->begin;
+-
+-for my $q (qw(perl python ruby php lua)) {
+-	my $sock = Net::HTTPS::NB->new(Host => 'encrypted.google.com', Blocking => 0)
+-		or next;
+-	
+-	$loop->begin();
+-	
+-	my $wc; $wc = AnyEvent->io(
+-		fh => $sock,
+-		poll => 'w', # first wait until non-blocking socket connection completed
+-		cb => sub { wait_connection($wc, $loop, $sock, $q) }
+-	);
+-}
+-
+-$loop->end;
+-$loop->recv();
+-
+-# wait until non-blocking connection completed
+-sub wait_connection {
+-	undef $_[0]; # remove watcher completely
+-	my ($wc, $loop, $sock, $q) = @_;
+-	
+-	if ($sock->connected) { # handshake completed
+-		print "$q: Connected\n";
+-		$sock->write_request(GET => "/search?q=$q");
+-		my $wh; $wh = AnyEvent->io( # now wait headers
+-			fh => $sock,
+-			poll => 'r',
+-			cb => sub { wait_headers($wh, $loop, $sock, $q) }
+-		);
+-	}
+-	elsif($HTTPS_ERROR == HTTPS_WANT_READ) {
+-		$wc = AnyEvent->io( # handshake need reading
+-			fh => $sock,
+-			poll => 'r',
+-			cb => sub { wait_connection($wc, $loop, $sock, $q) }
+-		);
+-	}
+-	elsif($HTTPS_ERROR == HTTPS_WANT_WRITE) {
+-		$wc = AnyEvent->io( # handshake need writing
+-			fh => $sock,
+-			poll => 'w',
+-			cb => sub { wait_connection($wc, $loop, $sock, $q) }
+-		);
+-	}
+-	else {
+-		print "$q: Connection failed - $HTTPS_ERROR\n";
+-		$loop->end();
+-	}
+-}
+-
+-# wait for full headers
+-sub wait_headers {
+-	my (undef, $loop, $sock, $q) = @_;
+-	
+-	if (my @h = $sock->read_response_headers()) {
+-		undef $_[0]; # remove headers watcher
+-		
+-		print "$q: HTTP code - $h[0]\n";
+-		my $body = '';
+-		
+-		unless (wait_body($_, $loop, $sock, $q, \$body)) {
+-			my $wb; $wb = AnyEvent->io( # now wait body
+-				fh => $sock,
+-				poll => 'r',
+-				cb => sub { wait_body($wb, $loop, $sock, $q, \$body) }
+-			);
+-		}
+-	}
+-	# else this sub will invoked again when new data will arrive
+-}
+-
+-# wait for full body
+-sub wait_body {
+-	my (undef, $loop, $sock, $q, $body) = @_;
+-	
+-	my ($n, $buf);
+-	while (1) {
+-		$n = $sock->read_entity_body($buf, 1024);
+-		if ($n > 0) {
+-			substr($$body, length $$body) = $buf; # append body
+-		}
+-		elsif ((defined($n) && $n == 0) || (!defined($n) && $! != EWOULDBLOCK && $! != EAGAIN)) {
+-			# error or eof, but who cares?
+-			undef $_[0]; # remove body watcher
+-			my ($result) = $$body =~ /([\d,]+\s+results?)/;
+-			print "$q: ", $result||'unknown', "\n";
+-			$loop->end;
+-			return 1; # body readed
+-		}
+-		else {
+-			# wait more data
+-			last;
+-		}
+-	}
+-	
+-	0; # body still not readed
+-}
+diff -Nru Net-HTTPS-NB-0.14/Makefile.PL Net-HTTPS-NB-0.14_mod/Makefile.PL
+--- Net-HTTPS-NB-0.14/Makefile.PL	2015-10-14 07:11:10.000000000 -0400
++++ Net-HTTPS-NB-0.14_mod/Makefile.PL	2016-03-14 03:09:39.063284216 -0400
+@@ -6,7 +6,7 @@
+     NAME              => 'Net::HTTPS::NB',
+     LICENSE           => 'perl',
+     VERSION_FROM      => 'lib/Net/HTTPS/NB.pm', # finds $VERSION
+-    PREREQ_PM         => { Exporter => 0, IO::Socket::SSL => 0.98, Net::HTTP => 0, Net::HTTPS => 0, Test::More => 0.88 },
++    PREREQ_PM         => { Exporter => 0, IO::Socket::SSL => 0.98, Net::HTTP => 0, Net::HTTPS => 0 },
+     META_MERGE        => { resources => {repository => 'https://github.com/olegwtf/p5-Net-HTTPS-NB'} },
+     ($] >= 5.005 ?     ## Add these new keywords supported since 5.005
+       (ABSTRACT_FROM  => 'lib/Net/HTTPS/NB.pm', # retrieve abstract from module
+diff -Nru Net-HTTPS-NB-0.14/META.json Net-HTTPS-NB-0.14_mod/META.json
+--- Net-HTTPS-NB-0.14/META.json	2015-10-14 09:13:45.000000000 -0400
++++ Net-HTTPS-NB-0.14_mod/META.json	2016-03-14 03:09:59.463284615 -0400
+@@ -36,7 +36,6 @@
+             "IO::Socket::SSL" : "0.98",
+             "Net::HTTP" : "0",
+             "Net::HTTPS" : "0",
+-            "Test::More" : "0.88"
+          }
+       }
+    },
+diff -Nru Net-HTTPS-NB-0.14/META.yml Net-HTTPS-NB-0.14_mod/META.yml
+--- Net-HTTPS-NB-0.14/META.yml	2015-10-14 09:13:45.000000000 -0400
++++ Net-HTTPS-NB-0.14_mod/META.yml	2016-03-14 03:10:10.243284924 -0400
+@@ -22,7 +22,6 @@
+   IO::Socket::SSL: '0.98'
+   Net::HTTP: '0'
+   Net::HTTPS: '0'
+-  Test::More: '0.88'
+ resources:
+   repository: https://github.com/olegwtf/p5-Net-HTTPS-NB
+ version: 0.14
+diff -Nru Net-HTTPS-NB-0.14/t/Net-HTTPS-NB.t Net-HTTPS-NB-0.14_mod/t/Net-HTTPS-NB.t
+--- Net-HTTPS-NB-0.14/t/Net-HTTPS-NB.t	2015-10-14 07:11:10.000000000 -0400
++++ Net-HTTPS-NB-0.14_mod/t/Net-HTTPS-NB.t	1969-12-31 19:00:00.000000000 -0500
+@@ -1,43 +0,0 @@
+-#!/usr/bin/env perl
+-
+-use Test::More;
+-BEGIN {
+-	use_ok('Net::HTTPS::NB');
+-}
+-use strict;
+-
+-SKIP: {
+-	skip "I heared fork doesn't work on Windows"
+-		if $^O =~ /MSWin/i;
+-	
+-	my ($host, $port) = make_server();
+-	my $start = time();
+-	my $sock = Net::HTTPS::NB->new(Host => $host, PeerPort => $port);
+-	
+-	ok(time() - $start >= 3, 'Blocking connect');
+-	ok(! defined $sock, 'HTTPS init error');
+-	
+-	($host, $port) = make_server();
+-	$start = time();
+-	$sock = Net::HTTPS::NB->new(Host => $host, PeerPort => $port, Blocking => 0);
+-	
+-	ok(time() - $start < 3, 'Non blocking connect');
+-	is($sock->connected, 0, 'Invalid socket connection');
+-	isa_ok($sock, 'Net::HTTPS::NB');
+-}
+-
+-done_testing();
+-
+-sub make_server {
+-	my $serv = IO::Socket::INET->new(Listen => 3);
+-	my $child = fork();
+-	die 'fork:', $! unless defined $child;
+-	
+-	if ($child == 0) {
+-		sleep 3;
+-		$serv->accept();
+-		exit;
+-	}
+-	
+-	return ($serv->sockhost eq "0.0.0.0" ? "127.0.0.1" : $serv->sockhost, $serv->sockport);
+-}
