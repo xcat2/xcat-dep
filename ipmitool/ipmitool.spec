@@ -1,13 +1,14 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.15
-Release:      1
+Release:      2
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
 Source:       ipmitool-%{version}.tar.gz
 Patch:        ipmitool-%{version}-saneretry.patch
 Patch2:       ipmitool-%{version}-rflash.patch
+Patch3:       ipmitool-%{version}-solactivate.patch
 Buildroot:    /var/tmp/ipmitool-root
 
 %description
@@ -33,6 +34,7 @@ fi
 %setup -n ipmitool-%{version}
 %patch -p1
 %patch2 -p1
+%patch3 -p1
 
 %build
 ./configure --with-kerneldir \

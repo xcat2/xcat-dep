@@ -93,7 +93,7 @@ if (! grep /libcrypto.so/, @output) {
   exit 1;
 }
 
-my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-$version-1.$arch.rpm";
+my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-$version-2.$arch.rpm";
 my $dstdir = "/tmp/build/$os/$arch";
 
 # check the build result
