@@ -60,6 +60,7 @@ if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
 fi
 
 %files
+%dir %attr(-,root,root) /opt/xcat/bin/
 %attr(755,root,root) /opt/xcat/bin/ipmitool-xcat
 
 
