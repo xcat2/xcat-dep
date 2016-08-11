@@ -1,3 +1,8 @@
+ipmitool-xcat (1.8.15-3) unstable; urgency=low
+  * Handle HUP and TERM signal
+
+ -- chenglch <chenglch@cn.ibm.com>  Wed, 10 Aug 2016 11:18:00 +0100
+
 ipmitool-xcat (1.8.15-2) unstable; urgency=low
   * To close sol session after no more data get from server side
 
