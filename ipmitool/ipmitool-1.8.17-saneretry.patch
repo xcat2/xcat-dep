@@ -1,0 +1,50 @@
+--- ipmitool-1.8.17/lib/ipmi_sol.c	2016-05-06 10:48:54.000000000 -0400
++++ ipmitool-1.8.17-saneretry/lib/ipmi_sol.c	2016-09-08 14:55:18.201644718 -0400
+@@ -76,7 +76,6 @@
+ #define SOL_PARAMETER_SOL_PAYLOAD_CHANNEL       0x07
+ #define SOL_PARAMETER_SOL_PAYLOAD_PORT          0x08
+ 
+-#define MAX_SOL_RETRY 6
+ 
+ const struct valstr sol_parameter_vals[] = {
+ 	{ SOL_PARAMETER_SET_IN_PROGRESS,           "Set In Progress (0)" },
+@@ -1535,7 +1534,6 @@
+ 	int    retval;
+ 	int    buffer_size = intf->session->sol_data.max_inbound_payload_size;
+ 	int    keepAliveRet = 0;
+-	int    retrySol = 0;
+ 
+ 	/* Subtract SOL header from max_inbound_payload_size */
+ 	if (buffer_size > 4)
+@@ -1572,29 +1570,8 @@
+ 		
+ 			if (keepAliveRet != 0)
+ 			{
+-				/*
+-				 * Retrying the keep Alive before declaring a communication
+-				 * lost state with the IPMC. Helpful when the payload is
+-				 * reset and brings down the connection temporarily. Otherwise,
+-				 * if we send getDevice Id to check the status of IPMC during
+-				 * this down time when the connection is restarting, SOL will
+-				 * exit even though the IPMC is available and the session is open.
+-				 */
+-				if (retrySol == MAX_SOL_RETRY)
+-				{
+-					/* no response to Get Device ID keepalive message */
+-					bShouldExit = 1;
+-					continue;
+-				}
+-				else
+-				{
+-					retrySol++;
+-				}
+-			}
+-			else
+-			{
+-				/* if the keep Alive is successful reset retries to zero */
+-				retrySol = 0;
++				bShouldExit = 1;
++				continue;
+ 			}
+ 		} /* !oem="i82571spt" */
+ 		/* Wait up to half a second */

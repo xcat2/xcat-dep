@@ -1,0 +1,54 @@
+--- ipmitool-1.8.17/include/ipmitool/ipmi_sol.h	2016-05-06 10:48:54.000000000 -0400
++++ ipmitool-1.8.17-signal/include/ipmitool/ipmi_sol.h	2016-09-08 14:28:20.051574790 -0400
+@@ -104,5 +104,6 @@
+ 					  uint8_t                  channel,
+ 					  struct sol_config_parameters * params);
+ 
++void leave_raw_mode(void);
+ 
+ #endif /* IPMI_SOL_H */
+--- ipmitool-1.8.17/lib/ipmi_main.c	2016-05-06 10:48:54.000000000 -0400
++++ ipmitool-1.8.17-signal/lib/ipmi_main.c	2016-09-08 14:32:32.011584407 -0400
+@@ -271,23 +271,25 @@
+ 	if (cmdlist != NULL)
+ 		ipmi_cmd_print(cmdlist);
+ }
+-/* ipmi_catch_sigint  -  Handle the interrupt signal (Ctrl-C), close the
+- *                       interface, and exit ipmitool with error (-1)
++ /* ipmi_catch_sig  -  Handle the interrupt signal (Ctrl-C),TERM signal,
++ *                    and HUP signal. Close the interface, and exit
++ *                    ipmitool with error (-1)
+  *
+- *                       This insures that the IOL session gets freed
+- *                       for other callers.
++ *                    This insures that the IOL session gets freed
++ *                    for other callers.
+  *
+  * returns -1
+  */
+-void ipmi_catch_sigint()
++void ipmi_catch_sig(const int sig)
+ {
+ 	if (ipmi_main_intf != NULL) {
+-		printf("\nSIGN INT: Close Interface %s\n",ipmi_main_intf->desc);
++		printf("\nSIGN %s: Close Interface %s\n",strsignal(sig), ipmi_main_intf->desc);
+ 		/* reduce retry count to a single retry */
+ 		ipmi_main_intf->ssn_params.retry = 1;
+ 		/* close interface */
+ 		ipmi_main_intf->close(ipmi_main_intf);
+ 	}
++	leave_raw_mode();
+ 	exit(-1);
+ }
+ 
+@@ -420,7 +422,9 @@
+ 	/* save program name */
+ 	progname = strrchr(argv[0], '/');
+ 	progname = ((progname == NULL) ? argv[0] : progname+1);
+-	signal(SIGINT, ipmi_catch_sigint);
++	signal(SIGINT, ipmi_catch_sig);
++	signal(SIGTERM, ipmi_catch_sig);
++	signal(SIGHUP, ipmi_catch_sig);
+ 
+ 	while ((argflag = getopt(argc, (char **)argv, OPTION_STRING)) != -1)
+ 	{

@@ -37,12 +37,13 @@ if ( ! grep /openssl-devel|libopenssl/, @output ) {
 
 # check the source files
 my $pwd = `pwd`;
-my $version = "1.8.15";
+my $version = "1.8.17";
 chomp($pwd);
 if ( (! -f "$pwd/ipmitool-$version.tar.gz")
   || (! -f "$pwd/ipmitool.spec")
   || (! -f "$pwd/ipmitool-$version-saneretry.patch")
-  || (! -f "$pwd/ipmitool-$version-rflash.patch")) {  
+  || (! -f "$pwd/ipmitool-$version-rflash.patch")
+  || (! -f "$pwd/ipmitool-$version-signal.patch")) {  
   print "missed some necessary files for building.\n";
   exit 1;
 }
@@ -93,7 +94,7 @@ if (! grep /libcrypto.so/, @output) {
   exit 1;
 }
 
-my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-$version-3.$arch.rpm";
+my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-$version-0.$arch.rpm";
 my $dstdir = "/tmp/build/$os/$arch";
 
 # check the build result

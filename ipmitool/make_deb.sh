@@ -1,5 +1,5 @@
 #!/bin/bash
-VERSION=1.8.15
+VERSION=1.8.17
 
 tar xvfz ipmitool-$VERSION.tar.gz
 cd ipmitool-$VERSION
