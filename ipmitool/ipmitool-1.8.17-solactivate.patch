@@ -1,0 +1,13 @@
+diff -uNr ipmitool-1.8.17/lib/ipmi_sol.c ipmitool-1.8.17-solactivate/lib/ipmi_sol.c
+--- ipmitool-1.8.17/lib/ipmi_sol.c	2016-05-06 10:48:54.000000000 -0400
++++ ipmitool-1.8.17-solactivate/lib/ipmi_sol.c	2016-09-27 13:55:08.091124971 -0400
+@@ -1652,6 +1652,9 @@
+ 				{
+ 					output(rs);
+ 				}
++                                else {
++                                        bShouldExit = bBmcClosedSession = 1;
++                                }
+ 				/*
+ 				 * Should recv_sol come back null, the incoming packet was not ours.
+ 				 * Just fall through, the keepalive logic will determine if
