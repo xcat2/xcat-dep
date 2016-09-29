@@ -1,4 +1,4 @@
-ipmitool-1.8.15-saneretry.patch
-ipmitool-1.8.15-rflash.patch
-ipmitool-1.8.15-solactivate.patch
-ipmitool-1.8.15-signal.patch
+ipmitool-1.8.17-saneretry.patch
+ipmitool-1.8.17-rflash.patch
+ipmitool-1.8.17-solactivate.patch
+ipmitool-1.8.17-signal.patch
