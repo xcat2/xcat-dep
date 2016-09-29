@@ -1,3 +1,8 @@
+ipmitool-xcat (1.8.17-0) unstable; urgency=low
+  * Upgrade to 1.8.17 version
+
+ -- chenglch <chenglch@cn.ibm.com>  Thu, 29 Sep 2016 11:10:00 +0100
+
 ipmitool-xcat (1.8.15-3) unstable; urgency=low
   * Handle HUP and TERM signal
 
