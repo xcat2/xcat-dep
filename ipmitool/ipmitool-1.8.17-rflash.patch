@@ -1,0 +1,21 @@
+--- ipmitool-1.8.17/lib/ipmi_hpmfwupg.c	2016-05-06 10:48:54.000000000 -0400
++++ ipmitool-1.8.17-rflash/lib/ipmi_hpmfwupg.c	2016-09-08 15:00:12.441654169 -0400
+@@ -730,18 +730,6 @@
+ 			lprintf(LOG_NOTICE, "\n    Upgrade undesirable at this moment");
+ 			return HPMFWUPG_ERROR;
+ 		}
+-		/* Get confimation from the user if he wants to continue when
+-		 * service affected during upgrade
+-		 */
+-		if (!(option & COMPARE_MODE)
+-				&& (pFwupgCtx->targetCap.GlobalCapabilities.bitField.servAffectDuringUpg == 1
+-					|| pImageHeader->imageCapabilities.bitField.servAffected == 1)) {
+-			if (HpmGetUserInput("\nServices may be affected during upgrade. Do you wish to continue? (y/n): ")) {
+-				rc = HPMFWUPG_SUCCESS;
+-			} else {
+-				return HPMFWUPG_ERROR;
+-			}
+-		}
+ 	}
+ 	/* Get the general properties of each component present in image */
+ 	for (componentId = HPMFWUPG_COMPONENT_ID_0;
