@@ -1,21 +1,21 @@
---- ipmitool-1.8.17/include/ipmitool/ipmi_sol.h	2016-05-06 10:48:54.000000000 -0400
-+++ ipmitool-1.8.17-signal/include/ipmitool/ipmi_sol.h	2016-09-08 14:28:20.051574790 -0400
-@@ -104,5 +104,6 @@
- 					  uint8_t                  channel,
- 					  struct sol_config_parameters * params);
- 
-+void leave_raw_mode(void);
- 
- #endif /* IPMI_SOL_H */
+diff -uNr ipmitool-1.8.17/lib/ipmi_main.c ipmitool-1.8.17-signal/lib/ipmi_main.c
 --- ipmitool-1.8.17/lib/ipmi_main.c	2016-05-06 10:48:54.000000000 -0400
-+++ ipmitool-1.8.17-signal/lib/ipmi_main.c	2016-09-08 14:32:32.011584407 -0400
-@@ -271,23 +271,25 @@
++++ ipmitool-1.8.17-signal/lib/ipmi_main.c	2016-11-03 22:38:41.868914065 -0400
+@@ -92,6 +92,7 @@
+ 
+ extern int verbose;
+ extern int csv_output;
++extern int sol_activated;
+ extern const struct valstr ipmi_privlvl_vals[];
+ extern const struct valstr ipmi_authtype_session_vals[];
+ 
+@@ -271,24 +272,30 @@
  	if (cmdlist != NULL)
  		ipmi_cmd_print(cmdlist);
  }
 -/* ipmi_catch_sigint  -  Handle the interrupt signal (Ctrl-C), close the
 - *                       interface, and exit ipmitool with error (-1)
-+ /* ipmi_catch_sig  -  Handle the interrupt signal (Ctrl-C),TERM signal,
++ /* ipmi_catch_sig  - Handle the interrupt signal (Ctrl-C),TERM signal,
 + *                    and HUP signal. Close the interface, and exit
 + *                    ipmitool with error (-1)
   *
@@ -29,19 +29,31 @@
 -void ipmi_catch_sigint()
 +void ipmi_catch_sig(const int sig)
  {
- 	if (ipmi_main_intf != NULL) {
+-	if (ipmi_main_intf != NULL) {
 -		printf("\nSIGN INT: Close Interface %s\n",ipmi_main_intf->desc);
-+		printf("\nSIGN %s: Close Interface %s\n",strsignal(sig), ipmi_main_intf->desc);
- 		/* reduce retry count to a single retry */
- 		ipmi_main_intf->ssn_params.retry = 1;
- 		/* close interface */
- 		ipmi_main_intf->close(ipmi_main_intf);
- 	}
-+	leave_raw_mode();
- 	exit(-1);
+-		/* reduce retry count to a single retry */
+-		ipmi_main_intf->ssn_params.retry = 1;
+-		/* close interface */
+-		ipmi_main_intf->close(ipmi_main_intf);
+-	}
+-	exit(-1);
++    if (sol_activated == 1) {
++        printf("\nSIGN %s: Deactivate sol session\r\n",strsignal(sig));
++        sol_activated = 0;
++    } else {
++        if (ipmi_main_intf != NULL) {
++            printf("\nSIGN %s: Close Interface %s\n",strsignal(sig), ipmi_main_intf->desc);
++            /* reduce retry count to a single retry */
++            ipmi_main_intf->ssn_params.retry = 1;
++            /* close interface */
++            ipmi_main_intf->close(ipmi_main_intf);
++        }
++        exit(-1);
++    }
  }
  
-@@ -420,7 +422,9 @@
+ /* ipmi_parse_hex - convert hexadecimal numbers to ascii string
+@@ -420,7 +427,9 @@
  	/* save program name */
  	progname = strrchr(argv[0], '/');
  	progname = ((progname == NULL) ? argv[0] : progname+1);
@@ -52,3 +64,110 @@
  
  	while ((argflag = getopt(argc, (char **)argv, OPTION_STRING)) != -1)
  	{
+diff -uNr ipmitool-1.8.17/lib/ipmi_sol.c ipmitool-1.8.17-signal/lib/ipmi_sol.c
+--- ipmitool-1.8.17/lib/ipmi_sol.c	2016-11-03 22:31:55.998893852 -0400
++++ ipmitool-1.8.17-signal/lib/ipmi_sol.c	2016-11-04 01:18:45.669370142 -0400
+@@ -46,6 +46,7 @@
+ #include <time.h>
+ #include <signal.h>
+ #include <unistd.h>
++#include <errno.h>
+ 
+ #if defined(HAVE_CONFIG_H)
+ # include <config.h>
+@@ -98,7 +99,7 @@
+ static int            _use_sol_for_keepalive = 0;
+ 
+ extern int verbose;
+-
++int sol_activated = 0;
+ /*
+  * ipmi_sol_payload_access
+  */
+@@ -1556,6 +1557,11 @@
+ 		FD_SET(0, &read_fds);
+ 		FD_SET(intf->fd, &read_fds);
+ 
++                if (sol_activated == 0) {
++                    bBmcClosedSession = 0;
++                    keepAliveRet = 0;
++                    break;
++                }
+ 		if (!ipmi_oem_active(intf,"i82571spt"))
+ 		{
+ 			/* Send periodic keepalive packet */
+@@ -1584,6 +1590,11 @@
+ 		{
+ 			if (retval == -1)
+ 			{
++                                if (errno == EINTR) {
++                                    bBmcClosedSession = 0;
++                                    keepAliveRet = 0;
++                                    break;
++                                }
+ 				/* ERROR */
+ 				perror("select");
+ 				return -1;
+@@ -1629,6 +1640,10 @@
+ 				{
+ 					output(rs);
+ 				}
++                                else
++                                {
++                                    bShouldExit = bBmcClosedSession = 1;
++                                }
+ 				/*
+ 				 * Should recv_sol come back null, the incoming packet was not ours.
+ 				 * Just fall through, the keepalive logic will determine if
+@@ -1647,24 +1662,23 @@
+ 			}
+ 		}
+ 	}
+-
+-	leave_raw_mode();
+-
+-	if (keepAliveRet != 0)
+-	{
+-		lprintf(LOG_ERR, "Error: No response to keepalive - Terminating session");
+-		/* attempt to clean up anyway */
+-		ipmi_sol_deactivate(intf, instance);
+-		exit(1);
+-	}
+-
+-	if (bBmcClosedSession)
+-	{
+-		lprintf(LOG_ERR, "SOL session closed by BMC");
+-		exit(1);
+-	}
+-	else
+-		ipmi_sol_deactivate(intf, instance);
++ 
++        leave_raw_mode();
++        ipmi_sol_deactivate(intf, instance);
++        if (keepAliveRet != 0)
++        {
++            lprintf(LOG_ERR, "Error: No response to keepalive - Terminating session");
++            return -1;
++        }
++        if (bBmcClosedSession)
++        {
++            lprintf(LOG_ERR, "SOL session closed by BMC");
++            return -1;
++        } else if (sol_activated == 0)
++        {
++            lprintf(LOG_ERR, "SOL session closed by signal");
++            return -1;
++        }
+ 
+ 	return 0;
+ }
+@@ -1748,7 +1762,8 @@
+ 	data[3] = 0x00; /* reserved */
+ 	data[4] = 0x00; /* reserved */
+ 	data[5] = 0x00; /* reserved */
+-
++        /* Make sure deactivate code sent to BMC no matter what the status is */
++        sol_activated = 1;
+ 	rsp = intf->sendrecv(intf, &req);
+ 
+ 	if (NULL != rsp) {

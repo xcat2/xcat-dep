@@ -1,15 +1,14 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.17
-Release:      0
+Release:      1
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
 Source:       ipmitool-%{version}.tar.gz
 Patch:        ipmitool-%{version}-saneretry.patch
 Patch2:       ipmitool-%{version}-rflash.patch
-Patch3:       ipmitool-%{version}-solactivate.patch
-Patch4:       ipmitool-%{version}-signal.patch
+Patch3:       ipmitool-%{version}-signal.patch
 Buildroot:    /var/tmp/ipmitool-root
 
 %description
@@ -36,7 +35,6 @@ fi
 %patch -p1
 %patch2 -p1
 %patch3 -p1
-%patch4 -p1
 
 %build
 ./configure --with-kerneldir \
@@ -66,6 +64,9 @@ fi
 
 
 %changelog
+* Wed Nov 04 2016 <chenglch@cn.ibm.com> 1.8.17-1
+  Make ipmitool exit gracefully when receiving `INT`, `TERM` or `HUP` signal.
+  Close the intf(lanplus) session when the sol session at BMC side is closed.
 * Wed Nov 04 2015 <chenglch@cn.ibm.com> 1.8.15
   Delete user prompt to upgrade firmware
 * Wed Apr 27 2011 <andywray@us.ibm.com> 1.8.11-3
