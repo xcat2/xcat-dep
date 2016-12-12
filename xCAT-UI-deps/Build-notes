@@ -7,5 +7,6 @@ This creates /opt/freeware/src/packages/RPMS/noarch/xCAT-UI-deps-*.noarch.rpm
 
 For zVM s390:
 Copy the xCAT-UI-deps.spec and xCAT-UI-deps.tar.gz to /root/build/SOURCES
+cd /root/build/SOURCES
 rpmbuild -ba xCAT-UI-deps.spec
 This creates /root/build/RPMS/noarch/xCAT-UI-deps-*.noarch.rpm
