@@ -1,5 +1,5 @@
---- ./ipmitool-1.8.18/lib/ipmi_main.c	2016-07-31 02:56:33.000000000 -0400
-+++ ./ipmitool-1.8.18-signal/lib/ipmi_main.c	2017-05-30 14:04:11.798264910 -0400
+--- ipmitool-1.8.18/lib/ipmi_main.c	2016-07-31 02:56:33.000000000 -0400
++++ ipmitool-1.8.18-signal/lib/ipmi_main.c	2017-05-30 14:04:11.798264910 -0400
 @@ -92,6 +92,7 @@
  
  extern int verbose;
@@ -62,8 +62,8 @@
  	memset(kgkey, 0, sizeof(kgkey));
  
  	while ((argflag = getopt(argc, (char **)argv, OPTION_STRING)) != -1)
---- ./ipmitool-1.8.18/lib/ipmi_sol.c	2016-06-29 14:06:29.000000000 -0400
-+++ ./ipmitool-1.8.18-signal/lib/ipmi_sol.c	2017-05-30 14:28:55.503571252 -0400
+--- ipmitool-1.8.18/lib/ipmi_sol.c	2016-06-29 14:06:29.000000000 -0400
++++ ipmitool-1.8.18-signal/lib/ipmi_sol.c	2017-05-30 14:28:55.503571252 -0400
 @@ -46,6 +46,7 @@
  #include <time.h>
  #include <signal.h>

@@ -1,5 +1,5 @@
---- ./ipmitool-1.8.18/lib/ipmi_sol.c	2016-06-29 14:06:29.000000000 -0400
-+++ ./ipmitool-1.8.18-saneretry/lib/ipmi_sol.c	2017-05-30 13:41:12.462969340 -0400
+--- ipmitool-1.8.18/lib/ipmi_sol.c	2016-06-29 14:06:29.000000000 -0400
++++ ipmitool-1.8.18-saneretry/lib/ipmi_sol.c	2017-05-30 13:41:12.462969340 -0400
 @@ -76,7 +76,6 @@
  #define SOL_PARAMETER_SOL_PAYLOAD_CHANNEL       0x07
  #define SOL_PARAMETER_SOL_PAYLOAD_PORT          0x08
