@@ -1,7 +1,7 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.18
-Release:      1
+Release:      0
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
