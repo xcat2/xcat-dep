@@ -1,5 +1,7 @@
 #! /usr/bin/perl
 
+my $version = "1.8.18";
+
 #check the distro
 $cmd = "cat /etc/*release";
 @output = `$cmd`;
@@ -37,7 +39,6 @@ if ( ! grep /openssl-devel|libopenssl/, @output ) {
 
 # check the source files
 my $pwd = `pwd`;
-my $version = "1.8.17";
 chomp($pwd);
 if ( (! -f "$pwd/ipmitool-$version.tar.gz")
   || (! -f "$pwd/ipmitool.spec")

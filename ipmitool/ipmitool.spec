@@ -1,6 +1,6 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
-Version:      1.8.17
+Version:      1.8.18
 Release:      1
 License:      BSD
 Group:        Utilities
@@ -64,6 +64,8 @@ fi
 
 
 %changelog
+* Tue May 30 2017 <vhu@us.im.com> 1.8.18
+  Added support for building ipmitool-xcat 1.8.18 and forward fit patches
 * Wed Nov 04 2016 <chenglch@cn.ibm.com> 1.8.17-1
   Make ipmitool exit gracefully when receiving `INT`, `TERM` or `HUP` signal.
   Close the intf(lanplus) session when the sol session at BMC side is closed.
