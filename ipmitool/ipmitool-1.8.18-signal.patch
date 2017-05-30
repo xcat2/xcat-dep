@@ -1,0 +1,135 @@
+--- ./ipmitool-1.8.18/lib/ipmi_main.c	2016-07-31 02:56:33.000000000 -0400
++++ ./ipmitool-1.8.18-signal/lib/ipmi_main.c	2017-05-30 14:04:11.798264910 -0400
+@@ -92,6 +92,7 @@
+ 
+ extern int verbose;
+ extern int csv_output;
++extern int sol_activated;
+ extern const struct valstr ipmi_privlvl_vals[];
+ extern const struct valstr ipmi_authtype_session_vals[];
+ 
+@@ -271,24 +272,30 @@
+ 	if (cmdlist != NULL)
+ 		ipmi_cmd_print(cmdlist);
+ }
+-/* ipmi_catch_sigint  -  Handle the interrupt signal (Ctrl-C), close the
+- *                       interface, and exit ipmitool with error (-1)
++/* ipmi_catch_sig  - Handle the interrupt signal (Ctrl-C),TERM signal,
++ *                   and HUP signal. Close the interface, and exit
++ *                   ipmitool with error (-1)
+  *
+- *                       This insures that the IOL session gets freed
+- *                       for other callers.
++ *                   This insures that the IOL session gets freed
++ *                   for other callers.
+  *
+  * returns -1
+  */
+-void ipmi_catch_sigint()
++void ipmi_catch_sig(const int sig)
+ {
+-	if (ipmi_main_intf != NULL) {
+-		printf("\nSIGN INT: Close Interface %s\n",ipmi_main_intf->desc);
+-		/* reduce retry count to a single retry */
+-		ipmi_main_intf->ssn_params.retry = 1;
+-		/* close interface */
+-		ipmi_main_intf->close(ipmi_main_intf);
++	if (sol_activated == 1) {
++		printf("\nSIGN %s: Deactivate sol session\r\n",strsignal(sig));
++		sol_activated = 0;
++	} else {
++		if (ipmi_main_intf != NULL) {
++			printf("\nSIGN %s: Close Interface %s\n",strsignal(sig), ipmi_main_intf->desc);
++			/* reduce retry count to a single retry */
++			ipmi_main_intf->ssn_params.retry = 1;
++			/* close interface */
++			ipmi_main_intf->close(ipmi_main_intf);
++		}
++		exit(-1);
+ 	}
+-	exit(-1);
+ }
+ 
+ static uint8_t
+@@ -357,7 +364,9 @@
+ 	/* save program name */
+ 	progname = strrchr(argv[0], '/');
+ 	progname = ((progname == NULL) ? argv[0] : progname+1);
+-	signal(SIGINT, ipmi_catch_sigint);
++	signal(SIGINT, ipmi_catch_sig);
++	signal(SIGTERM, ipmi_catch_sig);
++	signal(SIGHUP, ipmi_catch_sig);
+ 	memset(kgkey, 0, sizeof(kgkey));
+ 
+ 	while ((argflag = getopt(argc, (char **)argv, OPTION_STRING)) != -1)
+--- ./ipmitool-1.8.18/lib/ipmi_sol.c	2016-06-29 14:06:29.000000000 -0400
++++ ./ipmitool-1.8.18-signal/lib/ipmi_sol.c	2017-05-30 14:28:55.503571252 -0400
+@@ -46,6 +46,7 @@
+ #include <time.h>
+ #include <signal.h>
+ #include <unistd.h>
++#include <errno.h>
+ 
+ #if defined(HAVE_CONFIG_H)
+ # include <config.h>
+@@ -99,6 +100,7 @@
+ static int            _use_sol_for_keepalive = 0;
+ 
+ extern int verbose;
++int sol_activated = 0;
+ 
+ /*
+  * ipmi_sol_payload_access
+@@ -1558,6 +1560,12 @@
+ 		FD_SET(0, &read_fds);
+ 		FD_SET(intf->fd, &read_fds);
+ 
++		if (sol_activated == 0) {
++			bBmcClosedSession = 0;
++			keepAliveRet = 0;
++			break;
++		}
++
+ 		if (!ipmi_oem_active(intf,"i82571spt"))
+ 		{
+ 			/* Send periodic keepalive packet */
+@@ -1668,22 +1676,24 @@
+ 	}
+ 
+ 	leave_raw_mode();
++	ipmi_sol_deactivate(intf, instance);
+ 
+ 	if (keepAliveRet != 0)
+ 	{
+ 		lprintf(LOG_ERR, "Error: No response to keepalive - Terminating session");
+-		/* attempt to clean up anyway */
+-		ipmi_sol_deactivate(intf, instance);
+-		exit(1);
++		return -1;
+ 	}
+ 
+ 	if (bBmcClosedSession)
+ 	{
+ 		lprintf(LOG_ERR, "SOL session closed by BMC");
+-		exit(1);
++		return -1;
++	}
++	else if (sol_activated == 0)
++	{
++		lprintf(LOG_ERR, "SOL session closed by signal");
++		return -1;
+ 	}
+-	else
+-		ipmi_sol_deactivate(intf, instance);
+ 
+ 	return 0;
+ }
+@@ -1768,6 +1778,8 @@
+ 	data[4] = 0x00; /* reserved */
+ 	data[5] = 0x00; /* reserved */
+ 
++	/* Make sure deactivate code sent to BMC no matter what the status is */
++	sol_activated = 1;
+ 	rsp = intf->sendrecv(intf, &req);
+ 
+ 	if (NULL != rsp) {
