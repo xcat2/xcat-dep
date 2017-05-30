@@ -1,6 +1,7 @@
 #! /usr/bin/perl
 
 my $version = "1.8.18";
+my $release = "0";
 
 #check the distro
 $cmd = "cat /etc/*release";
@@ -95,7 +96,7 @@ if (! grep /libcrypto.so/, @output) {
   exit 1;
 }
 
-my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-$version-1.$arch.rpm";
+my $objrpm = "$blddir/RPMS/$arch/ipmitool-xcat-$version-$release.$arch.rpm";
 my $dstdir = "/tmp/build/$os/$arch";
 
 # check the build result
