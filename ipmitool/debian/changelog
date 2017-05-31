@@ -1,3 +1,8 @@
+ipmitool-xcat (1.8.18) unstable; urgency=low
+  * Upgrade to 1.8.18 version
+
+ -- Victor Hu <vhu@us.ibm.com> Tue, May 30, 2017 14:41:01 -0400
+
 ipmitool-xcat (1.8.17-1) unstable; urgency=low
   * Make ipmitool exit gracefully when receiving `INT`, `TERM` or `HUP` signal.
   * Close the intf(lanplus) session when the sol session at BMC side is closed.

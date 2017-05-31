@@ -1,7 +1,7 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
-Version:      1.8.17
-Release:      1
+Version:      1.8.18
+Release:      0
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
@@ -64,7 +64,9 @@ fi
 
 
 %changelog
-* Wed Nov 04 2016 <chenglch@cn.ibm.com> 1.8.17-1
+* Tue May 30 2017 <vhu@us.im.com> 1.8.18
+  Added support for building ipmitool-xcat 1.8.18 and forward fit patches
+* Fri Nov 04 2016 <chenglch@cn.ibm.com> 1.8.17-1
   Make ipmitool exit gracefully when receiving `INT`, `TERM` or `HUP` signal.
   Close the intf(lanplus) session when the sol session at BMC side is closed.
 * Wed Nov 04 2015 <chenglch@cn.ibm.com> 1.8.15
@@ -270,7 +272,7 @@ fi
  - Make ipmievd generate pidfile
  - Add initscripts for ipmievd
 
-* Mon Jan 17 2006 <duncan@iceblink.org>  1.8.6-1
+* Tue Jan 17 2006 <duncan@iceblink.org>  1.8.6-1
  - Fix memory corruption when sending encrypted SOL traffic
  - Add keepalive timer to IPMIv2 SOL sessions
 
@@ -338,7 +340,7 @@ fi
  - new "shell" and "exec" commands
  - lots of other contributed patches
 
-* Sat May 27 2004 <duncan@iceblink.org>  1.5.9-1
+* Thu May 27 2004 <duncan@iceblink.org>  1.5.9-1
  - Add ability to get a particular sensor by name
  - Add ability to set a particular sensor threshold
  - Add support for displaying V2 channel authentication levels
