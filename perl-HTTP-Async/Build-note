@@ -5,12 +5,3 @@ Build Notes
 2) copy perl-HTTP-Async.spec into /root/rpmbuild/SPECS 
 3) rpmbuild -ba /root/rpmbuild/SPECS/perl-HTTP-Async.spec
 4) The rpm package is located at /root/rpmbuild/RPMS/noarch/perl-HTTP-Async-0.30-2.noarch.rpm
-
-2. To build .deb package
-1) Install 'alien' on the build machine
-2) Create a temparary directory such as /tmp/perl-HTTP-Async, and copy the perl-HTTP-Async-0.30-2.noarch.rpm package into it
-3) Use the command "alien -k --scripts -s perl-HTTP-Async-0.30-2.noarch.rpm" to generate debian packaging related files.
- It will generate a directory like ./perl-HTTP-Async-0.30
-3) cd perl-HTTP-Async-0.30; mv usr/local/share/ usr/; rmdir usr/local/
-4) dpkg-buildpackage -uc -us
-5) The .deb package perl-http-async_0.30-2_all.deb will be located at /tmp/perl-HTTP-Async
