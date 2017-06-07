@@ -1,3 +1,9 @@
+conserver-xcat (8.2.1-1) unstable; urgency=low
+
+  * Upgrade to 8.2.1 version
+
+ -- chenglch <chenglch@cn.ibm.com>  Wed, 07 Jun 2017 18:05:49 -0500
+
 conserver-xcat (8.1.16-3) unstable; urgency=low
 
   * Changed to conserver-xcat package
