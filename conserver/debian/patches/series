@@ -1,4 +1,1 @@
-certificate-auth.patch
-initscript.patch
-initscript1.patch
-segfault-sslopt.patch
+initscript_8.2.1.patch

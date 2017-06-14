@@ -35,12 +35,9 @@ print "The build env is: $os-$arch\n";
 # check the source files
 my $pwd = `pwd`;
 chomp($pwd);
-if ( (! -f "$pwd/conserver-8.1.16.tar.gz")
+if ( (! -f "$pwd/conserver-8.2.1.tar.gz")
   || (! -f "$pwd/conserver.spec")
-  || (! -f "$pwd/certificate-auth.patch")
-  || (! -f "$pwd/initscript.patch")
-  || (! -f "$pwd/initscript1.patch")
-  || (! -f "$pwd/segfault-sslopt.patch")) {
+  || (! -f "$pwd/initscript_8.2.1.patch")) {
   print "missed some necessary files for building.\n";
   exit 1;
 }
@@ -54,10 +51,10 @@ if ($os eq "rh5") {
   $blddir = "/usr/src/packages";
 }
 
-#&runcmd("mkdir -p $blddir/SOURCES");
-#&runcmd("mkdir -p $blddir/SPECS");
-#&runcmd("mkdir -p $blddir/BUILD");
-#&runcmd("mkdir -p $blddir/RPMS");
+&runcmd("mkdir -p $blddir/SOURCES");
+&runcmd("mkdir -p $blddir/SPECS");
+&runcmd("mkdir -p $blddir/BUILD");
+&runcmd("mkdir -p $blddir/RPMS");
 
 # clean the env
 $cmd = "rm -rf $blddir/SOURCES/conserver*";
@@ -70,7 +67,7 @@ $cmd = "rm -rf $blddir/RPMS/$arch/conserver*";
 &runcmd($cmd);
 
 # copy the build files
-$cmd = "cp -rf ./conserver-8.1.16.tar.gz $blddir/SOURCES/";
+$cmd = "cp -rf ./conserver-8.2.1.tar.gz $blddir/SOURCES/";
 &runcmd($cmd);
 
 $cmd = "cp -rf ./*.patch $blddir/SOURCES/";
@@ -82,7 +79,7 @@ $cmd = "cp -rf ./conserver.spec $blddir/SPECS/";
 $cmd = "rpmbuild -bb $blddir/SPECS/conserver.spec";
 &runcmd($cmd);
 
-my $objrpm = "$blddir/RPMS/$arch/conserver-xcat-8.1.16-10.$arch.rpm";
+my $objrpm = "$blddir/RPMS/$arch/conserver-xcat-8.2.1-1.$arch.rpm";
 my $dstdir = "/tmp/build/$os/$arch";
 
 # check the build result

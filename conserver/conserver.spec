@@ -4,14 +4,14 @@
 #
 
 %define pkg  conserver
-%define ver  8.1.16
+%define ver  8.2.1
 
 # define the name of the machine on which the main conserver
 # daemon will be running if you don't want to use the default
 # hostname (console)
 %define master console
 
-%define distver 10
+%define distver 1
 
 Summary: Serial console server daemon/client
 Name: %{pkg}-xcat
@@ -21,10 +21,7 @@ License: BSD
 Group: System Environment/Daemons
 URL: http://www.conserver.com/
 Source: http://www.conserver.com/%{pkg}-%{ver}.tar.gz
-Patch: certificate-auth.patch
-Patch1: initscript.patch
-Patch2: initscript1.patch
-Patch3: segfault-sslopt.patch
+Patch: initscript_8.2.1.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 BuildRequires: openssl-devel
 Prefix: %{_prefix}
@@ -43,9 +40,6 @@ bells and whistles to accentuate that basic functionality.
 %{__rm} -rf %{buildroot}
 %setup -n %{pkg}-%{ver}
 %patch -p1
-%patch1 -p1
-%patch2 -p1
-%patch3 -p1
 
 
 %build
