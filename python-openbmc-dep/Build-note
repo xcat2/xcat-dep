@@ -1,0 +1,15 @@
+Build Notes
+
+1. To build rpm
+1) Install pip and python-devel
+   - wget https://bootstrap.pypa.io/get-pip.py
+   - python get-pip.py
+   - yum install python-devel
+2) Create an clean directory for pip package destination
+   - mkdir -p python-openbmc-dep
+3) pip install -U --force --prefix python-openbmc-dep docopt gevent
+3) rpmbuild -ba python-openbmc-dep.spec
+4) The rpm package is located at /root/rpmbuild/RPMS/ppc64le/python-openbmc-dep-1.0-snap201803090524.ppc64le.rpm
+
+2. To build .deb package
+Not support yet
