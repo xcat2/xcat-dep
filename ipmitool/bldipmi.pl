@@ -13,6 +13,10 @@ if (grep /Red Hat Enterprise Linux Server release 5\.\d/, @output) {
   $os = "rh6";
 } elsif (grep /Red Hat Enterprise Linux Server release 7\.\d/, @output) {
   $os = "rh7";
+} elsif (grep /CentOS Linux release 7\.\d/, @output) {
+  $os = "rh7";
+} elsif (grep /CentOS release 6\.\d/, @output) {
+  $os = "rh6";
 } elsif (grep /SUSE Linux Enterprise Server 10/, @output) {
   $os = "sles10";
 } elsif (grep /SUSE Linux Enterprise Server 11/, @output) {
