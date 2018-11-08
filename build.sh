@@ -1,7 +1,7 @@
 #!/bin/bash
 
 pkgname=$1
-cur_path=$(cd "$(dirname "$0")"; pwd)
+cur_path=$(dirname "$0")
 if [ "$pkgname" = "ipmitool" ]; then
     $cur_path/ipmitool/build.sh
     exit $?

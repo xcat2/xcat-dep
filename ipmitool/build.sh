@@ -8,16 +8,14 @@ function check_linux_distro()
     echo "${distro}"
 }
 
-build_dir=/ipmitool_build
-if [ ${DEST} ]; then
-    build_dir=${DEST}
-fi
+pkgname="ipmitool"
+
+build_dir=${DEST:-/${pkgname}_build}
 
 XCAT_BUILD_DISTRO="$(check_linux_distro)"
-echo "[INFO] Start to build ipmitool on $XCAT_BUILD_DISTRO"
+echo "[INFO] Start to build $pkgname on $XCAT_BUILD_DISTRO"
 
-cur_path=$(cd "$(dirname "$0")"; pwd)
-cd $cur_path
+cd "$(dirname "$0")"
 
 XCAT_BUILD_DISTRO="$(check_linux_distro)"
 case "${XCAT_BUILD_DISTRO}" in
@@ -39,13 +37,13 @@ esac
 
 $buildcmd |& tee /tmp/build.log
 if [ $? != 0 ]; then
-    echo "[ERROR] Failed to build ipmitool by command $buildcmd"
+    echo "[ERROR] Failed to build $pkgname by command $buildcmd"
     exit 1
 fi
 
-buildpath=`find $dftpath -name ipmitool*.$pkgtype | xargs ls -t | head -n 1`
+buildpath=`find $dftpath -name ${pkgname}*.$pkgtype | xargs ls -t | head -n 1`
 if [ -z "$buildpath" ]; then
-    echo "[ERROR] Could not find build ipmitool*.$pkgtype"
+    echo "[ERROR] Could not find build ${pkgname}*.$pkgtype"
     exit 1
 fi
 
