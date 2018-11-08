@@ -2,10 +2,11 @@
 
 pkgname=$1
 cur_path=$(dirname "$0")
-if [ "$pkgname" = "ipmitool" ]; then
-    $cur_path/ipmitool/build.sh
+if [ "$pkgname" ]; then
+    $cur_path/$pkgname/build.sh
     exit $?
-elif [ -z $pkgname ]; then
+else
+    # TODO: if not specify, build all packages for xcat-dep
     echo "Please specify package want to build"
     exit 1
 fi

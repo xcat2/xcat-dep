@@ -15,7 +15,8 @@ build_dir=${DEST:-/${pkgname}_build}
 XCAT_BUILD_DISTRO="$(check_linux_distro)"
 echo "[INFO] Start to build $pkgname on $XCAT_BUILD_DISTRO"
 
-cd "$(dirname "$0")"
+cur_path=$(dirname "$0")
+cd $cur_path
 
 XCAT_BUILD_DISTRO="$(check_linux_distro)"
 case "${XCAT_BUILD_DISTRO}" in
