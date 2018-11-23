@@ -1,0 +1,1 @@
+For RHEL 8, run "rpmbuild --rebuild perl-AppConfig-1.71-13.fc29.src.rpm".

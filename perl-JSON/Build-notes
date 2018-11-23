@@ -1,0 +1,1 @@
+For RHEL 8, run "rpmbuild --rebuild perl-JSON-2.97.001-4.fc29.src.rpm".

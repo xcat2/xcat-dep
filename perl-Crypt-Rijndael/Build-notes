@@ -5,3 +5,5 @@
 
 
 Note: the build of perl-Crypt-Rijndael needs perl-Test-Manifest, which is not shipped with RHEL. Could build perl-Test-Manifest from source code, or download binary from internet.
+
+For RHEL 8, run "rpmbuild --rebuild perl-Crypt-Rijndael-1.13-10.fc29.src.rpm".
