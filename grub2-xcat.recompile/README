@@ -29,4 +29,7 @@ running "./makedeb" will convert the grub2-xcat rpm generated above to deb packa
 
 Finally, upload the deb package to the build server.
 
-
+======
+NOTICE
+======
+If rebuild of `grub2-2.02-0.16.el7.src.rpm' is needed. The file `Makefile' may need to be checked out to an older version.
