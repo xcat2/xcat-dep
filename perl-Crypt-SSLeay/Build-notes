@@ -22,3 +22,5 @@
 6. cp /tmp/Crypt-SSLeay-0.57.tar.gz /usr/src/packages/SOURCES
 7. Run "rpmbuild -ta /usr/src//packages/SOURCES/Crypt-SSLeay-0.57.tar.gz" which creates /usr/src/packages/RPMS/ppc64/perl-Crypt-SSLeay-0.57-1.ppc64.rpm
 
+
+For RHEL 8, run "rpmbuild --rebuild perl-Crypt-SSLeay-0.72-20.fc29.src.rpm".
