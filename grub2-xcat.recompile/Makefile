@@ -2,7 +2,7 @@
 # Maintainer: GONG Jie <gongjie@linux.vnet.ibm.com>
 #
 
-SRC_RPM = grub2-2.02-0.16.el7.src.rpm
+SRC_RPM = grub2-2.02-57.el8.src.rpm
 SPEC_TEMPLATE = grub2-xcat.spec.template
 
 #BUILD_NUMBER_FILE = build-number.txt
@@ -14,7 +14,7 @@ deb: grub2-xcat.all.deb
 
 grub2.ppc64.rpm: $(SRC_RPM)
 	rpmbuild --rebuild $^ 2>&1 | tee rpmbuild.out
-	cp -f $$(awk '/Wrote: .*\/grub2-[0-9].*\.rpm/ { print $$NF }' rpmbuild.out) \
+	cp -f $$(awk '/Wrote: .*\/grub2-ppc64*-modules-*.*\.rpm/ { print $$NF }' rpmbuild.out) \
 		grub2.ppc64.rpm
 
 timestamp.extract: grub2.ppc64.rpm
@@ -28,18 +28,13 @@ timestamp.grub2.mknetdir: timestamp.extract
 	mkdir -p grub2-xcat/tftpboot
 	grub2-mknetdir --directory=grub2/usr/lib/grub/powerpc-ieee1275 \
 		--net-directory=grub2-xcat/tftpboot
-	mkdir -p grub2-xcat/usr/share/doc/grub2-xcat/
-	cp -f grub2/usr/share/doc/grub2-2.02/COPYING grub2-xcat/usr/share/doc/grub2-xcat/COPYING
 	touch timestamp.grub2.mknetdir
 
 #grub2-xcat.spec: $(SPEC_TEMPLATE) $(BUILD_NUMBER_FILE) timestamp.grub2.mknetdir
 grub2-xcat.spec: $(SPEC_TEMPLATE)  timestamp.grub2.mknetdir
 	umask 0022
 	( cd grub2-xcat ; find tftpboot -type d -exec echo '%dir "/{}"' ';' ) >filelist
-	( cd grub2-xcat ; find 'usr/share/doc/grub2-xcat' -type d -exec echo '%dir "/{}"' ';' ) >>filelist
 	( cd grub2-xcat ; find tftpboot -type f -exec echo '"/{}"' ';' ) >>filelist
-	( cd grub2-xcat ; find 'usr/share/doc/grub2-xcat' -type f -exec echo '"/{}"' ';' ) >>filelist
-
 
 	cat $(SPEC_TEMPLATE) | sed -e \
 		's@###<<<BUILD>>>###@snap'$$(date +"%Y%m%d%H%M")'@g' \
@@ -71,7 +66,6 @@ grub2-xcat.all.deb: grub2-xcat.noarch.rpm
          -e 's!Maintainer:.*!Maintainer:xCAT <xcat-user@lists.sourceforge.net> \nHomepage:http://xcat.sourceforge.net/!'  grub2-xcat-deb/debian/control; \
          cd grub2-xcat-deb; \
          debian/rules binary) 
-
 
 #$(BUILD_NUMBER_FILE): $(SPEC_TEMPLATE) $(BINARY_RPM)
 #	@if ! test -f $(BUILD_NUMBER_FILE); then echo 0 > $(BUILD_NUMBER_FILE); fi

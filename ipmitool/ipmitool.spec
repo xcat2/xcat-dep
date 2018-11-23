@@ -1,15 +1,30 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.18
-Release:      0
+Release:      2
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
 Source:       ipmitool-%{version}.tar.gz
-Patch:        ipmitool-%{version}-saneretry.patch
-Patch2:       ipmitool-%{version}-rflash.patch
-Patch3:       ipmitool-%{version}-signal.patch
+
+Patch1:       0001-CVE-2011-4339-OpenIPMI.patch
+# WARNING:  THIS PATCH MUST BE USED FOR RAWHIDE (f26+) BRANCH
+Patch2:       0002-openssl.patch
+Patch3:       0003-ipmitool-1.8.11-set-kg-key.patch
+Patch4:       0004-slowswid.patch
+Patch5:       0005-sensor-id-length.patch
+Patch6:       0006-enable-usb.patch
+Patch7:       0007-check-input.patch
+
+Patch80:      ipmitool-%{version}-saneretry.patch
+Patch82:      ipmitool-%{version}-rflash.patch
+Patch83:      ipmitool-%{version}-signal.patch
+
 Buildroot:    /var/tmp/ipmitool-root
+
+BuildRequires: openssl-devel readline-devel ncurses-devel
+# bootstrap
+BuildRequires: automake autoconf libtool
 
 %description
 This package contains a utility for interfacing with devices that support
@@ -32,12 +47,39 @@ if [ "$RPM_BUILD_ROOT" ] && [ "$RPM_BUILD_ROOT" != "/" ]; then
 fi
 
 %setup -n ipmitool-%{version}
-%patch -p1
-%patch2 -p1
-%patch3 -p1
+%patch1  -p1
+%patch2  -p1
+%patch3  -p1
+%patch4  -p1
+%patch5  -p1
+%patch6  -p1
+%patch7  -p1
+%patch80 -p1
+%patch82 -p1
+%patch83 -p1
+
+for f in AUTHORS ChangeLog; do
+    iconv -f iso-8859-1 -t utf8 < ${f} > ${f}.utf8
+    mv ${f}.utf8 ${f}
+done
 
 %build
-./configure --with-kerneldir \
+# --disable-dependency-tracking speeds up the build
+# --enable-file-security adds some security checks
+# --disable-intf-free disables FreeIPMI support - we don't want to depend on
+#   FreeIPMI libraries, FreeIPMI has its own ipmitoool-like utility.
+
+aclocal
+libtoolize --automake --copy
+autoheader
+automake --foreign --add-missing --copy
+aclocal
+autoconf
+automake --foreign
+%configure --disable-dependency-tracking \
+	--enable-file-security \
+	--disable-intf-free \
+	--with-kerneldir \
 	--with-rpm-distro= \
 	--prefix=%{_prefix} \
 	--bindir=%{_bindir} \
@@ -50,7 +92,6 @@ fi
 make
 
 %install
-strip src/ipmitool
 mkdir -p $RPM_BUILD_ROOT/opt/xcat/bin
 cp src/ipmitool $RPM_BUILD_ROOT/opt/xcat/bin/ipmitool-xcat
 
@@ -65,6 +106,8 @@ fi
 
 
 %changelog
+* Thu Nov 15 2018 <gongjie@linux.vnet.ibm.com> 1.8.18-2
+  Rebuild on RHEL 8. Intigrate patches from RHEL 8
 * Tue May 30 2017 <vhu@us.im.com> 1.8.18
   Added support for building ipmitool-xcat 1.8.18 and forward fit patches
 * Fri Nov 04 2016 <chenglch@cn.ibm.com> 1.8.17-1
@@ -375,7 +418,7 @@ fi
  - Fix SEL event decoding for generic events
  - Handle empty SEL gracefully when doing "sel list"
  - Fix sdr handling of sensors that do not return a reading
- - Fix for CSV display of sensor readings/units from Fredrik Öhrn
+ - Fix for CSV display of sensor readings/units from Fredrik Ohrn
 
 * Tue Nov 25 2003 <duncan@iceblink.org>  1.5.5-1
  - Add -U option for setting LAN username
