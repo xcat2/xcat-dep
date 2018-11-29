@@ -14,7 +14,7 @@ deb: grub2-xcat.all.deb
 
 grub2.ppc64.rpm: $(SRC_RPM)
 	rpmbuild --rebuild $^ 2>&1 | tee rpmbuild.out
-	cp -f $$(awk '/Wrote: .*\/grub2-ppc64*-modules-*.*\.rpm/ { print $$NF }' rpmbuild.out) \
+	cp -f $$(awk '/Wrote: .*\/grub2-ppc64.*-modules-.*.*\.rpm/ { print $$NF }' rpmbuild.out) \
 		grub2.ppc64.rpm
 
 timestamp.extract: grub2.ppc64.rpm
