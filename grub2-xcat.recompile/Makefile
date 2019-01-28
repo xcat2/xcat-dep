@@ -2,7 +2,7 @@
 # Maintainer: GONG Jie <gongjie@linux.vnet.ibm.com>
 #
 
-SRC_RPM = grub2-2.02-57.el8.src.rpm
+SRC_RPM = grub2-2.02-0.76.el7.src.rpm
 SPEC_TEMPLATE = grub2-xcat.spec.template
 
 #BUILD_NUMBER_FILE = build-number.txt
@@ -14,7 +14,7 @@ deb: grub2-xcat.all.deb
 
 grub2.ppc64.rpm: $(SRC_RPM)
 	rpmbuild --rebuild $^ 2>&1 | tee rpmbuild.out
-	cp -f $$(awk '/Wrote: .*\/grub2-ppc64*-modules-*.*\.rpm/ { print $$NF }' rpmbuild.out) \
+	cp -f $$(awk '/Wrote: .*\/grub2-ppc64.*-modules-.*.*\.rpm/ { print $$NF }' rpmbuild.out) \
 		grub2.ppc64.rpm
 
 timestamp.extract: grub2.ppc64.rpm
