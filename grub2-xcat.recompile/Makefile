@@ -2,7 +2,7 @@
 # Maintainer: GONG Jie <gongjie@linux.vnet.ibm.com>
 #
 
-SRC_RPM = grub2-2.02-0.76.el7.src.rpm
+SRC_RPM = grub2-2.02-0.76.el7.1.src.rpm
 SPEC_TEMPLATE = grub2-xcat.spec.template
 
 #BUILD_NUMBER_FILE = build-number.txt
