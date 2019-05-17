@@ -7,3 +7,5 @@ Build Notes
 5. gzip IO-Stty-.02.tar
 6. cp IO-Stty-.02.tar.gz /usr/src/packages/SOURCES
 7. rpmbuild -ta  /usr/src/packages/SOURCES/IO-Stty-.02.tar.gz
+
+For RHEL 8, run "rpmbuild --rebuild perl-IO-Stty-0.03-21.fc29.src.rpm".

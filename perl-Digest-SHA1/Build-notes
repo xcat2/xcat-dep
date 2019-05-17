@@ -1,0 +1,1 @@
+Run "rpmbuild --rebuild perl-Digest-SHA1-2.13-23.fc28.src.rpm"
