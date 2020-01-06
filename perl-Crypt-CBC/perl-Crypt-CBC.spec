@@ -18,7 +18,7 @@
 
 Name:           perl-Crypt-CBC
 Version:        2.33
-Release:        3.7
+Release:        5.26
 %define cpan_name Crypt-CBC
 Summary:        Encrypt Data with Cipher Block Chaining Mode
 License:        GPL-1.0+ or Artistic-1.0

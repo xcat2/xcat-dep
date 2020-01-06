@@ -1,3 +1,4 @@
 1.(Optional) Get the right version of net-snmp source RPM from internet, i.e., from RHEL source tree.
-2. rpm -Uvh net-snmp-5.7.2-20.ael7b.src.rpm
-3. rpmbuild -bb /root/rpmbuild/SPECS/net-snmp.spec, which creates the /root/rpmbuild/RPMS/ppc64le/net-snmp-perl-5.7.2-20.ael7b.ppc64le.rpm
+  ex: https://ftp3.linux.ibm.com/files/redhat/release_cds/RHEL-8.1.0-GA/BaseOS/source/tree/Packages/net-snmp-5.8-10.el8.src.rpm
+2. rpm -Uvh net-snmp-5.8-10.el8.src.rpm (needs to be on the node which has rhel8 and has net-snmp rpm with version 5.8-10)
+3. rpmbuild -bb /root/rpmbuild/SPECS/net-snmp.spec, which creates the /root/rpmbuild/RPMS/ppc64le/net-snmp-perl-5.8-10.ppc64le.rpm
