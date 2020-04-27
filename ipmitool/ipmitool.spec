@@ -16,12 +16,11 @@ Patch5:       0005-sensor-id-length.patch
 Patch6:       0006-enable-usb.patch
 Patch7:       0007-check-input.patch
 
-Patch12:      0012-CVE-2020-5208.patch
-
 Patch80:      ipmitool-%{version}-saneretry.patch
 Patch82:      ipmitool-%{version}-rflash.patch
 Patch83:      ipmitool-%{version}-signal.patch
 
+Patch12:      0012-CVE-2020-5208.patch
 
 Buildroot:    /var/tmp/ipmitool-root
 
@@ -57,10 +56,10 @@ fi
 %patch5  -p1
 %patch6  -p1
 %patch7  -p1
-%patch12 -p1
 %patch80 -p1
 %patch82 -p1
 %patch83 -p1
+%patch12 -p1
 
 for f in AUTHORS ChangeLog; do
     iconv -f iso-8859-1 -t utf8 < ${f} > ${f}.utf8
