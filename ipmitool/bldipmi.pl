@@ -60,7 +60,7 @@ if ( (! -f "$pwd/ipmitool-$version.tar.gz")
 my $blddir;
 if ($os eq "rh5") {
   $blddir = "/usr/src/redhat";
-} elsif (($os eq "rh6") || ($os eq "rh7")) {
+} elsif ($os =~ /rh\d/) {
   $blddir = "/root/rpmbuild";
 } elsif ($os =~ /sles1\d/) {
   $blddir = "/usr/src/packages";
@@ -118,12 +118,6 @@ if (! -f $objrpm) {
   print "The obj file has been built successfully, you can get it here: $dstdir\n";
   exit 0;
 }
-
-
-
-
-
-
 
 sub runcmd () {
   my $cmd = shift;
