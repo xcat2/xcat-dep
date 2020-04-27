@@ -110,8 +110,6 @@ fi
 
 
 %changelog
-* Mon Apr 26 2020 <cxhong@us.ibm.com> 1.8.18
-  Added security support CVE-2020-5208
 * Thu Nov 15 2018 <gongjie@linux.vnet.ibm.com> 1.8.18-2
   Rebuild on RHEL 8. Intigrate patches from RHEL 8
 * Tue May 30 2017 <vhu@us.im.com> 1.8.18
