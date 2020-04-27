@@ -16,9 +16,12 @@ Patch5:       0005-sensor-id-length.patch
 Patch6:       0006-enable-usb.patch
 Patch7:       0007-check-input.patch
 
+Patch12:      0012-CVE-2020-5208.patch
+
 Patch80:      ipmitool-%{version}-saneretry.patch
 Patch82:      ipmitool-%{version}-rflash.patch
 Patch83:      ipmitool-%{version}-signal.patch
+
 
 Buildroot:    /var/tmp/ipmitool-root
 
@@ -54,6 +57,7 @@ fi
 %patch5  -p1
 %patch6  -p1
 %patch7  -p1
+%patch12 -p1
 %patch80 -p1
 %patch82 -p1
 %patch83 -p1
@@ -106,6 +110,8 @@ fi
 
 
 %changelog
+* Mon Apr 26 2020 <cxhong@us.ibm.com> 1.8.18
+  Added security support CVE-2020-5208
 * Thu Nov 15 2018 <gongjie@linux.vnet.ibm.com> 1.8.18-2
   Rebuild on RHEL 8. Intigrate patches from RHEL 8
 * Tue May 30 2017 <vhu@us.im.com> 1.8.18

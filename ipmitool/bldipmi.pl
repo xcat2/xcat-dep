@@ -49,7 +49,8 @@ if ( (! -f "$pwd/ipmitool-$version.tar.gz")
   || (! -f "$pwd/ipmitool.spec")
   || (! -f "$pwd/ipmitool-$version-saneretry.patch")
   || (! -f "$pwd/ipmitool-$version-rflash.patch")
-  || (! -f "$pwd/ipmitool-$version-signal.patch")) {  
+  || (! -f "$pwd/ipmitool-$version-signal.patch")  
+  || (! -f "$pwd/0012-CVE-2020-5208.patch")) {  
   print "missed some necessary files for building.\n";
   exit 1;
 }
