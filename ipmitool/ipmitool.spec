@@ -1,11 +1,11 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.18
-Release:      2
+Release:      3
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
-Source:       ipmitool-%{version}.tar.gz
+Source:       ipmitool-%{version}.${ipmibld}.tar.gz
 
 Patch1:       0001-CVE-2011-4339-OpenIPMI.patch
 # WARNING:  THIS PATCH MUST BE USED FOR RAWHIDE (f26+) BRANCH
@@ -19,8 +19,6 @@ Patch7:       0007-check-input.patch
 Patch80:      ipmitool-%{version}-saneretry.patch
 Patch82:      ipmitool-%{version}-rflash.patch
 Patch83:      ipmitool-%{version}-signal.patch
-
-Patch12:      0012-CVE-2020-5208.patch
 
 Buildroot:    /var/tmp/ipmitool-root
 
@@ -59,7 +57,6 @@ fi
 %patch80 -p1
 %patch82 -p1
 %patch83 -p1
-%patch12 -p1
 
 for f in AUTHORS ChangeLog; do
     iconv -f iso-8859-1 -t utf8 < ${f} > ${f}.utf8
