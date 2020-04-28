@@ -82,7 +82,7 @@ $cmd = "rm -rf $blddir/RPMS/$arch/ipmitool*";
 &runcmd($cmd);
 
 # copy the build files
-$cmd = "cp -rf ./ipmitool-$version*.tar.gz $blddir/SOURCES/";
+$cmd = "cp -rf ./ipmitool-$version.$ipmibld.tar.gz $blddir/SOURCES/";
 &runcmd($cmd);
 
 $cmd = "cp -rf ./*.patch $blddir/SOURCES/";

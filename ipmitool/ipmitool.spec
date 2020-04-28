@@ -5,7 +5,7 @@ Release:      3
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
-Source:       ipmitool-%{version}.${ipmibld}.tar.gz
+Source:       ipmitool-%{version}.%{ipmibld}.tar.gz
 
 Patch1:       0001-CVE-2011-4339-OpenIPMI.patch
 # WARNING:  THIS PATCH MUST BE USED FOR RAWHIDE (f26+) BRANCH
