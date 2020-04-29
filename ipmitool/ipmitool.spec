@@ -1,7 +1,7 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.18
-Release:      2
+Release:      3
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
@@ -19,6 +19,8 @@ Patch7:       0007-check-input.patch
 Patch80:      ipmitool-%{version}-saneretry.patch
 Patch82:      ipmitool-%{version}-rflash.patch
 Patch83:      ipmitool-%{version}-signal.patch
+
+Patch12:      0012-CVE-2020-5208.patch
 
 Buildroot:    /var/tmp/ipmitool-root
 
@@ -57,6 +59,7 @@ fi
 %patch80 -p1
 %patch82 -p1
 %patch83 -p1
+%patch12 -p1
 
 for f in AUTHORS ChangeLog; do
     iconv -f iso-8859-1 -t utf8 < ${f} > ${f}.utf8
@@ -106,6 +109,8 @@ fi
 
 
 %changelog
+* Thu Apr 30 2020 <cxhong@us.ibm.com> 1.8.18-3
+  Add security patch CVE-2020-5208 
 * Thu Nov 15 2018 <gongjie@linux.vnet.ibm.com> 1.8.18-2
   Rebuild on RHEL 8. Intigrate patches from RHEL 8
 * Tue May 30 2017 <vhu@us.im.com> 1.8.18
