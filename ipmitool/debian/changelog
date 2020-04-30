@@ -1,3 +1,8 @@
+ipmitool-xcat (1.8.18-3) unstable; urgency=low
+  * Add security patch CVE-2020-5208
+
+ -- cxhong <cxhong@us.ibm.com>  Thu, 29 Apr 2020 11:10:00 +0100
+
 ipmitool-xcat (1.8.18) unstable; urgency=low
   * Upgrade to 1.8.18 version
 
