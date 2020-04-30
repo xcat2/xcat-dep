@@ -1,12 +1,12 @@
 ipmitool-xcat (1.8.18-3) unstable; urgency=low
   * Add security patch CVE-2020-5208
 
- -- cxhong <cxhong@us.ibm.com>  Thu, 29 Apr 2020 11:10:00 +0100
+ -- cxhong <cxhong@us.ibm.com>  Thu, 30 Apr 2020 11:10:00 +0100
 
 ipmitool-xcat (1.8.18) unstable; urgency=low
-  * Upgrade to 1.8.18 version
+  * Upgrade to 1.8.18 version 
 
- -- Victor Hu <vhu@us.ibm.com> Tue, 30 May 2017 14:41:01 -0400 
+ -- Victor Hu <vhu@us.ibm.com>  Tue, 30 May 2017 14:41:01 +0100
 
 ipmitool-xcat (1.8.17-1) unstable; urgency=low
   * Make ipmitool exit gracefully when receiving `INT`, `TERM` or `HUP` signal.
