@@ -26,7 +26,7 @@ if (grep /Red Hat Enterprise Linux Server release 5\.\d/, @output) {
 } elsif (grep /SUSE Linux Enterprise Server 12/, @output) {
   $os = "sles12";
 } elsif (grep /SUSE Linux Enterprise Server 15/, @output) {
-  $os = "sle15";
+  $os = "sles15";
 } else {
   print "unknow os\n";
   exit 1;
