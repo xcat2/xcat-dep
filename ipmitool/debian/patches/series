@@ -1,3 +1,5 @@
 ipmitool-1.8.18-saneretry.patch
 ipmitool-1.8.18-rflash.patch
 ipmitool-1.8.18-signal.patch
+0002-openssl.patch
+0012-CVE-2020-5208.patch

@@ -1,7 +1,7 @@
 #! /usr/bin/perl
 
 my $version = "1.8.18";
-my $release = "0";
+my $release = "3";
 
 #check the distro
 $cmd = "cat /etc/*release";
@@ -13,6 +13,8 @@ if (grep /Red Hat Enterprise Linux Server release 5\.\d/, @output) {
   $os = "rh6";
 } elsif (grep /Red Hat Enterprise Linux Server release 7\.\d/, @output) {
   $os = "rh7";
+} elsif (grep /Red Hat Enterprise Linux release 8\.\d/, @output) {
+  $os = "rh8";
 } elsif (grep /CentOS Linux release 7\.\d/, @output) {
   $os = "rh7";
 } elsif (grep /CentOS release 6\.\d/, @output) {
@@ -23,6 +25,8 @@ if (grep /Red Hat Enterprise Linux Server release 5\.\d/, @output) {
   $os = "sles11";
 } elsif (grep /SUSE Linux Enterprise Server 12/, @output) {
   $os = "sles12";
+} elsif (grep /SUSE Linux Enterprise Server 15/, @output) {
+  $os = "sles15";
 } else {
   print "unknow os\n";
   exit 1;
@@ -49,7 +53,8 @@ if ( (! -f "$pwd/ipmitool-$version.tar.gz")
   || (! -f "$pwd/ipmitool.spec")
   || (! -f "$pwd/ipmitool-$version-saneretry.patch")
   || (! -f "$pwd/ipmitool-$version-rflash.patch")
-  || (! -f "$pwd/ipmitool-$version-signal.patch")) {  
+  || (! -f "$pwd/ipmitool-$version-signal.patch")  
+  || (! -f "$pwd/0012-CVE-2020-5208.patch")) {  
   print "missed some necessary files for building.\n";
   exit 1;
 }
@@ -57,7 +62,7 @@ if ( (! -f "$pwd/ipmitool-$version.tar.gz")
 my $blddir;
 if ($os eq "rh5") {
   $blddir = "/usr/src/redhat";
-} elsif (($os eq "rh6") || ($os eq "rh7")) {
+} elsif ($os =~ /rh\d/) {
   $blddir = "/root/rpmbuild";
 } elsif ($os =~ /sles1\d/) {
   $blddir = "/usr/src/packages";
@@ -115,12 +120,6 @@ if (! -f $objrpm) {
   print "The obj file has been built successfully, you can get it here: $dstdir\n";
   exit 0;
 }
-
-
-
-
-
-
 
 sub runcmd () {
   my $cmd = shift;
