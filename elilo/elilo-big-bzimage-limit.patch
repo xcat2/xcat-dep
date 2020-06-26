@@ -1,0 +1,17 @@
+Nowadays x86_64 bzImage with a lot of built-in drivers may well be over 8 MB and
+it will not boot with kernel_size limited at 8 MB. Increase the limit to 15 MB.
+
+Reading file size at runtime could be a better solution.
+
+diff -uNr elilo-3.16-source.orig/x86_64/bzimage.c elilo-3.16-source/x86_64/bzimage.c
+--- elilo-3.16-source.orig/x86_64/bzimage.c	2012-11-19 22:01:04.000000000 +0100
++++ elilo-3.16-source/x86_64/bzimage.c	2014-05-14 13:44:00.352004159 +0200
+@@ -34,7 +34,7 @@
+ boot_params_t *param_start = NULL;
+ UINTN param_size = 0;
+ 
+-UINTN kernel_size = 0x800000;	/* 8M (default x86_64 bzImage size limit) */
++UINTN kernel_size = 0xF00000;
+ 
+ static VOID *
+ bzImage_alloc()

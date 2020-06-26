@@ -15,7 +15,8 @@ BuildArch:	noarch
 
 
 Source0: elilo-3.14-source.tar.gz
-Patch: elilo-xcat.patch
+Patch1: elilo-xcat.patch
+Patch2: elilo-big-bzimage-limit.patch
 
 %description
 elilo with patches from the xCAT team.  Most significantly, adds iPXE usage to the network support
