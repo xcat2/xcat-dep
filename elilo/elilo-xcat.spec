@@ -1,6 +1,6 @@
 Name:           elilo-xcat
 Version:        3.14
-Release:        4
+Release:        5
 Summary:        xCAT patched variant of elilo
 
 Group:          System Environment/Kernel
@@ -15,7 +15,8 @@ BuildArch:	noarch
 
 
 Source0: elilo-3.14-source.tar.gz
-Patch: elilo-xcat.patch
+Patch1: elilo-xcat.patch
+Patch2: elilo-big-bzimage-limit.patch
 
 %description
 elilo with patches from the xCAT team.  Most significantly, adds iPXE usage to the network support
@@ -23,7 +24,8 @@ elilo with patches from the xCAT team.  Most significantly, adds iPXE usage to t
 %prep
 
 %setup   -n elilo
-%patch -p1
+%patch1  -p1
+%patch2  -p1
 
 %build
 
