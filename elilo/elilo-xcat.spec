@@ -1,6 +1,6 @@
 Name:           elilo-xcat
 Version:        3.14
-Release:        4
+Release:        5
 Summary:        xCAT patched variant of elilo
 
 Group:          System Environment/Kernel
