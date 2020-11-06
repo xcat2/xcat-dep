@@ -1,3 +1,9 @@
+elilo-xcat (3.14-5) UNRELEASED; urgency=low
+
+  * bump up the kernel_size from 8M to 15M 
+
+ -- xCAT <https://github.com/xcat2/>  Fri, 10 Jul 2020 23:16:56 -0800
+
 elilo-xcat (3.14-4) UNRELEASED; urgency=low
 
   * modify the package to be arch indep 
