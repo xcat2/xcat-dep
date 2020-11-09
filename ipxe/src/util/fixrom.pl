@@ -14,7 +14,8 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
 
 use strict;
 use warnings;
@@ -28,7 +29,13 @@ my @romfiles = @ARGV;
 foreach my $romfile ( @romfiles ) {
   my $rom = new Option::ROM;
   $rom->load ( $romfile );
-  $rom->pnp_header->fix_checksum() if $rom->pnp_header;
-  $rom->fix_checksum();
+  my $image = $rom;
+  while ( $image ) {
+    $image->pnp_header->fix_checksum() if $image->pnp_header;
+    $image->undi_header->fix_checksum() if $image->undi_header;
+    $image->ipxe_header->fix_checksum() if $image->ipxe_header;
+    $image->fix_checksum();
+    $image = $image->next_image();
+  }
   $rom->save ( $romfile );
 }

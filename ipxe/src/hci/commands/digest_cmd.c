@@ -13,31 +13,40 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
+
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
+#include <getopt.h>
 #include <ipxe/command.h>
+#include <ipxe/parseopt.h>
 #include <ipxe/image.h>
 #include <ipxe/crypto.h>
-
 #include <ipxe/md5.h>
 #include <ipxe/sha1.h>
+#include <usr/imgmgmt.h>
 
-/**
- * "digest" command syntax message
+/** @file
  *
- * @v argv		Argument list
+ * Digest commands
+ *
  */
-static void digest_syntax ( char **argv ) {
-	printf ( "Usage:\n"
-		 "  %s <image name>\n"
-		 "\n"
-		 "Calculate the %s of an image\n",
-		 argv[0], argv[0] );
-}
+
+/** "digest" options */
+struct digest_options {};
+
+/** "digest" option list */
+static struct option_descriptor digest_opts[] = {};
+
+/** "digest" command descriptor */
+static struct command_descriptor digest_cmd =
+	COMMAND_DESC ( struct digest_options, digest_opts, 1, MAX_ARGUMENTS,
+		       "<image> [<image>...]" );
 
 /**
  * The "digest" command
@@ -45,11 +54,11 @@ static void digest_syntax ( char **argv ) {
  * @v argc		Argument count
  * @v argv		Argument list
  * @v digest		Digest algorithm
- * @ret rc		Exit code
+ * @ret rc		Return status code
  */
 static int digest_exec ( int argc, char **argv,
 			 struct digest_algorithm *digest ) {
-	const char *image_name;
+	struct digest_options opts;
 	struct image *image;
 	uint8_t digest_ctx[digest->ctxsize];
 	uint8_t digest_out[digest->digestsize];
@@ -59,23 +68,17 @@ static int digest_exec ( int argc, char **argv,
 	size_t frag_len;
 	int i;
 	unsigned j;
+	int rc;
 
-	if ( argc < 2 ||
-	     !strcmp ( argv[1], "--help" ) ||
-	     !strcmp ( argv[1], "-h" ) ) {
-		digest_syntax ( argv );
-		return 1;
-	}
+	/* Parse options */
+	if ( ( rc = parse_options ( argc, argv, &digest_cmd, &opts ) ) != 0 )
+		return rc;
 
-	for ( i = 1 ; i < argc ; i++ ) {
-		image_name = argv[i];
+	for ( i = optind ; i < argc ; i++ ) {
 
-		/* find image */
-		image = find_image ( image_name );
-		if ( ! image ) {
-			printf ( "No such image: %s\n", image_name );
+		/* Acquire image */
+		if ( ( rc = imgacquire ( argv[i], 0, &image ) ) != 0 )
 			continue;
-		}
 		offset = 0;
 		len = image->len;
 

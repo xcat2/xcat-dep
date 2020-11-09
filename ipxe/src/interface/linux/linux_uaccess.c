@@ -13,7 +13,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 FILE_LICENCE(GPL2_OR_LATER);
@@ -26,7 +27,6 @@ FILE_LICENCE(GPL2_OR_LATER);
  *
  */
 
-PROVIDE_UACCESS_INLINE(linux, phys_to_user);
 PROVIDE_UACCESS_INLINE(linux, user_to_phys);
 PROVIDE_UACCESS_INLINE(linux, virt_to_user);
 PROVIDE_UACCESS_INLINE(linux, user_to_virt);

@@ -15,7 +15,8 @@
 *
 *    You should have received a copy of the GNU General Public License
 *    along with this program; if not, write to the Free Software
-*    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+*    02110-1301, USA.
 *
 *    Portions of this code based on:
 *               sundance.c: A Linux device driver for the Sundance ST201 "Alta"
@@ -257,7 +258,7 @@ static struct sundance_private {
 	const char *nic_name;
 	/* Frequently used values */
 
-	unsigned int cur_rx;	/* Producer/consumer ring indicies */
+	unsigned int cur_rx;	/* Producer/consumer ring indices */
 	unsigned int mtu;
 
 	/* These values keep track of the tranceiver/media in use */
@@ -440,7 +441,7 @@ static void sundance_irq ( struct nic *nic, irq_action_t action ) {
 /**************************************************************************
 POLL - Wait for a frame
 ***************************************************************************/
-static int sundance_poll(struct nic *nic, int retreive)
+static int sundance_poll(struct nic *nic, int retrieve)
 {
 	/* return true if there's an ethernet packet ready to read */
 	/* nic->packet should contain data on return */
@@ -454,7 +455,7 @@ static int sundance_poll(struct nic *nic, int retreive)
 		return 0;
 
 	/* There is a packet ready */
-	if(!retreive)
+	if(!retrieve)
 		return 1;
 
 	intr_status = inw(nic->ioaddr + IntrStatus);
@@ -575,7 +576,7 @@ static int sundance_probe ( struct nic *nic, struct pci_device *pci ) {
 	/* BASE is used throughout to address the card */
 	BASE = pci->ioaddr;
 	printf(" sundance.c: Found %s Vendor=0x%hX Device=0x%hX\n",
-	       pci->driver_name, pci->vendor, pci->device);
+	       pci->id->name, pci->vendor, pci->device);
 
 	/* Get the MAC Address by reading the EEPROM */
 	for (i = 0; i < 3; i++) {
@@ -597,15 +598,16 @@ static int sundance_probe ( struct nic *nic, struct pci_device *pci ) {
 	/* point to private storage */
 	sdc = &sdx;
 
-	sdc->nic_name = pci->driver_name;
+	sdc->nic_name = pci->id->name;
 	sdc->mtu = mtu;
 
-	pci_read_config_byte(pci, PCI_REVISION_ID, &sdc->pci_rev_id);
+	pci_read_config_byte(pci, PCI_REVISION, &sdc->pci_rev_id);
 
 	DBG ( "Device revision id: %hx\n", sdc->pci_rev_id );
 
 	/* Print out some hardware info */
-	DBG ( "%s: %s at ioaddr %hX, ", pci->driver_name, nic->node_addr, (unsigned int) BASE);
+	DBG ( "%s: %s at ioaddr %hX, ",
+	      pci->id->name, nic->node_addr, (unsigned int) BASE);
 
 	sdc->mii_preamble_required = 0;
 	if (1) {

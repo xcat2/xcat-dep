@@ -10,7 +10,7 @@
  * no-ops.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #ifdef UACCESS_EFI
 #define UACCESS_PREFIX_efi
@@ -56,6 +56,12 @@ UACCESS_INLINE ( efi, userptr_add ) ( userptr_t userptr, off_t offset ) {
 	return trivial_userptr_add ( userptr, offset );
 }
 
+static inline __always_inline off_t
+UACCESS_INLINE ( efi, userptr_sub ) ( userptr_t userptr,
+				      userptr_t subtrahend ) {
+	return trivial_userptr_sub ( userptr, subtrahend );
+}
+
 static inline __always_inline void
 UACCESS_INLINE ( efi, memcpy_user ) ( userptr_t dest, off_t dest_off,
 					userptr_t src, off_t src_off,
@@ -68,6 +74,13 @@ UACCESS_INLINE ( efi, memmove_user ) ( userptr_t dest, off_t dest_off,
 					 userptr_t src, off_t src_off,
 					 size_t len ) {
 	trivial_memmove_user ( dest, dest_off, src, src_off, len );
+}
+
+static inline __always_inline int
+UACCESS_INLINE ( efi, memcmp_user ) ( userptr_t first, off_t first_off,
+				      userptr_t second, off_t second_off,
+				      size_t len ) {
+	return trivial_memcmp_user ( first, first_off, second, second_off, len);
 }
 
 static inline __always_inline void

@@ -98,6 +98,27 @@ $flag_table = array (
 	   "cfgsec" => "general"
 	   ),
 
+        "KEYBOARD_MAP"
+        => array (
+           "flag" => "KEYBOARD_MAP",
+           "type" => "choice",
+	   "options" => array("al","az","bg","by","cf","cz","de","dk","es","et","fi","fr",
+	      "gr","hu","il","it","lt","mk","mt","nl","no","pl","pt","ro","ru","sg","sr",
+	      "th","ua","uk","us","wo"),
+           "value" => "us",
+           "cfgsec" => "console"
+           ),
+
+	"LOG_LEVEL"
+	=> array (
+	   "flag" => "LOG_LEVEL",
+	   "type" => "choice",
+	   "options" => array("LOG_NONE","LOG_EMERG","LOG_ALERT","LOG_CRIT","LOG_ERR",
+	      "LOG_WARNING","LOG_NOTICE","LOG_INFO","LOG_DEBUG","LOG_ALL"),
+	   "value" => "LOG_NONE",
+	   "cfgsec" => "console"
+	   ),
+
 	// End Console Options
 
 	// Begin Network Protocol Options:
@@ -487,6 +508,17 @@ $flag_table = array (
 
 	// End Wireless options
 
+	// Obscure options required to compile
+	"NETDEV_DISCARD_RATE"
+	=> array (
+	   "flag" => "NETDEV_DISCARD_RATE",
+	   "type" => "integer",
+	   "value" => "0",
+	   "cfgsec" => "general",
+	   "hide_from_user" => true
+	   )
+
+	// End Obscure options
 );
 
 // For emacs:

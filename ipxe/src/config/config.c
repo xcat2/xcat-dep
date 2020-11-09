@@ -1,14 +1,30 @@
 /*
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2, or (at
- * your option) any later version.
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <config/general.h>
 #include <config/console.h>
+#include <config/sideband.h>
+#include <config/settings.h>
 
 /** @file
  *
@@ -28,50 +44,18 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * in the final iPXE executable built.
  */
 
-/*
- * Build ID string calculations
- *
- */
-#undef XSTR
-#undef STR
-#define XSTR(s) STR(s)
-#define STR(s) #s
-
-#ifdef BUILD_SERIAL
-#include "config/.buildserial.h"
-#define BUILD_SERIAL_STR " #" XSTR(BUILD_SERIAL_NUM)
-#else
-#define BUILD_SERIAL_STR ""
-#endif
-
-#ifdef BUILD_ID
-#define BUILD_ID_STR " " BUILD_ID
-#else
-#define BUILD_ID_STR ""
-#endif
-
-#if defined(BUILD_ID) || defined(BUILD_SERIAL)
-#define BUILD_STRING " [build" BUILD_ID_STR BUILD_SERIAL_STR "]"
-#else
-#define BUILD_STRING ""
-#endif
+PROVIDE_REQUIRING_SYMBOL();
 
 /*
  * Drag in all requested console types
  *
  */
 
-#ifdef CONSOLE_PCBIOS
-REQUIRE_OBJECT ( bios_console );
-#endif
 #ifdef CONSOLE_SERIAL
-REQUIRE_OBJECT ( serial_console );
+REQUIRE_OBJECT ( serial );
 #endif
 #ifdef CONSOLE_DIRECT_VGA
 REQUIRE_OBJECT ( video_subr );
-#endif
-#ifdef CONSOLE_BTEXT
-REQUIRE_OBJECT ( btext );
 #endif
 #ifdef CONSOLE_PC_KBD
 REQUIRE_OBJECT ( pc_kbd );
@@ -79,11 +63,20 @@ REQUIRE_OBJECT ( pc_kbd );
 #ifdef CONSOLE_SYSLOG
 REQUIRE_OBJECT ( syslog );
 #endif
+#ifdef CONSOLE_SYSLOGS
+REQUIRE_OBJECT ( syslogs );
+#endif
 #ifdef CONSOLE_EFI
 REQUIRE_OBJECT ( efi_console );
 #endif
 #ifdef CONSOLE_LINUX
 REQUIRE_OBJECT ( linux_console );
+#endif
+#ifdef CONSOLE_VMWARE
+REQUIRE_OBJECT ( vmconsole );
+#endif
+#ifdef CONSOLE_DEBUGCON
+REQUIRE_OBJECT ( debugcon );
 #endif
 
 /*
@@ -92,6 +85,9 @@ REQUIRE_OBJECT ( linux_console );
  */
 #ifdef NET_PROTO_IPV4
 REQUIRE_OBJECT ( ipv4 );
+#endif
+#ifdef NET_PROTO_IPV6
+REQUIRE_OBJECT ( ipv6 );
 #endif
 
 /*
@@ -121,8 +117,8 @@ REQUIRE_OBJECT ( https );
 #ifdef DOWNLOAD_PROTO_FTP
 REQUIRE_OBJECT ( ftp );
 #endif
-#ifdef DOWNLOAD_PROTO_TFTM
-REQUIRE_OBJECT ( tftm );
+#ifdef DOWNLOAD_PROTO_NFS
+REQUIRE_OBJECT ( nfs_open );
 #endif
 #ifdef DOWNLOAD_PROTO_SLAM
 REQUIRE_OBJECT ( slam );
@@ -134,6 +130,9 @@ REQUIRE_OBJECT ( slam );
  */
 #ifdef SANBOOT_PROTO_ISCSI
 REQUIRE_OBJECT ( iscsi );
+#endif
+#ifdef SANBOOT_PROTO_HTTP
+REQUIRE_OBJECT ( httpblock );
 #endif
 
 /*
@@ -154,17 +153,8 @@ REQUIRE_OBJECT ( nbi );
 #ifdef IMAGE_ELF
 REQUIRE_OBJECT ( elfboot );
 #endif
-#ifdef IMAGE_FREEBSD
-REQUIRE_OBJECT ( freebsd );
-#endif
 #ifdef IMAGE_MULTIBOOT
 REQUIRE_OBJECT ( multiboot );
-#endif
-#ifdef IMAGE_AOUT
-REQUIRE_OBJECT ( aout );
-#endif
-#ifdef IMAGE_WINCE
-REQUIRE_OBJECT ( wince );
 #endif
 #ifdef IMAGE_PXE
 REQUIRE_OBJECT ( pxe_image );
@@ -188,6 +178,9 @@ REQUIRE_OBJECT ( comboot_resolv );
 #endif
 #ifdef IMAGE_EFI
 REQUIRE_OBJECT ( efi_image );
+#endif
+#ifdef IMAGE_SDI
+REQUIRE_OBJECT ( sdi );
 #endif
 
 /*
@@ -213,11 +206,17 @@ REQUIRE_OBJECT ( route_cmd );
 #ifdef IMAGE_CMD
 REQUIRE_OBJECT ( image_cmd );
 #endif
+#ifdef IMAGE_TRUST_CMD
+REQUIRE_OBJECT ( image_trust_cmd );
+#endif
 #ifdef DHCP_CMD
 REQUIRE_OBJECT ( dhcp_cmd );
 #endif
 #ifdef SANBOOT_CMD
 REQUIRE_OBJECT ( sanboot_cmd );
+#endif
+#ifdef MENU_CMD
+REQUIRE_OBJECT ( menu_cmd );
 #endif
 #ifdef LOGIN_CMD
 REQUIRE_OBJECT ( login_cmd );
@@ -233,6 +232,54 @@ REQUIRE_OBJECT ( pxe_cmd );
 #endif
 #ifdef LOTEST_CMD
 REQUIRE_OBJECT ( lotest_cmd );
+#endif
+#ifdef VLAN_CMD
+REQUIRE_OBJECT ( vlan_cmd );
+#endif
+#ifdef POWEROFF_CMD
+REQUIRE_OBJECT ( poweroff_cmd );
+#endif
+#ifdef REBOOT_CMD
+REQUIRE_OBJECT ( reboot_cmd );
+#endif
+#ifdef CPUID_CMD
+REQUIRE_OBJECT ( cpuid_cmd );
+#endif
+#ifdef SYNC_CMD
+REQUIRE_OBJECT ( sync_cmd );
+#endif
+#ifdef SHELL_CMD
+REQUIRE_OBJECT ( shell );
+#endif
+#ifdef NSLOOKUP_CMD
+REQUIRE_OBJECT ( nslookup_cmd );
+#endif
+#ifdef PCI_CMD
+REQUIRE_OBJECT ( pci_cmd );
+#endif
+#ifdef PARAM_CMD
+REQUIRE_OBJECT ( param_cmd );
+#endif
+#ifdef NEIGHBOUR_CMD
+REQUIRE_OBJECT ( neighbour_cmd );
+#endif
+#ifdef PING_CMD
+REQUIRE_OBJECT ( ping_cmd );
+#endif
+#ifdef CONSOLE_CMD
+REQUIRE_OBJECT ( console_cmd );
+#endif
+#ifdef IPSTAT_CMD
+REQUIRE_OBJECT ( ipstat_cmd );
+#endif
+#ifdef PROFSTAT_CMD
+REQUIRE_OBJECT ( profstat_cmd );
+#endif
+#ifdef NTP_CMD
+REQUIRE_OBJECT ( ntp_cmd );
+#endif
+#ifdef CERT_CMD
+REQUIRE_OBJECT ( cert_cmd );
 #endif
 
 /*
@@ -265,3 +312,41 @@ REQUIRE_OBJECT ( embedded );
 #ifdef DRIVERS_LINUX
 REQUIRE_OBJECT ( tap );
 #endif
+
+/*
+ * Drag in relevant sideband entry points
+ */
+#ifdef CONFIG_BOFM
+#ifdef BOFM_EFI
+REQUIRE_OBJECT ( efi_bofm );
+#endif /* BOFM_EFI */
+#endif /* CONFIG_BOFM */
+
+/*
+ * Drag in relevant settings sources
+ */
+#ifdef PCI_SETTINGS
+REQUIRE_OBJECT ( pci_settings );
+#endif
+#ifdef VMWARE_SETTINGS
+REQUIRE_OBJECT ( guestinfo );
+#endif
+#ifdef CPUID_SETTINGS
+REQUIRE_OBJECT ( cpuid_settings );
+#endif
+#ifdef MEMMAP_SETTINGS
+REQUIRE_OBJECT ( memmap_settings );
+#endif
+#ifdef VRAM_SETTINGS
+REQUIRE_OBJECT ( vram_settings );
+#endif
+#ifdef ACPI_SETTINGS
+REQUIRE_OBJECT ( acpi_settings );
+#endif
+
+/*
+ * Drag in selected keyboard map
+ */
+#define REQUIRE_KEYMAP_OBJECT( _map ) REQUIRE_OBJECT ( keymap_ ## _map )
+#define REQUIRE_KEYMAP( _map ) REQUIRE_KEYMAP_OBJECT ( _map )
+REQUIRE_KEYMAP ( KEYBOARD_MAP );

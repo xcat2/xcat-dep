@@ -272,7 +272,7 @@ enum net80211_crypto_alg {
 #define NET80211_MAX_RATES	16
 
 /** The maximum number of channels we allow to be configured simultaneously */
-#define NET80211_MAX_CHANNELS	32
+#define NET80211_MAX_CHANNELS	40
 
 /** Seconds we'll wait to get all fragments of a packet */
 #define NET80211_FRAG_TIMEOUT	2
@@ -1093,7 +1093,8 @@ struct net80211_wlan
 
 
 /** 802.11 encryption key setting */
-extern struct setting net80211_key_setting __setting;
+extern const struct setting
+net80211_key_setting __setting ( SETTING_NETDEV_EXTRA, key );
 
 
 /**

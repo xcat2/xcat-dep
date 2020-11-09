@@ -1,7 +1,7 @@
 /** @file
   StatusCode related definitions in PI.
 
-Copyright (c) 2009 - 2010, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2009 - 2013, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials are licensed and made available under
 the terms and conditions of the BSD License that accompanies this distribution.
 The full text of the license may be found at
@@ -22,7 +22,7 @@ WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 FILE_LICENCE ( BSD3 );
 
 //
-// Required for IA32 and IPF defines for CPU exception types
+// Required for IA32, X64, IPF, ARM and EBC defines for CPU exception types
 //
 #include <ipxe/efi/Protocol/DebugSupport.h>
 
@@ -566,9 +566,9 @@ typedef struct {
 /// IO Bus Class PCI Subclass Progress Code definitions.
 ///
 ///@{
-#define EFI_IOB_PCI_PC_BUS_ENUM   (EFI_SUBCLASS_SPECIFIC | 0x00000000)
-#define EFI_IOB_PCI_PC_RES_ALLOC  (EFI_SUBCLASS_SPECIFIC | 0x00000001)
-#define EFI_IOB_PCI_PC_HPC_INIT   (EFI_SUBCLASS_SPECIFIC | 0x00000002)
+#define EFI_IOB_PCI_BUS_ENUM   (EFI_SUBCLASS_SPECIFIC | 0x00000000)
+#define EFI_IOB_PCI_RES_ALLOC  (EFI_SUBCLASS_SPECIFIC | 0x00000001)
+#define EFI_IOB_PCI_HPC_INIT   (EFI_SUBCLASS_SPECIFIC | 0x00000002)
 ///@}
 
 //
@@ -598,7 +598,10 @@ typedef struct {
 //
 // IO Bus Class ATA/ATAPI Subclass Progress Code definitions.
 //
-
+#define EFI_IOB_ATA_BUS_SMART_ENABLE          (EFI_SUBCLASS_SPECIFIC | 0x00000000)
+#define EFI_IOB_ATA_BUS_SMART_DISABLE         (EFI_SUBCLASS_SPECIFIC | 0x00000001)
+#define EFI_IOB_ATA_BUS_SMART_OVERTHRESHOLD   (EFI_SUBCLASS_SPECIFIC | 0x00000002)
+#define EFI_IOB_ATA_BUS_SMART_UNDERTHRESHOLD  (EFI_SUBCLASS_SPECIFIC | 0x00000003)
 //
 // IO Bus Class FC Subclass Progress Code definitions.
 //
@@ -671,6 +674,8 @@ typedef struct {
 //
 // IO Bus Class ATA/ATAPI Subclass Error Code definitions.
 //
+#define EFI_IOB_ATA_BUS_SMART_NOTSUPPORTED  (EFI_SUBCLASS_SPECIFIC | 0x00000000)
+#define EFI_IOB_ATA_BUS_SMART_DISABLED      (EFI_SUBCLASS_SPECIFIC | 0x00000001)
 
 //
 // IO Bus Class FC Subclass Error Code definitions.
@@ -713,6 +718,9 @@ typedef struct {
 #define EFI_SOFTWARE_EFI_BOOT_SERVICE     (EFI_SOFTWARE | 0x00100000)
 #define EFI_SOFTWARE_EFI_RUNTIME_SERVICE  (EFI_SOFTWARE | 0x00110000)
 #define EFI_SOFTWARE_EFI_DXE_SERVICE      (EFI_SOFTWARE | 0x00120000)
+#define EFI_SOFTWARE_X64_EXCEPTION        (EFI_SOFTWARE | 0x00130000)
+#define EFI_SOFTWARE_ARM_EXCEPTION        (EFI_SOFTWARE | 0x00140000)
+
 ///@}
 
 ///
@@ -755,11 +763,11 @@ typedef struct {
 /// Software Class PEI Module Subclass Progress Code definitions.
 ///
 ///@{
-#define EFI_SW_PEIM_PC_RECOVERY_BEGIN (EFI_SUBCLASS_SPECIFIC | 0x00000000)
-#define EFI_SW_PEIM_PC_CAPSULE_LOAD   (EFI_SUBCLASS_SPECIFIC | 0x00000001)
-#define EFI_SW_PEIM_PC_CAPSULE_START  (EFI_SUBCLASS_SPECIFIC | 0x00000002)
-#define EFI_SW_PEIM_PC_RECOVERY_USER  (EFI_SUBCLASS_SPECIFIC | 0x00000003)
-#define EFI_SW_PEIM_PC_RECOVERY_AUTO  (EFI_SUBCLASS_SPECIFIC | 0x00000004)
+#define EFI_SW_PEI_PC_RECOVERY_BEGIN  (EFI_SUBCLASS_SPECIFIC | 0x00000000)
+#define EFI_SW_PEI_PC_CAPSULE_LOAD    (EFI_SUBCLASS_SPECIFIC | 0x00000001)
+#define EFI_SW_PEI_PC_CAPSULE_START   (EFI_SUBCLASS_SPECIFIC | 0x00000002)
+#define EFI_SW_PEI_PC_RECOVERY_USER   (EFI_SUBCLASS_SPECIFIC | 0x00000003)
+#define EFI_SW_PEI_PC_RECOVERY_AUTO   (EFI_SUBCLASS_SPECIFIC | 0x00000004)
 #define EFI_SW_PEI_PC_S3_BOOT_SCRIPT  (EFI_SUBCLASS_SPECIFIC | 0x00000005)
 #define EFI_SW_PEI_PC_OS_WAKE         (EFI_SUBCLASS_SPECIFIC | 0x00000006)
 ///@}
@@ -806,6 +814,14 @@ typedef struct {
 #define EFI_SW_RT_PC_HANDOFF_TO_NEXT  (EFI_SUBCLASS_SPECIFIC | 0x00000001)
 #define EFI_SW_RT_PC_RETURN_TO_LAST   (EFI_SUBCLASS_SPECIFIC | 0x00000002)
 ///@}
+
+//
+// Software Class X64 Exception Subclass Progress Code definitions.
+//
+
+//
+// Software Class ARM Exception Subclass Progress Code definitions.
+//
 
 //
 // Software Class EBC Exception Subclass Progress Code definitions.
@@ -988,8 +1004,8 @@ typedef struct {
 /// Software Class PEI Module Subclass Error Code definitions.
 ///
 ///@{
-#define EFI_SW_PEIM_EC_NO_RECOVERY_CAPSULE         (EFI_SUBCLASS_SPECIFIC | 0x00000000)
-#define EFI_SW_PEIM_EC_INVALID_CAPSULE_DESCRIPTOR  (EFI_SUBCLASS_SPECIFIC | 0x00000001)
+#define EFI_SW_PEI_EC_NO_RECOVERY_CAPSULE          (EFI_SUBCLASS_SPECIFIC | 0x00000000)
+#define EFI_SW_PEI_EC_INVALID_CAPSULE_DESCRIPTOR   (EFI_SUBCLASS_SPECIFIC | 0x00000001)
 #define EFI_SW_PEI_EC_S3_RESUME_PPI_NOT_FOUND      (EFI_SUBCLASS_SPECIFIC | 0x00000002)
 #define EFI_SW_PEI_EC_S3_BOOT_SCRIPT_ERROR         (EFI_SUBCLASS_SPECIFIC | 0x00000003)
 #define EFI_SW_PEI_EC_S3_OS_WAKE_ERROR             (EFI_SUBCLASS_SPECIFIC | 0x00000004)
@@ -1121,8 +1137,65 @@ typedef struct {
 // Software Class EFI Runtime Service Subclass Error Code definitions.
 //
 
-//
-// Software Class EFI DXE Service Subclass Error Code definitions.
-//
+///
+/// Software Class EFI DXE Service Subclass Error Code definitions.
+///
+///@{
+#define EFI_SW_DXE_BS_PC_BEGIN_CONNECTING_DRIVERS   (EFI_SUBCLASS_SPECIFIC | 0x00000005)
+#define EFI_SW_DXE_BS_PC_VERIFYING_PASSWORD         (EFI_SUBCLASS_SPECIFIC | 0x00000006)
+///@}
+
+///
+/// Software Class DXE RT Driver Subclass Progress Code definitions.
+///
+///@{
+#define EFI_SW_DXE_RT_PC_S0                         (EFI_SUBCLASS_SPECIFIC | 0x00000000)
+#define EFI_SW_DXE_RT_PC_S1                         (EFI_SUBCLASS_SPECIFIC | 0x00000001)
+#define EFI_SW_DXE_RT_PC_S2                         (EFI_SUBCLASS_SPECIFIC | 0x00000002)
+#define EFI_SW_DXE_RT_PC_S3                         (EFI_SUBCLASS_SPECIFIC | 0x00000003)
+#define EFI_SW_DXE_RT_PC_S4                         (EFI_SUBCLASS_SPECIFIC | 0x00000004)
+#define EFI_SW_DXE_RT_PC_S5                         (EFI_SUBCLASS_SPECIFIC | 0x00000005)
+///@}
+
+///
+/// Software Class X64 Exception Subclass Error Code definitions.
+/// These exceptions are derived from the debug protocol
+/// definitions in the EFI specification.
+///
+///@{
+#define EFI_SW_EC_X64_DIVIDE_ERROR                   EXCEPT_X64_DIVIDE_ERROR
+#define EFI_SW_EC_X64_DEBUG                          EXCEPT_X64_DEBUG
+#define EFI_SW_EC_X64_NMI                            EXCEPT_X64_NMI
+#define EFI_SW_EC_X64_BREAKPOINT                     EXCEPT_X64_BREAKPOINT
+#define EFI_SW_EC_X64_OVERFLOW                       EXCEPT_X64_OVERFLOW
+#define EFI_SW_EC_X64_BOUND                          EXCEPT_X64_BOUND
+#define EFI_SW_EC_X64_INVALID_OPCODE                 EXCEPT_X64_INVALID_OPCODE
+#define EFI_SW_EC_X64_DOUBLE_FAULT                   EXCEPT_X64_DOUBLE_FAULT
+#define EFI_SW_EC_X64_INVALID_TSS                    EXCEPT_X64_INVALID_TSS
+#define EFI_SW_EC_X64_SEG_NOT_PRESENT                EXCEPT_X64_SEG_NOT_PRESENT
+#define EFI_SW_EC_X64_STACK_FAULT                    EXCEPT_X64_STACK_FAULT
+#define EFI_SW_EC_X64_GP_FAULT                       EXCEPT_X64_GP_FAULT
+#define EFI_SW_EC_X64_PAGE_FAULT                     EXCEPT_X64_PAGE_FAULT
+#define EFI_SW_EC_X64_FP_ERROR                       EXCEPT_X64_FP_ERROR
+#define EFI_SW_EC_X64_ALIGNMENT_CHECK                EXCEPT_X64_ALIGNMENT_CHECK
+#define EFI_SW_EC_X64_MACHINE_CHECK                  EXCEPT_X64_MACHINE_CHECK
+#define EFI_SW_EC_X64_SIMD                           EXCEPT_X64_SIMD
+///@}
+
+///
+/// Software Class ARM Exception Subclass Error Code definitions.
+/// These exceptions are derived from the debug protocol
+/// definitions in the EFI specification.
+///
+///@{
+#define EFI_SW_EC_ARM_RESET                          EXCEPT_ARM_RESET
+#define EFI_SW_EC_ARM_UNDEFINED_INSTRUCTION          EXCEPT_ARM_UNDEFINED_INSTRUCTION
+#define EFI_SW_EC_ARM_SOFTWARE_INTERRUPT             EXCEPT_ARM_SOFTWARE_INTERRUPT
+#define EFI_SW_EC_ARM_PREFETCH_ABORT                 EXCEPT_ARM_PREFETCH_ABORT
+#define EFI_SW_EC_ARM_DATA_ABORT                     EXCEPT_ARM_DATA_ABORT
+#define EFI_SW_EC_ARM_RESERVED                       EXCEPT_ARM_RESERVED
+#define EFI_SW_EC_ARM_IRQ                            EXCEPT_ARM_IRQ
+#define EFI_SW_EC_ARM_FIQ                            EXCEPT_ARM_FIQ
+///@}
 
 #endif

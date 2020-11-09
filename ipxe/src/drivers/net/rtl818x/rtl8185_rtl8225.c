@@ -30,7 +30,6 @@ FILE_LICENCE(GPL2_ONLY);
 #define RTL8225_ANAPARAM2_OFF	0x840dec11
 
 #define min(a,b) (((a)<(b))?(a):(b))
-#define ARRAY_SIZE(a) (int)(sizeof(a)/sizeof((a)[0]))
 
 static inline void rtl8225_write_phy_ofdm(struct net80211_device *dev,
 					  u8 addr, u8 data)
@@ -71,7 +70,7 @@ static void rtl8225_write(struct net80211_device *dev, u8 addr, u16 data)
 	udelay(10);
 
 	for (i = 15; i >= 0; i--) {
-		u16 reg = reg80 | !!(bangdata & (1 << i));
+		u16 reg = ( reg80 | ( ( bangdata >> i ) & 1 ) );
 
 		if (i & 1)
 			rtl818x_iowrite16(priv, &priv->map->RFPinsOutput, reg);
@@ -323,7 +322,7 @@ static void rtl8225_rf_set_tx_power(struct net80211_device *dev, int channel)
 static void rtl8225_rf_init(struct net80211_device *dev)
 {
 	struct rtl818x_priv *priv = dev->priv;
-	int i;
+	unsigned int i;
 
 	rtl818x_set_anaparam(priv, RTL8225_ANAPARAM_ON);
 
@@ -552,7 +551,7 @@ static const u16 rtl8225z2_rxgain[] = {
 static void rtl8225z2_rf_init(struct net80211_device *dev)
 {
 	struct rtl818x_priv *priv = dev->priv;
-	int i;
+	unsigned int i;
 
 	rtl818x_set_anaparam(priv, RTL8225_ANAPARAM_ON);
 

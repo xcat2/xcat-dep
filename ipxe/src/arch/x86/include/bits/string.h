@@ -1,44 +1,48 @@
-#ifndef ETHERBOOT_BITS_STRING_H
-#define ETHERBOOT_BITS_STRING_H
-/*
- * Taken from Linux /usr/include/asm/string.h
- * All except memcpy, memmove, memset and memcmp removed.
- *
- * Non-standard memswap() function added because it saves quite a bit
- * of code (mbrown@fensystems.co.uk).
- */
+#ifndef X86_BITS_STRING_H
+#define X86_BITS_STRING_H
 
 /*
- * This string-include defines all string functions as inline
- * functions. Use gcc. It also assumes ds=es=data space, this should be
- * normal. Most of the string-functions are rather heavily hand-optimized,
- * see especially strtok,strstr,str[c]spn. They should work, but are not
- * very easy to understand. Everything is done entirely within the register
- * set, making the functions fast and clean. String instructions have been
- * used through-out, making for "slightly" unclear code :-)
+ * Copyright (C) 2007 Michael Brown <mbrown@fensystems.co.uk>.
  *
- *		NO Copyright (C) 1991, 1992 Linus Torvalds,
- *		consider these trivial functions to be PD.
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License as
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( PUBLIC_DOMAIN );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#define __HAVE_ARCH_MEMCPY
+/** @file
+ *
+ * Optimised string operations
+ *
+ */
 
 extern void * __memcpy ( void *dest, const void *src, size_t len );
+extern void * __memcpy_reverse ( void *dest, const void *src, size_t len );
 
-#if 0
-static inline __attribute__ (( always_inline )) void *
-__memcpy ( void *dest, const void *src, size_t len ) {
-	int d0, d1, d2;
-	__asm__ __volatile__ ( "rep ; movsb"
-			       : "=&c" ( d0 ), "=&S" ( d1 ), "=&D" ( d2 )
-			       : "0" ( len ), "1" ( src ), "2" ( dest )
-			       : "memory" );
-	return dest; 
-}
-#endif
-
+/**
+ * Copy memory area (where length is a compile-time constant)
+ *
+ * @v dest		Destination address
+ * @v src		Source address
+ * @v len		Length
+ * @ret dest		Destination address
+ */
 static inline __attribute__ (( always_inline )) void *
 __constant_memcpy ( void *dest, const void *src, size_t len ) {
 	union {
@@ -150,103 +154,191 @@ __constant_memcpy ( void *dest, const void *src, size_t len ) {
 	return dest;
 }
 
-#define memcpy( dest, src, len )			\
-	( __builtin_constant_p ( (len) ) ?		\
-	  __constant_memcpy ( (dest), (src), (len) ) :	\
-	  __memcpy ( (dest), (src), (len) ) )
-
-#define __HAVE_ARCH_MEMMOVE
-static inline void * memmove(void * dest,const void * src, size_t n)
-{
-int d0, d1, d2;
-if (dest<src)
-__asm__ __volatile__(
-	"cld\n\t"
-	"rep\n\t"
-	"movsb"
-	: "=&c" (d0), "=&S" (d1), "=&D" (d2)
-	:"0" (n),"1" (src),"2" (dest)
-	: "memory");
-else
-__asm__ __volatile__(
-	"std\n\t"
-	"rep\n\t"
-	"movsb\n\t"
-	"cld"
-	: "=&c" (d0), "=&S" (d1), "=&D" (d2)
-	:"0" (n),
-	 "1" (n-1+(const char *)src),
-	 "2" (n-1+(char *)dest)
-	:"memory");
-return dest;
+/**
+ * Copy memory area
+ *
+ * @v dest		Destination address
+ * @v src		Source address
+ * @v len		Length
+ * @ret dest		Destination address
+ */
+static inline __attribute__ (( always_inline )) void *
+memcpy ( void *dest, const void *src, size_t len ) {
+	if ( __builtin_constant_p ( len ) ) {
+		return __constant_memcpy ( dest, src, len );
+	} else {
+		return __memcpy ( dest, src, len );
+	}
 }
 
-#define __HAVE_ARCH_MEMSET
-static inline void * memset(void *s, int c,size_t count)
-{
-int d0, d1;
-__asm__ __volatile__(
-	"cld\n\t"
-	"rep\n\t"
-	"stosb"
-	: "=&c" (d0), "=&D" (d1)
-	:"a" (c),"1" (s),"0" (count)
-	:"memory");
-return s;
+extern void * __memmove ( void *dest, const void *src, size_t len );
+
+/**
+ * Copy (possibly overlapping) memory area
+ *
+ * @v dest		Destination address
+ * @v src		Source address
+ * @v len		Length
+ * @ret dest		Destination address
+ */
+static inline __attribute__ (( always_inline )) void *
+memmove ( void *dest, const void *src, size_t len ) {
+	ssize_t offset = ( dest - src );
+
+	if ( __builtin_constant_p ( offset ) ) {
+		if ( offset <= 0 ) {
+			return memcpy ( dest, src, len );
+		} else {
+			return __memcpy_reverse ( dest, src, len );
+		}
+	} else {
+		return __memmove ( dest, src, len );
+	}
 }
 
-#define __HAVE_ARCH_MEMSWAP
-static inline void * memswap(void *dest, void *src, size_t n)
-{
-long d0, d1, d2, d3;
-__asm__ __volatile__(
-	"\n1:\t"
-	"movb (%2),%%al\n\t"
-	"xchgb (%1),%%al\n\t"
-	"inc %1\n\t"
-	"stosb\n\t"
-	"loop 1b"
-	: "=&c" (d0), "=&S" (d1), "=&D" (d2), "=&a" (d3)
-	: "0" (n), "1" (src), "2" (dest)
-	: "memory" );
-return dest;
+/**
+ * Fill memory region
+ *
+ * @v dest		Destination address
+ * @v fill		Fill pattern
+ * @v len		Length
+ * @ret dest		Destination address
+ */
+static inline __attribute__ (( always_inline )) void *
+__memset ( void *dest, int fill, size_t len ) {
+	void *discard_D;
+	size_t discard_c;
+
+	__asm__ __volatile__ ( "rep stosb"
+			       : "=&D" ( discard_D ), "=&c" ( discard_c )
+			       : "0" ( dest ), "1" ( len ), "a" ( fill )
+			       : "memory" );
+	return dest;
 }
 
-#define __HAVE_ARCH_STRNCMP
-static inline int strncmp(const char * cs,const char * ct,size_t count)
-{
-register int __res;
-int d0, d1, d2;
-__asm__ __volatile__(
-	"1:\tdecl %3\n\t"
-	"js 2f\n\t"
-	"lodsb\n\t"
-	"scasb\n\t"
-	"jne 3f\n\t"
-	"testb %%al,%%al\n\t"
-	"jne 1b\n"
-	"2:\txorl %%eax,%%eax\n\t"
-	"jmp 4f\n"
-	"3:\tsbbl %%eax,%%eax\n\t"
-	"orb $1,%%al\n"
-	"4:"
-		     :"=a" (__res), "=&S" (d0), "=&D" (d1), "=&c" (d2)
-		     :"1" (cs),"2" (ct),"3" (count));
-return __res;
+/**
+ * Fill memory region with zero (where length is a compile-time constant)
+ *
+ * @v dest		Destination address
+ * @v len		Length
+ * @ret dest		Destination address
+ */
+static inline __attribute__ (( always_inline )) void *
+__constant_memset_zero ( void *dest, size_t len ) {
+	union {
+		uint32_t u32[2];
+		uint16_t u16[4];
+		uint8_t  u8[8];
+	} __attribute__ (( __may_alias__ )) *dest_u = dest;
+	void *edi;
+	uint32_t eax;
+
+	switch ( len ) {
+	case 0 : /* 0 bytes */
+		return dest;
+
+	/* Single-register moves.  Almost certainly better than a
+	 * string operation.  We can avoid clobbering any registers,
+	 * we can reuse a zero that happens to already be in a
+	 * register, and we can optimise away the code entirely if the
+	 * memset() is used to clear a region which then gets
+	 * immediately overwritten.
+	 */
+	case 1 : /* 3 bytes */
+		dest_u->u8[0] = 0;
+		return dest;
+	case 2: /* 5 bytes */
+		dest_u->u16[0] = 0;
+		return dest;
+	case 4: /* 6 bytes */
+		dest_u->u32[0] = 0;
+		return dest;
+
+	/* Double-register moves.  Very probably better than a string
+	 * operation.
+	 */
+	case 3 : /* 9 bytes */
+		dest_u->u16[0] = 0;
+		dest_u->u8[2]  = 0;
+		return dest;
+	case 5 : /* 10 bytes */
+		dest_u->u32[0] = 0;
+		dest_u->u8[4]  = 0;
+		return dest;
+	case 6 : /* 12 bytes */
+		dest_u->u32[0] = 0;
+		dest_u->u16[2] = 0;
+		return dest;
+	case 8 : /* 13 bytes */
+		dest_u->u32[0] = 0;
+		dest_u->u32[1] = 0;
+		return dest;
+	}
+
+	/* As with memcpy(), we can potentially save space by using
+	 * multiple single-byte "stos" instructions instead of loading
+	 * up ecx and using "rep stosb".
+	 *
+	 * "load ecx, rep movsb" is 7 bytes, plus an average of 1 byte
+	 * to allow for saving/restoring ecx 50% of the time.
+	 *
+	 * "stosl" and "stosb" are 1 byte each, "stosw" is two bytes.
+	 *
+	 * The calculations are therefore the same as for memcpy(),
+	 * giving a cutoff point of around 26 bytes.
+	 */
+
+	edi = dest;
+	eax = 0;
+
+	if ( len >= 26 )
+		return __memset ( dest, 0, len );
+
+	if ( len >= 6*4 )
+		__asm__ __volatile__ ( "stosl" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+	if ( len >= 5*4 )
+		__asm__ __volatile__ ( "stosl" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+	if ( len >= 4*4 )
+		__asm__ __volatile__ ( "stosl" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+	if ( len >= 3*4 )
+		__asm__ __volatile__ ( "stosl" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+	if ( len >= 2*4 )
+		__asm__ __volatile__ ( "stosl" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+	if ( len >= 1*4 )
+		__asm__ __volatile__ ( "stosl" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+	if ( ( len % 4 ) >= 2 )
+		__asm__ __volatile__ ( "stosw" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+	if ( ( len % 2 ) >= 1 )
+		__asm__ __volatile__ ( "stosb" : "=&D" ( edi ), "=&a" ( eax )
+				       : "0" ( edi ), "1" ( eax ) : "memory" );
+
+	return dest;
 }
 
-#define __HAVE_ARCH_STRLEN
-static inline size_t strlen(const char * s)
-{
-int d0;
-register int __res;
-__asm__ __volatile__(
-	"repne\n\t"
-	"scasb\n\t"
-	"notl %0\n\t"
-	"decl %0"
-	:"=c" (__res), "=&D" (d0) :"1" (s),"a" (0), "0" (0xffffffff));
-return __res;
+/**
+ * Fill memory region
+ *
+ * @v dest		Destination address
+ * @v fill		Fill pattern
+ * @v len		Length
+ * @ret dest		Destination address
+ */
+static inline __attribute__ (( always_inline )) void *
+memset ( void *dest, int fill, size_t len ) {
+
+	if ( __builtin_constant_p ( fill ) && ( fill == 0 ) &&
+	     __builtin_constant_p ( len ) ) {
+		return __constant_memset_zero ( dest, len );
+	} else {
+		return __memset ( dest, fill, len );
+	}
 }
 
-#endif /* ETHERBOOT_BITS_STRING_H */
+#endif /* X86_BITS_STRING_H */

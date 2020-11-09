@@ -8,7 +8,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <ipxe/list.h>
 #include <ipxe/tables.h>
@@ -54,10 +54,27 @@ struct device_description {
 /** ISA bus type */
 #define BUS_TYPE_ISA 5
 
+/** TAP bus type */
+#define BUS_TYPE_TAP 6
+
+/** EFI bus type */
+#define BUS_TYPE_EFI 7
+
+/** Xen bus type */
+#define BUS_TYPE_XEN 8
+
+/** Hyper-V bus type */
+#define BUS_TYPE_HV 9
+
+/** USB bus type */
+#define BUS_TYPE_USB 10
+
 /** A hardware device */
 struct device {
 	/** Name */
-	char name[16];
+	char name[40];
+	/** Driver name */
+	const char *driver_name;
 	/** Device description */
 	struct device_description desc;
 	/** Devices on the same bus */
@@ -82,6 +99,8 @@ struct root_device {
 	struct device dev;
 	/** Root device driver */
 	struct root_driver *driver;
+	/** Driver-private data */
+	void *priv;
 };
 
 /** A root device driver */
@@ -111,6 +130,45 @@ struct root_driver {
 
 /** Declare a root device */
 #define __root_device __table_entry ( ROOT_DEVICES, 01 )
+
+/**
+ * Set root device driver-private data
+ *
+ * @v rootdev		Root device
+ * @v priv		Private data
+ */
+static inline void rootdev_set_drvdata ( struct root_device *rootdev,
+					 void *priv ){
+	rootdev->priv = priv;
+}
+
+/**
+ * Get root device driver-private data
+ *
+ * @v rootdev		Root device
+ * @ret priv		Private data
+ */
+static inline void * rootdev_get_drvdata ( struct root_device *rootdev ) {
+	return rootdev->priv;
+}
+
+extern int device_keep_count;
+
+/**
+ * Prevent devices from being removed on shutdown
+ *
+ */
+static inline void devices_get ( void ) {
+	device_keep_count++;
+}
+
+/**
+ * Allow devices to be removed on shutdown
+ *
+ */
+static inline void devices_put ( void ) {
+	device_keep_count--;
+}
 
 extern struct device * identify_device ( struct interface *intf );
 #define identify_device_TYPE( object_type ) \

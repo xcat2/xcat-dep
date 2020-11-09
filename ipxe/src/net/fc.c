@@ -13,10 +13,15 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stddef.h>
 #include <stdlib.h>
@@ -1178,11 +1183,11 @@ static struct interface_descriptor fc_port_ns_plogi_desc =
  * @v transport		Transport interface
  * @v node		Fibre Channel node name
  * @v port		Fibre Channel port name
+ * @v name		Symbolic port name
  * @ret rc		Return status code
  */
 int fc_port_open ( struct interface *transport, const struct fc_name *node_wwn,
-		   const struct fc_name *port_wwn ) {
-	static unsigned int portindex = 0;
+		   const struct fc_name *port_wwn, const char *name ) {
 	struct fc_port *port;
 
 	/* Allocate and initialise structure */
@@ -1198,9 +1203,7 @@ int fc_port_open ( struct interface *transport, const struct fc_name *node_wwn,
 	INIT_LIST_HEAD ( &port->xchgs );
 	memcpy ( &port->node_wwn, node_wwn, sizeof ( port->node_wwn ) );
 	memcpy ( &port->port_wwn, port_wwn, sizeof ( port->port_wwn ) );
-
-	/* Create device name */
-	snprintf ( port->name, sizeof ( port->name ), "fc%d", portindex++ );
+	snprintf ( port->name, sizeof ( port->name ), "%s", name );
 
 	DBGC ( port, "FCPORT %s opened as %s",
 	       port->name, fc_ntoa ( &port->node_wwn ) );
@@ -1582,7 +1585,7 @@ static void fc_ulp_close ( struct fc_ulp *ulp, int rc ) {
 	       fc_ntoa ( &ulp->peer->port_wwn ), ulp->type, strerror ( rc ) );
 
 	/* Sanity check */
-	assert ( ulp->usage == 0 );
+	assert ( list_empty ( &ulp->users ) );
 
 	/* Stop link monitor */
 	fc_link_stop ( &ulp->link );
@@ -1596,35 +1599,50 @@ static void fc_ulp_close ( struct fc_ulp *ulp, int rc ) {
 }
 
 /**
- * Increment Fibre Channel upper-layer protocol active usage count
+ * Attach Fibre Channel upper-layer protocol user
  *
- * @v ulp		Fibre Channel ulp
+ * @v ulp		Fibre Channel upper-layer protocol
+ * @v user		Fibre Channel upper-layer protocol user
  */
-void fc_ulp_increment ( struct fc_ulp *ulp ) {
+void fc_ulp_attach ( struct fc_ulp *ulp, struct fc_ulp_user *user ) {
+
+	/* Sanity check */
+	assert ( user->ulp == NULL );
 
 	/* Increment peer's usage count */
 	fc_peer_increment ( ulp->peer );
 
-	/* Increment our usage count */
-	ulp->usage++;
+	/* Attach user */
+	user->ulp = fc_ulp_get ( ulp );
+	list_add ( &user->list, &ulp->users );
 }
 
 /**
- * Decrement Fibre Channel upper-layer protocol active usage count
+ * Detach Fibre Channel upper-layer protocol user
  *
- * @v ulp		Fibre Channel ulp
+ * @v user		Fibre Channel upper-layer protocol user
  */
-void fc_ulp_decrement ( struct fc_ulp *ulp ) {
+void fc_ulp_detach ( struct fc_ulp_user *user ) {
+	struct fc_ulp *ulp = user->ulp;
 
-	/* Sanity check */
-	assert ( ulp->usage > 0 );
+	/* Do nothing if not attached */
+	if ( ! ulp )
+		return;
 
-	/* Decrement our usage count and log out if we reach zero */
-	if ( --(ulp->usage) == 0 )
+	/* Sanity checks */
+	list_check_contains_entry ( user, &ulp->users, list );
+
+	/* Detach user and log out if no users remain */
+	list_del ( &user->list );
+	if ( list_empty ( &ulp->users ) )
 		fc_ulp_logout ( ulp, 0 );
 
 	/* Decrement our peer's usage count */
 	fc_peer_decrement ( ulp->peer );
+
+	/* Drop reference */
+	user->ulp = NULL;
+	fc_ulp_put ( ulp );
 }
 
 /**
@@ -1638,12 +1656,30 @@ void fc_ulp_decrement ( struct fc_ulp *ulp ) {
  */
 int fc_ulp_login ( struct fc_ulp *ulp, const void *param, size_t param_len,
 		   int originated ) {
+	struct fc_ulp_user *user;
+	struct fc_ulp_user *tmp;
 
 	/* Perform implicit logout if logged in and service parameters differ */
 	if ( fc_link_ok ( &ulp->link ) &&
 	     ( ( ulp->param_len != param_len ) ||
 	       ( memcmp ( ulp->param, param, ulp->param_len ) != 0 ) ) ) {
 		fc_ulp_logout ( ulp, 0 );
+	}
+
+	/* Work around a bug in some versions of the Linux Fibre
+	 * Channel stack, which fail to fully initialise image pairs
+	 * established via a PRLI originated by the Linux stack
+	 * itself.
+	 */
+	if ( originated )
+		ulp->flags |= FC_ULP_ORIGINATED_LOGIN_OK;
+	if ( ! ( ulp->flags & FC_ULP_ORIGINATED_LOGIN_OK ) ) {
+		DBGC ( ulp, "FCULP %s/%02x sending extra PRLI to work around "
+		       "Linux bug\n",
+		       fc_ntoa ( &ulp->peer->port_wwn ), ulp->type );
+		fc_link_stop ( &ulp->link );
+		fc_link_start ( &ulp->link );
+		return 0;
 	}
 
 	/* Log in, if applicable */
@@ -1672,18 +1708,11 @@ int fc_ulp_login ( struct fc_ulp *ulp, const void *param, size_t param_len,
 	/* Record login */
 	fc_link_up ( &ulp->link );
 
-	/* Work around a bug in some versions of the Linux Fibre
-	 * Channel stack, which fail to fully initialise image pairs
-	 * established via a PRLI originated by the Linux stack
-	 * itself.
-	 */
-	if ( originated )
-		ulp->flags |= FC_ULP_ORIGINATED_LOGIN_OK;
-	if ( ! ( ulp->flags & FC_ULP_ORIGINATED_LOGIN_OK ) ) {
-		DBGC ( ulp, "FCULP %s/%02x sending extra PRLI to work around "
-		       "Linux bug\n",
-		       fc_ntoa ( &ulp->peer->port_wwn ), ulp->type );
-		fc_link_start ( &ulp->link );
+	/* Notify users of link state change */
+	list_for_each_entry_safe ( user, tmp, &ulp->users, list ) {
+		fc_ulp_user_get ( user );
+		user->examine ( user );
+		fc_ulp_user_put ( user );
 	}
 
 	return 0;
@@ -1696,6 +1725,8 @@ int fc_ulp_login ( struct fc_ulp *ulp, const void *param, size_t param_len,
  * @v rc		Reason for logout
  */
 void fc_ulp_logout ( struct fc_ulp *ulp, int rc ) {
+	struct fc_ulp_user *user;
+	struct fc_ulp_user *tmp;
 
 	DBGC ( ulp, "FCULP %s/%02x logged out: %s\n",
 	       fc_ntoa ( &ulp->peer->port_wwn ), ulp->type, strerror ( rc ) );
@@ -1713,8 +1744,15 @@ void fc_ulp_logout ( struct fc_ulp *ulp, int rc ) {
 	/* Record logout */
 	fc_link_err ( &ulp->link, rc );
 
+	/* Notify users of link state change */
+	list_for_each_entry_safe ( user, tmp, &ulp->users, list ) {
+		fc_ulp_user_get ( user );
+		user->examine ( user );
+		fc_ulp_user_put ( user );
+	}
+
 	/* Close ULP if there are no clients attached */
-	if ( ulp->usage == 0 )
+	if ( list_empty ( &ulp->users ) )
 		fc_ulp_close ( ulp, rc );
 }
 
@@ -1797,6 +1835,7 @@ static struct fc_ulp * fc_ulp_create ( struct fc_peer *peer,
 	ulp->peer = fc_peer_get ( peer );
 	list_add_tail ( &ulp->list, &peer->ulps );
 	ulp->type = type;
+	INIT_LIST_HEAD ( &ulp->users );
 
 	/* Start link state monitor */
 	fc_link_start ( &ulp->link );
@@ -1900,3 +1939,9 @@ struct fc_ulp * fc_ulp_get_port_id_type ( struct fc_port *port,
  err_peer_get_wwn:
 	return NULL;
 }
+
+/* Drag in objects via fc_ports */
+REQUIRING_SYMBOL ( fc_ports );
+
+/* Drag in Fibre Channel configuration */
+REQUIRE_OBJECT ( config_fc );

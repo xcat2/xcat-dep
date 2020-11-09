@@ -8,7 +8,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /**
  * Clear a window to the bottom from current cursor position
@@ -86,5 +86,15 @@ int wdeleteln ( WINDOW *win ) {
 int werase ( WINDOW *win ) {
 	wmove( win, 0, 0 );
 	wclrtobot( win );
+	return OK;
+}
+
+/**
+ * Completely clear the screen
+ *
+ * @ret rc	return status code
+ */
+int erase ( void ) {
+	stdscr->scr->erase( stdscr->scr, stdscr->attrs );
 	return OK;
 }

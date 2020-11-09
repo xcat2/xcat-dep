@@ -14,7 +14,8 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
 
 use strict;
 use warnings;
@@ -42,9 +43,6 @@ my $baserom = shift @roms;
 my $offset = $baserom->length;
 
 foreach my $rom ( @roms ) {
-
-  # Update base length
-  $baserom->{length} += $rom->{length};
 
   # Merge initialisation entry point
   merge_entry_points ( $baserom->{init}, $rom->{init}, $offset );
@@ -84,8 +82,32 @@ foreach my $rom ( @roms ) {
     merge_entry_points ( $baserom_pnp->{bev}, $rom_pnp->{bev}, $offset );
   }
 
+  # Update iPXE header, if present
+  my $baserom_ipxe = $baserom->ipxe_header;
+  my $rom_ipxe = $rom->ipxe_header;
+  if ( $baserom_ipxe ) {
+
+    # Update shrunk length
+    $baserom_ipxe->{shrunk_length} = ( $baserom->{length} +
+				       ( $rom_ipxe ?
+					 $rom_ipxe->{shrunk_length} :
+					 $rom->{length} ) );
+
+    # Fix checksum
+    $baserom_ipxe->fix_checksum();
+  }
+
+  # Update base length
+  $baserom->{length} += $rom->{length};
+
   # Fix checksum for this ROM segment
   $rom->fix_checksum();
+
+  # Add this ROM to base ROM
+  my $data = substr ( $baserom->get(), 0, $baserom->length() );
+  $data .= $rom->get();
+  $data .= $baserom->next_image()->get() if $baserom->next_image();
+  $baserom->set ( $data );
 
   $offset += $rom->length;
 }
@@ -93,6 +115,3 @@ foreach my $rom ( @roms ) {
 $baserom->pnp_header->fix_checksum() if $baserom->pnp_header;
 $baserom->fix_checksum();
 $baserom->save ( "-" );
-foreach my $rom ( @roms ) {
-  $rom->save ( "-" );
-}

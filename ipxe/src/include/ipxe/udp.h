@@ -9,7 +9,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stddef.h>
 #include <ipxe/iobuf.h>
@@ -22,10 +22,6 @@ struct sockaddr;
 /**
  * UDP constants
  */
-
-#define UDP_MAX_HLEN	72
-#define UDP_MAX_TXIOB	ETH_MAX_MTU
-#define UDP_MIN_TXIOB	ETH_ZLEN
 
 /**
  * A UDP header

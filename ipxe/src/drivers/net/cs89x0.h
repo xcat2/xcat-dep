@@ -31,7 +31,8 @@ FILE_LICENCE ( GPL2_ONLY );
 
    You should have received a copy of the GNU General Public License
    along with this program; if not, write to the Free Software
-   Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.  */
+   Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+   02110-1301, USA. */
 
 #define PP_ChipID 0x0000	/* offset   0h -> Corp -ID              */
 				/* offset   2h -> Model/Product Number  */
@@ -469,9 +470,6 @@ FILE_LICENCE ( GPL2_ONLY );
 #define PNP_CNF_INT 0x70
 #define PNP_CNF_DMA 0x74
 #define PNP_CNF_MEM 0x48
-
-#define BIT0 1
-#define BIT15 0x8000
 
 /*
  * Local variables:

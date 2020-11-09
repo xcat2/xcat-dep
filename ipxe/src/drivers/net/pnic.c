@@ -6,8 +6,18 @@ Bochs Pseudo NIC driver for Etherboot
 /*
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2, or (at
- * your option) any later version.
+ * published by the Free Software Foundation; either version 2 of the
+ * License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  * See pnic_api.h for an explanation of the Bochs Pseudo NIC.
  */
@@ -215,8 +225,7 @@ static void pnic_remove ( struct pci_device *pci ) {
 /**************************************************************************
 PROBE - Look for an adapter, this routine's visible to the outside
 ***************************************************************************/
-static int pnic_probe ( struct pci_device *pci,
-			const struct pci_device_id *id __unused ) {
+static int pnic_probe ( struct pci_device *pci ) {
 	struct net_device *netdev;
 	struct pnic *pnic;
 	uint16_t api_version;

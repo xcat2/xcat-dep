@@ -47,8 +47,7 @@ static struct pci_device_id sis190_isa_bridge_tbl[] = {
 	PCI_ID (0x1039, 0x0968, "", "", 0),
 };
 
-static int sis190_isa_bridge_probe(struct pci_device *pdev __unused,
-				   const struct pci_device_id *ent __unused)
+static int sis190_isa_bridge_probe(struct pci_device *pdev __unused)
 {
 	return 0;
 }
@@ -72,12 +71,6 @@ struct pci_driver sis190_isa_bridge_driver __pci_driver = {
 
 static const u32 sis190_intr_mask =
 	RxQEmpty | RxQInt | TxQ1Int | TxQ0Int | RxHalt | TxHalt | LinkChange;
-
-/*
- * Maximum number of multicast addresses to filter (vs. Rx-all-multicast).
- * The chips use a 64 element hash table based on the Ethernet CRC.
- */
-static const int multicast_filter_limit = 32;
 
 static void __mdio_cmd(void *ioaddr, u32 ctl)
 {
@@ -893,7 +886,7 @@ static int sis190_init_board(struct pci_device *pdev, struct net_device **netdev
 
 	adjust_pci_device(pdev);
 
-	ioaddr = ioremap(pdev->membase, SIS190_REGS_SIZE);
+	ioaddr = pci_ioremap(pdev, pdev->membase, SIS190_REGS_SIZE);
 	if (!ioaddr) {
 		DBG("sis190: cannot remap MMIO, aborting\n");
 		rc = -EIO;
@@ -972,8 +965,8 @@ static int sis190_get_mac_addr_from_apc(struct pci_device *pdev,
 
 	list_for_each_entry(d, &(pdev->dev.siblings), siblings) {
 		unsigned int i;
-		isa_bridge = container_of(d, struct pci_device, dev);
 		for(i = 0; i < sis190_isa_bridge_driver.id_count; i++) {
+			isa_bridge = container_of(d, struct pci_device, dev);
 			if(isa_bridge->vendor ==
 			     sis190_isa_bridge_driver.ids[i].vendor
 			     && isa_bridge->device ==
@@ -1110,12 +1103,10 @@ static struct net_device_operations sis190_netdev_ops = {
 	.irq = sis190_irq,
 };
 
-static int sis190_probe(struct pci_device *pdev,
-			   const struct pci_device_id *ent __unused)
+static int sis190_probe(struct pci_device *pdev)
 {
 	struct sis190_private *tp;
 	struct net_device *dev;
-	void *ioaddr;
 	int rc;
 
 	rc = sis190_init_board(pdev, &dev);
@@ -1126,7 +1117,6 @@ static int sis190_probe(struct pci_device *pdev,
 	pci_set_drvdata(pdev, dev);
 
 	tp = netdev_priv(dev);
-	ioaddr = tp->mmio_addr;
 
 	rc = sis190_get_mac_addr(pdev, dev);
 	if (rc < 0)

@@ -13,14 +13,20 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdio.h>
 #include <getopt.h>
 #include <ipxe/command.h>
+#include <ipxe/parseopt.h>
 #include <usr/route.h>
 
 /** @file
@@ -29,52 +35,33 @@ FILE_LICENCE ( GPL2_OR_LATER );
  *
  */
 
-/**
- * "route" command syntax message
- *
- * @v argv		Argument list
- */
-static void route_syntax ( char **argv ) {
-	printf ( "Usage:\n"
-		 "  %s\n"
-		 "\n"
-		 "Displays the routing table\n",
-		 argv[0] );
-}
+/** "route" options */
+struct route_options {};
+
+/** "route" option list */
+static struct option_descriptor route_opts[] = {};
+
+/** "route" command descriptor */
+static struct command_descriptor route_cmd =
+	COMMAND_DESC ( struct route_options, route_opts, 0, 0, NULL );
 
 /**
  * The "route" command
  *
  * @v argc		Argument count
  * @v argv		Argument list
- * @ret rc		Exit code
+ * @ret rc		Return status code
  */
 static int route_exec ( int argc, char **argv ) {
-	static struct option longopts[] = {
-		{ "help", 0, NULL, 'h' },
-		{ NULL, 0, NULL, 0 },
-	};
-
-	int c;
+	struct route_options opts;
+	int rc;
 
 	/* Parse options */
-	while ( ( c = getopt_long ( argc, argv, "h", longopts, NULL ) ) >= 0 ){
-		switch ( c ) {
-		case 'h':
-			/* Display help text */
-		default:
-			/* Unrecognised/invalid option */
-			route_syntax ( argv );
-			return 1;
-		}
-	}
-
-	if ( optind != argc ) {
-		route_syntax ( argv );
-		return 1;
-	}
+	if ( ( rc = parse_options ( argc, argv, &route_cmd, &opts ) ) != 0 )
+		return rc;
 
 	route();
+
 	return 0;
 }
 

@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <ipxe/dhcp.h>
 #include <ipxe/dhcpopts.h>
@@ -22,10 +22,6 @@ struct dhcp_packet {
 	struct refcnt refcnt;
 	/** The DHCP packet contents */
 	struct dhcphdr *dhcphdr;
-	/** Maximum length of the DHCP packet buffer */
-	size_t max_len;
-	/** Used length of the DHCP packet buffer */
-	size_t len;
 	/** DHCP options */
 	struct dhcp_options options;
 	/** Settings interface */
@@ -52,6 +48,17 @@ dhcppkt_get ( struct dhcp_packet *dhcppkt ) {
 static inline __attribute__ (( always_inline )) void
 dhcppkt_put ( struct dhcp_packet *dhcppkt ) {
 	ref_put ( &dhcppkt->refcnt );
+}
+
+/**
+ * Get used length of DHCP packet
+ *
+ * @v dhcppkt		DHCP packet
+ * @ret len		Used length
+ */
+static inline int dhcppkt_len ( struct dhcp_packet *dhcppkt ) {
+	return ( offsetof ( struct dhcphdr, options ) +
+		 dhcppkt->options.used_len );
 }
 
 extern int dhcppkt_store ( struct dhcp_packet *dhcppkt, unsigned int tag,

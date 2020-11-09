@@ -13,7 +13,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -48,7 +49,7 @@ int aes_wrap ( const void *kek, const void *src, void *dest, int nblk )
 	cipher_setkey ( &aes_algorithm, aes_ctx, kek, 16 );
 
 	/* Set up */
-	memset ( A, 0xA6, sizeof ( A ) );
+	memset ( A, 0xA6, 8 );
 	memmove ( dest + 8, src, nblk * 8 );
 
 	/* Wrap */

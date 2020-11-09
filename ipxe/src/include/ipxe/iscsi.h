@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/socket.h>
@@ -16,6 +16,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/refcnt.h>
 #include <ipxe/xfer.h>
 #include <ipxe/process.h>
+#include <ipxe/acpi.h>
+#include <ipxe/settings.h>
 
 /** Default iSCSI port */
 #define ISCSI_PORT 3260
@@ -36,7 +38,7 @@ union iscsi_segment_lengths {
 		 */
 		uint8_t data_len[3];
 	} bytes;
-	/** Ths data length (measured in bytes), in network byte
+	/** The data length (measured in bytes), in network byte
 	 * order, with ahs_len as the first byte.
 	 */
 	uint32_t ahs_and_data_len;
@@ -92,6 +94,9 @@ struct iscsi_bhs_common {
 
 /** iSCSI tag magic marker */
 #define ISCSI_TAG_MAGIC 0x18ae0000
+
+/** iSCSI reserved tag value */
+#define ISCSI_TAG_RESERVED 0xffffffff
 
 /**
  * iSCSI basic header segment common request fields
@@ -237,6 +242,8 @@ struct iscsi_bhs_login_response {
 #define ISCSI_STATUS_INITIATOR_ERROR_NOT_FOUND		0x03
 #define ISCSI_STATUS_INITIATOR_ERROR_REMOVED		0x04
 #define ISCSI_STATUS_TARGET_ERROR		0x03
+#define ISCSI_STATUS_TARGET_ERROR_UNAVAILABLE		0x01
+#define ISCSI_STATUS_TARGET_ERROR_NO_RESOURCES		0x02
 
 /**
  * iSCSI SCSI command basic header segment
@@ -454,6 +461,36 @@ struct iscsi_bhs_r2t {
 #define ISCSI_OPCODE_R2T 0x31
 
 /**
+ * iSCSI NOP-In basic header segment
+ *
+ */
+struct iscsi_nop_in {
+	/** Opcode */
+	uint8_t opcode;
+	/** Reserved */
+	uint8_t reserved_a[3];
+	/** Segment lengths */
+	union iscsi_segment_lengths lengths;
+	/** Logical Unit Number */
+	struct scsi_lun lun;
+	/** Initiator Task Tag */
+	uint32_t itt;
+	/** Target Transfer Tag */
+	uint32_t ttt;
+	/** Status sequence number */
+	uint32_t statsn;
+	/** Expected command sequence number */
+	uint32_t expcmdsn;
+	/** Maximum command sequence number */
+	uint32_t maxcmdsn;
+	/** Reserved */
+	uint8_t reserved_b[12];
+};
+
+/** NOP-In opcode */
+#define ISCSI_OPCODE_NOP_IN 0x20
+
+/**
  * An iSCSI basic header segment
  */
 union iscsi_bhs {
@@ -466,6 +503,7 @@ union iscsi_bhs {
 	struct iscsi_bhs_data_in data_in;
 	struct iscsi_bhs_data_out data_out;
 	struct iscsi_bhs_r2t r2t;
+	struct iscsi_nop_in nop_in;
 	unsigned char bytes[ sizeof ( struct iscsi_bhs_common ) ];
 };
 
@@ -479,8 +517,6 @@ enum iscsi_tx_state {
 	ISCSI_TX_AHS,
 	/** Sending the data segment */
 	ISCSI_TX_DATA,
-	/** Sending the data segment padding */
-	ISCSI_TX_DATA_PADDING,
 };
 
 /** State of an iSCSI RX engine */
@@ -507,6 +543,8 @@ struct iscsi_session {
 	/** Transport-layer socket */
 	struct interface socket;
 
+	/** Initiator IQN */
+	char *initiator_iqn;
 	/** Target address */
 	char *target_address;
 	/** Target port */
@@ -611,6 +649,8 @@ struct iscsi_session {
 	struct sockaddr target_sockaddr;
 	/** SCSI LUN (for boot firmware table) */
 	struct scsi_lun lun;
+	/** ACPI descriptor */
+	struct acpi_descriptor desc;
 };
 
 /** iSCSI session is currently in the security negotiation phase */
@@ -658,6 +698,10 @@ struct iscsi_session {
 /** Target authenticated itself correctly */
 #define ISCSI_STATUS_AUTH_REVERSE_OK 0x00040000
 
-extern const char * iscsi_initiator_iqn ( void );
+/** Default initiator IQN prefix */
+#define ISCSI_DEFAULT_IQN_PREFIX "iqn.2010-04.org.ipxe"
+
+extern const struct setting
+initiator_iqn_setting __setting ( SETTING_SANBOOT_EXTRA, initiator-iqn );
 
 #endif /* _IPXE_ISCSI_H */

@@ -1,4 +1,3 @@
-#include <console.h>
 #include <curses.h>
 #include "mucurses.h"
 
@@ -8,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 static void _wupdcurs ( WINDOW *win ) __nonnull;
 void _wputch ( WINDOW *win, chtype ch, int wrap ) __nonnull;
@@ -76,7 +75,7 @@ void _wputch ( WINDOW *win, chtype ch, int wrap ) {
  * @v wrap	wrap "switch"
  */
 void _wputc ( WINDOW *win, char c, int wrap ) {
-	_wputch ( win, ( c | win->attrs ), wrap );
+	_wputch ( win, ( ( ( unsigned char ) c ) | win->attrs ), wrap );
 }
 
 /**
@@ -143,5 +142,15 @@ int wmove ( WINDOW *win, int y, int x ) {
 	win->curs_y = y;
 	win->curs_x = x;
 	_wupdcurs(win);
+	return OK;
+}
+
+/**
+ * Set cursor visibility
+ *
+ * @v visibility cursor visibility
+ */
+int curs_set ( int visibility ) {
+	stdscr->scr->cursor ( stdscr->scr, visibility );
 	return OK;
 }

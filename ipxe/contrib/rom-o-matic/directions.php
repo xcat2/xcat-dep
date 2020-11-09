@@ -1,4 +1,4 @@
-<?
+<?php
 
 /**
  * Copyright (C) 2009 Marty Connor <mdc@etherboot.org>.
@@ -21,12 +21,12 @@
 
 ?>
     <li>
-      Choose an output format: <? echo keys_menubox ( "ofmt", $ofmts,
+      Choose an output format: <?php echo keys_menubox ( "ofmt", $ofmts,
       isset ( $_POST['ofmt'] ) ? $_POST['ofmt'] : "") ?>
       <br><br>
     </li>
     <li>
-      Choose a NIC type: <? echo keys_menubox ( "nic", $nics,
+      Choose a NIC type: <?php echo keys_menubox ( "nic", $nics,
       isset ( $_POST['nic'] ) ? $_POST['nic'] : "" ) ?>
       <br><br>
     </li>
@@ -37,14 +37,14 @@
       <em>PCI VENDOR CODE</em> and <em>PCI DEVICE CODE</em>  <br>
       that match the NIC device for which you are making this image.<br><br>
       Information on how to determine NIC PCI IDs may be found
-      <a href="http://etherboot.org/wiki/romburning"
+      <a href="http://www.ipxe.org/howto/romburning"
       target="_blank">here</a>.
       <br><br>
-      PCI VENDOR CODE:  <? echo textbox ( "pci_vendor_code",
+      PCI VENDOR CODE:  <?php echo textbox ( "pci_vendor_code",
       isset ( $_POST['pci_vendor_code'] ) ? $_POST['pci_vendor_code']
               : "", 6 ); ?>
       &nbsp;&nbsp;
-      PCI DEVICE CODE:  <? echo textbox ( "pci_device_code",
+      PCI DEVICE CODE:  <?php echo textbox ( "pci_device_code",
       isset ( $_POST['pci_device_code'] ) ? $_POST['pci_device_code']
               : "", 6 ); ?>
       <h4>Please note for ROM images:</h4>

@@ -13,15 +13,21 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <errno.h>
 #include <assert.h>
 #include <byteswap.h>
@@ -40,6 +46,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/base16.h>
 #include <ipxe/base64.h>
 #include <ipxe/ibft.h>
+#include <ipxe/efi/efi_path.h>
 #include <ipxe/iscsi.h>
 
 /** @file
@@ -59,6 +66,34 @@ FEATURE ( FEATURE_PROTOCOL, "iSCSI", DHCP_EB_FEATURE_ISCSI, 1 );
 	__einfo_error ( EINFO_EACCES_INCORRECT_TARGET_PASSWORD )
 #define EINFO_EACCES_INCORRECT_TARGET_PASSWORD \
 	__einfo_uniqify ( EINFO_EACCES, 0x02, "Incorrect target password" )
+#define EINVAL_ROOT_PATH_TOO_SHORT \
+	__einfo_error ( EINFO_EINVAL_ROOT_PATH_TOO_SHORT )
+#define EINFO_EINVAL_ROOT_PATH_TOO_SHORT \
+	__einfo_uniqify ( EINFO_EINVAL, 0x01, "Root path too short" )
+#define EINVAL_BAD_CREDENTIAL_MIX \
+	__einfo_error ( EINFO_EINVAL_BAD_CREDENTIAL_MIX )
+#define EINFO_EINVAL_BAD_CREDENTIAL_MIX \
+	__einfo_uniqify ( EINFO_EINVAL, 0x02, "Bad credential mix" )
+#define EINVAL_NO_ROOT_PATH \
+	__einfo_error ( EINFO_EINVAL_NO_ROOT_PATH )
+#define EINFO_EINVAL_NO_ROOT_PATH \
+	__einfo_uniqify ( EINFO_EINVAL, 0x03, "No root path" )
+#define EINVAL_NO_TARGET_IQN \
+	__einfo_error ( EINFO_EINVAL_NO_TARGET_IQN )
+#define EINFO_EINVAL_NO_TARGET_IQN \
+	__einfo_uniqify ( EINFO_EINVAL, 0x04, "No target IQN" )
+#define EINVAL_NO_INITIATOR_IQN \
+	__einfo_error ( EINFO_EINVAL_NO_INITIATOR_IQN )
+#define EINFO_EINVAL_NO_INITIATOR_IQN \
+	__einfo_uniqify ( EINFO_EINVAL, 0x05, "No initiator IQN" )
+#define EIO_TARGET_UNAVAILABLE \
+	__einfo_error ( EINFO_EIO_TARGET_UNAVAILABLE )
+#define EINFO_EIO_TARGET_UNAVAILABLE \
+	__einfo_uniqify ( EINFO_EIO, 0x01, "Target not currently operational" )
+#define EIO_TARGET_NO_RESOURCES \
+	__einfo_error ( EINFO_EIO_TARGET_NO_RESOURCES )
+#define EINFO_EIO_TARGET_NO_RESOURCES \
+	__einfo_uniqify ( EINFO_EIO, 0x02, "Target out of resources" )
 #define ENOTSUP_INITIATOR_STATUS \
 	__einfo_error ( EINFO_ENOTSUP_INITIATOR_STATUS )
 #define EINFO_ENOTSUP_INITIATOR_STATUS \
@@ -71,6 +106,10 @@ FEATURE ( FEATURE_PROTOCOL, "iSCSI", DHCP_EB_FEATURE_ISCSI, 1 );
 	__einfo_error ( EINFO_ENOTSUP_DISCOVERY )
 #define EINFO_ENOTSUP_DISCOVERY \
 	__einfo_uniqify ( EINFO_ENOTSUP, 0x03, "Discovery not supported" )
+#define ENOTSUP_TARGET_STATUS \
+	__einfo_error ( EINFO_ENOTSUP_TARGET_STATUS )
+#define EINFO_ENOTSUP_TARGET_STATUS \
+	__einfo_uniqify ( EINFO_ENOTSUP, 0x04, "Unsupported target status" )
 #define EPERM_INITIATOR_AUTHENTICATION \
 	__einfo_error ( EINFO_EPERM_INITIATOR_AUTHENTICATION )
 #define EINFO_EPERM_INITIATOR_AUTHENTICATION \
@@ -90,29 +129,19 @@ FEATURE ( FEATURE_PROTOCOL, "iSCSI", DHCP_EB_FEATURE_ISCSI, 1 );
 #define EPROTO_INVALID_LARGE_BINARY \
 	__einfo_error ( EINFO_EPROTO_INVALID_LARGE_BINARY )
 #define EINFO_EPROTO_INVALID_LARGE_BINARY \
-	__einfo_uniqify ( EINFO_EPROTO, 0x03, "Invalid large binary" )
+	__einfo_uniqify ( EINFO_EPROTO, 0x03, "Invalid large binary value" )
 #define EPROTO_INVALID_CHAP_RESPONSE \
 	__einfo_error ( EINFO_EPROTO_INVALID_CHAP_RESPONSE )
 #define EINFO_EPROTO_INVALID_CHAP_RESPONSE \
 	__einfo_uniqify ( EINFO_EPROTO, 0x04, "Invalid CHAP response" )
-
-/** iSCSI initiator name (explicitly specified) */
-static char *iscsi_explicit_initiator_iqn;
-
-/** Default iSCSI initiator name (constructed from hostname) */
-static char *iscsi_default_initiator_iqn;
-
-/** iSCSI initiator username */
-static char *iscsi_initiator_username;
-
-/** iSCSI initiator password */
-static char *iscsi_initiator_password;
-
-/** iSCSI target username */
-static char *iscsi_target_username;
-
-/** iSCSI target password */
-static char *iscsi_target_password;
+#define EPROTO_INVALID_KEY_VALUE_PAIR \
+	__einfo_error ( EINFO_EPROTO_INVALID_KEY_VALUE_PAIR )
+#define EINFO_EPROTO_INVALID_KEY_VALUE_PAIR \
+	__einfo_uniqify ( EINFO_EPROTO, 0x05, "Invalid key/value pair" )
+#define EPROTO_VALUE_REJECTED \
+	__einfo_error ( EINFO_EPROTO_VALUE_REJECTED )
+#define EINFO_EPROTO_VALUE_REJECTED					\
+	__einfo_uniqify ( EINFO_EPROTO, 0x06, "Parameter rejected" )
 
 static void iscsi_start_tx ( struct iscsi_session *iscsi );
 static void iscsi_start_login ( struct iscsi_session *iscsi );
@@ -168,6 +197,7 @@ static void iscsi_free ( struct refcnt *refcnt ) {
 	struct iscsi_session *iscsi =
 		container_of ( refcnt, struct iscsi_session, refcnt );
 
+	free ( iscsi->initiator_iqn );
 	free ( iscsi->target_address );
 	free ( iscsi->target_iqn );
 	free ( iscsi->initiator_username );
@@ -198,9 +228,8 @@ static void iscsi_close ( struct iscsi_session *iscsi, int rc ) {
 	process_del ( &iscsi->process );
 
 	/* Shut down interfaces */
-	intf_shutdown ( &iscsi->socket, rc );
-	intf_shutdown ( &iscsi->control, rc );
-	intf_shutdown ( &iscsi->data, rc );
+	intfs_shutdown ( rc, &iscsi->socket, &iscsi->control, &iscsi->data,
+			 NULL );
 }
 
 /**
@@ -310,7 +339,8 @@ static void iscsi_scsi_done ( struct iscsi_session *iscsi, int rc,
 	iscsi->command = NULL;
 
 	/* Send SCSI response, if any */
-	scsi_response ( &iscsi->data, rsp );
+	if ( rsp )
+		scsi_response ( &iscsi->data, rsp );
 
 	/* Close SCSI command, if this is still the same command.  (It
 	 * is possible that the command interface has already been
@@ -383,11 +413,12 @@ static int iscsi_rx_scsi_response ( struct iscsi_session *iscsi,
 		= &iscsi->rx_bhs.scsi_response;
 	struct scsi_rsp rsp;
 	uint32_t residual_count;
+	size_t data_len;
 	int rc;
 
 	/* Buffer up the PDU data */
 	if ( ( rc = iscsi_rx_buffered_data ( iscsi, data, len ) ) != 0 ) {
-		DBGC ( iscsi, "iSCSI %p could not buffer login response: %s\n",
+		DBGC ( iscsi, "iSCSI %p could not buffer SCSI response: %s\n",
 		       iscsi, strerror ( rc ) );
 		return rc;
 	}
@@ -403,9 +434,11 @@ static int iscsi_rx_scsi_response ( struct iscsi_session *iscsi,
 	} else if ( response->flags & ISCSI_DATA_FLAG_UNDERFLOW ) {
 		rsp.overrun = -(residual_count);
 	}
-	if ( ISCSI_DATA_LEN ( response->lengths ) )
-		memcpy ( &rsp.sense, ( iscsi->rx_buffer + 2 ),
-			 sizeof ( rsp.sense ) );
+	data_len = ISCSI_DATA_LEN ( response->lengths );
+	if ( data_len ) {
+		scsi_parse_sense ( ( iscsi->rx_buffer + 2 ), ( data_len - 2 ),
+				   &rsp.sense );
+	}
 	iscsi_rx_buffered_data_done ( iscsi );
 
 	/* Check for errors */
@@ -543,22 +576,57 @@ static int iscsi_tx_data_out ( struct iscsi_session *iscsi ) {
 	struct io_buffer *iobuf;
 	unsigned long offset;
 	size_t len;
+	size_t pad_len;
 
 	offset = ntohl ( data_out->offset );
 	len = ISCSI_DATA_LEN ( data_out->lengths );
+	pad_len = ISCSI_DATA_PAD_LEN ( data_out->lengths );
 
 	assert ( iscsi->command != NULL );
 	assert ( iscsi->command->data_out );
 	assert ( ( offset + len ) <= iscsi->command->data_out_len );
 
-	iobuf = xfer_alloc_iob ( &iscsi->socket, len );
+	iobuf = xfer_alloc_iob ( &iscsi->socket, ( len + pad_len ) );
 	if ( ! iobuf )
 		return -ENOMEM;
 	
 	copy_from_user ( iob_put ( iobuf, len ),
 			 iscsi->command->data_out, offset, len );
+	memset ( iob_put ( iobuf, pad_len ), 0, pad_len );
 
 	return xfer_deliver_iob ( &iscsi->socket, iobuf );
+}
+
+/**
+ * Receive data segment of an iSCSI NOP-In
+ *
+ * @v iscsi		iSCSI session
+ * @v data		Received data
+ * @v len		Length of received data
+ * @v remaining		Data remaining after this data
+ * @ret rc		Return status code
+ */
+static int iscsi_rx_nop_in ( struct iscsi_session *iscsi,
+			     const void *data __unused, size_t len __unused,
+			     size_t remaining __unused ) {
+	struct iscsi_nop_in *nop_in = &iscsi->rx_bhs.nop_in;
+
+	DBGC2 ( iscsi, "iSCSI %p received NOP-In\n", iscsi );
+
+	/* We don't currently have the ability to respond to NOP-Ins
+	 * sent as ping requests, but we can happily accept NOP-Ins
+	 * sent merely to update CmdSN.
+	 */
+	if ( nop_in->ttt == htonl ( ISCSI_TAG_RESERVED ) )
+		return 0;
+
+	/* Ignore any other NOP-Ins.  The target may eventually
+	 * disconnect us for failing to respond, but this minimises
+	 * unnecessary connection closures.
+	 */
+	DBGC ( iscsi, "iSCSI %p received unsupported NOP-In with TTT %08x\n",
+	       iscsi, ntohl ( nop_in->ttt ) );
+	return 0;
 }
 
 /****************************************************************************
@@ -577,12 +645,12 @@ static int iscsi_tx_data_out ( struct iscsi_session *iscsi ) {
  *
  *     HeaderDigest=None
  *     DataDigest=None
- *     MaxConnections is irrelevant; we make only one connection anyway [4]
+ *     MaxConnections=1 (irrelevant; we make only one connection anyway) [4]
  *     InitialR2T=Yes [1]
- *     ImmediateData is irrelevant; we never send immediate data [4]
+ *     ImmediateData=No (irrelevant; we never send immediate data) [4]
  *     MaxRecvDataSegmentLength=8192 (default; we don't care) [3]
  *     MaxBurstLength=262144 (default; we don't care) [3]
- *     FirstBurstLength=262144 (default; we don't care)
+ *     FirstBurstLength=65536 (irrelevant due to other settings) [5]
  *     DefaultTime2Wait=0 [2]
  *     DefaultTime2Retain=0 [2]
  *     MaxOutstandingR2T=1
@@ -607,6 +675,11 @@ static int iscsi_tx_data_out ( struct iscsi_session *iscsi ) {
  * these parameters, but some targets (notably a QNAP TS-639Pro) fail
  * unless they are supplied, so we explicitly specify the default
  * values.
+ *
+ * [5] FirstBurstLength is defined to be irrelevant since we already
+ * force InitialR2T=Yes and ImmediateData=No, but some targets
+ * (notably LIO as of kernel 4.11) fail unless it is specified, so we
+ * explicitly specify the default value.
  */
 static int iscsi_build_login_request_strings ( struct iscsi_session *iscsi,
 					       void *data, size_t len ) {
@@ -627,7 +700,7 @@ static int iscsi_build_login_request_strings ( struct iscsi_session *iscsi,
 				    "TargetName=%s%c"
 				    "SessionType=Normal%c"
 				    "AuthMethod=%s%c",
-				    iscsi_initiator_iqn(), 0,
+				    iscsi->initiator_iqn, 0,
 				    iscsi->target_iqn, 0, 0,
 				    auth_method, 0 );
 	}
@@ -640,7 +713,7 @@ static int iscsi_build_login_request_strings ( struct iscsi_session *iscsi,
 		char buf[ base16_encoded_len ( iscsi->chap.response_len ) + 1 ];
 		assert ( iscsi->initiator_username != NULL );
 		base16_encode ( iscsi->chap.response, iscsi->chap.response_len,
-				buf );
+				buf, sizeof ( buf ) );
 		used += ssnprintf ( data + used, len - used,
 				    "CHAP_N=%s%cCHAP_R=0x%s%c",
 				    iscsi->initiator_username, 0, buf, 0 );
@@ -650,7 +723,7 @@ static int iscsi_build_login_request_strings ( struct iscsi_session *iscsi,
 		size_t challenge_len = ( sizeof ( iscsi->chap_challenge ) - 1 );
 		char buf[ base16_encoded_len ( challenge_len ) + 1 ];
 		base16_encode ( ( iscsi->chap_challenge + 1 ), challenge_len,
-				buf );
+				buf, sizeof ( buf ) );
 		used += ssnprintf ( data + used, len - used,
 				    "CHAP_I=%d%cCHAP_C=0x%s%c",
 				    iscsi->chap_challenge[0], 0, buf, 0 );
@@ -665,13 +738,14 @@ static int iscsi_build_login_request_strings ( struct iscsi_session *iscsi,
 				    "ImmediateData=No%c"
 				    "MaxRecvDataSegmentLength=8192%c"
 				    "MaxBurstLength=262144%c"
+				    "FirstBurstLength=65536%c"
 				    "DefaultTime2Wait=0%c"
 				    "DefaultTime2Retain=0%c"
 				    "MaxOutstandingR2T=1%c"
 				    "DataPDUInOrder=Yes%c"
 				    "DataSequenceInOrder=Yes%c"
 				    "ErrorRecoveryLevel=0%c",
-				    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 );
+				    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 );
 	}
 
 	return used;
@@ -745,25 +819,18 @@ static int iscsi_tx_login_request ( struct iscsi_session *iscsi ) {
 	struct iscsi_bhs_login_request *request = &iscsi->tx_bhs.login_request;
 	struct io_buffer *iobuf;
 	size_t len;
+	size_t pad_len;
 
 	len = ISCSI_DATA_LEN ( request->lengths );
-	iobuf = xfer_alloc_iob ( &iscsi->socket, len );
+	pad_len = ISCSI_DATA_PAD_LEN ( request->lengths );
+	iobuf = xfer_alloc_iob ( &iscsi->socket, ( len + pad_len ) );
 	if ( ! iobuf )
 		return -ENOMEM;
 	iob_put ( iobuf, len );
 	iscsi_build_login_request_strings ( iscsi, iobuf->data, len );
-	return xfer_deliver_iob ( &iscsi->socket, iobuf );
-}
+	memset ( iob_put ( iobuf, pad_len ), 0, pad_len );
 
-/**
- * Calculate maximum length of decoded large binary value
- *
- * @v encoded		Encoded large binary value
- * @v max_raw_len	Maximum length of raw data
- */
-static inline size_t
-iscsi_large_binary_decoded_max_len ( const char *encoded ) {
-	return ( strlen ( encoded ) ); /* Decoding never expands data */
+	return xfer_deliver_iob ( &iscsi->socket, iobuf );
 }
 
 /**
@@ -771,23 +838,23 @@ iscsi_large_binary_decoded_max_len ( const char *encoded ) {
  *
  * @v encoded		Encoded large binary value
  * @v raw		Raw data
+ * @v len		Length of data buffer
  * @ret len		Length of raw data, or negative error
  */
-static int iscsi_large_binary_decode ( const char *encoded, uint8_t *raw ) {
+static int iscsi_large_binary_decode ( const char *encoded, uint8_t *raw,
+				       size_t len ) {
 
-	if ( encoded[0] != '0' )
-		return -EPROTO_INVALID_LARGE_BINARY;
-
-	switch ( encoded[1] ) {
-	case 'x' :
-	case 'X' :
-		return base16_decode ( ( encoded + 2 ), raw );
-	case 'b' :
-	case 'B' :
-		return base64_decode ( ( encoded + 2 ), raw );
-	default:
-		return -EPROTO_INVALID_LARGE_BINARY;
+	/* Check for initial '0x' or '0b' and decode as appropriate */
+	if ( *(encoded++) == '0' ) {
+		switch ( tolower ( *(encoded++) ) ) {
+		case 'x' :
+			return base16_decode ( encoded, raw, len );
+		case 'b' :
+			return base64_decode ( encoded, raw, len );
+		}
 	}
+
+	return -EPROTO_INVALID_LARGE_BINARY;
 }
 
 /**
@@ -914,19 +981,27 @@ static int iscsi_handle_chap_i_value ( struct iscsi_session *iscsi,
  */
 static int iscsi_handle_chap_c_value ( struct iscsi_session *iscsi,
 				       const char *value ) {
-	uint8_t buf[ iscsi_large_binary_decoded_max_len ( value ) ];
+	uint8_t *buf;
 	unsigned int i;
-	size_t len;
+	int len;
 	int rc;
 
+	/* Allocate decoding buffer */
+	len = strlen ( value ); /* Decoding never expands data */
+	buf = malloc ( len );
+	if ( ! buf ) {
+		rc = -ENOMEM;
+		goto err_alloc;
+	}
+
 	/* Process challenge */
-	rc = iscsi_large_binary_decode ( value, buf );
-	if ( rc < 0 ) {
+	len = iscsi_large_binary_decode ( value, buf, len );
+	if ( len < 0 ) {
+		rc = len;
 		DBGC ( iscsi, "iSCSI %p invalid CHAP challenge \"%s\": %s\n",
 		       iscsi, value, strerror ( rc ) );
-		return rc;
+		goto err_decode;
 	}
-	len = rc;
 	chap_update ( &iscsi->chap, buf, len );
 
 	/* Build CHAP response */
@@ -943,7 +1018,13 @@ static int iscsi_handle_chap_c_value ( struct iscsi_session *iscsi,
 		}
 	}
 
-	return 0;
+	/* Success */
+	rc = 0;
+
+ err_decode:
+	free ( buf );
+ err_alloc:
+	return rc;
 }
 
 /**
@@ -984,8 +1065,8 @@ static int iscsi_handle_chap_n_value ( struct iscsi_session *iscsi,
  */
 static int iscsi_handle_chap_r_value ( struct iscsi_session *iscsi,
 				       const char *value ) {
-	uint8_t buf[ iscsi_large_binary_decoded_max_len ( value ) ];
-	size_t len;
+	uint8_t *buf;
+	int len;
 	int rc;
 
 	/* Generate CHAP response for verification */
@@ -993,7 +1074,7 @@ static int iscsi_handle_chap_r_value ( struct iscsi_session *iscsi,
 	if ( ( rc = chap_init ( &iscsi->chap, &md5_algorithm ) ) != 0 ) {
 		DBGC ( iscsi, "iSCSI %p could not initialise CHAP: %s\n",
 		       iscsi, strerror ( rc ) );
-		return rc;
+		goto err_chap_init;
 	}
 	chap_set_identifier ( &iscsi->chap, iscsi->chap_challenge[0] );
 	if ( iscsi->target_password ) {
@@ -1004,39 +1085,55 @@ static int iscsi_handle_chap_r_value ( struct iscsi_session *iscsi,
 		      ( sizeof ( iscsi->chap_challenge ) - 1 ) );
 	chap_respond ( &iscsi->chap );
 
+	/* Allocate decoding buffer */
+	len = strlen ( value ); /* Decoding never expands data */
+	buf = malloc ( len );
+	if ( ! buf ) {
+		rc = -ENOMEM;
+		goto err_alloc;
+	}
+
 	/* Process response */
-	rc = iscsi_large_binary_decode ( value, buf );
-	if ( rc < 0 ) {
+	len = iscsi_large_binary_decode ( value, buf, len );
+	if ( len < 0 ) {
+		rc = len;
 		DBGC ( iscsi, "iSCSI %p invalid CHAP response \"%s\": %s\n",
 		       iscsi, value, strerror ( rc ) );
-		return rc;
+		goto err_decode;
 	}
-	len = rc;
 
 	/* Check CHAP response */
-	if ( len != iscsi->chap.response_len ) {
+	if ( len != ( int ) iscsi->chap.response_len ) {
 		DBGC ( iscsi, "iSCSI %p invalid CHAP response length\n",
 		       iscsi );
-		return -EPROTO_INVALID_CHAP_RESPONSE;
+		rc = -EPROTO_INVALID_CHAP_RESPONSE;
+		goto err_response_len;
 	}
 	if ( memcmp ( buf, iscsi->chap.response, len ) != 0 ) {
 		DBGC ( iscsi, "iSCSI %p incorrect CHAP response \"%s\"\n",
 		       iscsi, value );
-		return -EACCES_INCORRECT_TARGET_PASSWORD;
+		rc = -EACCES_INCORRECT_TARGET_PASSWORD;
+		goto err_response;
 	}
 
 	/* Mark session as authenticated */
 	iscsi->status |= ISCSI_STATUS_AUTH_REVERSE_OK;
 
-	return 0;
+ err_response:
+ err_response_len:
+ err_decode:
+	free ( buf );
+ err_alloc:
+ err_chap_init:
+	return rc;
 }
 
 /** An iSCSI text string that we want to handle */
 struct iscsi_string_type {
 	/** String key
 	 *
-	 * This is the portion up to and including the "=" sign,
-	 * e.g. "InitiatorName=", "CHAP_A=", etc.
+	 * This is the portion preceding the "=" sign,
+	 * e.g. "InitiatorName", "CHAP_A", etc.
 	 */
 	const char *key;
 	/** Handle iSCSI string value
@@ -1050,13 +1147,13 @@ struct iscsi_string_type {
 
 /** iSCSI text strings that we want to handle */
 static struct iscsi_string_type iscsi_string_types[] = {
-	{ "TargetAddress=", iscsi_handle_targetaddress_value },
-	{ "AuthMethod=", iscsi_handle_authmethod_value },
-	{ "CHAP_A=", iscsi_handle_chap_a_value },
-	{ "CHAP_I=", iscsi_handle_chap_i_value },
-	{ "CHAP_C=", iscsi_handle_chap_c_value },
-	{ "CHAP_N=", iscsi_handle_chap_n_value },
-	{ "CHAP_R=", iscsi_handle_chap_r_value },
+	{ "TargetAddress", iscsi_handle_targetaddress_value },
+	{ "AuthMethod", iscsi_handle_authmethod_value },
+	{ "CHAP_A", iscsi_handle_chap_a_value },
+	{ "CHAP_I", iscsi_handle_chap_i_value },
+	{ "CHAP_C", iscsi_handle_chap_c_value },
+	{ "CHAP_N", iscsi_handle_chap_n_value },
+	{ "CHAP_R", iscsi_handle_chap_r_value },
 	{ NULL, NULL }
 };
 
@@ -1070,16 +1167,35 @@ static struct iscsi_string_type iscsi_string_types[] = {
 static int iscsi_handle_string ( struct iscsi_session *iscsi,
 				 const char *string ) {
 	struct iscsi_string_type *type;
+	const char *separator;
+	const char *value;
 	size_t key_len;
 	int rc;
 
+	/* Find separator */
+	separator = strchr ( string, '=' );
+	if ( ! separator ) {
+		DBGC ( iscsi, "iSCSI %p malformed string %s\n",
+		       iscsi, string );
+		return -EPROTO_INVALID_KEY_VALUE_PAIR;
+	}
+	key_len = ( separator - string );
+	value = ( separator + 1 );
+
+	/* Check for rejections.  Since we send only non-rejectable
+	 * values, any rejection is a fatal protocol error.
+	 */
+	if ( strcmp ( value, "Reject" ) == 0 ) {
+		DBGC ( iscsi, "iSCSI %p rejection: %s\n", iscsi, string );
+		return -EPROTO_VALUE_REJECTED;
+	}
+
+	/* Handle key/value pair */
 	for ( type = iscsi_string_types ; type->key ; type++ ) {
-		key_len = strlen ( type->key );
 		if ( strncmp ( string, type->key, key_len ) != 0 )
 			continue;
 		DBGC ( iscsi, "iSCSI %p handling %s\n", iscsi, string );
-		if ( ( rc = type->handle ( iscsi,
-					   ( string + key_len ) ) ) != 0 ) {
+		if ( ( rc = type->handle ( iscsi, value ) ) != 0 ) {
 			DBGC ( iscsi, "iSCSI %p could not handle %s: %s\n",
 			       iscsi, string, strerror ( rc ) );
 			return rc;
@@ -1141,7 +1257,14 @@ static int iscsi_status_to_rc ( unsigned int status_class,
 			return -ENOTSUP_INITIATOR_STATUS;
 		}
 	case ISCSI_STATUS_TARGET_ERROR :
-		return -EIO;
+		switch ( status_detail ) {
+		case ISCSI_STATUS_TARGET_ERROR_UNAVAILABLE:
+			return -EIO_TARGET_UNAVAILABLE;
+		case ISCSI_STATUS_TARGET_ERROR_NO_RESOURCES:
+			return -EIO_TARGET_NO_RESOURCES;
+		default:
+			return -ENOTSUP_TARGET_STATUS;
+		}
 	default :
 		return -EINVAL;
 	}
@@ -1250,6 +1373,24 @@ static int iscsi_rx_login_response ( struct iscsi_session *iscsi,
  */
 
 /**
+ * Pause TX engine
+ *
+ * @v iscsi		iSCSI session
+ */
+static void iscsi_tx_pause ( struct iscsi_session *iscsi ) {
+	process_del ( &iscsi->process );
+}
+
+/**
+ * Resume TX engine
+ *
+ * @v iscsi		iSCSI session
+ */
+static void iscsi_tx_resume ( struct iscsi_session *iscsi ) {
+	process_add ( &iscsi->process );
+}
+
+/**
  * Start up a new TX PDU
  *
  * @v iscsi		iSCSI session
@@ -1260,8 +1401,7 @@ static int iscsi_rx_login_response ( struct iscsi_session *iscsi,
 static void iscsi_start_tx ( struct iscsi_session *iscsi ) {
 
 	assert ( iscsi->tx_state == ISCSI_TX_IDLE );
-	assert ( ! process_running ( &iscsi->process ) );
-	
+
 	/* Initialise TX BHS */
 	memset ( &iscsi->tx_bhs, 0, sizeof ( iscsi->tx_bhs ) );
 
@@ -1269,7 +1409,7 @@ static void iscsi_start_tx ( struct iscsi_session *iscsi ) {
 	iscsi->tx_state = ISCSI_TX_BHS;
 
 	/* Start transmission process */
-	process_add ( &iscsi->process );
+	iscsi_tx_resume ( iscsi );
 }
 
 /**
@@ -1317,27 +1457,6 @@ static int iscsi_tx_data ( struct iscsi_session *iscsi ) {
 }
 
 /**
- * Transmit data padding of an iSCSI PDU
- *
- * @v iscsi		iSCSI session
- * @ret rc		Return status code
- * 
- * Handle transmission of any data padding in a PDU data segment.
- * iscsi::tx_bhs will be valid when this is called.
- */
-static int iscsi_tx_data_padding ( struct iscsi_session *iscsi ) {
-	static const char pad[] = { '\0', '\0', '\0' };
-	struct iscsi_bhs_common *common = &iscsi->tx_bhs.common;
-	size_t pad_len;
-	
-	pad_len = ISCSI_DATA_PAD_LEN ( common->lengths );
-	if ( ! pad_len )
-		return 0;
-
-	return xfer_deliver_raw ( &iscsi->socket, pad, pad_len );
-}
-
-/**
  * Complete iSCSI PDU transmission
  *
  * @v iscsi		iSCSI session
@@ -1350,13 +1469,15 @@ static void iscsi_tx_done ( struct iscsi_session *iscsi ) {
 	struct iscsi_bhs_common *common = &iscsi->tx_bhs.common;
 
 	/* Stop transmission process */
-	process_del ( &iscsi->process );
+	iscsi_tx_pause ( iscsi );
 
 	switch ( common->opcode & ISCSI_OPCODE_MASK ) {
 	case ISCSI_OPCODE_DATA_OUT:
 		iscsi_data_out_done ( iscsi );
+		break;
 	case ISCSI_OPCODE_LOGIN_REQUEST:
 		iscsi_login_request_done ( iscsi );
+		break;
 	default:
 		/* No action */
 		break;
@@ -1372,9 +1493,7 @@ static void iscsi_tx_done ( struct iscsi_session *iscsi ) {
  * 
  * Constructs data to be sent for the current TX state
  */
-static void iscsi_tx_step ( struct process *process ) {
-	struct iscsi_session *iscsi =
-		container_of ( process, struct iscsi_session, process );
+static void iscsi_tx_step ( struct iscsi_session *iscsi ) {
 	struct iscsi_bhs_common *common = &iscsi->tx_bhs.common;
 	int ( * tx ) ( struct iscsi_session *iscsi );
 	enum iscsi_tx_state next_state;
@@ -1397,16 +1516,11 @@ static void iscsi_tx_step ( struct process *process ) {
 		case ISCSI_TX_DATA:
 			tx = iscsi_tx_data;
 			tx_len = ISCSI_DATA_LEN ( common->lengths );
-			next_state = ISCSI_TX_DATA_PADDING;
-			break;
-		case ISCSI_TX_DATA_PADDING:
-			tx = iscsi_tx_data_padding;
-			tx_len = ISCSI_DATA_PAD_LEN ( common->lengths );
 			next_state = ISCSI_TX_IDLE;
 			break;
 		case ISCSI_TX_IDLE:
-			/* Stop processing */
-			iscsi_tx_done ( iscsi );
+			/* Nothing to do; pause processing */
+			iscsi_tx_pause ( iscsi );
 			return;
 		default:
 			assert ( 0 );
@@ -1415,7 +1529,10 @@ static void iscsi_tx_step ( struct process *process ) {
 
 		/* Check for window availability, if needed */
 		if ( tx_len && ( xfer_window ( &iscsi->socket ) == 0 ) ) {
-			/* Cannot transmit at this point; stop processing */
+			/* Cannot transmit at this point; pause
+			 * processing and wait for window to reopen
+			 */
+			iscsi_tx_pause ( iscsi );
 			return;
 		}
 
@@ -1430,8 +1547,18 @@ static void iscsi_tx_step ( struct process *process ) {
 
 		/* Move to next state */
 		iscsi->tx_state = next_state;
+
+		/* If we have moved to the idle state, mark
+		 * transmission as complete
+		 */
+		if ( iscsi->tx_state == ISCSI_TX_IDLE )
+			iscsi_tx_done ( iscsi );
 	}
 }
+
+/** iSCSI TX process descriptor */
+static struct process_descriptor iscsi_process_desc =
+	PROC_DESC ( struct iscsi_session, process, iscsi_tx_step );
 
 /**
  * Receive basic header segment of an iSCSI PDU
@@ -1504,6 +1631,8 @@ static int iscsi_rx_data ( struct iscsi_session *iscsi, const void *data,
 		return iscsi_rx_data_in ( iscsi, data, len, remaining );
 	case ISCSI_OPCODE_R2T:
 		return iscsi_rx_r2t ( iscsi, data, len, remaining );
+	case ISCSI_OPCODE_NOP_IN:
+		return iscsi_rx_nop_in ( iscsi, data, len, remaining );
 	default:
 		if ( remaining )
 			return 0;
@@ -1616,6 +1745,7 @@ static int iscsi_vredirect ( struct iscsi_session *iscsi, int type,
 			     va_list args ) {
 	va_list tmp;
 	struct sockaddr *peer;
+	int rc;
 
 	/* Intercept redirects to a LOCATION_SOCKET and record the IP
 	 * address for the iBFT.  This is a bit of a hack, but avoids
@@ -1631,12 +1761,22 @@ static int iscsi_vredirect ( struct iscsi_session *iscsi, int type,
 		va_end ( tmp );
 	}
 
-	return xfer_vreopen ( &iscsi->socket, type, args );
+	/* Redirect to new location */
+	if ( ( rc = xfer_vreopen ( &iscsi->socket, type, args ) ) != 0 )
+		goto err;
+
+	return 0;
+
+ err:
+	iscsi_close ( iscsi, rc );
+	return rc;
 }
 
 /** iSCSI socket interface operations */
 static struct interface_operation iscsi_socket_operations[] = {
 	INTF_OP ( xfer_deliver, struct iscsi_session *, iscsi_socket_deliver ),
+	INTF_OP ( xfer_window_changed, struct iscsi_session *,
+		  iscsi_tx_resume ),
 	INTF_OP ( xfer_vredirect, struct iscsi_session *, iscsi_vredirect ),
 	INTF_OP ( intf_close, struct iscsi_session *, iscsi_close ),
 };
@@ -1707,12 +1847,24 @@ static int iscsi_scsi_command ( struct iscsi_session *iscsi,
 	return iscsi->itt;
 }
 
+/**
+ * Get iSCSI ACPI descriptor
+ *
+ * @v iscsi		iSCSI session
+ * @ret desc		ACPI descriptor
+ */
+static struct acpi_descriptor * iscsi_describe ( struct iscsi_session *iscsi ) {
+
+	return &iscsi->desc;
+}
+
 /** iSCSI SCSI command-issuing interface operations */
 static struct interface_operation iscsi_control_op[] = {
 	INTF_OP ( scsi_command, struct iscsi_session *, iscsi_scsi_command ),
 	INTF_OP ( xfer_window, struct iscsi_session *, iscsi_scsi_window ),
 	INTF_OP ( intf_close, struct iscsi_session *, iscsi_close ),
-	INTF_OP ( acpi_describe, struct iscsi_session *, ibft_describe ),
+	INTF_OP ( acpi_describe, struct iscsi_session *, iscsi_describe ),
+	EFI_INTF_OP ( efi_describe, struct iscsi_session *, efi_iscsi_path ),
 };
 
 /** iSCSI SCSI command-issuing interface descriptor */
@@ -1762,6 +1914,33 @@ enum iscsi_root_path_component {
 	NUM_RP_COMPONENTS
 };
 
+/** iSCSI initiator IQN setting */
+const struct setting initiator_iqn_setting __setting ( SETTING_SANBOOT_EXTRA,
+						       initiator-iqn ) = {
+	.name = "initiator-iqn",
+	.description = "iSCSI initiator name",
+	.tag = DHCP_ISCSI_INITIATOR_IQN,
+	.type = &setting_type_string,
+};
+
+/** iSCSI reverse username setting */
+const struct setting reverse_username_setting __setting ( SETTING_AUTH_EXTRA,
+							  reverse-username ) = {
+	.name = "reverse-username",
+	.description = "Reverse user name",
+	.tag = DHCP_EB_REVERSE_USERNAME,
+	.type = &setting_type_string,
+};
+
+/** iSCSI reverse password setting */
+const struct setting reverse_password_setting __setting ( SETTING_AUTH_EXTRA,
+							  reverse-password ) = {
+	.name = "reverse-password",
+	.description = "Reverse password",
+	.tag = DHCP_EB_REVERSE_PASSWORD,
+	.type = &setting_type_string,
+};
+
 /**
  * Parse iSCSI root path
  *
@@ -1771,23 +1950,36 @@ enum iscsi_root_path_component {
  */
 static int iscsi_parse_root_path ( struct iscsi_session *iscsi,
 				   const char *root_path ) {
-	char rp_copy[ strlen ( root_path ) + 1 ];
+	char *rp_copy;
 	char *rp_comp[NUM_RP_COMPONENTS];
-	char *rp = rp_copy;
+	char *rp;
+	int skip = 0;
 	int i = 0;
 	int rc;
 
+	/* Create modifiable copy of root path */
+	rp_copy = strdup ( root_path );
+	if ( ! rp_copy ) {
+		rc = -ENOMEM;
+		goto err_strdup;
+	}
+	rp = rp_copy;
+
 	/* Split root path into component parts */
-	strcpy ( rp_copy, root_path );
 	while ( 1 ) {
 		rp_comp[i++] = rp;
 		if ( i == NUM_RP_COMPONENTS )
 			break;
-		for ( ; *rp != ':' ; rp++ ) {
+		for ( ; ( ( *rp != ':' ) || skip ) ; rp++ ) {
 			if ( ! *rp ) {
 				DBGC ( iscsi, "iSCSI %p root path \"%s\" "
 				       "too short\n", iscsi, root_path );
-				return -EINVAL;
+				rc = -EINVAL_ROOT_PATH_TOO_SHORT;
+				goto err_split;
+			} else if ( *rp == '[' ) {
+				skip = 1;
+			} else if ( *rp == ']' ) {
+				skip = 0;
 			}
 		}
 		*(rp++) = '\0';
@@ -1795,82 +1987,124 @@ static int iscsi_parse_root_path ( struct iscsi_session *iscsi,
 
 	/* Use root path components to configure iSCSI session */
 	iscsi->target_address = strdup ( rp_comp[RP_SERVERNAME] );
-	if ( ! iscsi->target_address )
-		return -ENOMEM;
+	if ( ! iscsi->target_address ) {
+		rc = -ENOMEM;
+		goto err_servername;
+	}
 	iscsi->target_port = strtoul ( rp_comp[RP_PORT], NULL, 10 );
 	if ( ! iscsi->target_port )
 		iscsi->target_port = ISCSI_PORT;
 	if ( ( rc = scsi_parse_lun ( rp_comp[RP_LUN], &iscsi->lun ) ) != 0 ) {
 		DBGC ( iscsi, "iSCSI %p invalid LUN \"%s\"\n",
 		       iscsi, rp_comp[RP_LUN] );
-		return rc;
+		goto err_lun;
 	}
 	iscsi->target_iqn = strdup ( rp_comp[RP_TARGETNAME] );
-	if ( ! iscsi->target_iqn )
+	if ( ! iscsi->target_iqn ) {
+		rc = -ENOMEM;
+		goto err_targetname;
+	}
+
+ err_targetname:
+ err_lun:
+ err_servername:
+ err_split:
+	free ( rp_copy );
+ err_strdup:
+	return rc;
+}
+
+/**
+ * Fetch iSCSI settings
+ *
+ * @v iscsi		iSCSI session
+ * @ret rc		Return status code
+ */
+static int iscsi_fetch_settings ( struct iscsi_session *iscsi ) {
+	char *hostname;
+	union uuid uuid;
+	int len;
+
+	/* Fetch relevant settings.  Don't worry about freeing on
+	 * error, since iscsi_free() will take care of that anyway.
+	 */
+	fetch_string_setting_copy ( NULL, &username_setting,
+				    &iscsi->initiator_username );
+	fetch_string_setting_copy ( NULL, &password_setting,
+				    &iscsi->initiator_password );
+	fetch_string_setting_copy ( NULL, &reverse_username_setting,
+				    &iscsi->target_username );
+	fetch_string_setting_copy ( NULL, &reverse_password_setting,
+				    &iscsi->target_password );
+
+	/* Use explicit initiator IQN if provided */
+	fetch_string_setting_copy ( NULL, &initiator_iqn_setting,
+				    &iscsi->initiator_iqn );
+	if ( iscsi->initiator_iqn )
+		return 0;
+
+	/* Otherwise, try to construct an initiator IQN from the hostname */
+	fetch_string_setting_copy ( NULL, &hostname_setting, &hostname );
+	if ( hostname ) {
+		len = asprintf ( &iscsi->initiator_iqn,
+				 ISCSI_DEFAULT_IQN_PREFIX ":%s", hostname );
+		free ( hostname );
+		if ( len < 0 ) {
+			DBGC ( iscsi, "iSCSI %p could not allocate initiator "
+			       "IQN\n", iscsi );
+			return -ENOMEM;
+		}
+		assert ( iscsi->initiator_iqn );
+		return 0;
+	}
+
+	/* Otherwise, try to construct an initiator IQN from the UUID */
+	if ( ( len = fetch_uuid_setting ( NULL, &uuid_setting, &uuid ) ) < 0 ) {
+		DBGC ( iscsi, "iSCSI %p has no suitable initiator IQN\n",
+		       iscsi );
+		return -EINVAL_NO_INITIATOR_IQN;
+	}
+	if ( ( len = asprintf ( &iscsi->initiator_iqn,
+				ISCSI_DEFAULT_IQN_PREFIX ":%s",
+				uuid_ntoa ( &uuid ) ) ) < 0 ) {
+		DBGC ( iscsi, "iSCSI %p could not allocate initiator IQN\n",
+		       iscsi );
 		return -ENOMEM;
+	}
+	assert ( iscsi->initiator_iqn );
 
 	return 0;
 }
 
+
 /**
- * Set iSCSI authentication details
+ * Check iSCSI authentication details
  *
  * @v iscsi		iSCSI session
- * @v initiator_username Initiator username, if any
- * @v initiator_password Initiator password, if any
- * @v target_username	Target username, if any
- * @v target_password	Target password, if any
  * @ret rc		Return status code
  */
-static int iscsi_set_auth ( struct iscsi_session *iscsi,
-			    const char *initiator_username,
-			    const char *initiator_password,
-			    const char *target_username,
-			    const char *target_password ) {
+static int iscsi_check_auth ( struct iscsi_session *iscsi ) {
 
-	/* Check for initiator or target credentials */
-	if ( initiator_username || initiator_password ||
-	     target_username || target_password ) {
-
-		/* We must have at least an initiator username+password */
-		if ( ! ( initiator_username && initiator_password ) )
-			goto invalid_auth;
-
-		/* Store initiator credentials */
-		iscsi->initiator_username = strdup ( initiator_username );
-		if ( ! iscsi->initiator_username )
-			return -ENOMEM;
-		iscsi->initiator_password = strdup ( initiator_password );
-		if ( ! iscsi->initiator_password )
-			return -ENOMEM;
-
-		/* Check for target credentials */
-		if ( target_username || target_password ) {
-
-			/* We must have target username+password */
-			if ( ! ( target_username && target_password ) )
-				goto invalid_auth;
-
-			/* Store target credentials */
-			iscsi->target_username = strdup ( target_username );
-			if ( ! iscsi->target_username )
-				return -ENOMEM;
-			iscsi->target_password = strdup ( target_password );
-			if ( ! iscsi->target_password )
-				return -ENOMEM;
-		}
+	/* Check for invalid authentication combinations */
+	if ( ( /* Initiator username without password (or vice-versa) */
+		( !! iscsi->initiator_username ) ^
+		( !! iscsi->initiator_password ) ) ||
+	     ( /* Target username without password (or vice-versa) */
+		( !! iscsi->target_username ) ^
+		( !! iscsi->target_password ) ) ||
+	     ( /* Target (reverse) without initiator (forward) */
+		( iscsi->target_username &&
+		  ( ! iscsi->initiator_username ) ) ) ) {
+		DBGC ( iscsi, "iSCSI %p invalid credentials: initiator "
+		       "%sname,%spw, target %sname,%spw\n", iscsi,
+		       ( iscsi->initiator_username ? "" : "no " ),
+		       ( iscsi->initiator_password ? "" : "no " ),
+		       ( iscsi->target_username ? "" : "no " ),
+		       ( iscsi->target_password ? "" : "no " ) );
+		return -EINVAL_BAD_CREDENTIAL_MIX;
 	}
 
 	return 0;
-
- invalid_auth:
-	DBGC ( iscsi, "iSCSI %p invalid credentials: initiator "
-	       "%sname,%spw, target %sname,%spw\n", iscsi,
-	       ( initiator_username ? "" : "no " ),
-	       ( initiator_password ? "" : "no " ),
-	       ( target_username ? "" : "no " ),
-	       ( target_password ? "" : "no " ) );
-	return -EINVAL;
 }
 
 /**
@@ -1886,7 +2120,7 @@ static int iscsi_open ( struct interface *parent, struct uri *uri ) {
 
 	/* Sanity check */
 	if ( ! uri->opaque ) {
-		rc = -EINVAL;
+		rc = -EINVAL_NO_ROOT_PATH;
 		goto err_sanity_uri;
 	}
 
@@ -1900,19 +2134,19 @@ static int iscsi_open ( struct interface *parent, struct uri *uri ) {
 	intf_init ( &iscsi->control, &iscsi_control_desc, &iscsi->refcnt );
 	intf_init ( &iscsi->data, &iscsi_data_desc, &iscsi->refcnt );
 	intf_init ( &iscsi->socket, &iscsi_socket_desc, &iscsi->refcnt );
-	process_init_stopped ( &iscsi->process, iscsi_tx_step,
+	process_init_stopped ( &iscsi->process, &iscsi_process_desc,
 			       &iscsi->refcnt );
+	acpi_init ( &iscsi->desc, &ibft_model, &iscsi->refcnt );
 
 	/* Parse root path */
 	if ( ( rc = iscsi_parse_root_path ( iscsi, uri->opaque ) ) != 0 )
 		goto err_parse_root_path;
 	/* Set fields not specified by root path */
-	if ( ( rc = iscsi_set_auth ( iscsi,
-				     iscsi_initiator_username,
-				     iscsi_initiator_password,
-				     iscsi_target_username,
-				     iscsi_target_password ) ) != 0 )
-		goto err_set_auth;
+	if ( ( rc = iscsi_fetch_settings ( iscsi ) ) != 0 )
+		goto err_fetch_settings;
+	/* Validate authentication */
+	if ( ( rc = iscsi_check_auth ( iscsi ) ) != 0 )
+		goto err_check_auth;
 
 	/* Sanity checks */
 	if ( ! iscsi->target_address ) {
@@ -1924,9 +2158,12 @@ static int iscsi_open ( struct interface *parent, struct uri *uri ) {
 	if ( ! iscsi->target_iqn ) {
 		DBGC ( iscsi, "iSCSI %p no target address supplied in %s\n",
 		       iscsi, uri->opaque );
-		rc = -EINVAL;
+		rc = -EINVAL_NO_TARGET_IQN;
 		goto err_sanity_iqn;
 	}
+	DBGC ( iscsi, "iSCSI %p initiator %s\n",iscsi, iscsi->initiator_iqn );
+	DBGC ( iscsi, "iSCSI %p target %s %s\n",
+	       iscsi, iscsi->target_address, iscsi->target_iqn );
 
 	/* Open socket */
 	if ( ( rc = iscsi_open_connection ( iscsi ) ) != 0 )
@@ -1948,7 +2185,8 @@ static int iscsi_open ( struct interface *parent, struct uri *uri ) {
  err_open_connection:
  err_sanity_iqn:
  err_sanity_address:
- err_set_auth:
+ err_check_auth:
+ err_fetch_settings:
  err_parse_root_path:
 	iscsi_close ( iscsi, rc );
 	ref_put ( &iscsi->refcnt );
@@ -1962,165 +2200,3 @@ struct uri_opener iscsi_uri_opener __uri_opener = {
 	.scheme = "iscsi",
 	.open = iscsi_open,
 };
-
-/****************************************************************************
- *
- * Settings
- *
- */
-
-/** iSCSI initiator IQN setting */
-struct setting initiator_iqn_setting __setting = {
-	.name = "initiator-iqn",
-	.description = "iSCSI initiator name",
-	.tag = DHCP_ISCSI_INITIATOR_IQN,
-	.type = &setting_type_string,
-};
-
-/** iSCSI reverse username setting */
-struct setting reverse_username_setting __setting = {
-	.name = "reverse-username",
-	.description = "Reverse user name",
-	.tag = DHCP_EB_REVERSE_USERNAME,
-	.type = &setting_type_string,
-};
-
-/** iSCSI reverse password setting */
-struct setting reverse_password_setting __setting = {
-	.name = "reverse-password",
-	.description = "Reverse password",
-	.tag = DHCP_EB_REVERSE_PASSWORD,
-	.type = &setting_type_string,
-};
-
-/** An iSCSI string setting */
-struct iscsi_string_setting {
-	/** Setting */
-	struct setting *setting;
-	/** String to update */
-	char **string;
-	/** String prefix */
-	const char *prefix;
-};
-
-/** iSCSI string settings */
-static struct iscsi_string_setting iscsi_string_settings[] = {
-	{
-		.setting = &initiator_iqn_setting,
-		.string = &iscsi_explicit_initiator_iqn,
-		.prefix = "",
-	},
-	{
-		.setting = &username_setting,
-		.string = &iscsi_initiator_username,
-		.prefix = "",
-	},
-	{
-		.setting = &password_setting,
-		.string = &iscsi_initiator_password,
-		.prefix = "",
-	},
-	{
-		.setting = &reverse_username_setting,
-		.string = &iscsi_target_username,
-		.prefix = "",
-	},
-	{
-		.setting = &reverse_password_setting,
-		.string = &iscsi_target_password,
-		.prefix = "",
-	},
-	{
-		.setting = &hostname_setting,
-		.string = &iscsi_default_initiator_iqn,
-		.prefix = "iqn.2000-01.org.etherboot:",
-	},
-};
-
-/**
- * Apply iSCSI setting
- *
- * @v setting		iSCSI string setting
- * @ret rc		Return status code
- */
-static int apply_iscsi_string_setting ( struct iscsi_string_setting *setting ){
-	size_t prefix_len;
-	int setting_len;
-	size_t len;
-	int check_len;
-	char *p;
-
-	/* Free old string */
-	free ( *setting->string );
-	*setting->string = NULL;
-
-	/* Allocate new string */
-	prefix_len = strlen ( setting->prefix );
-	setting_len = fetch_setting_len ( NULL, setting->setting );
-	if ( setting_len < 0 ) {
-		/* Missing settings are not errors; leave strings as NULL */
-		return 0;
-	}
-	len = ( prefix_len + setting_len + 1 );
-	p = *setting->string = malloc ( len );
-	if ( ! p )
-		return -ENOMEM;
-
-	/* Fill new string */
-	strcpy ( p, setting->prefix );
-	check_len = fetch_string_setting ( NULL, setting->setting,
-					   ( p + prefix_len ),
-					   ( len - prefix_len ) );
-	assert ( check_len == setting_len );
-
-	return 0;
-}
-
-/**
- * Apply iSCSI settings
- *
- * @ret rc		Return status code
- */
-static int apply_iscsi_settings ( void ) {
-	struct iscsi_string_setting *setting;
-	unsigned int i;
-	int rc;
-
-	for ( i = 0 ; i < ( sizeof ( iscsi_string_settings ) /
-			    sizeof ( iscsi_string_settings[0] ) ) ; i++ ) {
-		setting = &iscsi_string_settings[i];
-		if ( ( rc = apply_iscsi_string_setting ( setting ) ) != 0 ) {
-			DBG ( "iSCSI could not apply setting %s\n",
-			      setting->setting->name );
-			return rc;
-		}
-	}
-
-	return 0;
-}
-
-/** iSCSI settings applicator */
-struct settings_applicator iscsi_settings_applicator __settings_applicator = {
-	.apply = apply_iscsi_settings,
-};
-
-/****************************************************************************
- *
- * Initiator name
- *
- */
-
-/**
- * Get iSCSI initiator IQN
- *
- * @v iscsi		iSCSI session
- * @ret rc		Return status code
- */
-const char * iscsi_initiator_iqn ( void ) {
-
-	if ( iscsi_explicit_initiator_iqn )
-		return iscsi_explicit_initiator_iqn;
-	if ( iscsi_default_initiator_iqn )
-		return iscsi_default_initiator_iqn;
-	return "iqn.2000-09.org.etherboot:UNKNOWN";
-}

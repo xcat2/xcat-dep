@@ -13,10 +13,15 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /**
  * @file
@@ -81,7 +86,56 @@ struct cipher_algorithm cipher_null = {
 	.decrypt = cipher_null_decrypt,
 };
 
+static int pubkey_null_init ( void *ctx __unused, const void *key __unused,
+			      size_t key_len __unused ) {
+	return 0;
+}
+
+static size_t pubkey_null_max_len ( void *ctx __unused ) {
+	return 0;
+}
+
+static int pubkey_null_encrypt ( void *ctx __unused,
+				 const void *plaintext __unused,
+				 size_t plaintext_len __unused,
+				 void *ciphertext __unused ) {
+	return 0;
+}
+
+static int pubkey_null_decrypt ( void *ctx __unused,
+				 const void *ciphertext __unused,
+				 size_t ciphertext_len __unused,
+				 void *plaintext __unused ) {
+	return 0;
+}
+
+static int pubkey_null_sign ( void *ctx __unused,
+			      struct digest_algorithm *digest __unused,
+			      const void *value __unused,
+			      void *signature __unused ) {
+	return 0;
+}
+
+static int pubkey_null_verify ( void *ctx __unused,
+				struct digest_algorithm *digest __unused,
+				const void *value __unused,
+				const void *signature __unused ,
+				size_t signature_len __unused ) {
+	return 0;
+}
+
+static void pubkey_null_final ( void *ctx __unused ) {
+	/* Do nothing */
+}
+
 struct pubkey_algorithm pubkey_null = {
 	.name = "null",
 	.ctxsize = 0,
+	.init = pubkey_null_init,
+	.max_len = pubkey_null_max_len,
+	.encrypt = pubkey_null_encrypt,
+	.decrypt = pubkey_null_decrypt,
+	.sign = pubkey_null_sign,
+	.verify = pubkey_null_verify,
+	.final = pubkey_null_final,
 };

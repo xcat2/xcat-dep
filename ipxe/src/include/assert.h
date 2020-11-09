@@ -10,13 +10,19 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
+#ifndef ASSERTING
 #ifdef NDEBUG
 #define ASSERTING 0
 #else
 #define ASSERTING 1
 #endif
+#endif
+
+extern unsigned int assertion_failures;
+
+#define ASSERTED ( ASSERTING && ( assertion_failures != 0 ) )
 
 /** printf() for assertions
  *
@@ -43,6 +49,7 @@ assert_printf ( const char *fmt, ... ) asm ( "printf" );
 #define assert( condition ) 						     \
 	do { 								     \
 		if ( ASSERTING && ! (condition) ) { 			     \
+			assertion_failures++;				     \
 			assert_printf ( "assert(%s) failed at %s line %d\n", \
 					#condition, __FILE__, __LINE__ );    \
 		} 							     \

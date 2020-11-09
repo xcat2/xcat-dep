@@ -13,21 +13,29 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdio.h>
 #include <stdarg.h>
 #include <unistd.h>
 #include <string.h>
 #include <curses.h>
-#include <console.h>
+#include <ipxe/console.h>
 #include <ipxe/settings.h>
 #include <ipxe/editbox.h>
 #include <ipxe/keys.h>
+#include <ipxe/ansicol.h>
+#include <ipxe/jumpscroll.h>
 #include <ipxe/settings_ui.h>
+#include <config/branding.h>
 
 /** @file
  *
@@ -35,45 +43,51 @@ FILE_LICENCE ( GPL2_OR_LATER );
  *
  */
 
-/* Colour pairs */
-#define CPAIR_NORMAL	1
-#define CPAIR_SELECT	2
-#define CPAIR_EDIT	3
-#define CPAIR_ALERT	4
-
 /* Screen layout */
-#define TITLE_ROW		1
-#define SETTINGS_LIST_ROW	3
-#define SETTINGS_LIST_COL	1
-#define SETTINGS_LIST_ROWS	16
-#define INFO_ROW		20
-#define ALERT_ROW		20
-#define INSTRUCTION_ROW		22
+#define TITLE_ROW		1U
+#define SETTINGS_LIST_ROW	3U
+#define SETTINGS_LIST_COL	1U
+#define SETTINGS_LIST_ROWS	( LINES - 6U - SETTINGS_LIST_ROW )
+#define INFO_ROW		( LINES - 5U )
+#define ALERT_ROW		( LINES - 2U )
+#define INSTRUCTION_ROW		( LINES - 2U )
 #define INSTRUCTION_PAD "     "
 
-/** Layout of text within a setting widget */
-struct setting_row {
-	char start[0];
-	char pad1[1];
-	char name[15];
-	char pad2[1];
-	char value[60];
-	char pad3[1];
-	char nul;
-} __attribute__ (( packed ));
+/** Layout of text within a setting row */
+#define SETTING_ROW_TEXT( cols ) struct {				\
+	char start[0];							\
+	char pad1[1];							\
+	union {								\
+		char settings[ cols - 1 - 1 - 1 - 1 ];			\
+		struct {						\
+			char name[15];					\
+			char pad2[1];					\
+			char value[ cols - 1 - 15 - 1 - 1 - 1 - 1 ];	\
+		} setting;						\
+	} u;								\
+	char pad3[1];							\
+	char nul;							\
+} __attribute__ (( packed ))
 
-/** A setting widget */
-struct setting_widget {
-	/** Settings block */
+/** A settings user interface row */
+struct settings_ui_row {
+	/** Target configuration settings block
+	 *
+	 * Valid only for rows that lead to new settings blocks.
+	 */
 	struct settings *settings;
-        /** Index of the first visible setting, for scrolling. */
-	unsigned int first_visible;
-	/** Configuration setting */
-	struct setting *setting;
+	/** Configuration setting origin
+	 *
+	 * Valid only for rows that represent individual settings.
+	 */
+	struct settings *origin;
+	/** Configuration setting
+	 *
+	 * Valid only for rows that represent individual settings.
+	 */
+	struct setting setting;
 	/** Screen row */
 	unsigned int row;
-	/** Screen column */
-	unsigned int col;
 	/** Edit box widget used for editing setting */
 	struct edit_box editbox;
 	/** Editing in progress flag */
@@ -82,145 +96,168 @@ struct setting_widget {
 	char value[256]; /* enough size for a DHCP string */
 };
 
-/** Number of registered configuration settings */
-#define NUM_SETTINGS table_num_entries ( SETTINGS )
-
-static void load_setting ( struct setting_widget *widget ) __nonnull;
-static int save_setting ( struct setting_widget *widget ) __nonnull;
-static void init_widget ( struct setting_widget *widget,
-                           struct settings *settings ) __nonnull;
-static void draw_setting ( struct setting_widget *widget ) __nonnull;
-static int edit_setting ( struct setting_widget *widget, int key ) __nonnull;
-static void select_setting ( struct setting_widget *widget,
-			     unsigned int index ) __nonnull;
-static void reveal ( struct setting_widget *widget, unsigned int n) __nonnull;
-static void vmsg ( unsigned int row, const char *fmt, va_list args ) __nonnull;
-static void msg ( unsigned int row, const char *fmt, ... ) __nonnull;
-static void valert ( const char *fmt, va_list args ) __nonnull;
-static void alert ( const char *fmt, ... ) __nonnull;
-static void draw_info_row ( struct setting *setting ) __nonnull;
-static int main_loop ( struct settings *settings ) __nonnull;
+/** A settings user interface */
+struct settings_ui {
+	/** Settings block */
+	struct settings *settings;
+	/** Jump scroller */
+	struct jump_scroller scroll;
+	/** Current row */
+	struct settings_ui_row row;
+};
 
 /**
- * Load setting widget value from configuration settings
+ * Select a setting
  *
- * @v widget		Setting widget
- *
+ * @v ui		Settings user interface
+ * @v index		Index of setting row
+ * @ret count		Number of setting rows
  */
-static void load_setting ( struct setting_widget *widget ) {
+static unsigned int select_setting_row ( struct settings_ui *ui,
+					 unsigned int index ) {
+	SETTING_ROW_TEXT ( COLS ) *text;
+	struct settings *settings;
+	struct setting *setting;
+	struct setting *previous = NULL;
+	unsigned int count = 0;
 
-	/* Mark as not editing */
-	widget->editing = 0;
+	/* Initialise structure */
+	memset ( &ui->row, 0, sizeof ( ui->row ) );
+	ui->row.row = ( SETTINGS_LIST_ROW + index - ui->scroll.first );
 
-	/* Read current setting value */
-	if ( fetchf_setting ( widget->settings, widget->setting,
-			      widget->value, sizeof ( widget->value ) ) < 0 ) {
-		widget->value[0] = '\0';
-	}	
+	/* Include parent settings block, if applicable */
+	if ( ui->settings->parent && ( count++ == index ) ) {
+		ui->row.settings = ui->settings->parent;
+		snprintf ( ui->row.value, sizeof ( ui->row.value ),
+			   "../" );
+	}
+
+	/* Include any child settings blocks, if applicable */
+	list_for_each_entry ( settings, &ui->settings->children, siblings ) {
+		if ( count++ == index ) {
+			ui->row.settings = settings;
+			snprintf ( ui->row.value, sizeof ( ui->row.value ),
+				   "%s/", settings->name );
+		}
+	}
+
+	/* Include any applicable settings */
+	for_each_table_entry ( setting, SETTINGS ) {
+
+		/* Skip inapplicable settings */
+		if ( ! setting_applies ( ui->settings, setting ) )
+			continue;
+
+		/* Skip duplicate settings */
+		if ( previous && ( setting_cmp ( setting, previous ) == 0 ) )
+			continue;
+		previous = setting;
+
+		/* Read current setting value and origin */
+		if ( count++ == index ) {
+			fetchf_setting ( ui->settings, setting, &ui->row.origin,
+					 &ui->row.setting, ui->row.value,
+					 sizeof ( ui->row.value ) );
+		}
+	}
 
 	/* Initialise edit box */
-	init_editbox ( &widget->editbox, widget->value,
-		       sizeof ( widget->value ), NULL, widget->row,
-		       ( widget->col + offsetof ( struct setting_row, value )),
-		       sizeof ( ( ( struct setting_row * ) NULL )->value ), 0);
+	init_editbox ( &ui->row.editbox, ui->row.value,
+		       sizeof ( ui->row.value ), NULL, ui->row.row,
+		       ( SETTINGS_LIST_COL +
+			 offsetof ( typeof ( *text ), u.setting.value ) ),
+		       sizeof ( text->u.setting.value ), 0 );
+
+	return count;
 }
 
 /**
- * Save setting widget value back to configuration settings
+ * Copy string without NUL termination
  *
- * @v widget		Setting widget
+ * @v dest		Destination
+ * @v src		Source
+ * @v len		Maximum length of destination
+ * @ret len		Length of (unterminated) string
  */
-static int save_setting ( struct setting_widget *widget ) {
-	return storef_setting ( widget->settings, widget->setting,
-				widget->value );
+static size_t string_copy ( char *dest, const char *src, size_t len ) {
+	size_t src_len;
+
+	src_len = strlen ( src );
+	if ( len > src_len )
+		len = src_len;
+	memcpy ( dest, src, len );
+	return len;
 }
 
 /**
- * Initialise the scrolling setting widget, drawing initial display.
+ * Draw setting row
  *
- * @v widget		Setting widget
- * @v settings		Settings block
+ * @v ui		Settings UI
  */
-static void init_widget ( struct setting_widget *widget,
-			  struct settings *settings ) {
-	memset ( widget, 0, sizeof ( *widget ) );
-	widget->settings = settings;
-	widget->first_visible = SETTINGS_LIST_ROWS;
-	reveal ( widget, 0 );
-}
-
-/**
- * Draw setting widget
- *
- * @v widget		Setting widget
- */
-static void draw_setting ( struct setting_widget *widget ) {
-	struct setting_row row;
-	unsigned int len;
-	unsigned int curs_col;
+static void draw_setting_row ( struct settings_ui *ui ) {
+	SETTING_ROW_TEXT ( COLS ) text;
+	unsigned int curs_offset;
 	char *value;
 
 	/* Fill row with spaces */
-	memset ( &row, ' ', sizeof ( row ) );
-	row.nul = '\0';
+	memset ( &text, ' ', sizeof ( text ) );
+	text.nul = '\0';
 
-	/* Construct dot-padded name */
-	memset ( row.name, '.', sizeof ( row.name ) );
-	len = strlen ( widget->setting->name );
-	if ( len > sizeof ( row.name ) )
-		len = sizeof ( row.name );
-	memcpy ( row.name, widget->setting->name, len );
+	/* Construct row content */
+	if ( ui->row.settings ) {
 
-	/* Construct space-padded value */
-	value = widget->value;
-	if ( ! *value )
-		value = "<not specified>";
-	len = strlen ( value );
-	if ( len > sizeof ( row.value ) )
-		len = sizeof ( row.value );
-	memcpy ( row.value, value, len );
-	curs_col = ( widget->col + offsetof ( typeof ( row ), value )
-		     + len );
+		/* Construct space-padded name */
+		curs_offset = ( offsetof ( typeof ( text ), u.settings ) +
+				string_copy ( text.u.settings,
+					      ui->row.value,
+					      sizeof ( text.u.settings ) ) );
+
+	} else {
+
+		/* Construct dot-padded name */
+		memset ( text.u.setting.name, '.',
+			 sizeof ( text.u.setting.name ) );
+		string_copy ( text.u.setting.name, ui->row.setting.name,
+			      sizeof ( text.u.setting.name ) );
+
+		/* Construct space-padded value */
+		value = ui->row.value;
+		if ( ! *value )
+			value = "<not specified>";
+		curs_offset = ( offsetof ( typeof ( text ), u.setting.value ) +
+				string_copy ( text.u.setting.value, value,
+					      sizeof ( text.u.setting.value )));
+	}
 
 	/* Print row */
-	mvprintw ( widget->row, widget->col, "%s", row.start );
-	move ( widget->row, curs_col );
-	if ( widget->editing )
-		draw_editbox ( &widget->editbox );
+	if ( ( ui->row.origin == ui->settings ) || ( ui->row.settings != NULL ))
+		attron ( A_BOLD );
+	mvprintw ( ui->row.row, SETTINGS_LIST_COL, "%s", text.start );
+	attroff ( A_BOLD );
+	move ( ui->row.row, ( SETTINGS_LIST_COL + curs_offset ) );
 }
 
 /**
- * Edit setting widget
+ * Edit setting ui
  *
- * @v widget		Setting widget
+ * @v ui		Settings UI
  * @v key		Key pressed by user
  * @ret key		Key returned to application, or zero
  */
-static int edit_setting ( struct setting_widget *widget, int key ) {
-	widget->editing = 1;
-	return edit_editbox ( &widget->editbox, key );
+static int edit_setting ( struct settings_ui *ui, int key ) {
+	assert ( ui->row.setting.name != NULL );
+	ui->row.editing = 1;
+	return edit_editbox ( &ui->row.editbox, key );
 }
 
 /**
- * Select a setting for display updates, by index.
+ * Save setting ui value back to configuration settings
  *
- * @v widget		Setting widget
- * @v settings		Settings block
- * @v index		Index of setting with settings list
+ * @v ui		Settings UI
  */
-static void select_setting ( struct setting_widget *widget,
-			     unsigned int index ) {
-	struct setting *all_settings = table_start ( SETTINGS );
-	unsigned int skip = offsetof ( struct setting_widget, setting );
-
-	/* Reset the widget, preserving static state. */
-	memset ( ( char * ) widget + skip, 0, sizeof ( *widget ) - skip );
-	widget->setting = &all_settings[index];
-	widget->row = SETTINGS_LIST_ROW + index - widget->first_visible;
-	widget->col = SETTINGS_LIST_COL;
-
-	/* Read current setting value */
-	load_setting ( widget );
+static int save_setting ( struct settings_ui *ui ) {
+	assert ( ui->row.setting.name != NULL );
+	return storef_setting ( ui->settings, &ui->row.setting, ui->row.value );
 }
 
 /**
@@ -294,163 +331,218 @@ static void alert ( const char *fmt, ... ) {
 
 /**
  * Draw title row
+ *
+ * @v ui		Settings UI
  */
-static void draw_title_row ( void ) {
+static void draw_title_row ( struct settings_ui *ui ) {
+	const char *name;
+
+	clearmsg ( TITLE_ROW );
+	name = settings_name ( ui->settings );
 	attron ( A_BOLD );
-	msg ( TITLE_ROW, "iPXE option configuration console" );
+	msg ( TITLE_ROW, PRODUCT_SHORT_NAME " configuration settings%s%s",
+	      ( name[0] ? " - " : "" ), name );
 	attroff ( A_BOLD );
 }
 
 /**
  * Draw information row
  *
- * @v setting		Current configuration setting
+ * @v ui		Settings UI
  */
-static void draw_info_row ( struct setting *setting ) {
+static void draw_info_row ( struct settings_ui *ui ) {
+	char buf[32];
+
+	/* Draw nothing unless this row represents a setting */
 	clearmsg ( INFO_ROW );
+	clearmsg ( INFO_ROW + 1 );
+	if ( ! ui->row.setting.name )
+		return;
+
+	/* Determine a suitable setting name */
+	setting_name ( ( ui->row.origin ?
+			 ui->row.origin : ui->settings ),
+		       &ui->row.setting, buf, sizeof ( buf ) );
+
+	/* Draw row */
 	attron ( A_BOLD );
-	msg ( INFO_ROW, "%s - %s", setting->name, setting->description );
+	msg ( INFO_ROW, "%s - %s", buf, ui->row.setting.description );
 	attroff ( A_BOLD );
+	color_set ( CPAIR_URL, NULL );
+	msg ( ( INFO_ROW + 1 ), PRODUCT_SETTING_URI, ui->row.setting.name );
+	color_set ( CPAIR_NORMAL, NULL );
 }
 
 /**
  * Draw instruction row
  *
- * @v editing		Editing in progress flag
+ * @v ui		Settings UI
  */
-static void draw_instruction_row ( int editing ) {
+static void draw_instruction_row ( struct settings_ui *ui ) {
+
 	clearmsg ( INSTRUCTION_ROW );
-	if ( editing ) {
+	if ( ui->row.editing ) {
 		msg ( INSTRUCTION_ROW,
 		      "Enter - accept changes" INSTRUCTION_PAD
 		      "Ctrl-C - discard changes" );
 	} else {
 		msg ( INSTRUCTION_ROW,
-		      "Ctrl-D - delete setting" INSTRUCTION_PAD
-		      "Ctrl-X - exit configuration utility" );
+		      "%sCtrl-X - exit configuration utility",
+		      ( ( ui->row.origin == ui->settings ) ?
+			"Ctrl-D - delete setting" INSTRUCTION_PAD : "" ) );
 	}
 }
 
 /**
- * Reveal a setting by index: Scroll the setting list to reveal the
- * specified setting.
+ * Draw the current block of setting rows
  *
- * @widget	The main loop's display widget.
- * @n		The index of the setting to reveal.
+ * @v ui		Settings UI
  */
-static void reveal ( struct setting_widget *widget, unsigned int n)
-{
+static void draw_setting_rows ( struct settings_ui *ui ) {
 	unsigned int i;
 
-	/* Simply return if setting N is already on-screen. */
-	if ( n - widget->first_visible < SETTINGS_LIST_ROWS )
-		return;
-	
-	/* Jump scroll to make the specified setting visible. */
-	while ( widget->first_visible < n )
-		widget->first_visible += SETTINGS_LIST_ROWS;
-	while ( widget->first_visible > n )
-		widget->first_visible -= SETTINGS_LIST_ROWS;
-	
-	/* Draw elipses before and/or after the settings list to
-	   represent any invisible settings. */
-	mvaddstr ( SETTINGS_LIST_ROW - 1,
-		   SETTINGS_LIST_COL + 1,
-		   widget->first_visible > 0 ? "..." : "   " );
-	mvaddstr ( SETTINGS_LIST_ROW + SETTINGS_LIST_ROWS,
-		   SETTINGS_LIST_COL + 1,
-		   ( widget->first_visible + SETTINGS_LIST_ROWS < NUM_SETTINGS
-		     ? "..."
-		     : "   " ) );
-	
+	/* Draw ellipses before and/or after the list as necessary */
+	color_set ( CPAIR_SEPARATOR, NULL );
+	mvaddstr ( ( SETTINGS_LIST_ROW - 1 ), ( SETTINGS_LIST_COL + 1 ),
+		   jump_scroll_is_first ( &ui->scroll ) ? "   " : "..." );
+	mvaddstr ( ( SETTINGS_LIST_ROW + SETTINGS_LIST_ROWS ),
+		   ( SETTINGS_LIST_COL + 1 ),
+		   jump_scroll_is_last ( &ui->scroll ) ? "   " : "..." );
+	color_set ( CPAIR_NORMAL, NULL );
+
 	/* Draw visible settings. */
-	for ( i = 0; i < SETTINGS_LIST_ROWS; i++ ) {
-		if ( widget->first_visible + i < NUM_SETTINGS ) {
-			select_setting ( widget, widget->first_visible + i );
-			draw_setting ( widget );
+	for ( i = 0 ; i < SETTINGS_LIST_ROWS ; i++ ) {
+		if ( ( ui->scroll.first + i ) < ui->scroll.count ) {
+			select_setting_row ( ui, ( ui->scroll.first + i ) );
+			draw_setting_row ( ui );
 		} else {
 			clearmsg ( SETTINGS_LIST_ROW + i );
 		}
 	}
+}
 
-	/* Set the widget to the current row, which will be redrawn
-	   appropriately by the main loop. */
-	select_setting ( widget, n );
+/**
+ * Select settings block
+ *
+ * @v ui		Settings UI
+ * @v settings		Settings block
+ */
+static void select_settings ( struct settings_ui *ui,
+			      struct settings *settings ) {
+
+	ui->settings = settings_target ( settings );
+	ui->scroll.count = select_setting_row ( ui, 0 );
+	ui->scroll.rows = SETTINGS_LIST_ROWS;
+	ui->scroll.current = 0;
+	ui->scroll.first = 0;
+	draw_title_row ( ui );
+	draw_setting_rows ( ui );
+	select_setting_row ( ui, 0 );
 }
 
 static int main_loop ( struct settings *settings ) {
-	struct setting_widget widget;
-	unsigned int current = 0;
-	unsigned int next;
+	struct settings_ui ui;
+	unsigned int previous;
+	int redraw = 1;
+	int move;
 	int key;
 	int rc;
 
 	/* Print initial screen content */
-	draw_title_row();
 	color_set ( CPAIR_NORMAL, NULL );
-	init_widget ( &widget, settings );
-	
+	memset ( &ui, 0, sizeof ( ui ) );
+	select_settings ( &ui, settings );
+
 	while ( 1 ) {
-		/* Redraw information and instruction rows */
-		draw_info_row ( widget.setting );
-		draw_instruction_row ( widget.editing );
 
-		/* Redraw current setting */
-		color_set ( ( widget.editing ? CPAIR_EDIT : CPAIR_SELECT ),
-			    NULL );
-		draw_setting ( &widget );
-		color_set ( CPAIR_NORMAL, NULL );
+		/* Redraw rows if necessary */
+		if ( redraw ) {
+			draw_info_row ( &ui );
+			draw_instruction_row ( &ui );
+			color_set ( ( ui.row.editing ?
+				      CPAIR_EDIT : CPAIR_SELECT ), NULL );
+			draw_setting_row ( &ui );
+			color_set ( CPAIR_NORMAL, NULL );
+			curs_set ( ui.row.editing );
+			redraw = 0;
+		}
 
-		key = getkey();
-		if ( widget.editing ) {
-			key = edit_setting ( &widget, key );
+		/* Edit setting, if we are currently editing */
+		if ( ui.row.editing ) {
+
+			/* Sanity check */
+			assert ( ui.row.setting.name != NULL );
+
+			/* Redraw edit box */
+			color_set ( CPAIR_EDIT, NULL );
+			draw_editbox ( &ui.row.editbox );
+			color_set ( CPAIR_NORMAL, NULL );
+
+			/* Process keypress */
+			key = edit_setting ( &ui, getkey ( 0 ) );
 			switch ( key ) {
 			case CR:
 			case LF:
-				if ( ( rc = save_setting ( &widget ) ) != 0 ) {
-					alert ( " Could not set %s: %s ",
-						widget.setting->name,
-						strerror ( rc ) );
-				}
+				if ( ( rc = save_setting ( &ui ) ) != 0 )
+					alert ( " %s ", strerror ( rc ) );
 				/* Fall through */
 			case CTRL_C:
-				load_setting ( &widget );
+				select_setting_row ( &ui, ui.scroll.current );
+				redraw = 1;
 				break;
 			default:
 				/* Do nothing */
 				break;
 			}
-		} else {
-			next = current;
-			switch ( key ) {
-			case KEY_DOWN:
-				if ( next < ( NUM_SETTINGS - 1 ) )
-					reveal ( &widget, ++next );
-				break;
-			case KEY_UP:
-				if ( next > 0 )
-					reveal ( &widget, --next ) ;
-				break;
-			case CTRL_D:
-				delete_setting ( widget.settings,
-						 widget.setting );
-				select_setting ( &widget, next );
-				draw_setting ( &widget );
-				break;
-			case CTRL_X:
-				return 0;
-			default:
-				edit_setting ( &widget, key );
-				break;
-			}	
-			if ( next != current ) {
-				draw_setting ( &widget );
-				select_setting ( &widget, next );
-				current = next;
+
+			continue;
+		}
+
+		/* Otherwise, navigate through settings */
+		key = getkey ( 0 );
+		move = jump_scroll_key ( &ui.scroll, key );
+		if ( move ) {
+			previous = ui.scroll.current;
+			jump_scroll_move ( &ui.scroll, move );
+			if ( ui.scroll.current != previous ) {
+				draw_setting_row ( &ui );
+				redraw = 1;
+				if ( jump_scroll ( &ui.scroll ) )
+					draw_setting_rows ( &ui );
+				select_setting_row ( &ui, ui.scroll.current );
 			}
+			continue;
+		}
+
+		/* Handle non-navigation keys */
+		switch ( key ) {
+		case CTRL_D:
+			if ( ! ui.row.setting.name )
+				break;
+			if ( ( rc = delete_setting ( ui.settings,
+						     &ui.row.setting ) ) != 0 ){
+				alert ( " %s ", strerror ( rc ) );
+			}
+			select_setting_row ( &ui, ui.scroll.current );
+			redraw = 1;
+			break;
+		case CTRL_X:
+			return 0;
+		case CR:
+		case LF:
+			if ( ui.row.settings ) {
+				select_settings ( &ui, ui.row.settings );
+				redraw = 1;
+			}
+			/* Fall through */
+		default:
+			if ( ui.row.setting.name ) {
+				edit_setting ( &ui, key );
+				redraw = 1;
+			}
+			break;
 		}
 	}
-	
 }
 
 int settings_ui ( struct settings *settings ) {
@@ -458,11 +550,8 @@ int settings_ui ( struct settings *settings ) {
 
 	initscr();
 	start_color();
-	init_pair ( CPAIR_NORMAL, COLOR_WHITE, COLOR_BLUE );
-	init_pair ( CPAIR_SELECT, COLOR_WHITE, COLOR_RED );
-	init_pair ( CPAIR_EDIT, COLOR_BLACK, COLOR_CYAN );
-	init_pair ( CPAIR_ALERT, COLOR_WHITE, COLOR_RED );
 	color_set ( CPAIR_NORMAL, NULL );
+	curs_set ( 0 );
 	erase();
 	
 	rc = main_loop ( settings );

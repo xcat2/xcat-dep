@@ -93,7 +93,7 @@ FEATURE ( FEATURE_PROTOCOL, "SRP", DHCP_EB_FEATURE_SRP, 1 );
 	SRP_LOGIN_REJ_REASON_NO_MORE_CHANNELS,				      \
 	"RDMA channel limit reached for this initiator" )
 #define EPERM_LOGIN_REJ( reason_nibble )				      \
-	EUNIQ ( EPERM, (reason_nibble), EPERM_UNKNOWN,			      \
+	EUNIQ ( EINFO_EPERM, (reason_nibble), EPERM_UNKNOWN,		      \
 		EPERM_INSUFFICIENT_RESOURCES, EPERM_BAD_MAX_I_T_IU_LEN,	      \
 		EPERM_CANNOT_ASSOCIATE, EPERM_UNSUPPORTED_BUFFER_FORMAT,      \
 		EPERM_NO_MULTIPLE_CHANNELS, EPERM_NO_MORE_CHANNELS )
@@ -112,13 +112,6 @@ struct srp_device {
 	uint32_t memory_handle;
 	/** Login completed successfully */
 	int logged_in;
-
-	/** Initiator port ID (for boot firmware table) */
-	union srp_port_id initiator;
-	/** Target port ID (for boot firmware table) */
-	union srp_port_id target;
-	/** SCSI LUN (for boot firmware table) */
-	struct scsi_lun lun;
 
 	/** List of active commands */
 	struct list_head commands;
@@ -476,12 +469,14 @@ static int srp_rsp ( struct srp_device *srpdev,
 	const struct srp_rsp *rsp = data;
 	struct srp_command *srpcmd;
 	struct scsi_rsp response;
-	const void *sense;
 	ssize_t data_out_residual_count;
 	ssize_t data_in_residual_count;
 
 	/* Sanity check */
-	if ( len < sizeof ( *rsp ) ) {
+	if ( ( len < sizeof ( *rsp ) ) ||
+	     ( len < ( sizeof ( *rsp ) +
+		       srp_rsp_response_data_len ( rsp ) +
+		       srp_rsp_sense_data_len ( rsp ) ) ) ) {
 		DBGC ( srpdev, "SRP %p RSP too short (%zd bytes)\n",
 		       srpdev, len );
 		return -EINVAL;
@@ -523,9 +518,8 @@ static int srp_rsp ( struct srp_device *srpdev,
 	} else if ( rsp->valid & SRP_RSP_VALID_DIUNDER ) {
 		response.overrun = -(data_in_residual_count);
 	}
-	sense = srp_rsp_sense_data ( rsp );
-	if ( sense )
-		memcpy ( &response.sense, sense, sizeof ( response.sense ) );
+	scsi_parse_sense ( srp_rsp_sense_data ( rsp ),
+			   srp_rsp_sense_data_len ( rsp ), &response.sense );
 
 	/* Report SCSI response */
 	scsi_response ( &srpcmd->scsi, &response );
@@ -683,61 +677,6 @@ static size_t srpdev_window ( struct srp_device *srpdev ) {
 	return ( srpdev->logged_in ? ~( ( size_t ) 0 ) : 0 );
 }
 
-/**
- * A (transport-independent) sBFT created by iPXE
- */
-struct ipxe_sbft {
-	/** The table header */
-	struct sbft_table table;
-	/** The SCSI subtable */
-	struct sbft_scsi_subtable scsi;
-	/** The SRP subtable */
-	struct sbft_srp_subtable srp;
-} __attribute__ (( packed, aligned ( 16 ) ));
-
-/**
- * Describe SRP device in an ACPI table
- *
- * @v srpdev		SRP device
- * @v acpi		ACPI table
- * @v len		Length of ACPI table
- * @ret rc		Return status code
- */
-static int srpdev_describe ( struct srp_device *srpdev,
-			     struct acpi_description_header *acpi,
-			     size_t len ) {
-	struct ipxe_sbft *sbft =
-		container_of ( acpi, struct ipxe_sbft, table.acpi );
-	int rc;
-
-	/* Sanity check */
-	if ( len < sizeof ( *sbft ) )
-		return -ENOBUFS;
-
-	/* Populate table */
-	sbft->table.acpi.signature = cpu_to_le32 ( SBFT_SIG );
-	sbft->table.acpi.length = cpu_to_le32 ( sizeof ( *sbft ) );
-	sbft->table.acpi.revision = 1;
-	sbft->table.scsi_offset =
-		cpu_to_le16 ( offsetof ( typeof ( *sbft ), scsi ) );
-	memcpy ( &sbft->scsi.lun, &srpdev->lun, sizeof ( sbft->scsi.lun ) );
-	sbft->table.srp_offset =
-		cpu_to_le16 ( offsetof ( typeof ( *sbft ), srp ) );
-	memcpy ( &sbft->srp.initiator, &srpdev->initiator,
-		 sizeof ( sbft->srp.initiator ) );
-	memcpy ( &sbft->srp.target, &srpdev->target,
-		 sizeof ( sbft->srp.target ) );
-
-	/* Ask transport layer to describe transport-specific portions */
-	if ( ( rc = acpi_describe ( &srpdev->socket, acpi, len ) ) != 0 ) {
-		DBGC ( srpdev, "SRP %p cannot describe transport layer: %s\n",
-		       srpdev, strerror ( rc ) );
-		return rc;
-	}
-
-	return 0;
-}
-
 /** SRP device socket interface operations */
 static struct interface_operation srpdev_socket_op[] = {
 	INTF_OP ( xfer_deliver, struct srp_device *, srpdev_deliver ),
@@ -754,7 +693,6 @@ static struct interface_operation srpdev_scsi_op[] = {
 	INTF_OP ( scsi_command, struct srp_device *, srpdev_scsi_command ),
 	INTF_OP ( xfer_window, struct srp_device *, srpdev_window ),
 	INTF_OP ( intf_close, struct srp_device *, srpdev_close ),
-	INTF_OP ( acpi_describe, struct srp_device *, srpdev_describe ),
 };
 
 /** SRP device SCSI interface descriptor */
@@ -795,11 +733,6 @@ int srp_open ( struct interface *block, struct interface *socket,
 	       ntohl ( initiator->dwords[2] ), ntohl ( initiator->dwords[3] ),
 	       ntohl ( target->dwords[0] ), ntohl ( target->dwords[1] ),
 	       ntohl ( target->dwords[2] ), ntohl ( target->dwords[3] ) );
-
-	/* Preserve parameters required for boot firmware table */
-	memcpy ( &srpdev->initiator, initiator, sizeof ( srpdev->initiator ) );
-	memcpy ( &srpdev->target, target, sizeof ( srpdev->target ) );
-	memcpy ( &srpdev->lun, lun, sizeof ( srpdev->lun ) );
 
 	/* Attach to socket interface and initiate login */
 	intf_plug_plug ( &srpdev->socket, socket );

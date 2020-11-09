@@ -9,6 +9,7 @@
 #include <ipxe/xfer.h>
 #include <ipxe/open.h>
 #include <ipxe/uri.h>
+#include <ipxe/netdevice.h>
 #include <ipxe/udp.h>
 
 /** @file
@@ -16,7 +17,7 @@
  * UDP protocol
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /**
  * A UDP connection
@@ -47,45 +48,19 @@ static struct interface_descriptor udp_xfer_desc;
 struct tcpip_protocol udp_protocol __tcpip_protocol;
 
 /**
- * Bind UDP connection to local port
+ * Check if local UDP port is available
  *
- * @v udp		UDP connection
- * @ret rc		Return status code
- *
- * Opens the UDP connection and binds to the specified local port.  If
- * no local port is specified, the first available port will be used.
+ * @v port		Local port number
+ * @ret port		Local port number, or negative error
  */
-static int udp_bind ( struct udp_connection *udp ) {
-	struct udp_connection *existing;
-	static uint16_t try_port = 1023;
+static int udp_port_available ( int port ) {
+	struct udp_connection *udp;
 
-	/* If no port specified, find the first available port */
-	if ( ! udp->local.st_port ) {
-		while ( try_port ) {
-			try_port++;
-			if ( try_port < 1024 )
-				continue;
-			udp->local.st_port = htons ( try_port );
-			if ( udp_bind ( udp ) == 0 )
-				return 0;
-		}
-		return -EADDRINUSE;
-	}
-
-	/* Attempt bind to local port */
-	list_for_each_entry ( existing, &udp_conns, list ) {
-		if ( existing->local.st_port == udp->local.st_port ) {
-			DBGC ( udp, "UDP %p could not bind: port %d in use\n",
-			       udp, ntohs ( udp->local.st_port ) );
+	list_for_each_entry ( udp, &udp_conns, list ) {
+		if ( udp->local.st_port == htons ( port ) )
 			return -EADDRINUSE;
-		}
 	}
-
-	/* Add to UDP connection list */
-	DBGC ( udp, "UDP %p bound to port %d\n",
-	       udp, ntohs ( udp->local.st_port ) );
-
-	return 0;
+	return port;
 }
 
 /**
@@ -103,6 +78,7 @@ static int udp_open_common ( struct interface *xfer,
 	struct sockaddr_tcpip *st_peer = ( struct sockaddr_tcpip * ) peer;
 	struct sockaddr_tcpip *st_local = ( struct sockaddr_tcpip * ) local;
 	struct udp_connection *udp;
+	int port;
 	int rc;
 
 	/* Allocate and initialise structure */
@@ -119,8 +95,16 @@ static int udp_open_common ( struct interface *xfer,
 
 	/* Bind to local port */
 	if ( ! promisc ) {
-		if ( ( rc = udp_bind ( udp ) ) != 0 )
+		port = tcpip_bind ( st_local, udp_port_available );
+		if ( port < 0 ) {
+			rc = port;
+			DBGC ( udp, "UDP %p could not bind: %s\n",
+			       udp, strerror ( rc ) );
 			goto err;
+		}
+		udp->local.st_port = htons ( port );
+		DBGC ( udp, "UDP %p bound to port %d\n",
+		       udp, ntohs ( udp->local.st_port ) );
 	}
 
 	/* Attach parent interface, transfer reference to connection
@@ -197,7 +181,8 @@ static int udp_tx ( struct udp_connection *udp, struct io_buffer *iobuf,
 	int rc;
 
 	/* Check we can accommodate the header */
-	if ( ( rc = iob_ensure_headroom ( iobuf, UDP_MAX_HLEN ) ) != 0 ) {
+	if ( ( rc = iob_ensure_headroom ( iobuf,
+					  MAX_LL_NET_HEADER_LEN ) ) != 0 ) {
 		free_iob ( iobuf );
 		return rc;
 	}
@@ -218,9 +203,9 @@ static int udp_tx ( struct udp_connection *udp, struct io_buffer *iobuf,
 	udphdr->chksum = tcpip_chksum ( udphdr, len );
 
 	/* Dump debugging information */
-	DBGC ( udp, "UDP %p TX %d->%d len %d\n", udp,
-	       ntohs ( udphdr->src ), ntohs ( udphdr->dest ),
-	       ntohs ( udphdr->len ) );
+	DBGC2 ( udp, "UDP %p TX %d->%d len %d\n", udp,
+		ntohs ( udphdr->src ), ntohs ( udphdr->dest ),
+		ntohs ( udphdr->len ) );
 
 	/* Send it to the next layer for processing */
 	if ( ( rc = tcpip_tx ( iobuf, &udp_protocol, src, dest, netdev,
@@ -262,12 +247,15 @@ static struct udp_connection * udp_demux ( struct sockaddr_tcpip *local ) {
  * Process a received packet
  *
  * @v iobuf		I/O buffer
+ * @v netdev		Network device
  * @v st_src		Partially-filled source address
  * @v st_dest		Partially-filled destination address
  * @v pshdr_csum	Pseudo-header checksum
  * @ret rc		Return status code
  */
-static int udp_rx ( struct io_buffer *iobuf, struct sockaddr_tcpip *st_src,
+static int udp_rx ( struct io_buffer *iobuf,
+		    struct net_device *netdev __unused,
+		    struct sockaddr_tcpip *st_src,
 		    struct sockaddr_tcpip *st_dest, uint16_t pshdr_csum ) {
 	struct udp_header *udphdr = iobuf->data;
 	struct udp_connection *udp;
@@ -315,8 +303,8 @@ static int udp_rx ( struct io_buffer *iobuf, struct sockaddr_tcpip *st_src,
 	iob_pull ( iobuf, sizeof ( *udphdr ) );
 
 	/* Dump debugging information */
-	DBGC ( udp, "UDP %p RX %d<-%d len %zd\n", udp,
-	       ntohs ( udphdr->dest ), ntohs ( udphdr->src ), ulen );
+	DBGC2 ( udp, "UDP %p RX %d<-%d len %zd\n", udp,
+		ntohs ( udphdr->dest ), ntohs ( udphdr->src ), ulen );
 
 	/* Ignore if no matching connection found */
 	if ( ! udp ) {
@@ -340,6 +328,7 @@ static int udp_rx ( struct io_buffer *iobuf, struct sockaddr_tcpip *st_src,
 struct tcpip_protocol udp_protocol __tcpip_protocol = {
 	.name = "UDP",
 	.rx = udp_rx,
+	.zero_csum = TCPIP_NEGATIVE_ZERO_CSUM,
 	.tcpip_proto = IP_UDP,
 };
 
@@ -361,13 +350,13 @@ static struct io_buffer * udp_xfer_alloc_iob ( struct udp_connection *udp,
 					       size_t len ) {
 	struct io_buffer *iobuf;
 
-	iobuf = alloc_iob ( UDP_MAX_HLEN + len );
+	iobuf = alloc_iob ( MAX_LL_NET_HEADER_LEN + len );
 	if ( ! iobuf ) {
 		DBGC ( udp, "UDP %p cannot allocate buffer of length %zd\n",
 		       udp, len );
 		return NULL;
 	}
-	iob_reserve ( iobuf, UDP_MAX_HLEN );
+	iob_reserve ( iobuf, MAX_LL_NET_HEADER_LEN );
 	return iobuf;
 }
 
@@ -384,10 +373,9 @@ static int udp_xfer_deliver ( struct udp_connection *udp,
 			      struct xfer_metadata *meta ) {
 
 	/* Transmit data, if possible */
-	udp_tx ( udp, iobuf, ( ( struct sockaddr_tcpip * ) meta->src ),
-		 ( ( struct sockaddr_tcpip * ) meta->dest ), meta->netdev );
-
-	return 0;
+	return udp_tx ( udp, iobuf, ( ( struct sockaddr_tcpip * ) meta->src ),
+			( ( struct sockaddr_tcpip * ) meta->dest ),
+			meta->netdev );
 }
 
 /** UDP data transfer interface operations */
@@ -411,7 +399,6 @@ static struct interface_descriptor udp_xfer_desc =
 /** UDP socket opener */
 struct socket_opener udp_socket_opener __socket_opener = {
 	.semantics	= UDP_SOCK_DGRAM,
-	.family		= AF_INET,
 	.open		= udp_open,
 };
 

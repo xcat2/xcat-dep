@@ -25,13 +25,15 @@
  *	at some point. If there's anything obvious or better, not-so-obvious,
  *	please contact me by e-mail: anselm (AT) hoffmeister (DOT) be   *THANKS*
  */
+
+FILE_LICENCE ( GPL2_ONLY );
+
 #include <stdio.h>
 #include <pcmcia.h>
 #include <i82365.h>
 #define CODE_STATUS "alpha"
 #define	CODE_VERSION "0.1.3"
 #include <pcmcia-opts.h>
-#include <console.h>
 #include <ipxe/init.h>
 
 int	sockets; /* AHTODO: Phase this out! */

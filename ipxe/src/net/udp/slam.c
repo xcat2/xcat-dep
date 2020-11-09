@@ -13,10 +13,15 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -261,7 +266,8 @@ static int slam_tx_nack ( struct slam_request *slam ) {
 	if ( ! iobuf ) {
 		DBGC ( slam, "SLAM %p could not allocate I/O buffer\n",
 		       slam );
-		return -ENOMEM;
+		rc = -ENOMEM;
+		goto err_alloc;
 	}
 
 	/* Construct NACK.  We always request only a single packet;
@@ -289,14 +295,19 @@ static int slam_tx_nack ( struct slam_request *slam ) {
 		       "0-%ld\n", slam, ( num_blocks - 1 ) );
 	}
 	if ( ( rc = slam_put_value ( slam, iobuf, first_block ) ) != 0 )
-		return rc;
+		goto err_put_value;
 	if ( ( rc = slam_put_value ( slam, iobuf, num_blocks ) ) != 0 )
-		return rc;
+		goto err_put_value;
 	nul = iob_put ( iobuf, 1 );
 	*nul = 0;
 
 	/* Transmit packet */
-	return xfer_deliver_iob ( &slam->socket, iobuf );
+	return xfer_deliver_iob ( &slam->socket, iob_disown ( iobuf ) );
+
+ err_put_value:
+	free_iob ( iobuf );
+ err_alloc:
+	return rc;
 }
 
 /**
@@ -389,12 +400,16 @@ static int slam_pull_value ( struct slam_request *slam,
 		return -EINVAL;
 	}
 
-	/* Read value */
+	/* Strip value */
 	iob_pull ( iobuf, len );
-	*value = ( *data & 0x1f );
-	while ( --len ) {
-		*value <<= 8;
-		*value |= *(++data);
+
+	/* Read value, if applicable */
+	if ( value ) {
+		*value = ( *data & 0x1f );
+		while ( --len ) {
+			*value <<= 8;
+			*value |= *(++data);
+		}
 	}
 
 	return 0;
@@ -410,6 +425,8 @@ static int slam_pull_value ( struct slam_request *slam,
 static int slam_pull_header ( struct slam_request *slam,
 			      struct io_buffer *iobuf ) {
 	void *header = iobuf->data;
+	unsigned long total_bytes;
+	unsigned long block_size;
 	int rc;
 
 	/* If header matches cached header, just pull it and return */
@@ -426,12 +443,16 @@ static int slam_pull_header ( struct slam_request *slam,
 	 */
 	if ( ( rc = slam_pull_value ( slam, iobuf, NULL ) ) != 0 )
 		return rc;
-	if ( ( rc = slam_pull_value ( slam, iobuf,
-				      &slam->total_bytes ) ) != 0 )
+	if ( ( rc = slam_pull_value ( slam, iobuf, &total_bytes ) ) != 0 )
 		return rc;
-	if ( ( rc = slam_pull_value ( slam, iobuf,
-				      &slam->block_size ) ) != 0 )
+	if ( ( rc = slam_pull_value ( slam, iobuf, &block_size ) ) != 0 )
 		return rc;
+
+	/* Sanity check */
+	if ( block_size == 0 ) {
+		DBGC ( slam, "SLAM %p ignoring zero block size\n", slam );
+		return -EINVAL;
+	}
 
 	/* Update the cached header */
 	slam->header_len = ( iobuf->data - header );
@@ -439,9 +460,9 @@ static int slam_pull_header ( struct slam_request *slam,
 	memcpy ( slam->header, header, slam->header_len );
 
 	/* Calculate number of blocks */
-	slam->num_blocks = ( ( slam->total_bytes + slam->block_size - 1 ) /
-			     slam->block_size );
-
+	slam->total_bytes = total_bytes;
+	slam->block_size = block_size;
+	slam->num_blocks = ( ( total_bytes + block_size - 1 ) / block_size );
 	DBGC ( slam, "SLAM %p has total bytes %ld, block size %ld, num "
 	       "blocks %ld\n", slam, slam->total_bytes, slam->block_size,
 	       slam->num_blocks );
@@ -634,35 +655,49 @@ static struct interface_descriptor slam_xfer_desc =
  */
 static int slam_parse_multicast_address ( struct slam_request *slam,
 					  const char *path,
-					  struct sockaddr_in *address ) {
-	char path_dup[ strlen ( path ) /* no +1 */ ];
+					  struct sockaddr_tcpip *address ) {
+	char *path_dup;
 	char *sep;
 	char *end;
+	int rc;
 
 	/* Create temporary copy of path, minus the leading '/' */
 	assert ( *path == '/' );
-	memcpy ( path_dup, ( path + 1 ) , sizeof ( path_dup ) );
+	path_dup = strdup ( path + 1 );
+	if ( ! path_dup ) {
+		rc = -ENOMEM;
+		goto err_strdup;
+	}
 
 	/* Parse port, if present */
 	sep = strchr ( path_dup, ':' );
 	if ( sep ) {
 		*(sep++) = '\0';
-		address->sin_port = htons ( strtoul ( sep, &end, 0 ) );
+		address->st_port = htons ( strtoul ( sep, &end, 0 ) );
 		if ( *end != '\0' ) {
 			DBGC ( slam, "SLAM %p invalid multicast port "
 			       "\"%s\"\n", slam, sep );
-			return -EINVAL;
+			rc = -EINVAL;
+			goto err_port;
 		}
 	}
 
 	/* Parse address */
-	if ( inet_aton ( path_dup, &address->sin_addr ) == 0 ) {
+	if ( sock_aton ( path_dup, ( ( struct sockaddr * ) address ) ) == 0 ) {
 		DBGC ( slam, "SLAM %p invalid multicast address \"%s\"\n",
 		       slam, path_dup );
-		return -EINVAL;
+		rc = -EINVAL;
+		goto err_addr;
 	}
 
-	return 0;
+	/* Success */
+	rc = 0;
+
+ err_addr:
+ err_port:
+	free ( path_dup );
+ err_strdup:
+	return rc;
 }
 
 /**
@@ -680,7 +715,7 @@ static int slam_open ( struct interface *xfer, struct uri *uri ) {
 	};
 	struct slam_request *slam;
 	struct sockaddr_tcpip server;
-	struct sockaddr_in multicast;
+	struct sockaddr_tcpip multicast;
 	int rc;
 
 	/* Sanity checks */
@@ -722,7 +757,7 @@ static int slam_open ( struct interface *xfer, struct uri *uri ) {
 
 	/* Open multicast socket */
 	memcpy ( &multicast, &default_multicast, sizeof ( multicast ) );
-	if ( uri->path && 
+	if ( uri->path &&
 	     ( ( rc = slam_parse_multicast_address ( slam, uri->path,
 						     &multicast ) ) != 0 ) ) {
 		goto err;

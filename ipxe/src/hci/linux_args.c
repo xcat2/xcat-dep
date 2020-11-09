@@ -45,9 +45,9 @@ __asmcall void save_args(int argc, char **argv)
 
 /** Supported command-line options */
 static struct option options[] = {
-	{"net", 1, 0, 'n'},
-	{"settings", 1, 0, 's'},
-	{0, 0, 0, 0}
+	{"net", 1, NULL, 'n'},
+	{"settings", 1, NULL, 's'},
+	{NULL, 0, NULL, 0}
 };
 
 /**
@@ -185,6 +185,7 @@ void linux_args_cleanup(int flags __unused)
 }
 
 struct startup_fn startup_linux_args __startup_fn(STARTUP_EARLY) = {
+	.name = "linux_args",
 	.startup = linux_args_parse,
 	.shutdown = linux_args_cleanup,
 };

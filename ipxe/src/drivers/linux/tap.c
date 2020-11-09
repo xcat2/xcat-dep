@@ -31,6 +31,7 @@
 #include <ipxe/socket.h>
 
 /* This hack prevents pre-2.6.32 headers from redefining struct sockaddr */
+#define _SYS_SOCKET_H
 #define __GLIBC__ 2
 #include <linux/socket.h>
 #undef __GLIBC__
@@ -39,6 +40,7 @@
 #include <linux/if_tun.h>
 
 #define RX_BUF_SIZE 1536
+#define RX_QUOTA 4
 
 /** @file
  *
@@ -126,6 +128,7 @@ static void tap_poll(struct net_device *netdev)
 	struct tap_nic * nic = netdev->priv;
 	struct pollfd pfd;
 	struct io_buffer * iobuf;
+	unsigned int quota = RX_QUOTA;
 	int r;
 
 	pfd.fd = nic->fd;
@@ -143,7 +146,8 @@ static void tap_poll(struct net_device *netdev)
 	if (! iobuf)
 		goto allocfail;
 
-	while ((r = linux_read(nic->fd, iobuf->data, RX_BUF_SIZE)) > 0) {
+	while (quota-- &&
+	       ((r = linux_read(nic->fd, iobuf->data, RX_BUF_SIZE)) > 0)) {
 		DBGC2(nic, "tap %p read %d bytes\n", nic, r);
 
 		iob_put(iobuf, r);
@@ -200,11 +204,6 @@ static int tap_probe(struct linux_device *device, struct linux_device_request *r
 	netdev->dev = &device->dev;
 	memset(nic, 0, sizeof(*nic));
 
-	if ((rc = register_netdev(netdev)) != 0)
-		goto err_register;
-
-	netdev_link_up(netdev);
-
 	/* Look for the mandatory if setting */
 	if_setting = linux_find_setting("if", &request->settings);
 
@@ -216,10 +215,19 @@ static int tap_probe(struct linux_device *device, struct linux_device_request *r
 	}
 
 	nic->interface = if_setting->value;
+	snprintf ( device->dev.name, sizeof ( device->dev.name ), "%s",
+		   nic->interface );
+	device->dev.desc.bus_type = BUS_TYPE_TAP;
 	if_setting->applied = 1;
 
 	/* Apply rest of the settings */
 	linux_apply_settings(&request->settings, &netdev->settings.settings);
+
+	/* Register network device */
+	if ((rc = register_netdev(netdev)) != 0)
+		goto err_register;
+
+	netdev_link_up(netdev);
 
 	return 0;
 

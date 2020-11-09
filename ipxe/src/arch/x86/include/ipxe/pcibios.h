@@ -9,7 +9,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #ifdef PCIAPI_PCBIOS
 #define PCIAPI_PREFIX_pcbios
@@ -130,6 +130,19 @@ PCIAPI_INLINE ( pcbios, pci_write_config_dword ) ( struct pci_device *pci,
 						   unsigned int where,
 						   uint32_t value ) {
 	return pcibios_write ( pci, PCIBIOS_WRITE_CONFIG_DWORD | where, value);
+}
+
+/**
+ * Map PCI bus address as an I/O address
+ *
+ * @v bus_addr		PCI bus address
+ * @v len		Length of region
+ * @ret io_addr		I/O address, or NULL on error
+ */
+static inline __always_inline void *
+PCIAPI_INLINE ( pcbios, pci_ioremap ) ( struct pci_device *pci __unused,
+					unsigned long bus_addr, size_t len ) {
+	return ioremap ( bus_addr, len );
 }
 
 #endif /* _IPXE_PCIBIOS_H */

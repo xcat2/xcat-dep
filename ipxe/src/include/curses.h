@@ -2,7 +2,9 @@
 #define CURSES_H
 
 #include <stdint.h>
+#include <stdbool.h>
 #include <stdarg.h>
+#include <ipxe/console.h>
 
 /** @file
  *
@@ -10,7 +12,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #undef  ERR
 #define ERR	(-1)
@@ -24,7 +26,6 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #undef  TRUE
 #define TRUE	(1)
 
-typedef int bool;
 typedef uint32_t chtype;
 typedef uint32_t attr_t;
 
@@ -37,6 +38,13 @@ typedef struct _curses_screen {
 
 	void ( *init ) ( struct _curses_screen *scr );
 	void ( *exit ) ( struct _curses_screen *scr );
+	/**
+	 * Erase screen
+	 *
+	 * @v scr	screen on which to operate
+	 * @v attrs	attributes
+	 */
+	void ( * erase ) ( struct _curses_screen *scr, attr_t attrs );
 	/**
 	 * Move cursor to position specified by x,y coords
 	 *
@@ -68,6 +76,13 @@ typedef struct _curses_screen {
 	 * @ret FALSE	no character waiting in stream
 	 */
 	bool ( *peek ) ( struct _curses_screen *scr );
+	/**
+	 * Set cursor visibility
+	 *
+	 * @v scr	screen on which to operate
+	 * @v visibility cursor visibility
+	 */
+	void ( * cursor ) ( struct _curses_screen *scr, int visibility );
 } SCREEN;
 
 /** Curses Window struct */
@@ -91,12 +106,10 @@ typedef struct _curses_window {
 } WINDOW;
 
 extern WINDOW _stdscr;
-extern unsigned short _COLS;
-extern unsigned short _LINES;
 
 #define stdscr ( &_stdscr )
-#define COLS _COLS
-#define LINES _LINES
+#define COLS console_width
+#define LINES console_height
 
 #define MUCURSES_BITS( mask, shift ) (( mask ) << (shift))
 #define CPAIR_SHIFT	8
@@ -242,7 +255,7 @@ extern int echo ( void );
 extern int echochar ( const chtype );
 extern int endwin ( void );
 extern char erasechar ( void );
-//extern int erase ( void );
+extern int erase ( void );
 extern void filter ( void );
 extern int flash ( void );
 extern int flushinp ( void );
@@ -430,7 +443,8 @@ extern int wborder ( WINDOW *, chtype, chtype, chtype, chtype, chtype, chtype,
 extern int wclrtobot ( WINDOW * ) __nonnull;
 extern int wclrtoeol ( WINDOW * ) __nonnull;
 extern void wcursyncup ( WINDOW * );
-extern int wcolour_set ( WINDOW *, short, void * ) __nonnull;
+extern int wcolour_set ( WINDOW *, short, void * )
+	__attribute__ (( nonnull (1)));
 #define wcolor_set(w,s,v) wcolour_set((w),(s),(v))
 extern int wdelch ( WINDOW * ) __nonnull;
 extern int wdeleteln ( WINDOW * ) __nonnull;
@@ -550,10 +564,6 @@ static inline int delch ( void ) {
 
 static inline int deleteln ( void ) {
 	return wdeleteln( stdscr );
-}
-
-static inline int erase ( void ) {
-	return werase ( stdscr );
 }
 
 static inline int getch ( void ) {

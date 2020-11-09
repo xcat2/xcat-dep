@@ -14,10 +14,15 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -476,7 +481,6 @@ static int phantom_dmesg ( struct phantom_nic *phantom, unsigned int log,
 			    unsigned int max_lines ) {
 	uint32_t head;
 	uint32_t tail;
-	uint32_t len;
 	uint32_t sig;
 	uint32_t offset;
 	int byte;
@@ -487,7 +491,6 @@ static int phantom_dmesg ( struct phantom_nic *phantom, unsigned int log,
 
 	/* Locate log */
 	head = phantom_readl ( phantom, UNM_CAM_RAM_DMESG_HEAD ( log ) );
-	len = phantom_readl ( phantom, UNM_CAM_RAM_DMESG_LEN ( log ) );
 	tail = phantom_readl ( phantom, UNM_CAM_RAM_DMESG_TAIL ( log ) );
 	sig = phantom_readl ( phantom, UNM_CAM_RAM_DMESG_SIG ( log ) );
 	DBGC ( phantom, "Phantom %p firmware dmesg buffer %d (%08x-%08x)\n",
@@ -1455,11 +1458,8 @@ static struct net_device_operations phantom_operations = {
  *
  */
 
-/** Phantom CLP settings tag magic */
-#define PHN_CLP_TAG_MAGIC 0xc19c1900UL
-
-/** Phantom CLP settings tag magic mask */
-#define PHN_CLP_TAG_MAGIC_MASK 0xffffff00UL
+/** Phantom CLP settings scope */
+static const struct settings_scope phantom_settings_scope;
 
 /** Phantom CLP data
  *
@@ -1660,7 +1660,7 @@ static int phantom_clp_fetch ( struct phantom_nic *phantom, unsigned int port,
 /** A Phantom CLP setting */
 struct phantom_clp_setting {
 	/** iPXE setting */
-	struct setting *setting;
+	const struct setting *setting;
 	/** Setting number */
 	unsigned int clp_setting;
 };
@@ -1677,7 +1677,8 @@ static struct phantom_clp_setting clp_settings[] = {
  * @v clp_setting	Setting number, or 0 if not found
  */
 static unsigned int
-phantom_clp_setting ( struct phantom_nic *phantom, struct setting *setting ) {
+phantom_clp_setting ( struct phantom_nic *phantom,
+		      const struct setting *setting ) {
 	struct phantom_clp_setting *clp_setting;
 	unsigned int i;
 
@@ -1690,13 +1691,31 @@ phantom_clp_setting ( struct phantom_nic *phantom, struct setting *setting ) {
 	}
 
 	/* Allow for use of numbered settings */
-	if ( ( setting->tag & PHN_CLP_TAG_MAGIC_MASK ) == PHN_CLP_TAG_MAGIC )
-		return ( setting->tag & ~PHN_CLP_TAG_MAGIC_MASK );
+	if ( setting->scope == &phantom_settings_scope )
+		return setting->tag;
 
 	DBGC2 ( phantom, "Phantom %p has no \"%s\" setting\n",
 		phantom, setting->name );
 
 	return 0;
+}
+
+/**
+ * Check applicability of Phantom CLP setting
+ *
+ * @v settings		Settings block
+ * @v setting		Setting
+ * @ret applies		Setting applies within this settings block
+ */
+static int phantom_setting_applies ( struct settings *settings,
+				     const struct setting *setting ) {
+	struct phantom_nic *phantom =
+		container_of ( settings, struct phantom_nic, settings );
+	unsigned int clp_setting;
+
+	/* Find Phantom setting equivalent to iPXE setting */
+	clp_setting = phantom_clp_setting ( phantom, setting );
+	return ( clp_setting != 0 );
 }
 
 /**
@@ -1709,7 +1728,7 @@ phantom_clp_setting ( struct phantom_nic *phantom, struct setting *setting ) {
  * @ret rc		Return status code
  */
 static int phantom_store_setting ( struct settings *settings,
-				   struct setting *setting,
+				   const struct setting *setting,
 				   const void *data, size_t len ) {
 	struct phantom_nic *phantom =
 		container_of ( settings, struct phantom_nic, settings );
@@ -1718,8 +1737,7 @@ static int phantom_store_setting ( struct settings *settings,
 
 	/* Find Phantom setting equivalent to iPXE setting */
 	clp_setting = phantom_clp_setting ( phantom, setting );
-	if ( ! clp_setting )
-		return -ENOTSUP;
+	assert ( clp_setting != 0 );
 
 	/* Store setting */
 	if ( ( rc = phantom_clp_store ( phantom, phantom->port,
@@ -1752,8 +1770,7 @@ static int phantom_fetch_setting ( struct settings *settings,
 
 	/* Find Phantom setting equivalent to iPXE setting */
 	clp_setting = phantom_clp_setting ( phantom, setting );
-	if ( ! clp_setting )
-		return -ENOTSUP;
+	assert ( clp_setting != 0 );
 
 	/* Fetch setting */
 	if ( ( read_len = phantom_clp_fetch ( phantom, phantom->port,
@@ -1769,6 +1786,7 @@ static int phantom_fetch_setting ( struct settings *settings,
 
 /** Phantom CLP settings operations */
 static struct settings_operations phantom_settings_operations = {
+	.applies	= phantom_setting_applies,
 	.store		= phantom_store_setting,
 	.fetch		= phantom_fetch_setting,
 };
@@ -1792,9 +1810,8 @@ static int phantom_map_crb ( struct phantom_nic *phantom,
 
 	bar0_start = pci_bar_start ( pci, PCI_BASE_ADDRESS_0 );
 	bar0_size = pci_bar_size ( pci, PCI_BASE_ADDRESS_0 );
-	DBGC ( phantom, "Phantom %p is PCI %02x:%02x.%x with BAR0 at "
-	       "%08lx+%lx\n", phantom, pci->bus, PCI_SLOT ( pci->devfn ),
-	       PCI_FUNC ( pci->devfn ), bar0_start, bar0_size );
+	DBGC ( phantom, "Phantom %p is " PCI_FMT " with BAR0 at %08lx+%lx\n",
+	       phantom, PCI_ARGS ( pci ), bar0_start, bar0_size );
 
 	if ( ! bar0_start ) {
 		DBGC ( phantom, "Phantom %p BAR not assigned; ignoring\n",
@@ -1820,7 +1837,7 @@ static int phantom_map_crb ( struct phantom_nic *phantom,
 		return -EINVAL;
 	}
 
-	phantom->bar0 = ioremap ( bar0_start, bar0_size );
+	phantom->bar0 = pci_ioremap ( pci, bar0_start, bar0_size );
 	if ( ! phantom->bar0 ) {
 		DBGC ( phantom, "Phantom %p could not map BAR0\n", phantom );
 		return -EIO;
@@ -2039,11 +2056,11 @@ static int phantom_init_rcvpeg ( struct phantom_nic *phantom ) {
  * @v id		PCI ID
  * @ret rc		Return status code
  */
-static int phantom_probe ( struct pci_device *pci,
-			   const struct pci_device_id *id __unused ) {
+static int phantom_probe ( struct pci_device *pci ) {
 	struct net_device *netdev;
 	struct phantom_nic *phantom;
 	struct settings *parent_settings;
+	unsigned int busdevfn;
 	int rc;
 
 	/* Allocate Phantom device */
@@ -2057,11 +2074,11 @@ static int phantom_probe ( struct pci_device *pci,
 	pci_set_drvdata ( pci, netdev );
 	netdev->dev = &pci->dev;
 	memset ( phantom, 0, sizeof ( *phantom ) );
-	phantom->port = PCI_FUNC ( pci->devfn );
+	phantom->port = PCI_FUNC ( pci->busdevfn );
 	assert ( phantom->port < PHN_MAX_NUM_PORTS );
 	settings_init ( &phantom->settings,
 			&phantom_settings_operations,
-			&netdev->refcnt, "clp", PHN_CLP_TAG_MAGIC );
+			&netdev->refcnt, &phantom_settings_scope );
 
 	/* Fix up PCI device */
 	adjust_pci_device ( pci );
@@ -2074,16 +2091,20 @@ static int phantom_probe ( struct pci_device *pci,
 	 * B2 will have this fixed; remove this hack when B1 is no
 	 * longer in use.
 	 */
-	if ( PCI_FUNC ( pci->devfn ) == 0 ) {
+	busdevfn = pci->busdevfn;
+	if ( PCI_FUNC ( busdevfn ) == 0 ) {
 		unsigned int i;
 		for ( i = 0 ; i < 8 ; i++ ) {
 			uint32_t temp;
-			pci->devfn = PCI_DEVFN ( PCI_SLOT ( pci->devfn ), i );
+			pci->busdevfn =
+				PCI_BUSDEVFN ( PCI_SEG ( busdevfn ),
+					       PCI_BUS ( busdevfn ),
+					       PCI_SLOT ( busdevfn ), i );
 			pci_read_config_dword ( pci, 0xc8, &temp );
 			pci_read_config_dword ( pci, 0xc8, &temp );
 			pci_write_config_dword ( pci, 0xc8, 0xf1000 );
 		}
-		pci->devfn = PCI_DEVFN ( PCI_SLOT ( pci->devfn ), 0 );
+		pci->busdevfn = busdevfn;
 	}
 
 	/* Initialise the command PEG */
@@ -2111,7 +2132,7 @@ static int phantom_probe ( struct pci_device *pci,
 	/* Register settings blocks */
 	parent_settings = netdev_settings ( netdev );
 	if ( ( rc = register_settings ( &phantom->settings,
-					parent_settings ) ) != 0 ) {
+					parent_settings, "clp" ) ) != 0 ) {
 		DBGC ( phantom, "Phantom %p could not register settings: "
 		       "%s\n", phantom, strerror ( rc ) );
 		goto err_register_settings;

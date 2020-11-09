@@ -1,7 +1,9 @@
 /** @file
   Defines data types and constants introduced in UEFI.
 
-Copyright (c) 2006 - 2010, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2006 - 2017, Intel Corporation. All rights reserved.<BR>
+Portions copyright (c) 2011 - 2016, ARM Ltd. All rights reserved.<BR>
+
 This program and the accompanying materials are licensed and made available under
 the terms and conditions of the BSD License that accompanies this distribution.
 The full text of the license may be found at
@@ -87,16 +89,12 @@ typedef struct {
 ///
 /// 4-byte buffer. An IPv4 internet protocol address.
 ///
-typedef struct {
-  UINT8 Addr[4];
-} EFI_IPv4_ADDRESS;
+typedef IPv4_ADDRESS EFI_IPv4_ADDRESS;
 
 ///
 /// 16-byte buffer. An IPv6 internet protocol address.
 ///
-typedef struct {
-  UINT8 Addr[16];
-} EFI_IPv6_ADDRESS;
+typedef IPv6_ADDRESS EFI_IPv6_ADDRESS;
 
 ///
 /// 32-byte buffer containing a network Media Access Control address.
@@ -150,11 +148,15 @@ typedef union {
 #define EFI_END_OF_MEDIA          RETURN_END_OF_MEDIA
 #define EFI_END_OF_FILE           RETURN_END_OF_FILE
 #define EFI_INVALID_LANGUAGE      RETURN_INVALID_LANGUAGE
+#define EFI_COMPROMISED_DATA      RETURN_COMPROMISED_DATA
+#define EFI_HTTP_ERROR            RETURN_HTTP_ERROR
 
 #define EFI_WARN_UNKNOWN_GLYPH    RETURN_WARN_UNKNOWN_GLYPH
 #define EFI_WARN_DELETE_FAILURE   RETURN_WARN_DELETE_FAILURE
 #define EFI_WARN_WRITE_FAILURE    RETURN_WARN_WRITE_FAILURE
 #define EFI_WARN_BUFFER_TOO_SMALL RETURN_WARN_BUFFER_TOO_SMALL
+#define EFI_WARN_STALE_DATA       RETURN_WARN_STALE_DATA
+#define EFI_WARN_FILE_SYSTEM      RETURN_WARN_FILE_SYSTEM
 ///@}
 
 ///
@@ -183,16 +185,38 @@ typedef union {
 
 //
 // The EFI memory allocation functions work in units of EFI_PAGEs that are
-// 4K. This should in no way be confused with the page size of the processor.
+// 4KB. This should in no way be confused with the page size of the processor.
 // An EFI_PAGE is just the quanta of memory in EFI.
 //
-#define EFI_PAGE_SIZE             0x1000
+#define EFI_PAGE_SIZE             SIZE_4KB
 #define EFI_PAGE_MASK             0xFFF
 #define EFI_PAGE_SHIFT            12
 
-#define EFI_SIZE_TO_PAGES(a)  (((a) >> EFI_PAGE_SHIFT) + (((a) & EFI_PAGE_MASK) ? 1 : 0))
+/**
+  Macro that converts a size, in bytes, to a number of EFI_PAGESs.
 
-#define EFI_PAGES_TO_SIZE(a)   ( (a) << EFI_PAGE_SHIFT)
+  @param  Size      A size in bytes.  This parameter is assumed to be type UINTN.
+                    Passing in a parameter that is larger than UINTN may produce
+                    unexpected results.
+
+  @return  The number of EFI_PAGESs associated with the number of bytes specified
+           by Size.
+
+**/
+#define EFI_SIZE_TO_PAGES(Size)  (((Size) >> EFI_PAGE_SHIFT) + (((Size) & EFI_PAGE_MASK) ? 1 : 0))
+
+/**
+  Macro that converts a number of EFI_PAGEs to a size in bytes.
+
+  @param  Pages     The number of EFI_PAGES.  This parameter is assumed to be
+                    type UINTN.  Passing in a parameter that is larger than
+                    UINTN may produce unexpected results.
+
+  @return  The number of bytes associated with the number of EFI_PAGEs specified
+           by Pages.
+
+**/
+#define EFI_PAGES_TO_SIZE(Pages)  ((Pages) << EFI_PAGE_SHIFT)
 
 ///
 /// PE32+ Machine type for IA32 UEFI images.
@@ -218,6 +242,11 @@ typedef union {
 /// PE32+ Machine type for ARM mixed ARM and Thumb/Thumb2 images.
 ///
 #define EFI_IMAGE_MACHINE_ARMTHUMB_MIXED  0x01C2
+
+///
+/// PE32+ Machine type for AARCH64 A64 images.
+///
+#define EFI_IMAGE_MACHINE_AARCH64  0xAA64
 
 
 #if   defined (MDE_CPU_IA32)
@@ -247,6 +276,13 @@ typedef union {
   (((Machine) == EFI_IMAGE_MACHINE_ARMTHUMB_MIXED) || ((Machine) == EFI_IMAGE_MACHINE_EBC))
 
 #define EFI_IMAGE_MACHINE_CROSS_TYPE_SUPPORTED(Machine) ((Machine) == EFI_IMAGE_MACHINE_ARMTHUMB_MIXED)
+
+#elif defined (MDE_CPU_AARCH64)
+
+#define EFI_IMAGE_MACHINE_TYPE_SUPPORTED(Machine) \
+  (((Machine) == EFI_IMAGE_MACHINE_AARCH64) || ((Machine) == EFI_IMAGE_MACHINE_EBC))
+
+#define EFI_IMAGE_MACHINE_CROSS_TYPE_SUPPORTED(Machine) (FALSE)
 
 #elif defined (MDE_CPU_EBC)
 

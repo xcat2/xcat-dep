@@ -7,17 +7,36 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
-#include <ipxe/in.h>
+#include <ipxe/device.h>
+
 struct net_device;
+struct uri;
+struct settings;
 
-extern int shutdown_exit_flags;
+/** uriboot() flags */
+enum uriboot_flags {
+	URIBOOT_NO_SAN_DESCRIBE = 0x0001,
+	URIBOOT_NO_SAN_BOOT = 0x0002,
+	URIBOOT_NO_SAN_UNHOOK = 0x0004,
+};
 
-extern void autoboot ( void );
-extern int boot_next_server_and_filename ( struct in_addr next_server,
-					   const char *filename );
-extern int boot_root_path ( const char *root_path );
+#define URIBOOT_NO_SAN ( URIBOOT_NO_SAN_DESCRIBE | \
+			 URIBOOT_NO_SAN_BOOT |	   \
+			 URIBOOT_NO_SAN_UNHOOK )
+
+extern void set_autoboot_busloc ( unsigned int bus_type,
+				  unsigned int location );
+extern void set_autoboot_ll_addr ( const void *ll_addr, size_t len );
+
+extern int uriboot ( struct uri *filename, struct uri **root_paths,
+		     unsigned int root_path_count, int drive,
+		     const char *san_filename, unsigned int flags );
+extern struct uri *
+fetch_next_server_and_filename ( struct settings *settings );
+extern int netboot ( struct net_device *netdev );
+extern int ipxe ( struct net_device *netdev );
 
 extern int pxe_menu_boot ( struct net_device *netdev );
 

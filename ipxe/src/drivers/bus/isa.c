@@ -46,9 +46,9 @@ static isa_probe_addr_t isa_extra_probe_addrs[] = {
 #endif
 
 #define ISA_IOADDR( driver, ioidx )					  \
-	( ( (ioidx) < 0 ) ?						  \
-	  isa_extra_probe_addrs[ (ioidx) + ISA_EXTRA_PROBE_ADDR_COUNT ] : \
-	  (driver)->probe_addrs[(ioidx)] )
+	( ( (ioidx) >= 0 ) ?						  \
+	  (driver)->probe_addrs[(ioidx)] :				  \
+	  *( isa_extra_probe_addrs + (ioidx) + ISA_EXTRA_PROBE_ADDR_COUNT ) )
 
 static void isabus_remove ( struct root_device *rootdev );
 
@@ -114,6 +114,7 @@ static int isabus_probe ( struct root_device *rootdev ) {
 			/* Add to device hierarchy */
 			snprintf ( isa->dev.name, sizeof ( isa->dev.name ),
 				   "ISA%04x", isa->ioaddr );
+			isa->dev.driver_name = driver->name;
 			isa->dev.desc.bus_type = BUS_TYPE_ISA;
 			isa->dev.desc.vendor = driver->vendor_id;
 			isa->dev.desc.device = driver->prod_id;

@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /*
  * Symbolic names for some standard ASCII characters
@@ -58,6 +58,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
  */
 
 #define KEY_ANSI( n, terminator ) ( 0x100 * ( (n) + 1 ) + (terminator) )
+#define KEY_ANSI_N( key ) ( ( (key) / 0x100 ) - 1 )
+#define KEY_ANSI_TERMINATOR( key ) ( (key) & 0xff )
 
 #define KEY_MIN		0x101
 #define KEY_UP		KEY_ANSI ( 0, 'A' )	/**< Up arrow */
@@ -70,7 +72,14 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #define KEY_DC		KEY_ANSI ( 3, '~' )	/**< Delete */
 #define KEY_PPAGE	KEY_ANSI ( 5, '~' )	/**< Page up */
 #define KEY_NPAGE	KEY_ANSI ( 6, '~' )	/**< Page down */
+#define KEY_F5		KEY_ANSI ( 15, '~' )	/**< F5 */
+#define KEY_F6		KEY_ANSI ( 17, '~' )	/**< F6 */
+#define KEY_F7		KEY_ANSI ( 18, '~' )	/**< F7 */
 #define KEY_F8		KEY_ANSI ( 19, '~' )	/**< F8 (for PXE) */
+#define KEY_F9		KEY_ANSI ( 20, '~' )	/**< F9 */
+#define KEY_F10		KEY_ANSI ( 21, '~' )	/**< F10 */
+#define KEY_F11		KEY_ANSI ( 23, '~' )	/**< F11 */
+#define KEY_F12		KEY_ANSI ( 24, '~' )	/**< F12 */
 
 /* Not in the [KEY_MIN,KEY_MAX] range; terminals seem to send these as
  * normal ASCII values.

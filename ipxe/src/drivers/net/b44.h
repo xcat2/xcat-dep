@@ -14,7 +14,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  *
  * This driver is a port of the b44 linux driver version 1.01
  *
@@ -453,8 +454,7 @@ static void b44_free_rx_ring ( struct b44_private *bp );
 static void b44_rx_refill ( struct b44_private *bp, u32 pending );
 static void b44_populate_rx_descriptor (struct b44_private *bp, u32 index);
 
-static int b44_probe ( struct pci_device *pci,
-                       const struct pci_device_id *id );
+static int b44_probe ( struct pci_device *pci );
 static void b44_remove ( struct pci_device *pci );
 
 static int b44_open ( struct net_device *netdev );

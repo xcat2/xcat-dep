@@ -13,7 +13,12 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
 /** @file
@@ -22,9 +27,17 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <string.h>
+#include <config/defaults.h>
+
+/* Use generic_memcpy_reverse() if we cannot safely set the direction flag */
+#ifdef UNSAFE_STD
+#define USE_GENERIC_MEMCPY_REVERSE 1
+#else
+#define USE_GENERIC_MEMCPY_REVERSE 0
+#endif
 
 /**
  * Copy memory area
@@ -34,7 +47,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * @v len		Length
  * @ret dest		Destination address
  */
-void * __memcpy ( void *dest, const void *src, size_t len ) {
+void * __attribute__ (( noinline )) __memcpy ( void *dest, const void *src,
+					       size_t len ) {
 	void *edi = dest;
 	const void *esi = src;
 	int discard_ecx;
@@ -43,21 +57,68 @@ void * __memcpy ( void *dest, const void *src, size_t len ) {
 	 * moves.  Using movsl rather than movsb speeds these up by
 	 * around 32%.
 	 */
-	if ( len >> 2 ) {
-		__asm__ __volatile__ ( "rep movsl"
-				       : "=&D" ( edi ), "=&S" ( esi ),
-				         "=&c" ( discard_ecx )
-				       : "0" ( edi ), "1" ( esi ),
-				         "2" ( len >> 2 )
-				       : "memory" );
-	}
-	if ( len & 0x02 ) {
-		__asm__ __volatile__ ( "movsw" : "=&D" ( edi ), "=&S" ( esi )
-				       : "0" ( edi ), "1" ( esi ) : "memory" );
-	}
-	if ( len & 0x01 ) {
-		__asm__ __volatile__ ( "movsb" : "=&D" ( edi ), "=&S" ( esi )
-				       : "0" ( edi ), "1" ( esi ) : "memory" );
-	}
+	__asm__ __volatile__ ( "rep movsl"
+			       : "=&D" ( edi ), "=&S" ( esi ),
+				 "=&c" ( discard_ecx )
+			       : "0" ( edi ), "1" ( esi ), "2" ( len >> 2 )
+			       : "memory" );
+	__asm__ __volatile__ ( "rep movsb"
+			       : "=&D" ( edi ), "=&S" ( esi ),
+				 "=&c" ( discard_ecx )
+			       : "0" ( edi ), "1" ( esi ), "2" ( len & 3 )
+			       : "memory" );
 	return dest;
+}
+
+/**
+ * Copy memory area backwards
+ *
+ * @v dest		Destination address
+ * @v src		Source address
+ * @v len		Length
+ * @ret dest		Destination address
+ */
+void * __attribute__ (( noinline )) __memcpy_reverse ( void *dest,
+						       const void *src,
+						       size_t len ) {
+	void *edi = ( dest + len - 1 );
+	const void *esi = ( src + len - 1 );
+	int discard_ecx;
+
+	/* Use unoptimised version if we are not permitted to modify
+	 * the direction flag.
+	 */
+	if ( USE_GENERIC_MEMCPY_REVERSE )
+		return generic_memcpy_reverse ( dest, src, len );
+
+	/* Assume memmove() is not performance-critical, and perform a
+	 * bytewise copy for simplicity.
+	 */
+	__asm__ __volatile__ ( "std\n\t"
+			       "rep movsb\n\t"
+			       "cld\n\t"
+			       : "=&D" ( edi ), "=&S" ( esi ),
+				 "=&c" ( discard_ecx )
+			       : "0" ( edi ), "1" ( esi ),
+				 "2" ( len )
+			       : "memory" );
+	return dest;
+}
+
+
+/**
+ * Copy (possibly overlapping) memory area
+ *
+ * @v dest		Destination address
+ * @v src		Source address
+ * @v len		Length
+ * @ret dest		Destination address
+ */
+void * __memmove ( void *dest, const void *src, size_t len ) {
+
+	if ( dest <= src ) {
+		return __memcpy ( dest, src, len );
+	} else {
+		return __memcpy_reverse ( dest, src, len );
+	}
 }

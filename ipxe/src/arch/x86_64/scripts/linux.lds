@@ -8,8 +8,6 @@
 OUTPUT_FORMAT ( "elf64-x86-64", "elf64-x86-64", "elf64-x86-64" )
 OUTPUT_ARCH ( i386:x86-64 )
 
-ENTRY ( _start )
-
 SECTIONS {
 	_max_align = 32;
 
@@ -44,14 +42,19 @@ SECTIONS {
 	/*
 	 * The data section
 	 *
+	 * Adjust the address for the data segment.  We want to adjust up to
+	 * the same address within the page on the next page up.
 	 */
 
-	. = ALIGN ( _max_align );
+	. = ALIGN (CONSTANT (MAXPAGESIZE)) - ((CONSTANT (MAXPAGESIZE) - .) & (CONSTANT (MAXPAGESIZE) - 1));
+	. = DATA_SEGMENT_ALIGN (CONSTANT (MAXPAGESIZE), CONSTANT (COMMONPAGESIZE));
 	.data : {
 		_data = .;
 		*(.data)
 		*(.data.*)
-		*(SORT(.tbl.*))		/* Various tables.  See include/tables.h */
+		KEEP(*(SORT(.tbl.*)))
+		KEEP(*(.provided))
+		KEEP(*(.provided.*))
 		_edata = .;
 	}
 
@@ -77,6 +80,7 @@ SECTIONS {
 	.weak 0x0 : {
 		_weak = .;
 		*(.weak)
+		*(.weak.*)
 		_eweak = .;
 	}
 	_assert = ASSERT ( ( _weak == _eweak ), ".weak is non-zero length" );
@@ -92,10 +96,9 @@ SECTIONS {
 		*(.comment.*)
 		*(.note)
 		*(.note.*)
-		*(.eh_frame)
-		*(.eh_frame.*)
 		*(.rel)
 		*(.rel.*)
 		*(.discard)
+		*(.discard.*)
 	}
 }

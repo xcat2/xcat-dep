@@ -1,7 +1,7 @@
 /** @file
   The firmware volume related definitions in PI.
 
-  Copyright (c) 2006 - 2009, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2006 - 2013, Intel Corporation. All rights reserved.<BR>
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
   which accompanies this distribution.  The full text of the license may be found at
@@ -11,7 +11,7 @@
   WITHOUT WARRANTIES OR REPRESENTATIONS OF ANY KIND, EITHER EXPRESS OR IMPLIED.
 
   @par Revision Reference:
-  PI Version 1.0
+  PI Version 1.3
 
 **/
 
@@ -75,7 +75,7 @@ typedef UINT32  EFI_FVB_ATTRIBUTES_2;
 #define EFI_FVB2_ALIGNMENT_64K      0x00100000
 #define EFI_FVB2_ALIGNMENT_128K     0x00110000
 #define EFI_FVB2_ALIGNMENT_256K     0x00120000
-#define EFI_FVB2_ALIGNMNET_512K     0x00130000
+#define EFI_FVB2_ALIGNMENT_512K     0x00130000
 #define EFI_FVB2_ALIGNMENT_1M       0x00140000
 #define EFI_FVB2_ALIGNMENT_2M       0x00150000
 #define EFI_FVB2_ALIGNMENT_4M       0x00160000
@@ -88,7 +88,7 @@ typedef UINT32  EFI_FVB_ATTRIBUTES_2;
 #define EFI_FVB2_ALIGNMENT_512M     0x001D0000
 #define EFI_FVB2_ALIGNMENT_1G       0x001E0000
 #define EFI_FVB2_ALIGNMENT_2G       0x001F0000
-
+#define EFI_FVB2_WEAK_ALIGNMENT     0x80000000
 
 typedef struct {
   ///
@@ -207,8 +207,30 @@ typedef struct {
   ///
   /// An array of GUIDs, each GUID representing an OEM file type.
   ///
-  EFI_GUID  Types[1];
+  /// EFI_GUID  Types[1];
+  ///
 } EFI_FIRMWARE_VOLUME_EXT_ENTRY_OEM_TYPE;
 
+#define EFI_FV_EXT_TYPE_GUID_TYPE 0x0002
+
+///
+/// This extension header EFI_FIRMWARE_VOLUME_EXT_ENTRY_GUID_TYPE provides a vendor specific
+/// GUID FormatType type which includes a length and a successive series of data bytes.
+///
+typedef struct {
+  ///
+  /// Standard extension entry, with the type EFI_FV_EXT_TYPE_OEM_TYPE.
+  ///
+  EFI_FIRMWARE_VOLUME_EXT_ENTRY     Hdr;
+  ///
+  /// Vendor-specific GUID.
+  ///
+  EFI_GUID                          FormatType;
+  ///
+  /// An arry of bytes of length Length.
+  ///
+  /// UINT8                             Data[1];
+  ///
+} EFI_FIRMWARE_VOLUME_EXT_ENTRY_GUID_TYPE;
 
 #endif

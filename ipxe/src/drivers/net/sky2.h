@@ -294,7 +294,7 @@ enum csr_regs {
 	Y2_CFG_AER      = 0x1d00,	/* PCI Advanced Error Report region */
 };
 
-/*	B0_CTST			16 bit	Control/Status register */
+/*	B0_CTST			24 bit	Control/Status register */
 enum {
 	Y2_VMAIN_AVAIL	= 1<<17,/* VMAIN available (YUKON-2 only) */
 	Y2_VAUX_AVAIL	= 1<<16,/* VAUX available (YUKON-2 only) */
@@ -1056,7 +1056,7 @@ enum {
 
 	PHY_ST_PRE_SUP	= 1<<6, /* Bit  6:	Preamble Suppression */
 	PHY_ST_AN_OVER	= 1<<5, /* Bit  5:	Auto-Negotiation Over */
-	PHY_ST_REM_FLT	= 1<<4, /* Bit  4:	Remote Fault Condition Occured */
+	PHY_ST_REM_FLT	= 1<<4, /* Bit  4:	Remote Fault Condition Occurred */
 	PHY_ST_AN_CAP	= 1<<3, /* Bit  3:	Auto-Negotiation Capability */
 	PHY_ST_LSYNC	= 1<<2, /* Bit  2:	Link Synchronized */
 	PHY_ST_JAB_DET	= 1<<1, /* Bit  1:	Jabber Detected */
@@ -1587,8 +1587,8 @@ enum {
 	GM_GPSR_LINK_UP		= 1<<12, /* Bit 12:	Link Up Status */
 	GM_GPSR_PAUSE		= 1<<11, /* Bit 11:	Pause State */
 	GM_GPSR_TX_ACTIVE	= 1<<10, /* Bit 10:	Tx in Progress */
-	GM_GPSR_EXC_COL		= 1<<9,	/* Bit  9:	Excessive Collisions Occured */
-	GM_GPSR_LAT_COL		= 1<<8,	/* Bit  8:	Late Collisions Occured */
+	GM_GPSR_EXC_COL		= 1<<9,	/* Bit  9:	Excessive Collisions Occurred */
+	GM_GPSR_LAT_COL		= 1<<8,	/* Bit  8:	Late Collisions Occurred */
 
 	GM_GPSR_PHY_ST_CH	= 1<<5,	/* Bit  5:	PHY Status Change */
 	GM_GPSR_GIG_SPEED	= 1<<4,	/* Bit  4:	Gigabit Speed (1 = 1000 Mbps) */

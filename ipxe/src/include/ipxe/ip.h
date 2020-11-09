@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/in.h>
@@ -30,9 +30,6 @@ struct io_buffer;
 /* IP header defaults */
 #define IP_TOS		0
 #define IP_TTL		64
-
-#define IP_FRAG_IOB_SIZE	1500
-#define IP_FRAG_TIMEOUT		50
 
 /** An IPv4 packet header */
 struct iphdr {
@@ -73,24 +70,15 @@ struct ipv4_miniroute {
 	struct in_addr gateway;
 };
 
-/* Fragment reassembly buffer */
-struct frag_buffer {
-	/* Identification number */
-	uint16_t ident;
-	/* Source network address */
-	struct in_addr src;
-	/* Destination network address */
-	struct in_addr dest;
-	/* Reassembled I/O buffer */
-	struct io_buffer *frag_iob;
-	/* Reassembly timer */
-	struct retry_timer frag_timer;
-	/* List of fragment reassembly buffers */
-	struct list_head list;
-};
-
 extern struct list_head ipv4_miniroutes;
 
 extern struct net_protocol ipv4_protocol __net_protocol;
+
+extern int ipv4_has_any_addr ( struct net_device *netdev );
+extern int parse_ipv4_setting ( const struct setting_type *type,
+				const char *value, void *buf, size_t len );
+extern int format_ipv4_setting ( const struct setting_type *type,
+				 const void *raw, size_t raw_len, char *buf,
+				 size_t len );
 
 #endif /* _IPXE_IP_H */

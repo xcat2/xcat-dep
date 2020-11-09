@@ -1,12 +1,20 @@
+#include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
 #include <sys/stat.h>
-
-#define ENCODE
-#define VERBOSE
-#include "nrv2b.c"
-FILE *infile, *outfile;
+#include <lzma.h>
 
 #define DEBUG 0
+
+/* LZMA filter choices.  Must match those used by unlzma.S */
+#define LZMA_LC 2
+#define LZMA_LP 0
+#define LZMA_PB 0
+
+/* LZMA preset choice.  This is a policy decision */
+#define LZMA_PRESET ( LZMA_PRESET_DEFAULT | LZMA_PRESET_EXTREME )
 
 struct input_file {
 	void *buf;
@@ -136,6 +144,7 @@ static int read_zinfo_file ( const char *filename,
 
 static int alloc_output_file ( size_t max_len, struct output_file *output ) {
 	output->len = 0;
+	output->hdr_len = 0;
 	output->max_len = ( max_len );
 	output->buf = malloc ( max_len );
 	if ( ! output->buf ) {
@@ -143,7 +152,7 @@ static int alloc_output_file ( size_t max_len, struct output_file *output ) {
 			  max_len );
 		return -1;
 	}
-	memset ( output->buf, 0xff, sizeof ( output->buf ) );
+	memset ( output->buf, 0xff, max_len );
 	return 0;
 }
 
@@ -177,13 +186,97 @@ static int process_zinfo_copy ( struct input_file *input,
 	return 0;
 }
 
+#define OPCODE_CALL 0xe8
+#define OPCODE_JMP 0xe9
+
+static void bcj_filter ( void *data, size_t len ) {
+	struct {
+		uint8_t opcode;
+		int32_t target;
+	} __attribute__ (( packed )) *jump;
+	ssize_t limit = ( len - sizeof ( *jump ) );
+	ssize_t offset;
+
+	/* liblzma does include an x86 BCJ filter, but it's hideously
+	 * convoluted and undocumented.  This BCJ filter is
+	 * substantially simpler and achieves the same compression (at
+	 * the cost of requiring the decompressor to know the size of
+	 * the decompressed data, which we already have in iPXE).
+	 */
+	for ( offset = 0 ; offset <= limit ; offset++ ) {
+		jump = ( data + offset );
+
+		/* Skip instructions that are not followed by a rel32 address */
+		if ( ( jump->opcode != OPCODE_CALL ) &&
+		     ( jump->opcode != OPCODE_JMP ) )
+			continue;
+
+		/* Convert rel32 address to an absolute address.  To
+		 * avoid false positives (which damage the compression
+		 * ratio), we should check that the jump target is
+		 * within the range [0,limit).
+		 *
+		 * Some output values would then end up being mapped
+		 * from two distinct input values, making the
+		 * transformation irreversible.  To solve this, we
+		 * transform such values back into the part of the
+		 * range which would otherwise correspond to no input
+		 * values.
+		 */
+		if ( ( jump->target >= -offset ) &&
+		     ( jump->target < ( limit - offset ) ) ) {
+			/* Convert relative addresses in the range
+			 * [-offset,limit-offset) to absolute
+			 * addresses in the range [0,limit).
+			 */
+			jump->target += offset;
+		} else if ( ( jump->target >= ( limit - offset ) ) &&
+			    ( jump->target < limit ) ) {
+			/* Convert positive numbers in the range
+			 * [limit-offset,limit) to negative numbers in
+			 * the range [-offset,0).
+			 */
+			jump->target -= limit;
+		}
+		offset += sizeof ( jump->target );
+	};
+}
+
+#define CRCPOLY 0xedb88320
+#define CRCSEED 0xffffffff
+
+static uint32_t crc32_le ( uint32_t crc, const void *data, size_t len ) {
+	const uint8_t *src = data;
+	uint32_t mult;
+	unsigned int i;
+
+	while ( len-- ) {
+		crc ^= *(src++);
+		for ( i = 0 ; i < 8 ; i++ ) {
+			mult = ( ( crc & 1 ) ? CRCPOLY : 0 );
+			crc = ( ( crc >> 1 ) ^ mult );
+		}
+	}
+	return crc;
+}
+
 static int process_zinfo_pack ( struct input_file *input,
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	struct zinfo_pack *pack = &zinfo->pack;
 	size_t offset = pack->offset;
 	size_t len = pack->len;
-	unsigned long packed_len;
+	size_t start_len;
+	size_t packed_len = 0;
+	size_t remaining;
+	lzma_options_lzma options;
+	const lzma_filter filters[] = {
+		{ .id = LZMA_FILTER_LZMA1, .options = &options },
+		{ .id = LZMA_VLI_UNKNOWN }
+	};
+	void *packed;
+	uint32_t *len32;
+	uint32_t *crc32;
 
 	if ( ( offset + len ) > input->len ) {
 		fprintf ( stderr, "Input buffer overrun on pack\n" );
@@ -191,34 +284,50 @@ static int process_zinfo_pack ( struct input_file *input,
 	}
 
 	output->len = align ( output->len, pack->align );
+	start_len = output->len;
+	len32 = ( output->buf + output->len );
+	output->len += sizeof ( *len32 );
 	if ( output->len > output->max_len ) {
 		fprintf ( stderr, "Output buffer overrun on pack\n" );
 		return -1;
 	}
 
-	if ( ucl_nrv2b_99_compress ( ( input->buf + offset ), len,
-				     ( output->buf + output->len ),
-				     &packed_len, 0 ) != UCL_E_OK ) {
+	bcj_filter ( ( input->buf + offset ), len );
+
+	packed = ( output->buf + output->len );
+	remaining = ( output->max_len - output->len );
+	lzma_lzma_preset ( &options, LZMA_PRESET );
+	options.lc = LZMA_LC;
+	options.lp = LZMA_LP;
+	options.pb = LZMA_PB;
+	if ( lzma_raw_buffer_encode ( filters, NULL, ( input->buf + offset ),
+				      len, packed, &packed_len,
+				      remaining ) != LZMA_OK ) {
 		fprintf ( stderr, "Compression failure\n" );
 		return -1;
 	}
-
-	if ( DEBUG ) {
-		fprintf ( stderr, "PACK [%#zx,%#zx) to [%#zx,%#zx)\n",
-			  offset, ( offset + len ), output->len,
-			  ( size_t )( output->len + packed_len ) );
-	}
-
 	output->len += packed_len;
+
+	crc32 = ( output->buf + output->len );
+	output->len += sizeof ( *crc32 );
 	if ( output->len > output->max_len ) {
 		fprintf ( stderr, "Output buffer overrun on pack\n" );
 		return -1;
+	}
+	*len32 = ( packed_len + sizeof ( *crc32 ) );
+	*crc32 = crc32_le ( CRCSEED, packed, packed_len );
+
+	if ( DEBUG ) {
+		fprintf ( stderr, "PACK [%#zx,%#zx) to [%#zx,%#zx) crc %#08x\n",
+			  offset, ( offset + len ), start_len, output->len,
+			  *crc32 );
 	}
 
 	return 0;
 }
 
-static int process_zinfo_payl ( struct input_file *input,
+static int process_zinfo_payl ( struct input_file *input
+					__attribute__ (( unused )),
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	struct zinfo_payload *payload = &zinfo->payload;
@@ -229,20 +338,22 @@ static int process_zinfo_payl ( struct input_file *input,
 	if ( DEBUG ) {
 		fprintf ( stderr, "PAYL at %#zx\n", output->hdr_len );
 	}
+	return 0;
 }
 
-static int process_zinfo_add ( struct input_file *input,
+static int process_zinfo_add ( struct input_file *input
+					__attribute__ (( unused )),
 			       struct output_file *output,
 			       size_t len,
-			       struct zinfo_add *add,
+			       struct zinfo_add *add, size_t offset,
 			       size_t datasize ) {
-	size_t offset = add->offset;
 	void *target;
 	signed long addend;
 	unsigned long size;
 	signed long val;
 	unsigned long mask;
 
+	offset += add->offset;
 	if ( ( offset + datasize ) > output->len ) {
 		fprintf ( stderr, "Add at %#zx outside output buffer\n",
 			  offset );
@@ -275,16 +386,16 @@ static int process_zinfo_add ( struct input_file *input,
 		 ( ( 1UL << ( 8 * datasize ) ) - 1 ) : ~0UL );
 
 	if ( val < 0 ) {
-		fprintf ( stderr, "Add %s%#x+%#lx at %#zx %sflows field\n",
-			  ( ( addend < 0 ) ? "-" : "" ), abs ( addend ), size,
+		fprintf ( stderr, "Add %s%#lx+%#lx at %#zx %sflows field\n",
+			  ( ( addend < 0 ) ? "-" : "" ), labs ( addend ), size,
 			  offset, ( ( addend < 0 ) ? "under" : "over" ) );
 		return -1;
 	}
 
 	if ( val & ~mask ) {
-		fprintf ( stderr, "Add %s%#x+%#lx at %#zx overflows %zd-byte "
+		fprintf ( stderr, "Add %s%#lx+%#lx at %#zx overflows %zd-byte "
 			  "field (%d bytes too big)\n",
-			  ( ( addend < 0 ) ? "-" : "" ), abs ( addend ), size,
+			  ( ( addend < 0 ) ? "-" : "" ), labs ( addend ), size,
 			  offset, datasize,
 			  ( int )( ( val - mask - 1 ) * add->divisor ) );
 		return -1;
@@ -303,9 +414,9 @@ static int process_zinfo_add ( struct input_file *input,
 	}
 
 	if ( DEBUG ) {
-		fprintf ( stderr, "ADDx [%#zx,%#zx) (%s%#x+(%#zx/%#x)) = "
+		fprintf ( stderr, "ADDx [%#zx,%#zx) (%s%#lx+(%#zx/%#x)) = "
 			  "%#lx\n", offset, ( offset + datasize ),
-			  ( ( addend < 0 ) ? "-" : "" ), abs ( addend ),
+			  ( ( addend < 0 ) ? "-" : "" ), labs ( addend ),
 			  len, add->divisor, val );
 	}
 
@@ -316,42 +427,90 @@ static int process_zinfo_addb ( struct input_file *input,
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	return process_zinfo_add ( input, output, output->len,
-				   &zinfo->add, 1 );
+				   &zinfo->add, 0, 1 );
 }
 
 static int process_zinfo_addw ( struct input_file *input,
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	return process_zinfo_add ( input, output, output->len,
-				   &zinfo->add, 2 );
+				   &zinfo->add, 0, 2 );
 }
 
 static int process_zinfo_addl ( struct input_file *input,
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	return process_zinfo_add ( input, output, output->len,
-				   &zinfo->add, 4 );
+				   &zinfo->add, 0, 4 );
 }
 
 static int process_zinfo_adhb ( struct input_file *input,
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	return process_zinfo_add ( input, output, output->hdr_len,
-				   &zinfo->add, 1 );
+				   &zinfo->add, 0, 1 );
 }
 
 static int process_zinfo_adhw ( struct input_file *input,
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	return process_zinfo_add ( input, output, output->hdr_len,
-				   &zinfo->add, 2 );
+				   &zinfo->add, 0, 2 );
 }
 
 static int process_zinfo_adhl ( struct input_file *input,
 				struct output_file *output,
 				union zinfo_record *zinfo ) {
 	return process_zinfo_add ( input, output, output->hdr_len,
-				   &zinfo->add, 4 );
+				   &zinfo->add, 0, 4 );
+}
+
+static int process_zinfo_adpb ( struct input_file *input,
+				struct output_file *output,
+				union zinfo_record *zinfo ) {
+	return process_zinfo_add ( input, output,
+				   ( output->len - output->hdr_len ),
+				   &zinfo->add, 0, 1 );
+}
+
+static int process_zinfo_adpw ( struct input_file *input,
+				struct output_file *output,
+				union zinfo_record *zinfo ) {
+	return process_zinfo_add ( input, output,
+				   ( output->len - output->hdr_len ),
+				   &zinfo->add, 0, 2 );
+}
+
+static int process_zinfo_adpl ( struct input_file *input,
+				struct output_file *output,
+				union zinfo_record *zinfo ) {
+	return process_zinfo_add ( input, output,
+				   ( output->len - output->hdr_len ),
+				   &zinfo->add, 0, 4 );
+}
+
+static int process_zinfo_appb ( struct input_file *input,
+				struct output_file *output,
+				union zinfo_record *zinfo ) {
+	return process_zinfo_add ( input, output,
+				   ( output->len - output->hdr_len ),
+				   &zinfo->add, output->hdr_len, 1 );
+}
+
+static int process_zinfo_appw ( struct input_file *input,
+				struct output_file *output,
+				union zinfo_record *zinfo ) {
+	return process_zinfo_add ( input, output,
+				   ( output->len - output->hdr_len ),
+				   &zinfo->add, output->hdr_len, 2 );
+}
+
+static int process_zinfo_appl ( struct input_file *input,
+				struct output_file *output,
+				union zinfo_record *zinfo ) {
+	return process_zinfo_add ( input, output,
+				   ( output->len - output->hdr_len ),
+				   &zinfo->add, output->hdr_len, 4 );
 }
 
 struct zinfo_processor {
@@ -371,6 +530,12 @@ static struct zinfo_processor zinfo_processors[] = {
 	{ "ADHB", process_zinfo_adhb },
 	{ "ADHW", process_zinfo_adhw },
 	{ "ADHL", process_zinfo_adhl },
+	{ "ADPB", process_zinfo_adpb },
+	{ "ADPW", process_zinfo_adpw },
+	{ "ADPL", process_zinfo_adpl },
+	{ "APPB", process_zinfo_appb },
+	{ "APPW", process_zinfo_appw },
+	{ "APPL", process_zinfo_appl },
 };
 
 static int process_zinfo ( struct input_file *input,

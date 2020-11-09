@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 
@@ -79,7 +79,5 @@ union tftp_any {
 	struct tftp_error	error;
 	struct tftp_oack	oack;
 };
-
-extern void tftp_set_request_blksize ( unsigned int blksize );
 
 #endif /* _IPXE_TFTP_H */

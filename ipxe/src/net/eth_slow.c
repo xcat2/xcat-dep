@@ -13,15 +13,21 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdlib.h>
 #include <string.h>
 #include <byteswap.h>
 #include <errno.h>
+#include <ipxe/timer.h>
 #include <ipxe/iobuf.h>
 #include <ipxe/netdevice.h>
 #include <ipxe/if_ether.h>
@@ -86,7 +92,7 @@ eth_slow_marker_tlv_name ( uint8_t type ) {
  * @ret name		LACP state name
  */
 static const char * eth_slow_lacp_state_name ( uint8_t state ) {
-	static char state_chars[] = "AFGSRTLX";
+	static char state_chars[] = "AFGSCDLX";
 	unsigned int i;
 
 	for ( i = 0 ; i < 8 ; i++ ) {
@@ -111,25 +117,25 @@ static void eth_slow_lacp_dump ( struct io_buffer *iobuf,
 	struct eth_slow_lacp *lacp = &eth_slow->lacp;
 
 	DBGC ( netdev,
-	       "SLOW %p %s LACP actor (%04x,%s,%04x,%02x,%04x) [%s]\n",
-	       netdev, label, ntohs ( lacp->actor.system_priority ),
+	       "SLOW %s %s LACP actor (%04x,%s,%04x,%02x,%04x) [%s]\n",
+	       netdev->name, label, ntohs ( lacp->actor.system_priority ),
 	       eth_ntoa ( lacp->actor.system ),
 	       ntohs ( lacp->actor.key ),
 	       ntohs ( lacp->actor.port_priority ),
 	       ntohs ( lacp->actor.port ),
 	       eth_slow_lacp_state_name ( lacp->actor.state ) );
 	DBGC ( netdev,
-	       "SLOW %p %s LACP partner (%04x,%s,%04x,%02x,%04x) [%s]\n",
-	       netdev, label, ntohs ( lacp->partner.system_priority ),
+	       "SLOW %s %s LACP partner (%04x,%s,%04x,%02x,%04x) [%s]\n",
+	       netdev->name, label, ntohs ( lacp->partner.system_priority ),
 	       eth_ntoa ( lacp->partner.system ),
 	       ntohs ( lacp->partner.key ),
 	       ntohs ( lacp->partner.port_priority ),
 	       ntohs ( lacp->partner.port ),
 	       eth_slow_lacp_state_name ( lacp->partner.state ) );
-	DBGC ( netdev, "SLOW %p %s LACP collector %04x (%d us)\n",
-	       netdev, label, ntohs ( lacp->collector.max_delay ),
+	DBGC ( netdev, "SLOW %s %s LACP collector %04x (%d us)\n",
+	       netdev->name, label, ntohs ( lacp->collector.max_delay ),
 	       ( ntohs ( lacp->collector.max_delay ) * 10 ) );
-	DBGC2_HDA ( netdev, 0, iobuf, iob_len ( iobuf ) );
+	DBGC2_HDA ( netdev, 0, iobuf->data, iob_len ( iobuf ) );
 }
 
 /**
@@ -143,8 +149,37 @@ static int eth_slow_lacp_rx ( struct io_buffer *iobuf,
 			      struct net_device *netdev ) {
 	union eth_slow_packet *eth_slow = iobuf->data;
 	struct eth_slow_lacp *lacp = &eth_slow->lacp;
+	unsigned int interval;
 
 	eth_slow_lacp_dump ( iobuf, netdev, "RX" );
+
+	/* Check for looped-back packets */
+	if ( memcmp ( lacp->actor.system, netdev->ll_addr,
+		      sizeof ( lacp->actor.system ) ) == 0 ) {
+		DBGC ( netdev, "SLOW %s RX loopback detected\n",
+		       netdev->name );
+		return -ELOOP;
+	}
+
+	/* If partner is not in sync, collecting, and distributing,
+	 * then block the link until after the next expected LACP
+	 * packet.
+	 */
+	if ( ~lacp->actor.state & ( LACP_STATE_IN_SYNC |
+				    LACP_STATE_COLLECTING |
+				    LACP_STATE_DISTRIBUTING ) ) {
+		DBGC ( netdev, "SLOW %s LACP partner is down\n", netdev->name );
+		interval = ( ( lacp->actor.state & LACP_STATE_FAST ) ?
+			     ( ( LACP_INTERVAL_FAST + 1 ) * TICKS_PER_SEC ) :
+			     ( ( LACP_INTERVAL_SLOW + 1 ) * TICKS_PER_SEC ) );
+		netdev_link_block ( netdev, interval );
+	} else {
+		if ( netdev_link_blocked ( netdev ) ) {
+			DBGC ( netdev, "SLOW %s LACP partner is up\n",
+			       netdev->name );
+		}
+		netdev_link_unblock ( netdev );
+	}
 
 	/* Build response */
 	memset ( lacp->reserved, 0, sizeof ( lacp->reserved ) );
@@ -166,7 +201,8 @@ static int eth_slow_lacp_rx ( struct io_buffer *iobuf,
 	lacp->actor.key = htons ( 1 );
 	lacp->actor.port_priority = htons ( LACP_PORT_PRIORITY_MAX );
 	lacp->actor.port = htons ( 1 );
-	lacp->actor.state = ( LACP_STATE_IN_SYNC |
+	lacp->actor.state = ( LACP_STATE_AGGREGATABLE |
+			      LACP_STATE_IN_SYNC |
 			      LACP_STATE_COLLECTING |
 			      LACP_STATE_DISTRIBUTING |
 			      ( lacp->partner.state & LACP_STATE_FAST ) );
@@ -191,13 +227,13 @@ static void eth_slow_marker_dump ( struct io_buffer *iobuf,
 	union eth_slow_packet *eth_slow = iobuf->data;
 	struct eth_slow_marker *marker = &eth_slow->marker;
 
-	DBGC ( netdev, "SLOW %p %s marker %s port %04x system %s xact %08x\n",
-	       netdev, label,
+	DBGC ( netdev, "SLOW %s %s marker %s port %04x system %s xact %08x\n",
+	       netdev->name, label,
 	       eth_slow_marker_tlv_name ( marker->marker.tlv.type ),
 	       ntohs ( marker->marker.port ),
 	       eth_ntoa ( marker->marker.system ),
 	       ntohl ( marker->marker.xact ) );
-	DBGC2_HDA ( netdev, 0, iobuf, iob_len ( iobuf ) );
+	DBGC2_HDA ( netdev, 0, iobuf->data, iob_len ( iobuf ) );
 }
 
 /**
@@ -234,12 +270,14 @@ static int eth_slow_marker_rx ( struct io_buffer *iobuf,
  * @v netdev		Network device
  * @v ll_dest		Link-layer destination address
  * @v ll_source		Link-layer source address
+ * @v flags		Packet flags
  * @ret rc		Return status code
  */
 static int eth_slow_rx ( struct io_buffer *iobuf,
 			 struct net_device *netdev,
 			 const void *ll_dest __unused,
-			 const void *ll_source __unused ) {
+			 const void *ll_source __unused,
+			 unsigned int flags __unused ) {
 	union eth_slow_packet *eth_slow = iobuf->data;
 
 	/* Sanity checks */
@@ -248,6 +286,9 @@ static int eth_slow_rx ( struct io_buffer *iobuf,
 		return -EINVAL;
 	}
 
+	/* Strip any trailing padding */
+	iob_unput ( iobuf, ( sizeof ( *eth_slow ) - iob_len ( iobuf ) ) );
+
 	/* Handle according to subtype */
 	switch ( eth_slow->header.subtype ) {
 	case ETH_SLOW_SUBTYPE_LACP:
@@ -255,8 +296,8 @@ static int eth_slow_rx ( struct io_buffer *iobuf,
 	case ETH_SLOW_SUBTYPE_MARKER:
 		return eth_slow_marker_rx ( iobuf, netdev );
 	default:
-		DBGC ( netdev, "SLOW %p RX unknown subtype %02x\n",
-		       netdev, eth_slow->header.subtype );
+		DBGC ( netdev, "SLOW %s RX unknown subtype %02x\n",
+		       netdev->name, eth_slow->header.subtype );
 		free_iob ( iobuf );
 		return -EINVAL;
 	}

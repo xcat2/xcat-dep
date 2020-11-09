@@ -13,19 +13,24 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <ipxe/in.h>
 #include <ipxe/xfer.h>
 #include <ipxe/open.h>
 #include <ipxe/process.h>
+#include <ipxe/socket.h>
 #include <ipxe/resolv.h>
 
 /** @file
@@ -86,20 +91,19 @@ struct numeric_resolv {
 	int rc;
 };
 
-static void numeric_step ( struct process *process ) {
-	struct numeric_resolv *numeric =
-		container_of ( process, struct numeric_resolv, process );
+static void numeric_step ( struct numeric_resolv *numeric ) {
 
-	process_del ( process );
 	if ( numeric->rc == 0 )
 		resolv_done ( &numeric->resolv, &numeric->sa );
 	intf_shutdown ( &numeric->resolv, numeric->rc );
 }
 
+static struct process_descriptor numeric_process_desc =
+	PROC_DESC_ONCE ( struct numeric_resolv, process, numeric_step );
+
 static int numeric_resolv ( struct interface *resolv,
 			    const char *name, struct sockaddr *sa ) {
 	struct numeric_resolv *numeric;
-	struct sockaddr_in *sin;
 
 	/* Allocate and initialise structure */
 	numeric = zalloc ( sizeof ( *numeric ) );
@@ -107,19 +111,12 @@ static int numeric_resolv ( struct interface *resolv,
 		return -ENOMEM;
 	ref_init ( &numeric->refcnt, NULL );
 	intf_init ( &numeric->resolv, &null_intf_desc, &numeric->refcnt );
-	process_init ( &numeric->process, numeric_step, &numeric->refcnt );
+	process_init ( &numeric->process, &numeric_process_desc,
+		       &numeric->refcnt );
 	memcpy ( &numeric->sa, sa, sizeof ( numeric->sa ) );
 
-	DBGC ( numeric, "NUMERIC %p attempting to resolve \"%s\"\n",
-	       numeric, name );
-
 	/* Attempt to resolve name */
-	sin = ( ( struct sockaddr_in * ) &numeric->sa );
-	if ( inet_aton ( name, &sin->sin_addr ) != 0 ) {
-		sin->sin_family = AF_INET;
-	} else {
-		numeric->rc = -EINVAL;
-	}
+	numeric->rc = sock_aton ( name, &numeric->sa );
 
 	/* Attach to parent interface, mortalise self, and return */
 	intf_plug_plug ( &numeric->resolv, resolv );
@@ -183,19 +180,16 @@ static int resmux_try ( struct resolv_mux *mux ) {
 }
 
 /**
- * Child resolved name
+ * Close name resolution multiplexer
  *
  * @v mux		Name resolution multiplexer
- * @v sa		Completed socket address
+ * @v rc		Reason for close
  */
-static void resmux_child_resolv_done ( struct resolv_mux *mux,
-				       struct sockaddr *sa ) {
+static void resmux_close ( struct resolv_mux *mux, int rc ) {
 
-	DBGC ( mux, "RESOLV %p resolved \"%s\" using method %s\n",
-	       mux, mux->name, mux->resolver->name );
-
-	/* Pass resolution to parent */
-	resolv_done ( &mux->parent, sa );
+	/* Shut down all interfaces */
+	intf_shutdown ( &mux->child, rc );
+	intf_shutdown ( &mux->parent, rc );
 }
 
 /**
@@ -229,18 +223,28 @@ static void resmux_child_close ( struct resolv_mux *mux, int rc ) {
 	return;
 
  finished:
-	intf_shutdown ( &mux->parent, rc );
+	resmux_close ( mux, rc );
 }
 
 /** Name resolution multiplexer child interface operations */
 static struct interface_operation resmux_child_op[] = {
-	INTF_OP ( resolv_done, struct resolv_mux *, resmux_child_resolv_done ),
 	INTF_OP ( intf_close, struct resolv_mux *, resmux_child_close ),
 };
 
 /** Name resolution multiplexer child interface descriptor */
 static struct interface_descriptor resmux_child_desc =
-	INTF_DESC ( struct resolv_mux, child, resmux_child_op );
+	INTF_DESC_PASSTHRU ( struct resolv_mux, child, resmux_child_op,
+			     parent );
+
+/** Name resolution multiplexer parent interface operations */
+static struct interface_operation resmux_parent_op[] = {
+	INTF_OP ( intf_close, struct resolv_mux *, resmux_close ),
+};
+
+/** Name resolution multiplexer parent interface descriptor */
+static struct interface_descriptor resmux_parent_desc =
+	INTF_DESC_PASSTHRU ( struct resolv_mux, parent, resmux_parent_op,
+			     child );
 
 /**
  * Start name resolution
@@ -261,7 +265,7 @@ int resolv ( struct interface *resolv, const char *name,
 	if ( ! mux )
 		return -ENOMEM;
 	ref_init ( &mux->refcnt, NULL );
-	intf_init ( &mux->parent, &null_intf_desc, &mux->refcnt );
+	intf_init ( &mux->parent, &resmux_parent_desc, &mux->refcnt );
 	intf_init ( &mux->child, &resmux_child_desc, &mux->refcnt );
 	mux->resolver = table_start ( RESOLVERS );
 	if ( sa )
@@ -341,7 +345,8 @@ static struct interface_operation named_xfer_ops[] = {
 
 /** Named socket opener data transfer interface descriptor */
 static struct interface_descriptor named_xfer_desc =
-	INTF_DESC ( struct named_socket, xfer, named_xfer_ops );
+	INTF_DESC_PASSTHRU ( struct named_socket, xfer, named_xfer_ops,
+			     resolv );
 
 /**
  * Name resolved
@@ -382,7 +387,8 @@ static struct interface_operation named_resolv_op[] = {
 
 /** Named socket opener resolver interface descriptor */
 static struct interface_descriptor named_resolv_desc =
-	INTF_DESC ( struct named_socket, resolv, named_resolv_op );
+	INTF_DESC_PASSTHRU ( struct named_socket, resolv, named_resolv_op,
+			     xfer );
 
 /**
  * Open named socket

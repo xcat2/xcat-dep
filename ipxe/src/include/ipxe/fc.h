@@ -8,7 +8,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/refcnt.h>
@@ -60,7 +60,7 @@ struct sockaddr_fc {
 	 */
 	char pad[ sizeof ( struct sockaddr ) - sizeof ( sa_family_t )
 					     - sizeof ( struct fc_port_id ) ];
-} __attribute__ (( may_alias ));
+} __attribute__ (( packed, may_alias ));
 
 extern struct fc_port_id fc_empty_port_id;
 extern struct fc_port_id fc_f_port_id;
@@ -325,7 +325,8 @@ extern int fc_port_login ( struct fc_port *port, struct fc_port_id *port_id,
 extern void fc_port_logout ( struct fc_port *port, int rc );
 extern int fc_port_open ( struct interface *transport,
 			  const struct fc_name *node_wwn,
-			  const struct fc_name *port_wwn );
+			  const struct fc_name *port_wwn,
+			  const char *name );
 extern struct fc_port * fc_port_find ( const char *name );
 
 /******************************************************************************
@@ -356,7 +357,15 @@ struct fc_peer {
 
 	/** List of upper-layer protocols */
 	struct list_head ulps;
-	/** Active usage count */
+	/** Active usage count
+	 *
+	 * A peer (and attached ULPs) may be created in response to
+	 * unsolicited login requests received via the fabric.  We
+	 * track our own active usage count independently of the
+	 * existence of the peer, so that if the peer becomes logged
+	 * out (e.g. due to a link failure) then we know whether or
+	 * not we should attempt to relogin.
+	 */
 	unsigned int usage;
 };
 
@@ -423,14 +432,36 @@ struct fc_ulp {
 	/** Service parameter length */
 	size_t param_len;
 
-	/** Active usage count */
-	unsigned int usage;
+	/** Active users of this upper-layer protocol
+	 *
+	 * As with peers, an upper-layer protocol may be created in
+	 * response to an unsolicited login request received via the
+	 * fabric.  This list records the number of active users of
+	 * the ULP; the number of entries in the list is equivalent to
+	 * the peer usage count.
+	 */
+	struct list_head users;
 };
 
 /** Fibre Channel upper-layer protocol flags */
 enum fc_ulp_flags {
 	/** A login originated by us has succeeded */
 	FC_ULP_ORIGINATED_LOGIN_OK = 0x0001,
+};
+
+/** A Fibre Channel upper-layer protocol user */
+struct fc_ulp_user {
+	/** Fibre Channel upper layer protocol */
+	struct fc_ulp *ulp;
+	/** List of users */
+	struct list_head list;
+	/** Containing object reference count, or NULL */
+	struct refcnt *refcnt;
+	/** Examine link state
+	 *
+	 * @v user		Fibre Channel upper-layer-protocol user
+	 */
+	void ( * examine ) ( struct fc_ulp_user *user );
 };
 
 /**
@@ -455,14 +486,51 @@ fc_ulp_put ( struct fc_ulp *ulp ) {
 	ref_put ( &ulp->refcnt );
 }
 
+/**
+ * Get reference to Fibre Channel upper-layer protocol user
+ *
+ * @v user		Fibre Channel upper-layer protocol user
+ * @ret user		Fibre Channel upper-layer protocol user
+ */
+static inline __attribute__ (( always_inline )) struct fc_ulp_user *
+fc_ulp_user_get ( struct fc_ulp_user *user ) {
+	ref_get ( user->refcnt );
+	return user;
+}
+
+/**
+ * Drop reference to Fibre Channel upper-layer protocol user
+ *
+ * @v user		Fibre Channel upper-layer protocol user
+ */
+static inline __attribute__ (( always_inline )) void
+fc_ulp_user_put ( struct fc_ulp_user *user ) {
+	ref_put ( user->refcnt );
+}
+
+/**
+ * Initialise Fibre Channel upper-layer protocol user
+ *
+ * @v user		Fibre Channel upper-layer protocol user
+ * @v examine		Examine link state method
+ * @v refcnt		Containing object reference count, or NULL
+ */
+static inline __attribute__ (( always_inline )) void
+fc_ulp_user_init ( struct fc_ulp_user *user,
+		   void ( * examine ) ( struct fc_ulp_user *user ),
+		   struct refcnt *refcnt ) {
+	user->examine = examine;
+	user->refcnt = refcnt;
+}
+
 extern struct fc_ulp * fc_ulp_get_wwn_type ( const struct fc_name *port_wwn,
 					     unsigned int type );
 extern struct fc_ulp *
 fc_ulp_get_port_id_type ( struct fc_port *port,
 			  const struct fc_port_id *peer_port_id,
 			  unsigned int type );
-extern void fc_ulp_increment ( struct fc_ulp *ulp );
-extern void fc_ulp_decrement ( struct fc_ulp *ulp );
+extern void fc_ulp_attach ( struct fc_ulp *ulp, struct fc_ulp_user *user );
+extern void fc_ulp_detach ( struct fc_ulp_user *user );
 extern int fc_ulp_login ( struct fc_ulp *ulp, const void *param,
 			  size_t param_len, int originated );
 extern void fc_ulp_logout ( struct fc_ulp *ulp, int rc );

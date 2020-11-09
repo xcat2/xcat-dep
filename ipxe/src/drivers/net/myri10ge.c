@@ -13,7 +13,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  ****************************************************************/
 
 FILE_LICENCE ( GPL2_ONLY );
@@ -94,8 +95,7 @@ FILE_LICENCE ( GPL2_ONLY );
 
 /* PCI driver entry points */
 
-static int	myri10ge_pci_probe ( struct pci_device*,
-				     const struct pci_device_id* );
+static int	myri10ge_pci_probe ( struct pci_device* );
 static void	myri10ge_pci_remove ( struct pci_device* );
 
 /* Network device operations */
@@ -183,8 +183,8 @@ struct myri10ge_private
 	 */
 
 	struct nvs_device	nvs;
-	struct nvo_fragment	nvo_fragment[2];
 	struct nvo_block	nvo;
+	unsigned int		nvo_registered;
 
 	/* Cached PCI capability locations. */
 
@@ -305,10 +305,10 @@ static int myri10ge_command ( struct myri10ge_private *priv,
 	command->response_addr.high = 0;
 	command->response_addr.low
 		= htonl ( virt_to_bus ( &priv->dma->command_response ) );
-	for ( i=0; i<36; i+=4 )
-		* ( uint32 * ) &command->pad[i] = 0;
+	for ( i=0; i<9; i++ )
+		command->pad[i] = 0;
 	wmb();
-	* ( uint32 * ) &command->pad[36] = 0;
+	command->pad[9] = 0;
 
 	/* Wait up to 2 seconds for a response. */
 
@@ -719,7 +719,7 @@ static int myri10ge_nv_init ( struct myri10ge_private *priv )
 		return 0;
 	}
 
-	/* Initilize NonVolatile Storage state. */
+	/* Initialize NonVolatile Storage state. */
 
 	priv->nvs.word_len_log2 = 0;
 	priv->nvs.size		= hdr.eeprom_len;
@@ -727,28 +727,21 @@ static int myri10ge_nv_init ( struct myri10ge_private *priv )
 	priv->nvs.read		= myri10ge_nvs_read;
 	priv->nvs.write		= myri10ge_nvs_write;
 
-	/* Build the NonVolatile storage fragment list.  We would like
-	   to use the whole last EEPROM block for this, but we must
-	   reduce the block size lest malloc fail in
-	   src/core/nvo.o. */
-
-	priv->nvo_fragment[0].address = nvo_fragment_pos;
-	priv->nvo_fragment[0].len     = 0x200;
-
 	/* Register the NonVolatile Options storage. */
 
 	nvo_init ( &priv->nvo,
 		   &priv->nvs,
-		   priv->nvo_fragment,
+		   nvo_fragment_pos, 0x200,
+		   NULL,
 		   & myri10ge_netdev (priv) -> refcnt );
 	rc = register_nvo ( &priv->nvo,
 			    netdev_settings ( myri10ge_netdev ( priv ) ) );
 	if ( rc ) {
 		DBG ("register_nvo failed");
-		priv->nvo_fragment[0].len = 0;
 		return rc;
 	}
 
+	priv->nvo_registered = 1;
 	DBG2 ( "NVO supported\n" );
 	return 0;
 }
@@ -758,7 +751,7 @@ myri10ge_nv_fini ( struct myri10ge_private *priv )
 {
 	/* Simply return if nonvolatile access is not supported. */
 
-	if ( 0 == priv->nvo_fragment[0].len )
+	if ( 0 == priv->nvo_registered )
 		return;
 
 	unregister_nvo ( &priv->nvo );
@@ -778,8 +771,7 @@ myri10ge_nv_fini ( struct myri10ge_private *priv )
  * This function is called very early on, while iPXE is initializing.
  * This is a iPXE PCI Device Driver API function.
  */
-static int myri10ge_pci_probe ( struct pci_device *pci,
-				const struct pci_device_id *id __unused )
+static int myri10ge_pci_probe ( struct pci_device *pci )
 {
 	static struct net_device_operations myri10ge_operations = {
 		.open     = myri10ge_net_open,

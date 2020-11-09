@@ -13,16 +13,21 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stddef.h>
 #include <stdarg.h>
 #include <stdio.h>
-#include <console.h>
 #include <errno.h>
+#include <wchar.h>
 #include <ipxe/vsprintf.h>
 
 /** @file */
@@ -61,11 +66,20 @@ static uint8_t type_sizes[] = {
 #define ALT_FORM 0x02
 
 /**
+ * Use zero padding
+ *
+ * Note that this value is set to 0x10 since that allows the pad
+ * character to be calculated as @c 0x20|(flags&ZPAD)
+ */
+#define ZPAD 0x10
+
+/**
  * Format a hexadecimal number
  *
  * @v end		End of buffer to contain number
  * @v num		Number to format
  * @v width		Minimum field width
+ * @v flags		Format flags
  * @ret ptr		End of buffer
  *
  * Fills a buffer in reverse order with a formatted hexadecimal
@@ -79,18 +93,18 @@ static uint8_t type_sizes[] = {
 static char * format_hex ( char *end, unsigned long long num, int width,
 			   int flags ) {
 	char *ptr = end;
-	int case_mod;
+	int case_mod = ( flags & LCASE );
+	int pad = ( ( flags & ZPAD ) | ' ' );
 
 	/* Generate the number */
-	case_mod = flags & LCASE;
 	do {
 		*(--ptr) = "0123456789ABCDEF"[ num & 0xf ] | case_mod;
 		num >>= 4;
 	} while ( num );
 
-	/* Zero-pad to width */
+	/* Pad to width */
 	while ( ( end - ptr ) < width )
-		*(--ptr) = '0';
+		*(--ptr) = pad;
 
 	/* Add "0x" or "0X" if alternate form specified */
 	if ( flags & ALT_FORM ) {
@@ -107,6 +121,7 @@ static char * format_hex ( char *end, unsigned long long num, int width,
  * @v end		End of buffer to contain number
  * @v num		Number to format
  * @v width		Minimum field width
+ * @v flags		Format flags
  * @ret ptr		End of buffer
  *
  * Fills a buffer in reverse order with a formatted decimal number.
@@ -115,9 +130,12 @@ static char * format_hex ( char *end, unsigned long long num, int width,
  * There must be enough space in the buffer to contain the largest
  * number that this function can format.
  */
-static char * format_decimal ( char *end, signed long num, int width ) {
+static char * format_decimal ( char *end, signed long num, int width,
+			       int flags ) {
 	char *ptr = end;
 	int negative = 0;
+	int zpad = ( flags & ZPAD );
+	int pad = ( zpad | ' ' );
 
 	/* Generate the number */
 	if ( num < 0 ) {
@@ -130,12 +148,16 @@ static char * format_decimal ( char *end, signed long num, int width ) {
 	} while ( num );
 
 	/* Add "-" if necessary */
-	if ( negative )
+	if ( negative && ( ! zpad ) )
 		*(--ptr) = '-';
 
-	/* Space-pad to width */
+	/* Pad to width */
 	while ( ( end - ptr ) < width )
-		*(--ptr) = ' ';
+		*(--ptr) = pad;
+
+	/* Add "-" if necessary */
+	if ( negative && zpad )
+		*ptr = '-';
 
 	return ptr;
 }
@@ -149,7 +171,7 @@ static char * format_decimal ( char *end, signed long num, int width ) {
  * Call's the printf_context::handler() method and increments
  * printf_context::len.
  */
-static inline void cputchar ( struct printf_context *ctx, unsigned int c ) {
+static inline void cputchar ( struct printf_context *ctx, unsigned char c ) {
 	ctx->handler ( ctx, c );
 	++ctx->len;
 }
@@ -169,6 +191,7 @@ size_t vcprintf ( struct printf_context *ctx, const char *fmt, va_list args ) {
 	char *ptr;
 	char tmp_buf[32]; /* 32 is enough for all numerical formats.
 			   * Insane width fields could overflow this buffer. */
+	wchar_t *wptr;
 
 	/* Initialise context */
 	ctx->len = 0;
@@ -186,7 +209,7 @@ size_t vcprintf ( struct printf_context *ctx, const char *fmt, va_list args ) {
 			if ( *fmt == '#' ) {
 				flags |= ALT_FORM;
 			} else if ( *fmt == '0' ) {
-				/* We always 0-pad hex and space-pad decimal */
+				flags |= ZPAD;
 			} else {
 				/* End of flag characters */
 				break;
@@ -218,12 +241,29 @@ size_t vcprintf ( struct printf_context *ctx, const char *fmt, va_list args ) {
 		/* Process conversion specifier */
 		ptr = tmp_buf + sizeof ( tmp_buf ) - 1;
 		*ptr = '\0';
+		wptr = NULL;
 		if ( *fmt == 'c' ) {
-			cputchar ( ctx, va_arg ( args, unsigned int ) );
+			if ( length < &type_sizes[LONG_LEN] ) {
+				cputchar ( ctx, va_arg ( args, unsigned int ) );
+			} else {
+				wchar_t wc;
+				size_t len;
+
+				wc = va_arg ( args, wint_t );
+				len = wcrtomb ( tmp_buf, wc, NULL );
+				tmp_buf[len] = '\0';
+				ptr = tmp_buf;
+			}
 		} else if ( *fmt == 's' ) {
-			ptr = va_arg ( args, char * );
-			if ( ! ptr )
-				ptr = "<NULL>";
+			if ( length < &type_sizes[LONG_LEN] ) {
+				ptr = va_arg ( args, char * );
+				if ( ! ptr )
+					ptr = "<NULL>";
+			} else {
+				wptr = va_arg ( args, wchar_t * );
+				if ( ! wptr )
+					ptr = "<NULL>";
+			}
 		} else if ( *fmt == 'p' ) {
 			intptr_t ptrval;
 
@@ -250,13 +290,22 @@ size_t vcprintf ( struct printf_context *ctx, const char *fmt, va_list args ) {
 			} else {
 				decimal = va_arg ( args, signed int );
 			}
-			ptr = format_decimal ( ptr, decimal, width );
+			ptr = format_decimal ( ptr, decimal, width, flags );
 		} else {
 			*(--ptr) = *fmt;
 		}
 		/* Write out conversion result */
-		for ( ; *ptr ; ptr++ ) {
-			cputchar ( ctx, *ptr );
+		if ( wptr == NULL ) {
+			for ( ; *ptr ; ptr++ ) {
+				cputchar ( ctx, *ptr );
+			}
+		} else {
+			for ( ; *wptr ; wptr++ ) {
+				size_t len = wcrtomb ( tmp_buf, *wptr, NULL );
+				for ( ptr = tmp_buf ; len-- ; ptr++ ) {
+					cputchar ( ctx, *ptr );
+				}
+			}
 		}
 	}
 

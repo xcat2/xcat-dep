@@ -3,7 +3,7 @@
   structure prototypes, global variables and constants that
   are needed for porting PXE to EFI.
 
-Copyright (c) 2006 - 2010, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2006 - 2016, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials are licensed and made available under
 the terms and conditions of the BSD License that accompanies this distribution.
 The full text of the license may be found at
@@ -721,10 +721,11 @@ typedef struct s_pxe_hw_undi {
   PXE_UINT8   Len;            ///< sizeof(PXE_HW_UNDI).
   PXE_UINT8   Fudge;          ///< makes 8-bit cksum equal zero.
   PXE_UINT8   Rev;            ///< PXE_ROMID_REV.
-  PXE_UINT8   IFcnt;          ///< physical connector count.
+  PXE_UINT8   IFcnt;          ///< physical connector count lower byte.
   PXE_UINT8   MajorVer;       ///< PXE_ROMID_MAJORVER.
   PXE_UINT8   MinorVer;       ///< PXE_ROMID_MINORVER.
-  PXE_UINT16  reserved;       ///< zero, not used.
+  PXE_UINT8   IFcntExt;       ///< physical connector count upper byte.
+  PXE_UINT8   reserved;       ///< zero, not used.
   PXE_UINT32  Implementation; ///< implementation flags.
   ///< reserved             ///< vendor use.
   ///< UINT32 Status;       ///< status port.
@@ -817,10 +818,11 @@ typedef struct s_pxe_sw_undi {
   PXE_UINT8   Len;            ///< sizeof(PXE_SW_UNDI).
   PXE_UINT8   Fudge;          ///< makes 8-bit cksum zero.
   PXE_UINT8   Rev;            ///< PXE_ROMID_REV.
-  PXE_UINT8   IFcnt;          ///< physical connector count.
+  PXE_UINT8   IFcnt;          ///< physical connector count lower byte.
   PXE_UINT8   MajorVer;       ///< PXE_ROMID_MAJORVER.
   PXE_UINT8   MinorVer;       ///< PXE_ROMID_MINORVER.
-  PXE_UINT16  reserved1;      ///< zero, not used.
+  PXE_UINT8   IFcntExt;       ///< physical connector count upper byte.
+  PXE_UINT8   reserved1;      ///< zero, not used.
   PXE_UINT32  Implementation; ///< Implementation flags.
   PXE_UINT64  EntryPoint;     ///< API entry point.
   PXE_UINT8   reserved2[3];   ///< zero, not used.
@@ -1079,7 +1081,7 @@ typedef struct s_pxe_cpb_start_31 {
 
   ///
   /// protocol driver can provide anything for this Unique_ID, UNDI remembers
-  /// that as just a 64bit value assocaited to the interface specified by
+  /// that as just a 64bit value associated to the interface specified by
   /// the ifnum and gives it back as a parameter to all the call-back routines
   /// when calling for that interface!
   ///
@@ -1457,6 +1459,26 @@ typedef struct s_pxe_db_statistics {
 /// Number of frames destined for unsupported protocol.
 ///
 #define PXE_STATISTICS_UNSUPPORTED_PROTOCOL 0x15
+
+///
+/// Number of valid frames received that were duplicated.
+///
+#define PXE_STATISTICS_RX_DUPLICATED_FRAMES 0x16
+
+///
+/// Number of encrypted frames received that failed to decrypt.
+///
+#define PXE_STATISTICS_RX_DECRYPT_ERROR_FRAMES 0x17
+
+///
+/// Number of frames that failed to transmit after exceeding the retry limit.
+///
+#define PXE_STATISTICS_TX_ERROR_FRAMES 0x18
+
+///
+/// Number of frames transmitted successfully after more than one attempt.
+///
+#define PXE_STATISTICS_TX_RETRY_FRAMES 0x19
 
 typedef struct s_pxe_cpb_mcast_ip_to_mac {
   ///

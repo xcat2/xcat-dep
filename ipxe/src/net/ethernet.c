@@ -13,12 +13,18 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <byteswap.h>
@@ -38,7 +44,25 @@ FILE_LICENCE ( GPL2_OR_LATER );
  */
 
 /** Ethernet broadcast MAC address */
-static uint8_t eth_broadcast[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
+uint8_t eth_broadcast[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff };
+
+/**
+ * Check if Ethernet packet has an 802.3 LLC header
+ *
+ * @v ethhdr		Ethernet header
+ * @ret is_llc		Packet has 802.3 LLC header
+ */
+static inline int eth_is_llc_packet ( struct ethhdr *ethhdr ) {
+	uint8_t len_msb;
+
+	/* Check if the protocol field contains a value short enough
+	 * to be a frame length.  The slightly convoluted form of the
+	 * comparison is designed to reduce to a single x86
+	 * instruction.
+	 */
+	len_msb = *( ( uint8_t * ) &ethhdr->h_protocol );
+	return ( len_msb < 0x06 );
+}
 
 /**
  * Add Ethernet link-layer header
@@ -50,9 +74,9 @@ static uint8_t eth_broadcast[ETH_ALEN] = { 0xff, 0xff, 0xff, 0xff, 0xff, 0xff};
  * @v net_proto		Network-layer protocol, in network-byte order
  * @ret rc		Return status code
  */
-static int eth_push ( struct net_device *netdev __unused,
-		      struct io_buffer *iobuf, const void *ll_dest,
-		      const void *ll_source, uint16_t net_proto ) {
+int eth_push ( struct net_device *netdev __unused, struct io_buffer *iobuf,
+	       const void *ll_dest, const void *ll_source,
+	       uint16_t net_proto ) {
 	struct ethhdr *ethhdr = iob_push ( iobuf, sizeof ( *ethhdr ) );
 
 	/* Build Ethernet header */
@@ -71,15 +95,21 @@ static int eth_push ( struct net_device *netdev __unused,
  * @ret ll_dest		Link-layer destination address
  * @ret ll_source	Source link-layer address
  * @ret net_proto	Network-layer protocol, in network-byte order
+ * @ret flags		Packet flags
  * @ret rc		Return status code
  */
-static int eth_pull ( struct net_device *netdev __unused, 
-		      struct io_buffer *iobuf, const void **ll_dest,
-		      const void **ll_source, uint16_t *net_proto ) {
+int eth_pull ( struct net_device *netdev __unused, struct io_buffer *iobuf,
+	       const void **ll_dest, const void **ll_source,
+	       uint16_t *net_proto, unsigned int *flags ) {
 	struct ethhdr *ethhdr = iobuf->data;
+	uint16_t *llc_proto;
 
-	/* Sanity check */
-	if ( iob_len ( iobuf ) < sizeof ( *ethhdr ) ) {
+	/* Sanity check.  While in theory we could receive a one-byte
+	 * packet, this will never happen in practice and performing
+	 * the combined length check here avoids the need for an
+	 * additional comparison if we detect an LLC frame.
+	 */
+	if ( iob_len ( iobuf ) < ( sizeof ( *ethhdr ) + sizeof ( *llc_proto ))){
 		DBG ( "Ethernet packet too short (%zd bytes)\n",
 		      iob_len ( iobuf ) );
 		return -EINVAL;
@@ -92,6 +122,21 @@ static int eth_pull ( struct net_device *netdev __unused,
 	*ll_dest = ethhdr->h_dest;
 	*ll_source = ethhdr->h_source;
 	*net_proto = ethhdr->h_protocol;
+	*flags = ( ( is_multicast_ether_addr ( ethhdr->h_dest ) ?
+		     LL_MULTICAST : 0 ) |
+		   ( is_broadcast_ether_addr ( ethhdr->h_dest ) ?
+		     LL_BROADCAST : 0 ) );
+
+	/* If this is an LLC frame (with a length in place of the
+	 * protocol field), then use the next two bytes (which happen
+	 * to be the LLC DSAP and SSAP) as the protocol.  This allows
+	 * for minimal-overhead support for receiving (rare) LLC
+	 * frames, without requiring a full LLC protocol layer.
+	 */
+	if ( eth_is_llc_packet ( ethhdr ) ) {
+		llc_proto = iobuf->data;
+		*net_proto = *llc_proto;
+	}
 
 	return 0;
 }
@@ -104,6 +149,21 @@ static int eth_pull ( struct net_device *netdev __unused,
  */
 void eth_init_addr ( const void *hw_addr, void *ll_addr ) {
 	memcpy ( ll_addr, hw_addr, ETH_ALEN );
+}
+
+/**
+ * Generate random Ethernet address
+ *
+ * @v hw_addr		Generated hardware address
+ */
+void eth_random_addr ( void *hw_addr ) {
+	uint8_t *addr = hw_addr;
+	unsigned int i;
+
+	for ( i = 0 ; i < ETH_ALEN ; i++ )
+		addr[i] = random();
+	addr[0] &= ~0x01; /* Clear multicast bit */
+	addr[0] |= 0x02; /* Set locally-assigned bit */
 }
 
 /**
@@ -143,6 +203,11 @@ int eth_mc_hash ( unsigned int af, const void *net_addr, void *ll_addr ) {
 		ll_addr_bytes[4] = net_addr_bytes[2];
 		ll_addr_bytes[5] = net_addr_bytes[3];
 		return 0;
+	case AF_INET6:
+		ll_addr_bytes[0] = 0x33;
+		ll_addr_bytes[1] = 0x33;
+		memcpy ( &ll_addr_bytes[2], &net_addr_bytes[12], 4 );
+		return 0;
 	default:
 		return -ENOTSUP;
 	}
@@ -159,6 +224,21 @@ int eth_eth_addr ( const void *ll_addr, void *eth_addr ) {
 	return 0;
 }
 
+/**
+ * Generate EUI-64 address
+ *
+ * @v ll_addr		Link-layer address
+ * @v eui64		EUI-64 address to fill in
+ * @ret rc		Return status code
+ */
+int eth_eui64 ( const void *ll_addr, void *eui64 ) {
+
+	memcpy ( ( eui64 + 0 ), ( ll_addr + 0 ), 3 );
+	memcpy ( ( eui64 + 5 ), ( ll_addr + 3 ), 3 );
+	*( ( uint16_t * ) ( eui64 + 3 ) ) = htons ( 0xfffe );
+	return 0;
+}
+
 /** Ethernet protocol */
 struct ll_protocol ethernet_protocol __ll_protocol = {
 	.name		= "Ethernet",
@@ -172,6 +252,7 @@ struct ll_protocol ethernet_protocol __ll_protocol = {
 	.ntoa		= eth_ntoa,
 	.mc_hash	= eth_mc_hash,
 	.eth_addr	= eth_eth_addr,
+	.eui64		= eth_eui64,
 };
 
 /**
@@ -188,9 +269,13 @@ struct net_device * alloc_etherdev ( size_t priv_size ) {
 		netdev->ll_protocol = &ethernet_protocol;
 		netdev->ll_broadcast = eth_broadcast;
 		netdev->max_pkt_len = ETH_FRAME_LEN;
+		netdev->mtu = ETH_MAX_MTU;
 	}
 	return netdev;
 }
 
-/* Drag in Ethernet slow protocols */
-REQUIRE_OBJECT ( eth_slow );
+/* Drag in objects via ethernet_protocol */
+REQUIRING_SYMBOL ( ethernet_protocol );
+
+/* Drag in Ethernet configuration */
+REQUIRE_OBJECT ( config_ethernet );

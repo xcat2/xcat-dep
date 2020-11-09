@@ -13,7 +13,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -38,11 +39,13 @@ FILE_LICENCE ( GPL2_OR_LATER );
  * @v netdev	Network device
  * @v ll_dest	Link-layer destination address
  * @v ll_source	Link-layer source address
+ * @v flags	Packet flags
  *
  * This function takes ownership of the I/O buffer passed to it.
  */
 static int eapol_rx ( struct io_buffer *iob, struct net_device *netdev,
-		      const void *ll_dest, const void *ll_source ) {
+		      const void *ll_dest, const void *ll_source,
+		      unsigned int flags __unused ) {
 	struct eapol_frame *eapol = iob->data;
 	struct eapol_handler *handler;
 

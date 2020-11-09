@@ -8,7 +8,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/fc.h>
@@ -85,5 +85,8 @@ enum fcoe_eof {
 	FCOE_EOF_NI = 0x49,	/**< End of Frame Invalid */
 	FCOE_EOF_A = 0x50,	/**< End of Frame Abort */
 };
+
+/** FCoE VLAN priority */
+#define FCOE_VLAN_PRIORITY 3
 
 #endif /* _IPXE_FCOE_H */

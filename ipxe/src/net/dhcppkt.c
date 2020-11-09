@@ -13,10 +13,15 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
+ *
+ * You can also choose to distribute this program under the terms of
+ * the Unmodified Binary Distribution Licence (as given in the file
+ * COPYING.UBDL), provided that you have satisfied its requirements.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -135,6 +140,19 @@ find_dhcp_packet_field ( unsigned int tag ) {
 }
 
 /**
+ * Check applicability of DHCP setting
+ *
+ * @v dhcppkt		DHCP packet
+ * @v tag		Setting tag number
+ * @ret applies		Setting applies within this settings block
+ */
+static int dhcppkt_applies ( struct dhcp_packet *dhcppkt __unused,
+			     unsigned int tag ) {
+
+	return dhcpopt_applies ( tag );
+}
+
+/**
  * Store value of DHCP packet setting
  *
  * @v dhcppkt		DHCP packet
@@ -147,7 +165,6 @@ int dhcppkt_store ( struct dhcp_packet *dhcppkt, unsigned int tag,
 		    const void *data, size_t len ) {
 	struct dhcp_packet_field *field;
 	void *field_data;
-	int rc;
 
 	/* If this is a special field, fill it in */
 	if ( ( field = find_dhcp_packet_field ( tag ) ) != NULL ) {
@@ -163,13 +180,7 @@ int dhcppkt_store ( struct dhcp_packet *dhcppkt, unsigned int tag,
 	}
 
 	/* Otherwise, use the generic options block */
-	rc = dhcpopt_store ( &dhcppkt->options, tag, data, len );
-
-	/* Update our used-length field */
-	dhcppkt->len = ( offsetof ( struct dhcphdr, options ) +
-			 dhcppkt->options.len );
-
-	return rc;
+	return dhcpopt_store ( &dhcppkt->options, tag, data, len );
 }
 
 /**
@@ -212,6 +223,22 @@ int dhcppkt_fetch ( struct dhcp_packet *dhcppkt, unsigned int tag,
  */
 
 /**
+ * Check applicability of DHCP setting
+ *
+ * @v settings		Settings block
+ * @v setting		Setting
+ * @ret applies		Setting applies within this settings block
+ */
+static int dhcppkt_settings_applies ( struct settings *settings,
+				      const struct setting *setting ) {
+	struct dhcp_packet *dhcppkt =
+		container_of ( settings, struct dhcp_packet, settings );
+
+	return ( ( setting->scope == NULL ) &&
+		 dhcppkt_applies ( dhcppkt, setting->tag ) );
+}
+
+/**
  * Store value of DHCP setting
  *
  * @v settings		Settings block
@@ -221,7 +248,7 @@ int dhcppkt_fetch ( struct dhcp_packet *dhcppkt, unsigned int tag,
  * @ret rc		Return status code
  */
 static int dhcppkt_settings_store ( struct settings *settings,
-				    struct setting *setting,
+				    const struct setting *setting,
 				    const void *data, size_t len ) {
 	struct dhcp_packet *dhcppkt =
 		container_of ( settings, struct dhcp_packet, settings );
@@ -249,6 +276,7 @@ static int dhcppkt_settings_fetch ( struct settings *settings,
 
 /** DHCP settings operations */
 static struct settings_operations dhcppkt_settings_operations = {
+	.applies = dhcppkt_settings_applies,
 	.store = dhcppkt_settings_store,
 	.fetch = dhcppkt_settings_fetch,
 };
@@ -273,12 +301,9 @@ void dhcppkt_init ( struct dhcp_packet *dhcppkt, struct dhcphdr *data,
 		    size_t len ) {
 	ref_init ( &dhcppkt->refcnt, NULL );
 	dhcppkt->dhcphdr = data;
-	dhcppkt->max_len = len;
 	dhcpopt_init ( &dhcppkt->options, &dhcppkt->dhcphdr->options,
-		       ( len - offsetof ( struct dhcphdr, options ) ) );
-	dhcppkt->len = ( offsetof ( struct dhcphdr, options ) +
-			 dhcppkt->options.len );
-	settings_init ( &dhcppkt->settings,
-			&dhcppkt_settings_operations, &dhcppkt->refcnt,
-			DHCP_SETTINGS_NAME, 0 );
+		       ( len - offsetof ( struct dhcphdr, options ) ),
+		       dhcpopt_no_realloc );
+	settings_init ( &dhcppkt->settings, &dhcppkt_settings_operations,
+			&dhcppkt->refcnt, NULL );
 }

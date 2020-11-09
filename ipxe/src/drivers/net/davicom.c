@@ -213,11 +213,11 @@ static int phy_read(int location)
  phy_write_1bit(io_dcr9, PHY_DATA_1);
  phy_write_1bit(io_dcr9, PHY_DATA_0);
 
- /* Send Phy addres */
+ /* Send Phy address */
  for (i=0x10; i>0; i=i>>1)
      phy_write_1bit(io_dcr9, phy_addr&i ? PHY_DATA_1: PHY_DATA_0);
    
- /* Send register addres */
+ /* Send register address */
  for (i=0x10; i>0; i=i>>1)
      phy_write_1bit(io_dcr9, location&i ? PHY_DATA_1: PHY_DATA_0);
 
@@ -257,11 +257,11 @@ static void phy_write(int location, u16 phy_data)
  phy_write_1bit(io_dcr9, PHY_DATA_0);
  phy_write_1bit(io_dcr9, PHY_DATA_1);
 
- /* Send Phy addres */
+ /* Send Phy address */
  for (i=0x10; i>0; i=i>>1)
    phy_write_1bit(io_dcr9, phy_addr&i ? PHY_DATA_1: PHY_DATA_0);
 
- /* Send register addres */
+ /* Send register address */
  for (i=0x10; i>0; i=i>>1)
    phy_write_1bit(io_dcr9, location&i ? PHY_DATA_1: PHY_DATA_0);
 
@@ -340,6 +340,7 @@ static void davicom_media_chk(struct nic * nic __unused)
   csr6 = 0x00200000;	/* SF */
   outl(csr6, ioaddr + CSR6);
 
+#define PCI_VENDOR_ID_DAVICOM		0x1282
 #define	PCI_DEVICE_ID_DM9009		0x9009
   if (vendor == PCI_VENDOR_ID_DAVICOM && dev_id == PCI_DEVICE_ID_DM9009) {
     /* Set to 10BaseT mode for DM9009 */

@@ -1,7 +1,7 @@
 #ifndef EISA_H
 #define EISA_H
 
-FILE_LICENCE ( GPL2_OR_LATER );
+FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 #include <stdint.h>
 #include <ipxe/isa_ids.h>
@@ -54,8 +54,6 @@ struct eisa_device {
 	 * this field.
 	 */
 	void *priv;
-	/** Driver name */
-	const char *driver_name;
 };
 
 /** An EISA driver */

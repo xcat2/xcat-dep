@@ -14,7 +14,8 @@
 #
 # You should have received a copy of the GNU General Public License
 # along with this program; if not, write to the Free Software
-# Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+# 02110-1301, USA.
 
 use strict;
 use warnings;
@@ -36,6 +37,7 @@ my $known_licences = {
     desc => "GPL version 2 (or, at your option, any later version)",
     can_subsume => {
       gpl_any => 1,
+      gpl2_or_later_or_ubdl => 1,
       public_domain => 1,
       bsd3 => 1,
       bsd2 => 1,
@@ -48,11 +50,23 @@ my $known_licences = {
     can_subsume => {
       gpl_any => 1,
       gpl2_or_later => 1,
+      gpl2_or_later_or_ubdl => 1,
       public_domain => 1,
       bsd3 => 1,
       bsd2 => 1,
       mit  => 1,
       isc  => 1,
+    },
+  },
+  gpl2_or_later_or_ubdl => {
+    desc => ( "GPL version 2 (or, at your option, any later version) or ".
+	      "Unmodified Binary Distribution Licence" ),
+    can_subsume => {
+      public_domain => 1,
+      bsd3 => 1,
+      bsd2 => 1,
+      mit => 1,
+      isc => 1,
     },
   },
   public_domain => {

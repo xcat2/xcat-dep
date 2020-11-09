@@ -5,7 +5,7 @@
   and PCI Configuration cycles on a PCI Root Bridge. It also provides services to perform
   defferent types of bus mastering DMA.
 
-  Copyright (c) 2006 - 2008, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2006 - 2011, Intel Corporation. All rights reserved.<BR>
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
   which accompanies this distribution.  The full text of the license may be found at
@@ -20,6 +20,8 @@
 #define __PCI_ROOT_BRIDGE_IO_H__
 
 FILE_LICENCE ( BSD3 );
+
+#include <ipxe/efi/Library/BaseLib.h>
 
 #define EFI_PCI_ROOT_BRIDGE_IO_PROTOCOL_GUID \
   { \
@@ -99,13 +101,20 @@ typedef enum {
 #define EFI_PCI_ATTRIBUTE_MEMORY_CACHED               0x0800
 #define EFI_PCI_ATTRIBUTE_MEMORY_DISABLE              0x1000
 #define EFI_PCI_ATTRIBUTE_DUAL_ADDRESS_CYCLE          0x8000
+#define EFI_PCI_ATTRIBUTE_ISA_IO_16                   0x10000
+#define EFI_PCI_ATTRIBUTE_VGA_PALETTE_IO_16           0x20000
+#define EFI_PCI_ATTRIBUTE_VGA_IO_16                   0x40000
 
 #define EFI_PCI_ATTRIBUTE_VALID_FOR_ALLOCATE_BUFFER   (EFI_PCI_ATTRIBUTE_MEMORY_WRITE_COMBINE | EFI_PCI_ATTRIBUTE_MEMORY_CACHED | EFI_PCI_ATTRIBUTE_DUAL_ADDRESS_CYCLE)
 
 #define EFI_PCI_ATTRIBUTE_INVALID_FOR_ALLOCATE_BUFFER (~EFI_PCI_ATTRIBUTE_VALID_FOR_ALLOCATE_BUFFER)
 
 #define EFI_PCI_ADDRESS(bus, dev, func, reg) \
-    ((UINT64) ((((UINTN) bus) << 24) + (((UINTN) dev) << 16) + (((UINTN) func) << 8) + ((UINTN) reg)))
+  (UINT64) ( \
+  (((UINTN) bus) << 24) | \
+  (((UINTN) dev) << 16) | \
+  (((UINTN) func) << 8) | \
+  (((UINTN) (reg)) < 256 ? ((UINTN) (reg)) : (UINT64) (LShiftU64 ((UINT64) (reg), 32))))
 
 typedef struct {
   UINT8   Register;

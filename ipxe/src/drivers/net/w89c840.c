@@ -26,7 +26,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -246,7 +247,7 @@ static struct winbond_private
     /* MII transceiver section. */
     int mii_cnt;                        /* MII device addresses. */
     u16 advertising;                    /* NWay media advertisement */
-    unsigned char phys[2];                /* MII device addresses. */
+    unsigned char phys[4];                /* MII device addresses. */
 } w840private __attribute__ ((aligned (PRIV_ALIGN_BYTES)));
 
 /* NIC specific static variables go here */
@@ -625,7 +626,7 @@ static int w89c840_probe ( struct nic *nic, struct pci_device *p ) {
 
 
     u16 sum = 0;
-    int i, j;
+    int i;
     unsigned short value;
 
     if (p->ioaddr == 0)
@@ -640,7 +641,9 @@ static int w89c840_probe ( struct nic *nic, struct pci_device *p ) {
 
     ioaddr = ioaddr & ~3; /* Mask the bit that says "this is an io addr" */
 
+#define PCI_VENDOR_ID_WINBOND2		0x1050
 #define PCI_DEVICE_ID_WINBOND2_89C840   0x0840
+#define PCI_VENDOR_ID_COMPEX		0x11f6
 #define PCI_DEVICE_ID_COMPEX_RL100ATX   0x2011
 
     /* From Matt Hortman <mbhortman@acpthinclient.com> */
@@ -666,7 +669,7 @@ static int w89c840_probe ( struct nic *nic, struct pci_device *p ) {
     adjust_pci_device(p);
 
     /* Ok. Got one. Read the eeprom. */
-    for (j = 0, i = 0; i < 0x40; i++) {
+    for (i = 0; i < 0x40; i++) {
         value = eeprom_read(ioaddr, i);
         eeprom[i] = value;
         sum += value;

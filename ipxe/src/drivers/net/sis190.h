@@ -77,7 +77,7 @@ enum sis190_registers {
 	IntrStatus		= 0x20,
 	IntrMask		= 0x24,
 	IntrControl		= 0x28,
-	IntrTimer		= 0x2c,	// unused (Interupt Timer)
+	IntrTimer		= 0x2c,	// unused (Interrupt Timer)
 	PMControl		= 0x30,	// unused (Power Mgmt Control/Status)
 	rsv2			= 0x34,	// reserved
 	ROMControl		= 0x38,
@@ -218,7 +218,7 @@ enum _DescStatusBit {
 	RxSizeMask	= 0x0000ffff
 	/*
 	* The asic could apparently do vlan, TSO, jumbo (sis191 only) and
-	* provide two (unused with Linux) Tx queues. No publically
+	* provide two (unused with Linux) Tx queues. No publicly
 	* available documentation alas.
 	*/
 };
@@ -295,13 +295,6 @@ static struct mii_chip_info {
 	{ "Marvell PHY 88E1111",  { 0x0141, 0x0cc0 }, LAN, F_PHY_88E1111 },
 	{ "Realtek PHY RTL8201",  { 0x0000, 0x8200 }, LAN, 0 },
 	{ NULL, { 0x00, 0x00 }, 0, 0 }
-};
-
-static const struct {
-	const char *name;
-} sis_chip_info[] = {
-	{ "SiS 190 PCI Fast Ethernet adapter" },
-	{ "SiS 191 PCI Gigabit Ethernet adapter" },
 };
 
 static void sis190_phy_task(struct sis190_private *tp);

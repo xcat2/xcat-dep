@@ -1,7 +1,7 @@
 /** @file
   EFI Network Interface Identifier Protocol.
 
-Copyright (c) 2006 - 2010, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2006 - 2013, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials are licensed and made available under
 the terms and conditions of the BSD License that accompanies this distribution.
 The full text of the license may be found at
@@ -36,7 +36,11 @@ FILE_LICENCE ( BSD3 );
     0x1ACED566, 0x76ED, 0x4218, {0xBC, 0x81, 0x76, 0x7F, 0x1F, 0x97, 0x7A, 0x89 } \
   }
 
-#define EFI_NETWORK_INTERFACE_IDENTIFIER_PROTOCOL_REVISION    0x00010000
+//
+// Revision defined in UEFI Specification 2.4
+//
+#define EFI_NETWORK_INTERFACE_IDENTIFIER_PROTOCOL_REVISION    0x00020000
+
 
 ///
 /// Revision defined in EFI1.1.
@@ -72,9 +76,9 @@ struct _EFI_NETWORK_INTERFACE_IDENTIFIER_PROTOCOL {
   UINT8     MajorVer;   ///< Major version number.
   UINT8     MinorVer;   ///< Minor version number.
   BOOLEAN   Ipv6Supported; ///< TRUE if the network interface supports IPv6; otherwise FALSE.
-  UINT8     IfNum;      ///< The network interface number that is being identified by this Network
-                        ///< Interface Identifier Protocol. This field must be less than or equal
-                        ///< to the IFcnt field in the !PXE structure.
+  UINT16    IfNum;      ///< The network interface number that is being identified by this Network
+                        ///< Interface Identifier Protocol. This field must be less than or
+                        ///< equal to the (IFcnt | IFcntExt <<8 ) fields in the !PXE structure.
 
 };
 
@@ -86,6 +90,29 @@ struct _EFI_NETWORK_INTERFACE_IDENTIFIER_PROTOCOL {
 typedef enum {
   EfiNetworkInterfaceUndi = 1
 } EFI_NETWORK_INTERFACE_TYPE;
+
+///
+/// Forward reference for pure ANSI compatability.
+///
+typedef struct undiconfig_table  UNDI_CONFIG_TABLE;
+
+///
+/// The format of the configuration table for UNDI
+///
+struct undiconfig_table {
+  UINT32             NumberOfInterfaces;    ///< The number of NIC devices
+                                            ///< that this UNDI controls.
+  UINT32             reserved;
+  UNDI_CONFIG_TABLE  *nextlink;             ///< A pointer to the next UNDI
+                                            ///< configuration table.
+  ///
+  /// The length of this array is given in the NumberOfInterfaces field.
+  ///
+  struct {
+    VOID             *NII_InterfacePointer; ///< Pointer to the NII interface structure.
+    VOID             *DevicePathPointer;    ///< Pointer to the device path for this NIC.
+  } NII_entry[1];
+};
 
 extern EFI_GUID gEfiNetworkInterfaceIdentifierProtocolGuid;
 extern EFI_GUID gEfiNetworkInterfaceIdentifierProtocolGuid_31;

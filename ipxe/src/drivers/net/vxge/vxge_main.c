@@ -45,6 +45,7 @@ static char *vxge_func_mode_names[] = {
 	"Multi Function 2 - 2 func, 8 vpath per func",
 	"Multi Function 4 - 4 func, 4 vpath per func",
 	"WLPEX/SharedIO 4 - 17 func, 1 vpath per func (PCIe ARI)",
+	"Multi Function 8 - For ESX DirectIO - 8 func, 2 vpath per func",
 };
 
 static inline int is_vxge_card_up(struct vxgedev *vdev)
@@ -181,13 +182,11 @@ vxge_xmit(struct net_device *dev, struct io_buffer *iobuf)
 	struct vxge_fifo *fifo = NULL;
 	struct vxgedev *vdev = NULL;
 	struct __vxge_hw_fifo *fifoh;
-	struct __vxge_hw_device  *hldev;
 	struct vxge_hw_fifo_txd *txdp;
 
 	vxge_trace();
 
 	vdev = (struct vxgedev *)netdev_priv(dev);
-	hldev = (struct __vxge_hw_device  *)pci_get_drvdata(vdev->pdev);
 
 	if (!is_vxge_card_up(vdev)) {
 		vxge_debug(VXGE_ERR,
@@ -253,7 +252,7 @@ static void vxge_poll(struct net_device *ndev)
 /*
  * vxge_irq - enable or Disable interrupts
  *
- * @netdev   netdevice sturcture reference
+ * @netdev   netdevice structure reference
  * @action   requested interrupt action
  */
 static void vxge_irq(struct net_device *netdev __unused, int action)
@@ -468,11 +467,9 @@ _out0:
 void
 vxge_device_unregister(struct __vxge_hw_device *hldev)
 {
-	struct vxgedev *vdev;
 	struct net_device *ndev;
 
 	ndev = hldev->ndev;
-	vdev = netdev_priv(ndev);
 
 	unregister_netdev(ndev);
 	netdev_nullify(ndev);
@@ -494,7 +491,7 @@ vxge_device_unregister(struct __vxge_hw_device *hldev)
  *
  */
 static int
-vxge_probe(struct pci_device *pdev, const struct pci_device_id *id __unused)
+vxge_probe(struct pci_device *pdev)
 {
 	struct __vxge_hw_device  *hldev;
 	enum vxge_hw_status status;
@@ -503,18 +500,16 @@ vxge_probe(struct pci_device *pdev, const struct pci_device_id *id __unused)
 	struct vxgedev *vdev;
 	int i;
 	u8 revision, titan1;
-	u32 host_type;
 	u32 function_mode;
 	unsigned long mmio_start, mmio_len;
 	void *bar0;
 	struct vxge_hw_device_hw_info hw_info;
 	struct vxge_hw_device_version *fw_version;
 
-	vxge_debug(VXGE_INFO, "vxge_probe for device %02X:%02X.%X\n",
-			pdev->bus, PCI_SLOT(pdev->devfn),
-			PCI_FUNC(pdev->devfn));
+	vxge_debug(VXGE_INFO, "vxge_probe for device " PCI_FMT "\n",
+			PCI_ARGS(pdev));
 
-	pci_read_config_byte(pdev, PCI_REVISION_ID, &revision);
+	pci_read_config_byte(pdev, PCI_REVISION, &revision);
 	titan1 = is_titan1(pdev->device, revision);
 
 	mmio_start = pci_bar_start(pdev, PCI_BASE_ADDRESS_0);
@@ -525,7 +520,7 @@ vxge_probe(struct pci_device *pdev, const struct pci_device_id *id __unused)
 	/* sets the bus master */
 	adjust_pci_device(pdev);
 
-	bar0 = ioremap(mmio_start, mmio_len);
+	bar0 = pci_ioremap(pdev, mmio_start, mmio_len);
 	if (!bar0) {
 		vxge_debug(VXGE_ERR,
 			"%s : cannot remap io memory bar0\n", __func__);
@@ -533,7 +528,7 @@ vxge_probe(struct pci_device *pdev, const struct pci_device_id *id __unused)
 		goto _exit0;
 	}
 
-	status = vxge_hw_device_hw_info_get(bar0, &hw_info);
+	status = vxge_hw_device_hw_info_get(pdev, bar0, &hw_info);
 	if (status != VXGE_HW_OK) {
 		vxge_debug(VXGE_ERR,
 			"%s: Reading of hardware info failed.\n",
@@ -562,7 +557,6 @@ vxge_probe(struct pci_device *pdev, const struct pci_device_id *id __unused)
 		"%s:%d  Vpath mask = %llx\n", __func__, __LINE__,
 		(unsigned long long)vpath_mask);
 
-	host_type = hw_info.host_type;
 	fw_version = &hw_info.fw_version;
 	/* fail the driver loading if firmware is incompatible */
 	if ((fw_version->major != VXGE_CERT_FW_VER_MAJOR) ||

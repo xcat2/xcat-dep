@@ -4,7 +4,7 @@
   Abstraction of a very simple input device like a keyboard or serial
   terminal.
 
-  Copyright (c) 2006 - 2009, Intel Corporation. All rights reserved.<BR>
+  Copyright (c) 2006 - 2011, Intel Corporation. All rights reserved.<BR>
   This program and the accompanying materials
   are licensed and made available under the terms and conditions of the BSD License
   which accompanies this distribution.  The full text of the license may be found at
@@ -48,7 +48,6 @@ typedef struct {
 //
 // Required unicode control chars
 //
-#define CHAR_NULL             0x0000
 #define CHAR_BACKSPACE        0x0008
 #define CHAR_TAB              0x0009
 #define CHAR_LINEFEED         0x000A
@@ -78,8 +77,6 @@ typedef struct {
 #define SCAN_F8         0x0012
 #define SCAN_F9         0x0013
 #define SCAN_F10        0x0014
-#define SCAN_F11        0x0015
-#define SCAN_F12        0x0016
 #define SCAN_ESC        0x0017
 
 /**
@@ -103,8 +100,9 @@ EFI_STATUS
   Reads the next keystroke from the input device. The WaitForKey Event can
   be used to test for existence of a keystroke via WaitForEvent () call.
 
-  @param  This Protocol instance pointer.
-  @param  Key  Driver may perform diagnostics on reset.
+  @param  This  Protocol instance pointer.
+  @param  Key   A pointer to a buffer that is filled in with the keystroke
+                information for the key that was pressed.
 
   @retval EFI_SUCCESS      The keystroke information was returned.
   @retval EFI_NOT_READY    There was no keystroke data available.

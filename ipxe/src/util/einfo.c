@@ -13,13 +13,15 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
+ * 02110-1301, USA.
  */
 
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -36,10 +38,15 @@ struct options {
 
 /** Error usage information */
 struct einfo {
+	/** Size of error information record */
 	uint32_t size;
+	/** Error number */
 	uint32_t error;
+	/** Offset to error description (NUL-terminated) */
 	uint32_t desc;
+	/** Offset to file name (NUL-terminated) */
 	uint32_t file;
+	/** Line number */
 	uint32_t line;
 } __attribute__ (( packed ));
 
@@ -49,7 +56,8 @@ struct einfo {
  * @v infile		Filename
  * @v opts		Command-line options
  */
-static void einfo ( const char *infile, struct options *opts ) {
+static void einfo ( const char *infile,
+		    struct options *opts __attribute__ (( unused )) ) {
 	int fd;
 	struct stat stat;
 	size_t len;
@@ -85,15 +93,16 @@ static void einfo ( const char *infile, struct options *opts ) {
 		for ( einfo = start ; ( ( void * ) einfo ) < ( start + len ) ;
 		      einfo = ( ( ( void * ) einfo ) + einfo->size ) ) {
 			printf ( "%08x\t%s\t%d\t%s\n", einfo->error,
-				 ( ( ( void * ) einfo ) + einfo->file ),
+				 ( ( ( char * ) einfo ) + einfo->file ),
 				 einfo->line,
-				 ( ( ( void * ) einfo ) + einfo->desc ) );
+				 ( ( ( char * ) einfo ) + einfo->desc ) );
 		}
 
+		/* Unmap file */
+		munmap ( start, len );
 	}
 
-	/* Unmap and close file */
-	munmap ( start, len );
+	/* Close file */
 	close ( fd );
 }
 
@@ -115,8 +124,7 @@ static void print_help ( const char *program_name ) {
  * @v opts		Options structure to populate
  */
 static int parse_options ( const int argc, char **argv,
-			   struct options *opts ) {
-	char *end;
+			   struct options *opts __attribute__ (( unused )) ) {
 	int c;
 
 	while (1) {
@@ -147,7 +155,7 @@ static int parse_options ( const int argc, char **argv,
 int main ( int argc, char **argv ) {
 	struct options opts = {
 	};
-	unsigned int infile_index;
+	int infile_index;
 	const char *infile;
 
 	/* Parse command-line arguments */
