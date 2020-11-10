@@ -1,7 +1,8 @@
-diff -urN ipxe/src/config/general.h ipxe-branded/src/config/general.h
---- ipxe/src/config/general.h	2010-11-11 14:09:48.052334980 -0500
-+++ ipxe-branded/src/config/general.h	2010-11-12 09:33:37.493584218 -0500
-@@ -24,8 +24,8 @@
+diff --git a/src/config/branding.h b/src/config/branding.h
+index 73f00af..29985fe 100644
+--- a/src/config/branding.h
++++ b/src/config/branding.h
+@@ -24,8 +24,8 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
   * "iPXE".
   *
   */
@@ -9,6 +10,6 @@ diff -urN ipxe/src/config/general.h ipxe-branded/src/config/general.h
 -#define PRODUCT_SHORT_NAME "iPXE"
 +#define PRODUCT_NAME "xCAT Network Boot Agent"
 +#define PRODUCT_SHORT_NAME "xNBA"
+ #define PRODUCT_URI "http://ipxe.org"
  
  /*
-  * Timer configuration

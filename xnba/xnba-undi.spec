@@ -1,12 +1,11 @@
 Name:           xnba-undi
-Version:        1.0.3
-Release:        7
+Version:        2.0.0 
+Release:        0
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
-Obsoletes:	gpxe-undi
 
 Group:          System Environment/Kernel
 License:        GPL
-URL:            https://ipxe.org/vendor/xcat/ipxe.git
+URL:            https://ipxe.org/ipxe.git
 BuildRoot:      %{_tmppath}/%{name}-%{version}-%{release}
 BuildArch:	noarch
 
@@ -15,14 +14,22 @@ BuildArch:	noarch
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: xnba-%{version}-7.tar.bz2
+Source0: ipxe-source-10-29-2020.tar.xz
+Patch1:  ipxe-branding.patch
+Patch2:  ipxe-machyp.patch
+Patch3:  ipxe-xnbaclass.patch
+Patch4:  ipxe-dhcp.patch
 
 %description
-The xCAT Network Boot Agent is a slightly modified version of gPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and gPXE script based booting.
+The xCAT Network Boot Agent is a slightly modified version of iPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and iPXE script based booting.
 
 %prep
 
-%setup  -n xnba-1.0.3-7
+%setup  -n ipxe-source
+%patch1 -p1
+%patch2 -p1
+%patch3 -p1
+%patch4 -p1
 
 %build
 
@@ -30,7 +37,7 @@ rm -rf %{buildroot}
 
 cd src
 make bin/undionly.kkpxe
-make bin-x86_64-efi/snponly.efi
+make bin-x86_64-efi/ipxe.efi
 
 
 %install
@@ -38,7 +45,7 @@ make bin-x86_64-efi/snponly.efi
 mkdir -p  %{buildroot}/tftpboot/xcat
 #Rename to avoid conflicting with potential vanilla undionly.kpxe that user may be using
 cp src/bin/undionly.kkpxe %{buildroot}/tftpboot/xcat/xnba.kpxe
-cp src/bin-x86_64-efi/snponly.efi %{buildroot}/tftpboot/xcat/xnba.efi
+cp src/bin-x86_64-efi/ipxe.efi %{buildroot}/tftpboot/xcat/xnba.efi
 
 
 %post 
