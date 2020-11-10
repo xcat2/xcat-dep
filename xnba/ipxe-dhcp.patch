@@ -1,13 +1,18 @@
-diff --git a/src/net/udp/dhcp.c b/src/net/udp/dhcp.c
-index 3a3666c..0e46a82 100644
---- a/src/net/udp/dhcp.c
-+++ b/src/net/udp/dhcp.c
-@@ -87,7 +87,7 @@ static uint8_t dhcp_request_options_data[] = {
- 	DHCP_VENDOR_CLASS_ID,
- 	DHCP_STRING ( DHCP_VENDOR_PXECLIENT ( DHCP_ARCH_CLIENT_ARCHITECTURE,
- 					      DHCP_ARCH_CLIENT_NDI ) ),
--	DHCP_USER_CLASS_ID, DHCP_STRING ( 'i', 'P', 'X', 'E' ),
-+	DHCP_USER_CLASS_ID, DHCP_STRING ( 'x', 'N', 'B', 'A' ),
- 	DHCP_PARAMETER_REQUEST_LIST,
- 	DHCP_OPTION ( DHCP_SUBNET_MASK, DHCP_ROUTERS, DHCP_DNS_SERVERS,
- 		      DHCP_LOG_SERVERS, DHCP_HOST_NAME, DHCP_DOMAIN_NAME,
+diff --git a/src/include/ipxe/dhcp.h b/src/include/ipxe/dhcp.h
+index b7a5f00..d086105 100644
+--- a/src/include/ipxe/dhcp.h
++++ b/src/include/ipxe/dhcp.h
+@@ -293,11 +293,11 @@ enum dhcp_client_architecture_values {
+ 	/** EFI IA32 */
+ 	DHCP_CLIENT_ARCHITECTURE_IA32 = 0x0006,
+ 	/** EFI x86-64 */
+-	DHCP_CLIENT_ARCHITECTURE_X86_64 = 0x0007,
++	DHCP_CLIENT_ARCHITECTURE_X86_64 = 0x0009, /** swapped with DHCP_CLIENT_ARCHITECTURE_EFI **/
+ 	/** EFI Xscale */
+ 	DHCP_CLIENT_ARCHITECTURE_XSCALE = 0x0008,
+ 	/** EFI BC */
+-	DHCP_CLIENT_ARCHITECTURE_EFI = 0x0009,
++	DHCP_CLIENT_ARCHITECTURE_EFI = 0x0007, /** swapped with DHCP_CLIENT_ARCHITECTURE_X86_64 **/
+ 	/** EFI 32-bit ARM */
+ 	DHCP_CLIENT_ARCHITECTURE_ARM32 = 0x000a,
+ 	/** EFI 64-bit ARM */

@@ -25,7 +25,7 @@ The xCAT Network Boot Agent is a slightly modified version of iPXE.  It provides
 
 %prep
 
-%setup  -n ipxe-source
+%setup  -n ipxe
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
