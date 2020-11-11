@@ -1,5 +1,5 @@
 Name:           xnba-undi
-Version:        2.0.0 
+Version:        1.20.1 
 Release:        0
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
 
@@ -14,7 +14,7 @@ BuildArch:	noarch
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source0: ipxe-source-10-29-2020.tar.xz
+Source:  xnba-1.20.1.tar.bz2 
 Patch1:  ipxe-branding.patch
 Patch2:  ipxe-machyp.patch
 Patch3:  ipxe-xnbaclass.patch
