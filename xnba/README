@@ -1,11 +1,23 @@
 xNBA
 -----
 
-xnba-undi-2.0-source.tar.bz2 is from https://github.com/xcat2/xNBA
-It included the soure code from ipxe.org and modification for xCAT Network Boot Agent
+xnba-1.20.1.tar.bz2 contains the source code of ipxe version 1.20.1
+The following patches contain modification for xCAT Network Boot Agent
+
+	ipxe-xnbaclass.patch
+	ipxe-machyp.patch
+	ipxe-dhcp.patch	
+	ipxe-branding.patch
+
+xNBA for linux
+--------------
+Require packages:  xz-devel
+RPM build:  rpmbuild -ba xnba-undi.spec
+
 
 xNBA for Debian
 ---------------
+Require packages:  dpkg-buildpackage, debhelper, and quilt
 
 ./make_deb.sh: build the package from the binaries under "binary" directory
 ./rebuild.sh : build the package from source code, this should only run on amd64/x86_64 platform, it will update the files under "binary" directory after compilation
