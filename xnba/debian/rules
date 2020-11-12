@@ -10,6 +10,7 @@
 build: build-stamp
 build-stamp:
 	dh_testdir
+	dh_quilt_patch
 	# Add here commands to compile the package.
 	$(MAKE) -C src bin/undionly.kkpxe
 	$(MAKE) -C src bin-x86_64-efi/ipxe.efi
