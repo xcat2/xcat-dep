@@ -13,15 +13,8 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
-
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /**
  * @file
@@ -40,7 +33,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 enum {
 	POSIX_EINVAL = 0x1c,  /* used to report bad arguments to GDB */
-	SIZEOF_PAYLOAD = 512, /* buffer size of GDB payload data */
+	SIZEOF_PAYLOAD = 256, /* buffer size of GDB payload data */
 };
 
 struct gdbstub {
@@ -255,20 +248,17 @@ static void gdbstub_continue ( struct gdbstub *stub, int single_step ) {
 static void gdbstub_breakpoint ( struct gdbstub *stub ) {
 	unsigned long args [ 3 ];
 	int enable = stub->payload [ 0 ] == 'Z' ? 1 : 0;
-	int rc;
-
 	if ( !gdbstub_get_packet_args ( stub, args, sizeof args / sizeof args [ 0 ], NULL ) ) {
 		gdbstub_send_errno ( stub, POSIX_EINVAL );
 		return;
 	}
-	if ( ( rc = gdbmach_set_breakpoint ( args [ 0 ], args [ 1 ],
-					     args [ 2 ], enable ) ) != 0 ) {
+	if ( gdbmach_set_breakpoint ( args [ 0 ], args [ 1 ], args [ 2 ], enable ) ) {
+		gdbstub_send_ok ( stub );
+	} else {
 		/* Not supported */
 		stub->len = 0;
 		gdbstub_tx_packet ( stub );
-		return;
 	}
-	gdbstub_send_ok ( stub );
 }
 
 static void gdbstub_rx_packet ( struct gdbstub *stub ) {
@@ -403,6 +393,5 @@ struct gdb_transport *find_gdb_transport ( const char *name ) {
 void gdbstub_start ( struct gdb_transport *trans ) {
 	stub.trans = trans;
 	stub.payload = &stub.buf [ 1 ];
-	gdbmach_init();
 	gdbmach_breakpoint();
 }

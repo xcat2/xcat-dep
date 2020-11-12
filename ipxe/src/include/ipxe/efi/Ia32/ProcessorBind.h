@@ -1,7 +1,7 @@
 /** @file
   Processor or Compiler specific defines and types for IA-32 architecture.
 
-Copyright (c) 2006 - 2015, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2006 - 2010, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials are licensed and made available under
 the terms and conditions of the BSD License that accompanies this distribution.
 The full text of the license may be found at
@@ -81,7 +81,7 @@ FILE_LICENCE ( BSD3 );
 #pragma warning ( disable : 4057 )
 
 //
-// ASSERT(FALSE) or while (TRUE) are legal constructs so suppress this warning
+// ASSERT(FALSE) or while (TRUE) are legal constructes so supress this warning
 //
 #pragma warning ( disable : 4127 )
 
@@ -95,33 +95,13 @@ FILE_LICENCE ( BSD3 );
 //
 #pragma warning ( disable : 4206 )
 
-#if _MSC_VER == 1800 || _MSC_VER == 1900
-
-//
-// Disable these warnings for VS2013.
-//
-
-//
-// This warning is for potentially uninitialized local variable, and it may cause false
-// positive issues in VS2013 and VS2015 build
-//
-#pragma warning ( disable : 4701 )
-
-//
-// This warning is for potentially uninitialized local pointer variable, and it may cause
-// false positive issues in VS2013 and VS2015 build
-//
-#pragma warning ( disable : 4703 )
-
-#endif
-
 #endif
 
 
 #if defined(_MSC_EXTENSIONS)
 
   //
-  // use Microsoft C compiler dependent integer width types
+  // use Microsoft C complier dependent integer width types
   //
 
   ///
@@ -169,7 +149,7 @@ FILE_LICENCE ( BSD3 );
   ///
   /// 1-byte signed value.
   ///
-  typedef signed char         INT8;
+  typedef char                INT8;
 #else
   ///
   /// 8-byte unsigned value.
@@ -216,7 +196,7 @@ FILE_LICENCE ( BSD3 );
   ///
   /// 1-byte signed value
   ///
-  typedef signed char         INT8;
+  typedef char                INT8;
 #endif
 
 ///
@@ -249,21 +229,9 @@ typedef INT32   INTN;
 #define MAX_ADDRESS   0xFFFFFFFF
 
 ///
-/// Maximum legal IA-32 INTN and UINTN values.
-///
-#define MAX_INTN   ((INTN)0x7FFFFFFF)
-#define MAX_UINTN  ((UINTN)0xFFFFFFFF)
-
-///
 /// The stack alignment required for IA-32.
 ///
 #define CPU_STACK_ALIGNMENT   sizeof(UINTN)
-
-///
-/// Page allocation granularity for IA-32.
-///
-#define DEFAULT_PAGE_ALLOCATION_GRANULARITY   (0x1000)
-#define RUNTIME_PAGE_ALLOCATION_GRANULARITY   (0x1000)
 
 //
 // Modifier to ensure that all protocol member functions and EFI intrinsics
@@ -279,17 +247,13 @@ typedef INT32   INTN;
   /// Microsoft* compiler specific method for EFIAPI calling convention.
   ///
   #define EFIAPI __cdecl
-#elif defined(__GNUC__)
-  ///
-  /// GCC specific method for EFIAPI calling convention.
-  ///
-  #define EFIAPI __attribute__((cdecl))
 #else
-  ///
-  /// The default for a non Microsoft* or GCC compiler is to assume the EFI ABI
-  /// is the standard.
-  ///
-  #define EFIAPI
+  #if defined(__GNUC__)
+    ///
+    /// GCC specific method for EFIAPI calling convention.
+    ///
+    #define EFIAPI __attribute__((cdecl))
+  #endif
 #endif
 
 #if defined(__GNUC__)
@@ -311,10 +275,6 @@ typedef INT32   INTN;
 
 **/
 #define FUNCTION_ENTRY_POINT(FunctionPointer) (VOID *)(UINTN)(FunctionPointer)
-
-#ifndef __USER_LABEL_PREFIX__
-#define __USER_LABEL_PREFIX__ _
-#endif
 
 #endif
 

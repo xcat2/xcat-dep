@@ -13,18 +13,12 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ipxe/device.h>
-#include <ipxe/console.h>
 #include <ipxe/init.h>
 
 /** @file
@@ -35,9 +29,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /** "startup() has been called" flag */
 static int started = 0;
-
-/** Colour for debug messages */
-#define colour table_start ( INIT_FNS )
 
 /**
  * Initialise iPXE
@@ -72,15 +63,11 @@ void startup ( void ) {
 
 	/* Call registered startup functions */
 	for_each_table_entry ( startup_fn, STARTUP_FNS ) {
-		if ( startup_fn->startup ) {
-			DBGC ( colour, "INIT startup %s...\n",
-			       startup_fn->name );
+		if ( startup_fn->startup )
 			startup_fn->startup();
-		}
 	}
 
 	started = 1;
-	DBGC ( colour, "INIT startup complete\n" );
 }
 
 /**
@@ -103,16 +90,9 @@ void shutdown ( int flags ) {
 
 	/* Call registered shutdown functions (in reverse order) */
 	for_each_table_entry_reverse ( startup_fn, STARTUP_FNS ) {
-		if ( startup_fn->shutdown ) {
-			DBGC ( colour, "INIT shutdown %s...\n",
-			       startup_fn->name );
+		if ( startup_fn->shutdown )
 			startup_fn->shutdown ( flags );
-		}
 	}
 
-	/* Reset console */
-	console_reset();
-
 	started = 0;
-	DBGC ( colour, "INIT shutdown complete\n" );
 }

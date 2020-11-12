@@ -1,18 +1,8 @@
-/*
+ /*
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * published by the Free Software Foundation; either version 2, or (at
+ * your option) any later version.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -95,7 +85,8 @@ void legacy_remove ( void *hwdev,
 
 #define PCI_DRIVER(_name,_ids,_class) 					  \
 	static inline int						  \
-	_name ## _pci_legacy_probe ( struct pci_device *pci );		  \
+	_name ## _pci_legacy_probe ( struct pci_device *pci,		  \
+				     const struct pci_device_id *id );	  \
 	static inline void						  \
 	_name ## _pci_legacy_remove ( struct pci_device *pci );		  \
 	struct pci_driver _name __pci_driver = {			  \
@@ -209,8 +200,7 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 
 #undef DRIVER
 #define DRIVER(_name_text,_unused2,_unused3,_name,_probe,_disable)	  \
-	static __attribute__ (( unused )) const char			  \
-	_name ## _text[] = _name_text;					  \
+	static const char _name ## _text[] = _name_text;		  \
 	static inline int						  \
 	_name ## _probe ( struct nic *nic, void *hwdev ) {		  \
 		return _probe ( nic, hwdev );				  \
@@ -221,7 +211,8 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 		_unsafe_disable ( nic, hwdev );				  \
 	}								  \
 	static inline int						  \
-	_name ## _pci_legacy_probe ( struct pci_device *pci ) {		  \
+	_name ## _pci_legacy_probe ( struct pci_device *pci,		  \
+			    const struct pci_device_id *id __unused ) {	  \
 		return legacy_probe ( pci, legacy_pci_set_drvdata,	  \
 				      &pci->dev, _name ## _probe,	  \
 				      _name ## _disable );		  \
@@ -277,7 +268,6 @@ static inline void * legacy_isa_get_drvdata ( void *hwdev ) {
 	_name ## _isa_legacy_remove ( struct isa_device *isa ) {	  \
 		return legacy_remove ( isa, legacy_isa_get_drvdata,	  \
 				       _name ## _disable );		  \
-	}								  \
-	PROVIDE_REQUIRING_SYMBOL()
+	}
 
 #endif	/* NIC_H */

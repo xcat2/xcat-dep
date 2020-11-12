@@ -13,8 +13,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -30,11 +29,9 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/hmac.h>
 #include <ipxe/list.h>
 #include <ipxe/ethernet.h>
-#include <ipxe/rbg.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-#include <byteswap.h>
 
 /** @file
  *
@@ -304,9 +301,8 @@ static void wpa_derive_ptk ( struct wpa_common_ctx *ctx )
 		memcpy ( ptk_data.nonce2, ctx->Anonce, WPA_NONCE_LEN );
 	}
 
-	DBGC2 ( ctx, "WPA %p A1 %s", ctx, eth_ntoa ( ptk_data.mac1 ) );
-	DBGC2 ( ctx, ", A2 %s\n", eth_ntoa ( ptk_data.mac2 ) );
-
+	DBGC2 ( ctx, "WPA %p A1 %s, A2 %s\n", ctx, eth_ntoa ( ptk_data.mac1 ),
+	       eth_ntoa ( ptk_data.mac2 ) );
 	DBGC2 ( ctx, "WPA %p Nonce1, Nonce2:\n", ctx );
 	DBGC2_HD ( ctx, ptk_data.nonce1, WPA_NONCE_LEN );
 	DBGC2_HD ( ctx, ptk_data.nonce2, WPA_NONCE_LEN );
@@ -518,8 +514,7 @@ static int wpa_handle_1_of_4 ( struct wpa_common_ctx *ctx,
 	ctx->state = WPA_WORKING;
 	memcpy ( ctx->Anonce, pkt->nonce, sizeof ( ctx->Anonce ) );
 	if ( ! ctx->have_Snonce ) {
-		rbg_generate ( NULL, 0, 0, ctx->Snonce,
-			       sizeof ( ctx->Snonce ) );
+		get_random_bytes ( ctx->Snonce, sizeof ( ctx->Snonce ) );
 		ctx->have_Snonce = 1;
 	}
 
@@ -913,5 +908,4 @@ struct eapol_handler eapol_key_handler __eapol_handler = {
 };
 
 /* WPA always needs EAPOL in order to be useful */
-REQUIRING_SYMBOL ( eapol_key_handler );
 REQUIRE_OBJECT ( eapol );

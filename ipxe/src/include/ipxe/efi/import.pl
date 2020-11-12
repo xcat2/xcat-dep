@@ -59,7 +59,6 @@ sub try_import_file {
       open my $outfh, ">$outfile" or die "Could not open $outfile: $!\n";
       my @dependencies = ();
       my $licence;
-      my $maybe_guard;
       my $guard;
       while ( <$infh> ) {
 	# Strip CR and trailing whitespace
@@ -78,15 +77,10 @@ sub try_import_file {
 	# Write out line
 	print $outfh "$_\n";
 	# Apply FILE_LICENCE() immediately after include guard
-	if ( defined $maybe_guard && ! defined $guard ) {
-	  if ( /^\#define\s+_?_${maybe_guard}_?_$/ ) {
-	    $guard = $maybe_guard;
-	    print $outfh "\nFILE_LICENCE ( $licence );\n" if $licence;
-	  }
-	  undef $maybe_guard;
-	}
-	if ( /^#ifndef\s+_?_(\S+)_?_/ ) {
-	  $maybe_guard = $1;
+	if ( /^\#define\s+_?_\S+_H_?_$/ ) {
+	  die "Duplicate header guard detected in $infile\n" if $guard;
+	  $guard = 1;
+	  print $outfh "\nFILE_LICENCE ( $licence );\n" if $licence;
 	}
       }
       close $outfh;
@@ -118,8 +112,7 @@ pod2usage ( 1 ) unless @ARGV == 1;
 my $edktop = shift;
 
 # Identify edk import directories
-my $edkdirs = [ "MdePkg/Include", "IntelFrameworkPkg/Include",
-		"MdeModulePkg/Include", "EdkCompatibilityPkg/Foundation" ];
+my $edkdirs = [ "MdePkg/Include", "IntelFrameworkPkg/Include" ];
 foreach my $edkdir ( @$edkdirs ) {
   die "Directory \"$edktop\" does not appear to contain the EFI EDK2 "
       ."(missing \"$edkdir\")\n" unless -d catdir ( $edktop, $edkdir );

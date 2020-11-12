@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -106,7 +101,7 @@ static int ib_mi_handle ( struct ib_device *ibdev,
 
 	/* Otherwise, ignore it */
 	DBGC ( mi, "MI %p RX TID %08x%08x ignored\n",
-	       mi, ntohl ( hdr->tid.high ), ntohl ( hdr->tid.low ) );
+	       mi, ntohl ( hdr->tid[0] ), ntohl ( hdr->tid[1] ) );
 	return -ENOTSUP;
 }
 
@@ -116,15 +111,13 @@ static int ib_mi_handle ( struct ib_device *ibdev,
  *
  * @v ibdev		Infiniband device
  * @v qp		Queue pair
- * @v dest		Destination address vector
- * @v source		Source address vector
+ * @v av		Address vector
  * @v iobuf		I/O buffer
  * @v rc		Completion status code
  */
 static void ib_mi_complete_recv ( struct ib_device *ibdev,
 				  struct ib_queue_pair *qp,
-				  struct ib_address_vector *dest __unused,
-				  struct ib_address_vector *source,
+				  struct ib_address_vector *av,
 				  struct io_buffer *iobuf, int rc ) {
 	struct ib_mad_interface *mi = ib_qp_get_ownerdata ( qp );
 	union ib_mad *mad;
@@ -152,13 +145,13 @@ static void ib_mi_complete_recv ( struct ib_device *ibdev,
 		goto out;
 	}
 	DBGC ( mi, "MI %p RX TID %08x%08x (%02x,%02x,%02x,%04x) status "
-	       "%04x\n", mi, ntohl ( hdr->tid.high ), ntohl ( hdr->tid.low ),
+	       "%04x\n", mi, ntohl ( hdr->tid[0] ), ntohl ( hdr->tid[1] ),
 	       hdr->mgmt_class, hdr->class_version, hdr->method,
 	       ntohs ( hdr->attr_id ), ntohs ( hdr->status ) );
 	DBGC2_HDA ( mi, 0, mad, sizeof ( *mad ) );
 
 	/* Handle MAD */
-	if ( ( rc = ib_mi_handle ( ibdev, mi, mad, source ) ) != 0 )
+	if ( ( rc = ib_mi_handle ( ibdev, mi, mad, av ) ) != 0 )
 		goto out;
 
  out:
@@ -168,11 +161,6 @@ static void ib_mi_complete_recv ( struct ib_device *ibdev,
 /** Management interface completion operations */
 static struct ib_completion_queue_operations ib_mi_completion_ops = {
 	.complete_recv = ib_mi_complete_recv,
-};
-
-/** Management interface queue pair operations */
-static struct ib_queue_pair_operations ib_mi_queue_pair_ops = {
-	.alloc_iob = alloc_iob,
 };
 
 /**
@@ -192,12 +180,12 @@ int ib_mi_send ( struct ib_device *ibdev, struct ib_mad_interface *mi,
 
 	/* Set common fields */
 	hdr->base_version = IB_MGMT_BASE_VERSION;
-	if ( ( hdr->tid.high == 0 ) && ( hdr->tid.low == 0 ) ) {
-		hdr->tid.high = htonl ( IB_MI_TID_MAGIC );
-		hdr->tid.low = htonl ( ++next_tid );
+	if ( ( hdr->tid[0] == 0 ) && ( hdr->tid[1] == 0 ) ) {
+		hdr->tid[0] = htonl ( IB_MI_TID_MAGIC );
+		hdr->tid[1] = htonl ( ++next_tid );
 	}
 	DBGC ( mi, "MI %p TX TID %08x%08x (%02x,%02x,%02x,%04x) status "
-	       "%04x\n", mi, ntohl ( hdr->tid.high ), ntohl ( hdr->tid.low ),
+	       "%04x\n", mi, ntohl ( hdr->tid[0] ), ntohl ( hdr->tid[1] ),
 	       hdr->mgmt_class, hdr->class_version, hdr->method,
 	       ntohs ( hdr->attr_id ), ntohs ( hdr->status ) );
 	DBGC2_HDA ( mi, 0, mad, sizeof ( *mad ) );
@@ -217,8 +205,8 @@ int ib_mi_send ( struct ib_device *ibdev, struct ib_mad_interface *mi,
 			smp->return_path.hops[hop_pointer] = ibdev->port;
 		} else {
 			DBGC ( mi, "MI %p TX TID %08x%08x invalid hop pointer "
-			       "%d\n", mi, ntohl ( hdr->tid.high ),
-			       ntohl ( hdr->tid.low ), hop_pointer );
+			       "%d\n", mi, ntohl ( hdr->tid[0] ),
+			       ntohl ( hdr->tid[1] ), hop_pointer );
 			return -EINVAL;
 		}
 	}
@@ -228,7 +216,7 @@ int ib_mi_send ( struct ib_device *ibdev, struct ib_mad_interface *mi,
 	if ( ! iobuf ) {
 		DBGC ( mi, "MI %p could not allocate buffer for TID "
 		       "%08x%08x\n",
-		       mi, ntohl ( hdr->tid.high ), ntohl ( hdr->tid.low ) );
+		       mi, ntohl ( hdr->tid[0] ), ntohl ( hdr->tid[1] ) );
 		return -ENOMEM;
 	}
 	memcpy ( iob_put ( iobuf, sizeof ( *mad ) ), mad, sizeof ( *mad ) );
@@ -236,7 +224,7 @@ int ib_mi_send ( struct ib_device *ibdev, struct ib_mad_interface *mi,
 	/* Send I/O buffer */
 	if ( ( rc = ib_post_send ( ibdev, mi->qp, av, iobuf ) ) != 0 ) {
 		DBGC ( mi, "MI %p TX TID %08x%08x failed: %s\n",
-		       mi,  ntohl ( hdr->tid.high ), ntohl ( hdr->tid.low ),
+		       mi,  ntohl ( hdr->tid[0] ), ntohl ( hdr->tid[1] ),
 		       strerror ( rc ) );
 		free_iob ( iobuf );
 		return rc;
@@ -261,7 +249,7 @@ static void ib_mi_timer_expired ( struct retry_timer *timer, int expired ) {
 	/* Abandon transaction if we have tried too many times */
 	if ( expired ) {
 		DBGC ( mi, "MI %p abandoning TID %08x%08x\n",
-		       mi, ntohl ( hdr->tid.high ), ntohl ( hdr->tid.low ) );
+		       mi, ntohl ( hdr->tid[0] ), ntohl ( hdr->tid[1] ) );
 		madx->op->complete ( ibdev, mi, madx, -ETIMEDOUT, NULL, NULL );
 		return;
 	}
@@ -341,44 +329,37 @@ void ib_destroy_madx ( struct ib_device *ibdev __unused,
  *
  * @v ibdev		Infiniband device
  * @v type		Queue pair type
- * @v new_mi		New management interface to fill in
- * @ret rc		Return status code
+ * @ret mi		Management agent, or NULL
  */
-int ib_create_mi ( struct ib_device *ibdev, enum ib_queue_pair_type type,
-		   struct ib_mad_interface **new_mi ) {
+struct ib_mad_interface * ib_create_mi ( struct ib_device *ibdev,
+					 enum ib_queue_pair_type type ) {
 	struct ib_mad_interface *mi;
-	const char *name;
 	int rc;
 
 	/* Allocate and initialise fields */
 	mi = zalloc ( sizeof ( *mi ) );
-	if ( ! mi ) {
-		rc = -ENOMEM;
+	if ( ! mi )
 		goto err_alloc;
-	}
 	mi->ibdev = ibdev;
 	INIT_LIST_HEAD ( &mi->madx );
 
 	/* Create completion queue */
-	if ( ( rc = ib_create_cq ( ibdev, IB_MI_NUM_CQES, &ib_mi_completion_ops,
-				   &mi->cq ) ) != 0 ) {
-		DBGC ( mi, "MI %p could not create completion queue: %s\n",
-		       mi, strerror ( rc ) );
+	mi->cq = ib_create_cq ( ibdev, IB_MI_NUM_CQES, &ib_mi_completion_ops );
+	if ( ! mi->cq ) {
+		DBGC ( mi, "MI %p could not allocate completion queue\n", mi );
 		goto err_create_cq;
 	}
 
 	/* Create queue pair */
-	name = ( ( type == IB_QPT_SMI ) ? "SMI" : "GSI" );
-	if ( ( rc = ib_create_qp ( ibdev, type, IB_MI_NUM_SEND_WQES, mi->cq,
-				   IB_MI_NUM_RECV_WQES, mi->cq,
-				   &ib_mi_queue_pair_ops, name, &mi->qp ) )!=0){
-		DBGC ( mi, "MI %p could not create queue pair: %s\n",
-		       mi, strerror ( rc ) );
+	mi->qp = ib_create_qp ( ibdev, type, IB_MI_NUM_SEND_WQES, mi->cq,
+				IB_MI_NUM_RECV_WQES, mi->cq );
+	if ( ! mi->qp ) {
+		DBGC ( mi, "MI %p could not allocate queue pair\n", mi );
 		goto err_create_qp;
 	}
 	ib_qp_set_ownerdata ( mi->qp, mi );
 	DBGC ( mi, "MI %p (%s) running on QPN %#lx\n",
-	       mi, mi->qp->name, mi->qp->qpn );
+	       mi, ( ( type == IB_QPT_SMI ) ? "SMI" : "GSI" ), mi->qp->qpn );
 
 	/* Set queue key */
 	mi->qp->qkey = ( ( type == IB_QPT_SMI ) ? IB_QKEY_SMI : IB_QKEY_GSI );
@@ -390,8 +371,7 @@ int ib_create_mi ( struct ib_device *ibdev, enum ib_queue_pair_type type,
 
 	/* Fill receive ring */
 	ib_refill_recv ( ibdev, mi->qp );
-	*new_mi = mi;
-	return 0;
+	return mi;
 
  err_modify_qp:
 	ib_destroy_qp ( ibdev, mi->qp );
@@ -400,7 +380,7 @@ int ib_create_mi ( struct ib_device *ibdev, enum ib_queue_pair_type type,
  err_create_cq:
 	free ( mi );
  err_alloc:
-	return rc;
+	return NULL;
 }
 
 /**
@@ -415,8 +395,8 @@ void ib_destroy_mi ( struct ib_device *ibdev, struct ib_mad_interface *mi ) {
 	/* Flush any outstanding requests */
 	list_for_each_entry_safe ( madx, tmp, &mi->madx, list ) {
 		DBGC ( mi, "MI %p destroyed while TID %08x%08x in progress\n",
-		       mi, ntohl ( madx->mad.hdr.tid.high ),
-		       ntohl ( madx->mad.hdr.tid.low ) );
+		       mi, ntohl ( madx->mad.hdr.tid[0] ),
+		       ntohl ( madx->mad.hdr.tid[1] ) );
 		madx->op->complete ( ibdev, mi, madx, -ECANCELED, NULL, NULL );
 	}
 

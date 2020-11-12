@@ -14,8 +14,7 @@
  *
  *    You should have received a copy of the GNU General Public License
  *    along with this program; if not, write to the Free Software
- *    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- *    02110-1301, USA.
+ *    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * Portions of this code are taken from the Linux forcedeth driver that was
  * based on a cleanroom reimplementation which was based on reverse engineered
@@ -62,7 +61,6 @@ FILE_LICENCE ( GPL2_OR_LATER );
 static inline void pci_push ( void *ioaddr )
 {
 	/* force out pending posted writes */
-	wmb();
 	readl ( ioaddr );
 }
 
@@ -336,7 +334,6 @@ nv_disable_hw_interrupts ( struct forcedeth_private *priv )
 	void *ioaddr = priv->mmio_addr;
 
 	writel ( 0, ioaddr + NvRegIrqMask );
-	pci_push ( ioaddr );
 }
 
 static void
@@ -679,7 +676,7 @@ forcedeth_open ( struct net_device *netdev )
 {
 	struct forcedeth_private *priv = netdev_priv ( netdev );
 	void *ioaddr = priv->mmio_addr;
-	int i;
+	int i, ret = 1;
 	int rc;
 	u32 low;
 
@@ -741,7 +738,8 @@ forcedeth_open ( struct net_device *netdev )
 		 ioaddr + NvRegReceiverStatus );
 
 	/* Set up slot time */
-	low = ( random() & NVREG_SLOTTIME_MASK );
+	get_random_bytes ( &low, sizeof(low) );
+	low &= NVREG_SLOTTIME_MASK;
 	writel ( low | NVREG_SLOTTIME_DEFAULT, ioaddr + NvRegSlotTime );
 
 	writel ( NVREG_TX_DEFERRAL_DEFAULT , ioaddr + NvRegTxDeferral );
@@ -766,6 +764,7 @@ forcedeth_open ( struct net_device *netdev )
 		 ioaddr + NvRegPowerState );
 
 	nv_disable_hw_interrupts ( priv );
+	pci_push ( ioaddr );
 	writel ( NVREG_MIISTAT_MASK_ALL, ioaddr + NvRegMIIStatus );
 	writel ( NVREG_IRQSTAT_MASK, ioaddr + NvRegIrqStatus );
 	pci_push ( ioaddr );
@@ -773,7 +772,7 @@ forcedeth_open ( struct net_device *netdev )
 	readl ( ioaddr + NvRegMIIStatus );
 	writel ( NVREG_MIISTAT_MASK_ALL, ioaddr + NvRegMIIStatus );
 	priv->linkspeed = 0;
-	nv_update_linkspeed ( priv );
+	ret = nv_update_linkspeed ( priv );
 	nv_start_rx ( priv );
 	nv_start_tx ( priv );
 
@@ -935,8 +934,15 @@ nv_process_rx_packets ( struct net_device *netdev )
 		} else {
 			len = flags & LEN_MASK_V1;
 
-			iob_put ( curr_iob, len );
-			netdev_rx ( netdev, curr_iob );
+			/* Filter any frames that have as destination address a
+			 * local MAC address but are not meant for this NIC */
+			if ( is_local_ether_addr ( curr_iob->data ) &&
+			     memcmp ( curr_iob->data, netdev->hw_addr, ETH_ALEN ) ) {
+				free_iob ( curr_iob );
+			} else {
+				iob_put ( curr_iob, len );
+				netdev_rx ( netdev, curr_iob );
+			}
 		}
 
 		/* Invalidate iobuf */
@@ -961,11 +967,6 @@ static void
 forcedeth_link_status ( struct net_device *netdev )
 {
 	struct forcedeth_private *priv = netdev_priv ( netdev );
-	void *ioaddr = priv->mmio_addr;
-
-	/* Clear the MII link change status by reading the MIIStatus register */
-	readl ( ioaddr + NvRegMIIStatus );
-	writel ( NVREG_MIISTAT_LINKCHANGE, ioaddr + NvRegMIIStatus );
 
 	if ( nv_update_linkspeed ( priv ) == 1 )
 		netdev_link_up ( netdev );
@@ -998,7 +999,7 @@ forcedeth_poll ( struct net_device *netdev )
 
 	DBG ( "forcedeth_poll: status = %#04x\n", status );
 
-	/* Link change interrupt occurred. Call always if link is down,
+	/* Link change interrupt occured. Call always if link is down,
 	 * to give auto-neg a chance to finish */
 	if ( ( status & NVREG_IRQ_LINK ) || ! ( netdev_link_ok ( netdev ) ) )
 		forcedeth_link_status ( netdev );
@@ -1019,6 +1020,7 @@ static void
 forcedeth_close ( struct net_device *netdev )
 {
 	struct forcedeth_private *priv = netdev_priv ( netdev );
+	void *ioaddr = priv->mmio_addr;
 
 	DBGP ( "forcedeth_close\n" );
 
@@ -1028,6 +1030,7 @@ forcedeth_close ( struct net_device *netdev )
 
 	/* Disable interrupts on the nic or we will lock up */
 	nv_disable_hw_interrupts ( priv );
+	pci_push ( ioaddr );
 
 	nv_free_rxtx_resources ( priv );
 
@@ -1097,6 +1100,11 @@ nv_setup_mac_addr ( struct forcedeth_private *priv )
 		dev->hw_addr[3] = ( orig_mac[0] >> 16 ) & 0xff;
 		dev->hw_addr[4] = ( orig_mac[0] >> 8 ) & 0xff;
 		dev->hw_addr[5] = ( orig_mac[0] >> 0 ) & 0xff;
+
+		writel ( txreg | NVREG_TRANSMITPOLL_MAC_ADDR_REV,
+			 ioaddr + NvRegTransmitPoll );
+
+		DBG ( "set workaround bit for reversed mac addr\n" );
 	}
 
 	if ( ! is_valid_ether_addr ( dev->hw_addr ) )
@@ -1176,7 +1184,7 @@ nv_mgmt_get_version ( struct forcedeth_private *priv )
 		ioaddr + NvRegTransmitterControl );
 	start = currticks();
 
-	while ( currticks() > start + 5 * TICKS_PER_SEC ) {
+	while ( currticks() > start + 5 * ticks_per_sec() ) {
 		data_ready2 = readl ( ioaddr + NvRegTransmitterControl );
 		if ( ( data_ready & NVREG_XMITCTL_DATA_READY ) !=
 		     ( data_ready2 & NVREG_XMITCTL_DATA_READY ) ) {
@@ -1749,8 +1757,10 @@ forcedeth_map_regs ( struct forcedeth_private *priv )
 	for ( reg = PCI_BASE_ADDRESS_0; reg <= PCI_BASE_ADDRESS_5; reg += 4 ) {
 		pci_read_config_dword ( priv->pci_dev, reg, &bar );
 
-		if ( ( ! ( bar & PCI_BASE_ADDRESS_SPACE_IO ) ) &&
-		     ( pci_bar_size ( priv->pci_dev, reg ) >= register_size ) ){
+		if ( ( ( bar & PCI_BASE_ADDRESS_SPACE ) ==
+			 PCI_BASE_ADDRESS_SPACE_MEMORY ) &&
+		       ( pci_bar_size ( priv->pci_dev, reg ) >=
+			 register_size ) ) {
 			addr = pci_bar_start ( priv->pci_dev, reg );
 			break;
 		}
@@ -1762,7 +1772,7 @@ forcedeth_map_regs ( struct forcedeth_private *priv )
 	}
 
 	rc = -ENOMEM;
-	ioaddr = pci_ioremap ( priv->pci_dev, addr, register_size );
+	ioaddr = ioremap ( addr, register_size );
 	if ( ! ioaddr ) {
 		DBG ( "Cannot remap MMIO\n" );
 		goto err_ioremap;
@@ -1786,7 +1796,7 @@ err_ioremap:
  * @ret rc	Return status code
  **/
 static int
-forcedeth_probe ( struct pci_device *pdev )
+forcedeth_probe ( struct pci_device *pdev, const struct pci_device_id *ent )
 {
 	struct net_device *netdev;
 	struct forcedeth_private *priv;
@@ -1796,7 +1806,7 @@ forcedeth_probe ( struct pci_device *pdev )
 	DBGP ( "forcedeth_probe\n" );
 
 	DBG ( "Found %s, vendor = %#04x, device = %#04x\n",
-	      pdev->id->name, pdev->id->vendor, pdev->id->device );
+		pdev->driver_name, ent->vendor, ent->device );
 
 	/* Allocate our private data */
 	netdev = alloc_etherdev ( sizeof ( *priv ) );
@@ -1819,7 +1829,7 @@ forcedeth_probe ( struct pci_device *pdev )
 	/* We'll need these set up for the rest of the routines */
 	priv->pci_dev = pdev;
 	priv->netdev = netdev;
-	priv->driver_data = pdev->id->driver_data;
+	priv->driver_data = ent->driver_data;
 
 	adjust_pci_device ( pdev );
 

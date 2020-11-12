@@ -7,12 +7,12 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 struct interface;
 
 extern struct interface monojob;
 
-extern int monojob_wait ( const char *string, unsigned long timeout );
+extern int monojob_wait ( const char *string );
 
 #endif /* _IPXE_MONOJOB_H */

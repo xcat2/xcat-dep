@@ -37,6 +37,7 @@ FILE_LICENCE(GPL2_OR_LATER);
 #include <linux/types.h>
 #include <linux/posix_types.h>
 typedef __kernel_pid_t pid_t;
+typedef __kernel_time_t time_t;
 typedef __kernel_suseconds_t suseconds_t;
 typedef __kernel_loff_t loff_t;
 #include <linux/time.h>
@@ -46,16 +47,12 @@ typedef __kernel_loff_t loff_t;
 #include <linux/poll.h>
 typedef unsigned long nfds_t;
 typedef uint32_t useconds_t;
-typedef uint32_t socklen_t;
-struct sockaddr;
 #define MAP_FAILED ( ( void * ) -1 )
-#define SEEK_SET 0
 
 extern long linux_syscall ( int number, ... );
 
 extern int linux_open ( const char *pathname, int flags );
 extern int linux_close ( int fd );
-extern off_t linux_lseek ( int fd, off_t offset, int whence );
 extern __kernel_ssize_t linux_read ( int fd, void *buf, __kernel_size_t count );
 extern __kernel_ssize_t linux_write ( int fd, const void *buf,
 				      __kernel_size_t count );
@@ -70,11 +67,6 @@ extern void * linux_mmap ( void *addr, __kernel_size_t length, int prot,
 extern void * linux_mremap ( void *old_address, __kernel_size_t old_size,
 			     __kernel_size_t new_size, int flags );
 extern int linux_munmap ( void *addr, __kernel_size_t length );
-extern int linux_socket ( int domain, int type_, int protocol );
-extern int linux_bind ( int fd, const struct sockaddr *addr,
-			socklen_t addrlen );
-extern ssize_t linux_sendto ( int fd, const void *buf, size_t len, int flags,
-			      const struct sockaddr *daddr, socklen_t addrlen );
 
 extern const char * linux_strerror ( int errnum );
 

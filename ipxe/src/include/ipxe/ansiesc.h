@@ -26,9 +26,7 @@
  * 
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
-
-struct ansiesc_context;
+FILE_LICENCE ( GPL2_OR_LATER );
 
 /** A handler for an escape sequence */
 struct ansiesc_handler {
@@ -44,7 +42,6 @@ struct ansiesc_handler {
 	unsigned int function;
 	/** Handle escape sequence
 	 *
-	 * @v ctx		ANSI escape context
 	 * @v count		Parameter count
 	 * @v params		Parameter list
 	 *
@@ -57,12 +54,11 @@ struct ansiesc_handler {
 	 * omitted".  Consequently, the parameter list will always
 	 * contain at least one item.
 	 */
-	void ( * handle ) ( struct ansiesc_context *ctx, unsigned int count,
-			    int params[] );
+	void ( * handle ) ( unsigned int count, int params[] );
 };
 
 /** Maximum number of parameters within a single escape sequence */
-#define ANSIESC_MAX_PARAMS 5
+#define ANSIESC_MAX_PARAMS 4
 
 /**
  * ANSI escape sequence context
@@ -116,19 +112,6 @@ struct ansiesc_context {
 
 /** Select graphic rendition */
 #define ANSIESC_SGR 'm'
-
-/** Explicit log message priority
- *
- * This is an iPXE private sequence identifier.  (The range 'p' to '~'
- * is reserved for private sequences.)
- */
-#define ANSIESC_LOG_PRIORITY 'p'
-
-/** Show cursor */
-#define ANSIESC_DECTCEM_SET ( ( '?' << 8 ) | 'h' )
-
-/** Hide cursor */
-#define ANSIESC_DECTCEM_RESET ( ( '?' << 8 ) | 'l' )
 
 /** @} */
 

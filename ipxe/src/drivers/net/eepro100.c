@@ -25,8 +25,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  *
  *              date       version  by      what
@@ -168,7 +167,8 @@ static struct net_device_operations ifec_operations = {
  * This function is called very early on, while iPXE is initializing.
  * This is a iPXE PCI Device Driver API function.
  */
-static int ifec_pci_probe ( struct pci_device *pci )
+static int ifec_pci_probe ( struct pci_device *pci,
+                            const struct pci_device_id *id __unused )
 {
 	struct net_device *netdev;
 	struct ifec_private *priv;
@@ -809,7 +809,7 @@ static void ifec_rx_process ( struct net_device *netdev )
 		       cur_rx );
 		DBGIO_HD ( (void*)rfd->packet, 0x30 );
 
-		if ( ( status & ( RFD_STATUS & ~RFDShort ) ) != RFD_OK ) {
+		if ( ( status & RFD_STATUS ) != RFD_OK ) {
 			DBG ( "Corrupted packet received. "
 			      "Status = %#08hx\n", status );
 			netdev_rx_err ( netdev, iob, -EINVAL );
@@ -910,7 +910,7 @@ static void ifec_refill_rx_ring ( struct net_device *netdev )
  * Initial allocation & initialization of the rx ring.
  *
  * @v netdev  		Device of rx ring.
- * @ret rc    		Non-zero if error occurred
+ * @ret rc    		Non-zero if error occured
  */
 static int ifec_rx_setup ( struct net_device *netdev )
 {
@@ -1136,12 +1136,12 @@ PCI_ROM(0x8086, 0x2449, "82562em",       "Intel EtherExpressPro100 82562EM", 0),
 PCI_ROM(0x8086, 0x2459, "82562-1",       "Intel 82562 based Fast Ethernet Connection", 0),
 PCI_ROM(0x8086, 0x245d, "82562-2",       "Intel 82562 based Fast Ethernet Connection", 0),
 PCI_ROM(0x8086, 0x1050, "82562ez",       "Intel 82562EZ Network Connection", 0),
+PCI_ROM(0x8086, 0x1051, "eepro100-1051", "Intel 82801EB/ER (ICH5/ICH5R) Chipset Ethernet Controller", 0),
 PCI_ROM(0x8086, 0x1065, "82562-3",       "Intel 82562 based Fast Ethernet Connection", 0),
 PCI_ROM(0x8086, 0x5200, "eepro100-5200", "Intel EtherExpress PRO/100 Intelligent Server", 0),
 PCI_ROM(0x8086, 0x5201, "eepro100-5201", "Intel EtherExpress PRO/100 Intelligent Server", 0),
 PCI_ROM(0x8086, 0x1092, "82562-3",       "Intel Pro/100 VE Network", 0),
 PCI_ROM(0x8086, 0x27dc, "eepro100-27dc", "Intel 82801G (ICH7) Chipset Ethernet Controller", 0),
-PCI_ROM(0x8086, 0x10fe, "82552",         "Intel 82552 10/100 Network Connection", 0),
 };
 
 /* Cards with device ids 0x1030 to 0x103F, 0x2449, 0x2459 or 0x245D might need

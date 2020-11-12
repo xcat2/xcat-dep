@@ -3,11 +3,11 @@
 
 /** @file
  *
- * iPXE SMBIOS API for Linux
+ * iPXE SMBIOS API for linux
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE(GPL2_OR_LATER);
 
 #ifdef SMBIOS_LINUX
 #define SMBIOS_PREFIX_linux

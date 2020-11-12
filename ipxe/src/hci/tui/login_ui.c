@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 /** @file
  *
@@ -32,21 +27,25 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <string.h>
 #include <errno.h>
 #include <curses.h>
-#include <ipxe/console.h>
+#include <console.h>
 #include <ipxe/settings.h>
 #include <ipxe/editbox.h>
 #include <ipxe/keys.h>
-#include <ipxe/ansicol.h>
 #include <ipxe/login_ui.h>
 
+/* Colour pairs */
+#define CPAIR_NORMAL		1
+#define CPAIR_LABEL		2
+#define CPAIR_EDITBOX		3
+
 /* Screen layout */
-#define USERNAME_LABEL_ROW	( ( LINES / 2U ) - 4U )
-#define USERNAME_ROW		( ( LINES / 2U ) - 2U )
-#define PASSWORD_LABEL_ROW	( ( LINES / 2U ) + 2U )
-#define PASSWORD_ROW		( ( LINES / 2U ) + 4U )
-#define LABEL_COL		( ( COLS / 2U ) - 4U )
-#define EDITBOX_COL		( ( COLS / 2U ) - 10U )
-#define EDITBOX_WIDTH		20U
+#define USERNAME_LABEL_ROW	8
+#define USERNAME_ROW		10
+#define PASSWORD_LABEL_ROW	14
+#define PASSWORD_ROW		16
+#define LABEL_COL		36
+#define EDITBOX_COL		30
+#define EDITBOX_WIDTH		20
 
 int login_ui ( void ) {
 	char username[64];
@@ -66,6 +65,9 @@ int login_ui ( void ) {
 	/* Initialise UI */
 	initscr();
 	start_color();
+	init_pair ( CPAIR_NORMAL, COLOR_WHITE, COLOR_BLACK );
+	init_pair ( CPAIR_LABEL, COLOR_WHITE, COLOR_BLACK );
+	init_pair ( CPAIR_EDITBOX, COLOR_WHITE, COLOR_BLUE );
 	init_editbox ( &username_box, username, sizeof ( username ), NULL,
 		       USERNAME_ROW, EDITBOX_COL, EDITBOX_WIDTH, 0 );
 	init_editbox ( &password_box, password, sizeof ( password ), NULL,
@@ -73,13 +75,11 @@ int login_ui ( void ) {
 		       EDITBOX_STARS );
 
 	/* Draw initial UI */
-	color_set ( CPAIR_NORMAL, NULL );
 	erase();
-	attron ( A_BOLD );
+	color_set ( CPAIR_LABEL, NULL );
 	mvprintw ( USERNAME_LABEL_ROW, LABEL_COL, "Username:" );
 	mvprintw ( PASSWORD_LABEL_ROW, LABEL_COL, "Password:" );
-	attroff ( A_BOLD );
-	color_set ( CPAIR_EDIT, NULL );
+	color_set ( CPAIR_EDITBOX, NULL );
 	draw_editbox ( &username_box );
 	draw_editbox ( &password_box );
 
@@ -88,7 +88,7 @@ int login_ui ( void ) {
 
 		draw_editbox ( current_box );
 
-		key = getkey ( 0 );
+		key = getkey();
 		switch ( key ) {
 		case KEY_DOWN:
 			current_box = &password_box;

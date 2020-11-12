@@ -34,30 +34,30 @@ include_once $top_inc;
 ?>
 
 <form action="build.php" method=POST>
-  <input type="hidden" name="version" value = "<?php echo $version ?>">
+  <input type="hidden" name="version" value = "<? echo $version ?>">
   <input type="hidden" name="use_flags" value="1">
   <h3>
-    Make changes below and press <?php echo $build ?> to create an image, <br>
-    Or press <?php echo $restart ?> to return to the main page.
+    Make changes below and press <? echo $build ?> to create an image, <br>
+    Or press <? echo $restart ?> to return to the main page.
   </h3>
   <hr>
   <ul>
-  <?php require ( "directions.php" ); ?>
+  <? require ( "directions.php" ); ?>
   </ul>
   <hr>
-  <?php echo_flags( $flags ); ?>
+  <? echo_flags( $flags ); ?>
   <hr>
   <h3>Embedded Script:</h3>
-  <?php echo textarea ( "embedded_script", "", "10", "50" ); ?>
+  <? echo textarea ( "embedded_script", "", "10", "50" ); ?>
   <br><br>
   <hr>
   <center><table width="35%"><tr>
-  <td align="left"> <?php echo $build; ?> </td>
-  <td align="right"> <?php echo $restart ?></td>
+  <td align="left"> <? echo $build; ?> </td>
+  <td align="right"> <? echo $restart ?></td>
   </tr></table></center>
 </form>
 
-<?php include_once $bottom_inc; ?>
+<? include_once $bottom_inc; ?>
 <?
 // For emacs:
 //

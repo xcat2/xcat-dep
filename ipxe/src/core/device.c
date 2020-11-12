@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <string.h>
 #include <ipxe/list.h>
@@ -39,9 +34,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 
 /** Registered root devices */
 static LIST_HEAD ( devices );
-
-/** Device removal inhibition counter */
-int device_keep_count = 0;
 
 /**
  * Probe a root device
@@ -95,11 +87,11 @@ static void probe_devices ( void ) {
  * Remove all devices
  *
  */
-static void remove_devices ( int booting __unused ) {
+static void remove_devices ( int flags ) {
 	struct root_device *rootdev;
 	struct root_device *tmp;
 
-	if ( device_keep_count != 0 ) {
+	if ( flags & SHUTDOWN_KEEP_DEVICES ) {
 		DBG ( "Refusing to remove devices on shutdown\n" );
 		return;
 	}
@@ -111,7 +103,6 @@ static void remove_devices ( int booting __unused ) {
 }
 
 struct startup_fn startup_devices __startup_fn ( STARTUP_NORMAL ) = {
-	.name = "devices",
 	.startup = probe_devices,
 	.shutdown = remove_devices,
 };

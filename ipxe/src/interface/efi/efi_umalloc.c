@@ -13,18 +13,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
-#include <string.h>
-#include <errno.h>
 #include <assert.h>
 #include <ipxe/umalloc.h>
 #include <ipxe/efi/efi.h>
@@ -55,7 +48,6 @@ static userptr_t efi_urealloc ( userptr_t old_ptr, size_t new_size ) {
 	userptr_t new_ptr = UNOWHERE;
 	size_t old_size;
 	EFI_STATUS efirc;
-	int rc;
 
 	/* Allocate new memory if necessary.  If allocation fails,
 	 * return without touching the old block.
@@ -66,9 +58,8 @@ static userptr_t efi_urealloc ( userptr_t old_ptr, size_t new_size ) {
 						   EfiBootServicesData,
 						   new_pages,
 						   &phys_addr ) ) != 0 ) {
-			rc = -EEFI ( efirc );
 			DBG ( "EFI could not allocate %d pages: %s\n",
-			      new_pages, strerror ( rc ) );
+			      new_pages, efi_strerror ( efirc ) );
 			return UNULL;
 		}
 		assert ( phys_addr != 0 );
@@ -92,9 +83,8 @@ static userptr_t efi_urealloc ( userptr_t old_ptr, size_t new_size ) {
 		old_pages = ( EFI_SIZE_TO_PAGES ( old_size ) + 1 );
 		phys_addr = user_to_phys ( old_ptr, -EFI_PAGE_SIZE );
 		if ( ( efirc = bs->FreePages ( phys_addr, old_pages ) ) != 0 ){
-			rc = -EEFI ( efirc );
 			DBG ( "EFI could not free %d pages at %llx: %s\n",
-			      old_pages, phys_addr, strerror ( rc ) );
+			      old_pages, phys_addr, efi_strerror ( efirc ) );
 			/* Not fatal; we have leaked memory but successfully
 			 * allocated (if asked to do so).
 			 */

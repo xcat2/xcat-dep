@@ -1,7 +1,5 @@
 #include <errno.h>
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
-
 /** @file
  *
  * Error codes

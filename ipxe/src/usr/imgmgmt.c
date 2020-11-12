@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -41,113 +36,86 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 
 /**
- * Download a new image
+ * Fetch an image
  *
- * @v uri		URI
- * @v timeout		Download timeout
- * @v image		Image to fill in
+ * @v uri_string	URI as a string (e.g. "http://www.nowhere.com/vmlinuz")
+ * @v name		Name for image, or NULL
+ * @v register_image	Image registration routine
  * @ret rc		Return status code
  */
-int imgdownload ( struct uri *uri, unsigned long timeout,
-		  struct image **image ) {
-	struct uri uri_redacted;
-	char *uri_string_redacted;
-	int rc;
-
-	/* Construct redacted URI */
-	memcpy ( &uri_redacted, uri, sizeof ( uri_redacted ) );
-	uri_redacted.user = NULL;
-	uri_redacted.password = NULL;
-	uri_redacted.query = NULL;
-	uri_redacted.fragment = NULL;
-	uri_string_redacted = format_uri_alloc ( &uri_redacted );
-	if ( ! uri_string_redacted ) {
-		rc = -ENOMEM;
-		goto err_uri_string;
-	}
-
-	/* Resolve URI */
-	uri = resolve_uri ( cwuri, uri );
-	if ( ! uri ) {
-		rc = -ENOMEM;
-		goto err_resolve_uri;
-	}
-
-	/* Allocate image */
-	*image = alloc_image ( uri );
-	if ( ! *image ) {
-		rc = -ENOMEM;
-		goto err_alloc_image;
-	}
-
-	/* Create downloader */
-	if ( ( rc = create_downloader ( &monojob, *image ) ) != 0 ) {
-		printf ( "Could not start download: %s\n", strerror ( rc ) );
-		goto err_create_downloader;
-	}
-
-	/* Wait for download to complete */
-	if ( ( rc = monojob_wait ( uri_string_redacted, timeout ) ) != 0 )
-		goto err_monojob_wait;
-
-	/* Register image */
-	if ( ( rc = register_image ( *image ) ) != 0 ) {
-		printf ( "Could not register image: %s\n", strerror ( rc ) );
-		goto err_register_image;
-	}
-
- err_register_image:
- err_monojob_wait:
- err_create_downloader:
-	image_put ( *image );
- err_alloc_image:
-	uri_put ( uri );
- err_resolve_uri:
-	free ( uri_string_redacted );
- err_uri_string:
-	return rc;
-}
-
-/**
- * Download a new image
- *
- * @v uri_string	URI string
- * @v timeout		Download timeout
- * @v image		Image to fill in
- * @ret rc		Return status code
- */
-int imgdownload_string ( const char *uri_string, unsigned long timeout,
-			 struct image **image ) {
+int imgfetch ( struct image *image, const char *uri_string,
+	       int ( * image_register ) ( struct image *image ) ) {
+	char uri_string_redacted[ strlen ( uri_string ) + 3 /* "***" */
+				  + 1 /* NUL */ ];
 	struct uri *uri;
+	const char *password;
 	int rc;
 
 	if ( ! ( uri = parse_uri ( uri_string ) ) )
 		return -ENOMEM;
 
-	rc = imgdownload ( uri, timeout, image );
+	image_set_uri ( image, uri );
+
+	/* Redact password portion of URI, if necessary */
+	password = uri->password;
+	if ( password )
+		uri->password = "***";
+	unparse_uri ( uri_string_redacted, sizeof ( uri_string_redacted ),
+		      uri, URI_ALL );
+	uri->password = password;
+
+	if ( ( rc = create_downloader ( &monojob, image, image_register,
+					LOCATION_URI, uri ) ) == 0 )
+		rc = monojob_wait ( uri_string_redacted );
 
 	uri_put ( uri );
 	return rc;
 }
 
 /**
- * Acquire an image
+ * Load an image
  *
- * @v name_uri		Name or URI string
- * @v timeout		Download timeout
- * @v image		Image to fill in
+ * @v image		Image
  * @ret rc		Return status code
  */
-int imgacquire ( const char *name_uri, unsigned long timeout,
-		 struct image **image ) {
+int imgload ( struct image *image ) {
+	int rc;
 
-	/* If we already have an image with the specified name, use it */
-	*image = find_image ( name_uri );
-	if ( *image )
-		return 0;
+	/* Try to load image */
+	if ( ( rc = image_autoload ( image ) ) != 0 )
+		return rc;
 
-	/* Otherwise, download a new image */
-	return imgdownload_string ( name_uri, timeout, image );
+	return 0;
+}
+
+/**
+ * Execute an image
+ *
+ * @v image		Image
+ * @ret rc		Return status code
+ */
+int imgexec ( struct image *image ) {
+	return image_exec ( image );
+}
+
+/**
+ * Identify the only loaded image
+ *
+ * @ret image		Image, or NULL if 0 or >1 images are loaded
+ */
+struct image * imgautoselect ( void ) {
+	struct image *image;
+	struct image *selected_image = NULL;
+	int flagged_images = 0;
+
+	for_each_image ( image ) {
+		if ( image->flags & IMAGE_LOADED ) {
+			selected_image = image;
+			flagged_images++;
+		}
+	}
+
+	return ( ( flagged_images == 1 ) ? selected_image : NULL );
 }
 
 /**
@@ -156,16 +124,21 @@ int imgacquire ( const char *name_uri, unsigned long timeout,
  * @v image		Executable/loadable image
  */
 void imgstat ( struct image *image ) {
-	printf ( "%s : %zd bytes", image->name, image->len );
+	printf ( "%s: %zd bytes", image->name, image->len );
 	if ( image->type )
 		printf ( " [%s]", image->type->name );
-	if ( image->flags & IMAGE_TRUSTED )
-		printf ( " [TRUSTED]" );
-	if ( image->flags & IMAGE_SELECTED )
-		printf ( " [SELECTED]" );
-	if ( image->flags & IMAGE_AUTO_UNREGISTER )
-		printf ( " [AUTOFREE]" );
+	if ( image->flags & IMAGE_LOADED )
+		printf ( " [LOADED]" );
 	if ( image->cmdline )
 		printf ( " \"%s\"", image->cmdline );
 	printf ( "\n" );
+}
+
+/**
+ * Free an image
+ *
+ * @v image		Executable/loadable image
+ */
+void imgfree ( struct image *image ) {
+	unregister_image ( image );
 }

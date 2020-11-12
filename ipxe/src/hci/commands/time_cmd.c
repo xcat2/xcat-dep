@@ -13,71 +13,72 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * March-19-2009 @ 02:44: Added sleep command.
  * Shao Miller <shao.miller@yrdsb.edu.on.ca>.
  */
-
-FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 #include <ipxe/command.h>
-#include <ipxe/parseopt.h>
+#include <ipxe/nap.h>
 #include <ipxe/timer.h>
 
-/** @file
- *
- * Time commands
- *
- */
-
-/** "time" options */
-struct time_options {};
-
-/** "time" option list */
-static struct option_descriptor time_opts[] = {};
-
-/** "time" command descriptor */
-static struct command_descriptor time_cmd =
-	COMMAND_DESC ( struct time_options, time_opts, 1, MAX_ARGUMENTS,
-		       "<command>" );
-
-/**
- * "time" command
- *
- * @v argc		Argument count
- * @v argv		Argument list
- * @ret rc		Return status code
- */
 static int time_exec ( int argc, char **argv ) {
-	struct time_options opts;
 	unsigned long start;
-	unsigned long elapsed;
-	int decisecs;
-	int rc;
+	int rc, secs;
 
-	/* Parse options */
-	if ( ( rc = parse_options ( argc, argv, &time_cmd, &opts ) ) != 0 )
-		return rc;
+	if ( argc == 1 ||
+	     !strcmp ( argv[1], "--help" ) ||
+	     !strcmp ( argv[1], "-h" ) )
+	{
+		printf ( "Usage:\n"
+			 "  %s <command>\n"
+			 "\n"
+			 "Time a command\n",
+			 argv[0] );
+		return 1;
+	}
 
 	start = currticks();
 	rc = execv ( argv[1], argv + 1 );
-	elapsed = ( currticks() - start );
-	decisecs = ( 10 * elapsed / TICKS_PER_SEC );
+	secs = (currticks() - start) / ticks_per_sec();
 
-	printf ( "%s: %d.%ds\n", argv[0],
-		 ( decisecs / 10 ), ( decisecs % 10 ) );
+	printf ( "%s: %ds\n", argv[0], secs );
 
 	return rc;
 }
 
-/** "time" command */
 struct command time_command __command = {
 	.name = "time",
 	.exec = time_exec,
+};
+
+static int sleep_exec ( int argc, char **argv ) {
+	unsigned long start, delay;
+
+	if ( argc == 1 ||
+	     !strcmp ( argv[1], "--help" ) ||
+	     !strcmp ( argv[1], "-h" ))
+	{
+		printf ( "Usage:\n"
+			 "  %s <seconds>\n"
+			 "\n"
+			 "Sleep for <seconds> seconds\n",
+			 argv[0] );
+		return 1;
+	}
+	start = currticks();
+	delay = strtoul ( argv[1], NULL, 0 ) * ticks_per_sec();
+	while ( ( currticks() - start ) <= delay )
+		cpu_nap();
+	return 0;
+}
+
+struct command sleep_command __command = {
+	.name = "sleep",
+	.exec = sleep_exec,
 };

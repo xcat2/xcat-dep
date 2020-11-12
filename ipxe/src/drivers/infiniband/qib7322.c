@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -137,21 +132,32 @@ struct qib7322 {
  * This card requires atomic 64-bit accesses.  Strange things happen
  * if you try to use 32-bit accesses; sometimes they work, sometimes
  * they don't, sometimes you get random data.
+ *
+ * These accessors use the "movq" MMX instruction, and so won't work
+ * on really old Pentiums (which won't have PCIe anyway, so this is
+ * something of a moot point).
  */
 
 /**
  * Read QIB7322 qword register
  *
  * @v qib7322		QIB7322 device
- * @v qword		Register buffer to read into
+ * @v dwords		Register buffer to read into
  * @v offset		Register offset
  */
-static void qib7322_readq ( struct qib7322 *qib7322, uint64_t *qword,
+static void qib7322_readq ( struct qib7322 *qib7322, uint32_t *dwords,
 			    unsigned long offset ) {
-	*qword = readq ( qib7322->regs + offset );
+	void *addr = ( qib7322->regs + offset );
+
+	__asm__ __volatile__ ( "movq (%1), %%mm0\n\t"
+			       "movq %%mm0, (%0)\n\t"
+			       : : "r" ( dwords ), "r" ( addr ) : "memory" );
+
+	DBGIO ( "[%08lx] => %08x%08x\n",
+		virt_to_phys ( addr ), dwords[1], dwords[0] );
 }
 #define qib7322_readq( _qib7322, _ptr, _offset ) \
-	qib7322_readq ( (_qib7322), (_ptr)->u.qwords, (_offset) )
+	qib7322_readq ( (_qib7322), (_ptr)->u.dwords, (_offset) )
 #define qib7322_readq_array8b( _qib7322, _ptr, _offset, _idx ) \
 	qib7322_readq ( (_qib7322), (_ptr), ( (_offset) + ( (_idx) * 8 ) ) )
 #define qib7322_readq_array64k( _qib7322, _ptr, _offset, _idx ) \
@@ -163,15 +169,22 @@ static void qib7322_readq ( struct qib7322 *qib7322, uint64_t *qword,
  * Write QIB7322 qword register
  *
  * @v qib7322		QIB7322 device
- * @v qword		Register buffer to write
+ * @v dwords		Register buffer to write
  * @v offset		Register offset
  */
-static void qib7322_writeq ( struct qib7322 *qib7322, const uint64_t *qword,
+static void qib7322_writeq ( struct qib7322 *qib7322, const uint32_t *dwords,
 			     unsigned long offset ) {
-	writeq ( *qword, ( qib7322->regs + offset ) );
+	void *addr = ( qib7322->regs + offset );
+
+	DBGIO ( "[%08lx] <= %08x%08x\n",
+		virt_to_phys ( addr ), dwords[1], dwords[0] );
+
+	__asm__ __volatile__ ( "movq (%0), %%mm0\n\t"
+			       "movq %%mm0, (%1)\n\t"
+			       : : "r" ( dwords ), "r" ( addr ) : "memory" );
 }
 #define qib7322_writeq( _qib7322, _ptr, _offset ) \
-	qib7322_writeq ( (_qib7322), (_ptr)->u.qwords, (_offset) )
+	qib7322_writeq ( (_qib7322), (_ptr)->u.dwords, (_offset) )
 #define qib7322_writeq_array8b( _qib7322, _ptr, _offset, _idx ) \
 	qib7322_writeq ( (_qib7322), (_ptr), ( (_offset) + ( (_idx) * 8 ) ) )
 #define qib7322_writeq_array64k( _qib7322, _ptr, _offset, _idx ) \
@@ -675,7 +688,7 @@ static int qib7322_init_send ( struct qib7322 *qib7322 ) {
 		rc = -ENOMEM;
 		goto err_alloc_sendbufavail;
 	}
-	memset ( qib7322->sendbufavail, 0, sizeof ( *qib7322->sendbufavail ) );
+	memset ( qib7322->sendbufavail, 0, sizeof ( qib7322->sendbufavail ) );
 
 	/* Program SendBufAvailAddr into the hardware */
 	memset ( &sendbufavailaddr, 0, sizeof ( sendbufavailaddr ) );
@@ -873,6 +886,7 @@ static int qib7322_init_recv ( struct qib7322 *qib7322 ) {
 	unsigned long egrbase;
 	unsigned int eager_array_size_kernel;
 	unsigned int eager_array_size_user;
+	unsigned int user_context_mask;
 	unsigned int ctx;
 
 	/* Select configuration based on number of contexts */
@@ -881,16 +895,19 @@ static int qib7322_init_recv ( struct qib7322 *qib7322 ) {
 		contextcfg = QIB7322_CONTEXTCFG_6CTX;
 		eager_array_size_kernel = QIB7322_EAGER_ARRAY_SIZE_6CTX_KERNEL;
 		eager_array_size_user = QIB7322_EAGER_ARRAY_SIZE_6CTX_USER;
+		user_context_mask = 0x000f;
 		break;
 	case 10:
 		contextcfg = QIB7322_CONTEXTCFG_10CTX;
 		eager_array_size_kernel = QIB7322_EAGER_ARRAY_SIZE_10CTX_KERNEL;
 		eager_array_size_user = QIB7322_EAGER_ARRAY_SIZE_10CTX_USER;
+		user_context_mask = 0x00ff;
 		break;
 	case 18:
 		contextcfg = QIB7322_CONTEXTCFG_18CTX;
 		eager_array_size_kernel = QIB7322_EAGER_ARRAY_SIZE_18CTX_KERNEL;
 		eager_array_size_user = QIB7322_EAGER_ARRAY_SIZE_18CTX_USER;
+		user_context_mask = 0xffff;
 		break;
 	default:
 		linker_assert ( 0, invalid_QIB7322_NUM_CONTEXTS );
@@ -1159,13 +1176,13 @@ static void qib7322_destroy_qp ( struct ib_device *ibdev,
  *
  * @v ibdev		Infiniband device
  * @v qp		Queue pair
- * @v dest		Destination address vector
+ * @v av		Address vector
  * @v iobuf		I/O buffer
  * @ret rc		Return status code
  */
 static int qib7322_post_send ( struct ib_device *ibdev,
 			       struct ib_queue_pair *qp,
-			       struct ib_address_vector *dest,
+			       struct ib_address_vector *av,
 			       struct io_buffer *iobuf ) {
 	struct qib7322 *qib7322 = ib_get_drvdata ( ibdev );
 	struct ib_work_queue *wq = &qp->send;
@@ -1197,7 +1214,7 @@ static int qib7322_post_send ( struct ib_device *ibdev,
 	/* Construct headers */
 	iob_populate ( &headers, header_buf, 0, sizeof ( header_buf ) );
 	iob_reserve ( &headers, sizeof ( header_buf ) );
-	ib_push ( ibdev, &headers, qp, iob_len ( iobuf ), dest );
+	ib_push ( ibdev, &headers, qp, iob_len ( iobuf ), av );
 
 	/* Calculate packet length */
 	len = ( ( sizeof ( sendpbc ) + iob_len ( &headers ) +
@@ -1399,8 +1416,7 @@ static void qib7322_complete_recv ( struct ib_device *ibdev,
 	struct io_buffer headers;
 	struct io_buffer *iobuf;
 	struct ib_queue_pair *intended_qp;
-	struct ib_address_vector dest;
-	struct ib_address_vector source;
+	struct ib_address_vector av;
 	unsigned int rcvtype;
 	unsigned int pktlen;
 	unsigned int egrindex;
@@ -1461,7 +1477,7 @@ static void qib7322_complete_recv ( struct ib_device *ibdev,
 	qp0 = ( qp->qpn == 0 );
 	intended_qp = NULL;
 	if ( ( rc = ib_pull ( ibdev, &headers, ( qp0 ? &intended_qp : NULL ),
-			      &payload_len, &dest, &source ) ) != 0 ) {
+			      &payload_len, &av ) ) != 0 ) {
 		DBGC ( qib7322, "QIB7322 %p could not parse headers: %s\n",
 		       qib7322, strerror ( rc ) );
 		err = 1;
@@ -1507,15 +1523,8 @@ static void qib7322_complete_recv ( struct ib_device *ibdev,
 			/* Completing the eager buffer described in
 			 * this header entry.
 			 */
-			if ( payload_len <= iob_tailroom ( iobuf ) ) {
-				iob_put ( iobuf, payload_len );
-				rc = ( err ?
-				       -EIO : ( useegrbfr ? 0 : -ECANCELED ) );
-			} else {
-				DBGC ( qib7322, "QIB7322 %p bad payload len "
-				       "%zd\n", qib7322, payload_len );
-				rc = -EPROTO;
-			}
+			iob_put ( iobuf, payload_len );
+			rc = ( err ? -EIO : ( useegrbfr ? 0 : -ECANCELED ) );
 			/* Redirect to target QP if necessary */
 			if ( qp != intended_qp ) {
 				DBGC2 ( qib7322, "QIB7322 %p redirecting QPN "
@@ -1525,12 +1534,10 @@ static void qib7322_complete_recv ( struct ib_device *ibdev,
 				qp->recv.fill--;
 				intended_qp->recv.fill++;
 			}
-			ib_complete_recv ( ibdev, intended_qp, &dest, &source,
-					   iobuf, rc );
+			ib_complete_recv ( ibdev, intended_qp, &av, iobuf, rc);
 		} else {
 			/* Completing on a skipped-over eager buffer */
-			ib_complete_recv ( ibdev, qp, &dest, &source, iobuf,
-					   -ECANCELED );
+			ib_complete_recv ( ibdev, qp, &av, iobuf, -ECANCELED );
 		}
 
 		/* Clear eager buffer */
@@ -2059,9 +2066,6 @@ static int qib7322_ahb_read ( struct qib7322 *qib7322, unsigned int location,
 	struct QIB_7322_ahb_transaction_reg xact;
 	int rc;
 
-	/* Avoid returning uninitialised data on error */
-	*data = 0;
-
 	/* Initiate transaction */
 	memset ( &xact, 0, sizeof ( xact ) );
 	BIT_FILL_2 ( &xact,
@@ -2277,7 +2281,8 @@ static void qib7322_reset ( struct qib7322 *qib7322, struct pci_device *pci ) {
  * @v id		PCI ID
  * @ret rc		Return status code
  */
-static int qib7322_probe ( struct pci_device *pci ) {
+static int qib7322_probe ( struct pci_device *pci,
+			   const struct pci_device_id *id __unused ) {
 	struct qib7322 *qib7322;
 	struct QIB_7322_Revision revision;
 	struct ib_device *ibdev;
@@ -2296,8 +2301,8 @@ static int qib7322_probe ( struct pci_device *pci ) {
 	/* Fix up PCI device */
 	adjust_pci_device ( pci );
 
-	/* Map PCI BARs */
-	qib7322->regs = pci_ioremap ( pci, pci->membase, QIB7322_BAR0_SIZE );
+	/* Get PCI BARs */
+	qib7322->regs = ioremap ( pci->membase, QIB7322_BAR0_SIZE );
 	DBGC2 ( qib7322, "QIB7322 %p has BAR at %08lx\n",
 		qib7322, pci->membase );
 
@@ -2391,7 +2396,6 @@ static int qib7322_probe ( struct pci_device *pci ) {
  err_init_recv:
  err_read_eeprom:
  err_init_i2c:
-	iounmap ( qib7322->regs );
 	free ( qib7322 );
  err_alloc_qib7322:
 	return rc;
@@ -2414,7 +2418,6 @@ static void qib7322_remove ( struct pci_device *pci ) {
 		ibdev_put ( qib7322->ibdev[i] );
 	qib7322_fini_send ( qib7322 );
 	qib7322_fini_recv ( qib7322 );
-	iounmap ( qib7322->regs );
 	free ( qib7322 );
 }
 

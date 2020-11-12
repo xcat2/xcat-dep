@@ -7,11 +7,22 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <assert.h>
 #include <ipxe/list.h>
+
+/**
+ * I/O buffer alignment
+ *
+ * I/O buffers allocated via alloc_iob() are guaranteed to be
+ * physically aligned to this boundary.  Some cards cannot DMA across
+ * a 4kB boundary.  With a standard Ethernet MTU, aligning to a 2kB
+ * boundary is sufficient to guarantee no 4kB boundary crossings.  For
+ * a jumbo Ethernet MTU, a packet may be larger than 4kB anyway.
+ */
+#define IOB_ALIGN 2048
 
 /**
  * Minimum I/O buffer length
@@ -20,7 +31,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * necessary.  This is used on behalf of hardware that is not capable
  * of auto-padding.
  */
-#define IOB_ZLEN 128
+#define IOB_ZLEN 64
 
 /**
  * A persistent I/O buffer
@@ -210,13 +221,9 @@ static inline void iob_populate ( struct io_buffer *iobuf,
 	(iobuf) = NULL;					\
 	__iobuf; } )
 
-extern struct io_buffer * __malloc alloc_iob_raw ( size_t len, size_t align,
-						   size_t offset );
 extern struct io_buffer * __malloc alloc_iob ( size_t len );
 extern void free_iob ( struct io_buffer *iobuf );
 extern void iob_pad ( struct io_buffer *iobuf, size_t min_len );
 extern int iob_ensure_headroom ( struct io_buffer *iobuf, size_t len );
-extern struct io_buffer * iob_concatenate ( struct list_head *list );
-extern struct io_buffer * iob_split ( struct io_buffer *iobuf, size_t len );
 
 #endif /* _IPXE_IOBUF_H */

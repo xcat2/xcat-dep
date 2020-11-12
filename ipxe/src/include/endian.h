@@ -1,22 +1,21 @@
-#ifndef _ENDIAN_H
-#define _ENDIAN_H
+#ifndef ETHERBOOT_ENDIAN_H
+#define ETHERBOOT_ENDIAN_H
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
-/** Constant representing little-endian byte order
- *
- * Little-endian systems should define BYTE_ORDER as LITTLE_ENDIAN.
- * This constant is intended to be used only at compile time.
- */
-#define __LITTLE_ENDIAN 0x44332211UL
+/* Definitions for byte order, according to significance of bytes,
+   from low addresses to high addresses.  The value is what you get by
+   putting '4' in the most significant byte, '3' in the second most
+   significant byte, '2' in the second least significant byte, and '1'
+   in the least significant byte, and then writing down one digit for
+   each byte, starting with the byte at the lowest address at the left,
+   and proceeding to the byte with the highest address at the right.  */
 
-/** Constant representing big-endian byte order
- *
- * Big-endian systems should define BYTE_ORDER as BIG_ENDIAN.
- * This constant is intended to be used only at compile time.
- */
-#define __BIG_ENDIAN 0x11223344UL
+#define __LITTLE_ENDIAN 1234
+#define __BIG_ENDIAN    4321
+#define __PDP_ENDIAN    3412
 
 #include "bits/endian.h"
 
-#endif /* _ENDIAN_H */
+
+#endif /* ETHERBOOT_ENDIAN_H */

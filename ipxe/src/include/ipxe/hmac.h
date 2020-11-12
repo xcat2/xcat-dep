@@ -6,7 +6,7 @@
  * Keyed-Hashing for Message Authentication
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ipxe/crypto.h>
 

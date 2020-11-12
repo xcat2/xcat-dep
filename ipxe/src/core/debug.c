@@ -1,64 +1,17 @@
-/*
- * Copyright (C) 2006 Michael Brown <mbrown@fensystems.co.uk>.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the
- * License, or any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
- */
-
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
-
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
-#include <ctype.h>
-#include <ipxe/console.h>
-
-/**
- * Print debug message
- *
- * @v fmt		Format string
- * @v ...		Arguments
- */
-void dbg_printf ( const char *fmt, ... ) {
-	int saved_usage;
-	va_list args;
-
-	/* Mark console as in use for debugging messages */
-	saved_usage = console_set_usage ( CONSOLE_USAGE_DEBUG );
-
-	/* Print message */
-	va_start ( args, fmt );
-	vprintf ( fmt, args );
-	va_end ( args );
-
-	/* Restore console usage */
-	console_set_usage ( saved_usage );
-}
+#include <ipxe/io.h>
+#include <console.h>
 
 /**
  * Pause until a key is pressed
  *
  */
 void dbg_pause ( void ) {
-	dbg_printf ( "\nPress a key..." );
+	printf ( "\nPress a key..." );
 	getchar();
-	dbg_printf ( "\r              \r" );
+	printf ( "\r              \r" );
 }
 
 /**
@@ -66,9 +19,9 @@ void dbg_pause ( void ) {
  *
  */
 void dbg_more ( void ) {
-	dbg_printf ( "---more---" );
+	printf ( "---more---" );
 	getchar();
-	dbg_printf ( "\r          \r" );
+	printf ( "\r          \r" );
 }
 
 /**
@@ -85,25 +38,27 @@ static void dbg_hex_dump_da_row ( unsigned long dispaddr, const void *data,
 	unsigned int i;
 	uint8_t byte;
 
-	dbg_printf ( "%08lx :", ( dispaddr + offset ) );
+	printf ( "%08lx :", ( dispaddr + offset ) );
 	for ( i = offset ; i < ( offset + 16 ) ; i++ ) {
 		if ( i >= len ) {
-			dbg_printf ( "   " );
+			printf ( "   " );
 			continue;
 		}
-		dbg_printf ( "%c%02x",
-			     ( ( ( i % 16 ) == 8 ) ? '-' : ' ' ), bytes[i] );
+		printf ( "%c%02x",
+			 ( ( ( i % 16 ) == 8 ) ? '-' : ' ' ), bytes[i] );
 	}
-	dbg_printf ( " : " );
+	printf ( " : " );
 	for ( i = offset ; i < ( offset + 16 ) ; i++ ) {
 		if ( i >= len ) {
-			dbg_printf ( " " );
+			printf ( " " );
 			continue;
 		}
 		byte = bytes[i];
-		dbg_printf ( "%c", ( isprint ( byte ) ? byte : '.' ) );
+		if ( ( byte < 0x20 ) || ( byte >= 0x7f ) )
+			byte = '.';
+		printf ( "%c", byte );
 	}
-	dbg_printf ( "\n" );
+	printf ( "\n" );
 }
 
 /**
@@ -123,24 +78,13 @@ void dbg_hex_dump_da ( unsigned long dispaddr, const void *data,
 }
 
 /**
- * Base message stream colour
- *
- * We default to using 31 (red foreground) as the base colour.
- */
-#ifndef DBGCOL_MIN
-#define DBGCOL_MIN 31
-#endif
-
-/**
  * Maximum number of separately coloured message streams
  *
  * Six is the realistic maximum; there are 8 basic ANSI colours, one
  * of which will be the terminal default and one of which will be
  * invisible on the terminal because it matches the background colour.
  */
-#ifndef DBGCOL_MAX
-#define DBGCOL_MAX ( DBGCOL_MIN + 6 - 1 )
-#endif
+#define NUM_AUTO_COLOURS 6
 
 /** A colour assigned to an autocolourised debug message stream */
 struct autocolour {
@@ -157,7 +101,7 @@ struct autocolour {
  * @ret colour		Colour ID
  */
 static int dbg_autocolour ( unsigned long stream ) {
-	static struct autocolour acs[ DBGCOL_MAX - DBGCOL_MIN + 1 ];
+	static struct autocolour acs[NUM_AUTO_COLOURS];
 	static unsigned long use;
 	unsigned int i;
 	unsigned int oldest;
@@ -194,12 +138,8 @@ static int dbg_autocolour ( unsigned long stream ) {
  * @v stream		Message stream ID
  */
 void dbg_autocolourise ( unsigned long stream ) {
-
-	if ( DBGCOL_MIN ) {
-		dbg_printf ( "\033[%dm",
-			     ( stream ?
-			       ( DBGCOL_MIN + dbg_autocolour ( stream ) ) : 0));
-	}
+	printf ( "\033[%dm",
+		 ( stream ? ( 31 + dbg_autocolour ( stream ) ) : 0 ) );
 }
 
 /**
@@ -207,7 +147,5 @@ void dbg_autocolourise ( unsigned long stream ) {
  *
  */
 void dbg_decolourise ( void ) {
-
-	if ( DBGCOL_MIN )
-		dbg_printf ( "\033[0m" );
+	printf ( "\033[0m" );
 }

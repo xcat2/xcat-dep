@@ -357,6 +357,7 @@ static void smc_phy_configure(int ioaddr)
     word my_phy_caps; // My PHY capabilities
     word my_ad_caps; // My Advertised capabilities
     word status;
+    int failed = 0;
     int rpc_cur_mode = RPC_DEFAULT;
     int lastPhy18;
 
@@ -463,12 +464,14 @@ static void smc_phy_configure(int ioaddr)
     if (timeout < 1)
     {
         PRINTK2("PHY auto-negotiate timed out\n");
+        failed = 1;
     }
 
     // Fail if we detected an auto-negotiate remote fault
     if (status & PHY_STAT_REM_FLT)
     {
         PRINTK2("PHY remote fault detected\n");
+        failed = 1;
     }
 
     // Set our sysctl parameters to match auto-negotiation results
@@ -882,7 +885,7 @@ static int smc9000_probe ( struct nic *nic, struct isa_device *isa ) {
 
    /* is it using AUI or 10BaseT ? */
    SMC_SELECT_BANK(nic->ioaddr, 1);
-   if (inw(nic->ioaddr + CFG) & CFG_AUI_SELECT)
+   if (inw(nic->ioaddr + CONFIG) & CFG_AUI_SELECT)
      media = 2;
    else
      media = 1;
@@ -911,12 +914,12 @@ static int smc9000_probe ( struct nic *nic, struct isa_device *isa ) {
    /* Select which interface to use */
    SMC_SELECT_BANK(nic->ioaddr, 1);
    if ( media == 1 ) {
-      _outw( inw( nic->ioaddr + CFG ) & ~CFG_AUI_SELECT,
-	   nic->ioaddr + CFG );
+      _outw( inw( nic->ioaddr + CONFIG ) & ~CFG_AUI_SELECT,
+	   nic->ioaddr + CONFIG );
    }
    else if ( media == 2 ) {
-      _outw( inw( nic->ioaddr + CFG ) | CFG_AUI_SELECT,
-	   nic->ioaddr + CFG );
+      _outw( inw( nic->ioaddr + CONFIG ) | CFG_AUI_SELECT,
+	   nic->ioaddr + CONFIG );
    }
 
    smc_phy_configure(nic->ioaddr);

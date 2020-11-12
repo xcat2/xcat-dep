@@ -205,15 +205,8 @@ static void a3c90x_reset(struct INF_3C90X *inf_3c90x)
 {
 	DBGP("a3c90x_reset\n");
 	/* Send the reset command to the card */
-	DBG2("3c90x: Issuing RESET\n");
-
-	/* reset of the receiver on B-revision cards re-negotiates the link
-	 * takes several seconds (a computer eternity), so we don't reset
-	 * it here.
-	 */
-	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr,
-				     cmdGlobalReset,
-				     globalResetMaskNetwork);
+	DBG("3c90x: Issuing RESET\n");
+	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdGlobalReset, 0);
 
 	/* global reset command resets station mask, non-B revision cards
 	 * require explicit reset of values
@@ -223,14 +216,26 @@ static void a3c90x_reset(struct INF_3C90X *inf_3c90x)
 	outw(0, inf_3c90x->IOAddr + regStationMask_2_3w + 2);
 	outw(0, inf_3c90x->IOAddr + regStationMask_2_3w + 4);
 
+	/* Issue transmit reset, wait for command completion */
+	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdTxReset, 0);
+
 	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdTxEnable, 0);
+
+	/*
+	 * reset of the receiver on B-revision cards re-negotiates the link
+	 * takes several seconds (a computer eternity)
+	 */
+	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdRxReset,
+				     inf_3c90x->isBrev ? 0x04 : 0x00);
+
 	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdRxEnable, 0);
 
-	/* enable rxComplete and txComplete indications */
+	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr,
+				     cmdSetInterruptEnable, 0);
+	/* enable rxComplete and txComplete */
 	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr,
 				     cmdSetIndicationEnable,
 				     INT_TXCOMPLETE | INT_UPCOMPLETE);
-
 	/* acknowledge any pending status flags */
 	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr,
 				     cmdAcknowledgeInterrupt, 0x661);
@@ -277,14 +282,14 @@ static void a3c90x_process_tx_packets(struct net_device *netdev)
 
 	DBGP("a3c90x_process_tx_packets\n");
 
-	DBG2("    tx_cnt: %d\n", p->tx_cnt);
+	DBG("    tx_cnt: %d\n", p->tx_cnt);
 
 	while (p->tx_tail != p->tx_cur) {
 
 		downlist_ptr = inl(p->IOAddr + regDnListPtr_l);
 
-		DBG2("    downlist_ptr: %#08x\n", downlist_ptr);
-		DBG2("    tx_tail: %d tx_cur: %d\n", p->tx_tail, p->tx_cur);
+		DBG("    downlist_ptr: %#08x\n", downlist_ptr);
+		DBG("    tx_tail: %d tx_cur: %d\n", p->tx_tail, p->tx_cur);
 
 		/* NIC is currently working on this tx desc */
 		if(downlist_ptr == virt_to_bus(p->tx_ring + p->tx_tail))
@@ -292,8 +297,8 @@ static void a3c90x_process_tx_packets(struct net_device *netdev)
 
 		netdev_tx_complete(netdev, p->tx_iobuf[p->tx_tail]);
 
-		DBG2("transmitted packet\n");
-		DBG2("    size: %zd\n", iob_len(p->tx_iobuf[p->tx_tail]));
+		DBG("transmitted packet\n");
+		DBG("    size: %zd\n", iob_len(p->tx_iobuf[p->tx_tail]));
 
 		p->tx_tail = (p->tx_tail + 1) % TX_RING_SIZE;
 		p->tx_cnt--;
@@ -346,12 +351,11 @@ static int a3c90x_transmit(struct net_device *netdev,
 	tx_cur_desc->DnNextPtr = 0;
 
 	/* FrameStartHeader differs in 90x and >= 90xB
-	 * It contains the packet length in 90x and a round up boundary and
-	 * packet ID for 90xB and 90xC. Disable packet length round-up on the
-	 * later revisions.
+	 * It contains length in 90x and a round up boundary and packet ID for
+	 * 90xB and 90xC. We can leave this to 0 for 90xB and 90xC.
 	 */
 	tx_cur_desc->FrameStartHeader =
-	    fshTxIndicate | (inf_3c90x->isBrev ? fshRndupDefeat : len);
+	    fshTxIndicate | (inf_3c90x->isBrev ? 0x00 : len);
 
 	tx_cur_desc->DataAddr = virt_to_bus(iob->data);
 	tx_cur_desc->DataLength = len | downLastFrag;
@@ -393,7 +397,7 @@ static int a3c90x_transmit(struct net_device *netdev,
 static void a3c90x_prepare_rx_desc(struct INF_3C90X *p, unsigned int index)
 {
 	DBGP("a3c90x_prepare_rx_desc\n");
-	DBG2("Populating rx_desc %d\n", index);
+	DBG("Populating rx_desc %d\n", index);
 
 	/* We have to stall the upload engine, so the NIC won't access the
 	 * rx descriptor while we modify it. There is a way around this
@@ -534,7 +538,7 @@ static void a3c90x_process_rx_packets(struct net_device *netdev)
 			break;
 
 		if (rx_status & upError) {
-			DBG("Corrupted packet received: %#x\n", rx_status);
+			DBG("Corrupted packet received\n");
 			netdev_rx_err(netdev, p->rx_iobuf[p->rx_cur],
 				      -EINVAL);
 		} else {
@@ -544,8 +548,8 @@ static void a3c90x_process_rx_packets(struct net_device *netdev)
 			packet_len = rx_status & 0x1FFF;
 			iob_put(p->rx_iobuf[p->rx_cur], packet_len);
 
-			DBG2("received packet\n");
-			DBG2("    size: %d\n", packet_len);
+			DBG("received packet\n");
+			DBG("    size: %d\n", packet_len);
 
 			netdev_rx(netdev, p->rx_iobuf[p->rx_cur]);
 		}
@@ -584,7 +588,7 @@ static void a3c90x_poll(struct net_device *netdev)
 	if (int_status & INT_TXCOMPLETE)
 		outb(0x00, p->IOAddr + regTxStatus_b);
 
-	DBG2("poll: status = %#04x\n", raw_status);
+	DBG("poll: status = %#04x\n", raw_status);
 
 	a3c90x_process_tx_packets(netdev);
 
@@ -692,40 +696,40 @@ static void a3c90x_hw_start(struct net_device *netdev)
 		mopt &= 0x7F;
 	}
 
-	DBG2("Connectors present: ");
+	DBG("Connectors present: ");
 	c = 0;
 	linktype = 0x0008;
 	if (mopt & 0x01) {
-		DBG2("%s100Base-T4", (c++) ? ", " : "");
+		DBG("%s100Base-T4", (c++) ? ", " : "");
 		linktype = linkMII;
 	}
 	if (mopt & 0x04) {
-		DBG2("%s100Base-FX", (c++) ? ", " : "");
+		DBG("%s100Base-FX", (c++) ? ", " : "");
 		linktype = link100BaseFX;
 	}
 	if (mopt & 0x10) {
-		DBG2("%s10Base-2", (c++) ? ", " : "");
+		DBG("%s10Base-2", (c++) ? ", " : "");
 		linktype = link10Base2;
 	}
 	if (mopt & 0x20) {
-		DBG2("%sAUI", (c++) ? ", " : "");
+		DBG("%sAUI", (c++) ? ", " : "");
 		linktype = linkAUI;
 	}
 	if (mopt & 0x40) {
-		DBG2("%sMII", (c++) ? ", " : "");
+		DBG("%sMII", (c++) ? ", " : "");
 		linktype = linkMII;
 	}
 	if ((mopt & 0xA) == 0xA) {
-		DBG2("%s10Base-T / 100Base-TX", (c++) ? ", " : "");
+		DBG("%s10Base-T / 100Base-TX", (c++) ? ", " : "");
 		linktype = linkAutoneg;
 	} else if ((mopt & 0xA) == 0x2) {
-		DBG2("%s100Base-TX", (c++) ? ", " : "");
+		DBG("%s100Base-TX", (c++) ? ", " : "");
 		linktype = linkAutoneg;
 	} else if ((mopt & 0xA) == 0x8) {
-		DBG2("%s10Base-T", (c++) ? ", " : "");
+		DBG("%s10Base-T", (c++) ? ", " : "");
 		linktype = linkAutoneg;
 	}
-	DBG2(".\n");
+	DBG(".\n");
 
 	/* Determine transceiver type to use, depending on value stored in
 	* eeprom 0x16
@@ -756,7 +760,7 @@ static void a3c90x_hw_start(struct net_device *netdev)
 	cfg &= ~(0xF << 20);
 	cfg |= (linktype << 20);
 
-	DBG2("Setting internal cfg register: 0x%08X (linktype: 0x%02X)\n",
+	DBG("Setting internal cfg register: 0x%08X (linktype: 0x%02X)\n",
 	    cfg, linktype);
 
 	outl(cfg, inf_3c90x->IOAddr + regInternalConfig_3_l);
@@ -814,17 +818,9 @@ static int a3c90x_open(struct net_device *netdev)
 		goto error;
 	}
 
-	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdStallCtl, upStall);
-
 	/* send rx_ring address to NIC */
 	outl(virt_to_bus(inf_3c90x->rx_ring),
 	     inf_3c90x->IOAddr + regUpListPtr_l);
-
-	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdStallCtl, upUnStall);
-
-	/* set maximum allowed receive packet length */
-	a3c90x_internal_SetWindow(inf_3c90x, winTxRxOptions3);
-	outl(RX_BUF_SIZE, inf_3c90x->IOAddr + regMaxPktSize_3_w);
 
 	/* enable packet transmission and reception */
 	a3c90x_internal_IssueCommand(inf_3c90x->IOAddr, cmdTxEnable, 0);
@@ -874,7 +870,8 @@ static struct net_device_operations a3c90x_operations = {
  *
  * @ret rc	Returns 0 on success, negative on failure
  */
-static int a3c90x_probe(struct pci_device *pci)
+static int a3c90x_probe(struct pci_device *pci,
+			const struct pci_device_id *pci_id __unused)
 {
 
 	struct net_device *netdev;
@@ -914,7 +911,7 @@ static int a3c90x_probe(struct pci_device *pci)
 		break;
 	}
 
-	DBG2("[3c90x]: found NIC(0x%04X, 0x%04X), isBrev=%d, is3c556=%d\n",
+	DBG("[3c90x]: found NIC(0x%04X, 0x%04X), isBrev=%d, is3c556=%d\n",
 	    pci->vendor, pci->device, inf_3c90x->isBrev,
 	    inf_3c90x->is3c556);
 

@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <byteswap.h>
@@ -43,7 +38,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * @v netdev		Network device
  * @v ll_dest		Link-layer destination address
  * @v ll_source		Link-layer source address
- * @v flags		Packet flags
  * @ret rc		Return status code
  *
  * This is a dummy method which simply discards RARP packets.
@@ -51,8 +45,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 static int rarp_rx ( struct io_buffer *iobuf,
 		     struct net_device *netdev __unused,
 		     const void *ll_dest __unused,
-		     const void *ll_source __unused,
-		     unsigned int flags __unused ) {
+		     const void *ll_source __unused ) {
 	free_iob ( iobuf );
 	return 0;
 }

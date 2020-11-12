@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -31,12 +26,11 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ctype.h>
 #include <byteswap.h>
 #include <curses.h>
-#include <ipxe/console.h>
+#include <console.h>
 #include <ipxe/dhcp.h>
 #include <ipxe/keys.h>
 #include <ipxe/timer.h>
-#include <ipxe/uri.h>
-#include <ipxe/ansicol.h>
+#include <ipxe/process.h>
 #include <usr/dhcpmgmt.h>
 #include <usr/autoboot.h>
 
@@ -45,6 +39,10 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * PXE Boot Menus
  *
  */
+
+/* Colour pairs */
+#define CPAIR_NORMAL	1
+#define CPAIR_SELECT	2
 
 /** A PXE boot menu item */
 struct pxe_menu_item {
@@ -102,9 +100,9 @@ static int pxe_menu_parse ( struct pxe_menu **menu ) {
 
 	/* Fetch raw menu */
 	memset ( raw_menu, 0, sizeof ( raw_menu ) );
-	if ( ( raw_menu_len = fetch_raw_setting ( NULL, &pxe_boot_menu_setting,
-						  raw_menu,
-						  sizeof ( raw_menu ) ) ) < 0 ){
+	if ( ( raw_menu_len = fetch_setting ( NULL, &pxe_boot_menu_setting,
+					      raw_menu,
+					      sizeof ( raw_menu ) ) ) < 0 ) {
 		rc = raw_menu_len;
 		DBG ( "Could not retrieve raw PXE boot menu: %s\n",
 		      strerror ( rc ) );
@@ -117,9 +115,8 @@ static int pxe_menu_parse ( struct pxe_menu **menu ) {
 	raw_menu_end = ( raw_menu + raw_menu_len );
 
 	/* Fetch raw prompt length */
-	raw_prompt_len =
-		fetch_raw_setting ( NULL, &pxe_boot_menu_prompt_setting,
-				    NULL, 0 );
+	raw_prompt_len = fetch_setting_len ( NULL,
+					     &pxe_boot_menu_prompt_setting );
 	if ( raw_prompt_len < 0 )
 		raw_prompt_len = 0;
 
@@ -170,8 +167,8 @@ static int pxe_menu_parse ( struct pxe_menu **menu ) {
 	if ( raw_prompt_len ) {
 		raw_menu_prompt = ( ( ( void * ) raw_menu_item ) +
 				    1 /* NUL */ );
-		fetch_raw_setting ( NULL, &pxe_boot_menu_prompt_setting,
-				    raw_menu_prompt, raw_prompt_len );
+		fetch_setting ( NULL, &pxe_boot_menu_prompt_setting,
+				raw_menu_prompt, raw_prompt_len );
 		(*menu)->timeout =
 			( ( raw_menu_prompt->timeout == 0xff ) ?
 			  -1 : raw_menu_prompt->timeout );
@@ -205,7 +202,7 @@ static void pxe_menu_draw_item ( struct pxe_menu *menu,
 
 	/* Draw row */
 	row = ( LINES - menu->num_items + index );
-	color_set ( ( selected ? CPAIR_PXE : CPAIR_DEFAULT ), NULL );
+	color_set ( ( selected ? CPAIR_SELECT : CPAIR_NORMAL ), NULL );
 	mvprintw ( row, 0, "%s", buf );
 	move ( row, 1 );
 }
@@ -225,7 +222,9 @@ static int pxe_menu_select ( struct pxe_menu *menu ) {
 	/* Initialise UI */
 	initscr();
 	start_color();
-	color_set ( CPAIR_DEFAULT, NULL );
+	init_pair ( CPAIR_NORMAL, COLOR_WHITE, COLOR_BLACK );
+	init_pair ( CPAIR_SELECT, COLOR_BLACK, COLOR_WHITE );
+	color_set ( CPAIR_NORMAL, NULL );
 
 	/* Draw initial menu */
 	for ( i = 0 ; i < menu->num_items ; i++ )
@@ -239,7 +238,9 @@ static int pxe_menu_select ( struct pxe_menu *menu ) {
 		pxe_menu_draw_item ( menu, menu->selection, 1 );
 
 		/* Wait for keyboard input */
-		key = getkey ( 0 );
+		while ( ! iskey() )
+			step();
+		key = getkey();
 
 		/* Unhighlight currently selected item */
 		pxe_menu_draw_item ( menu, menu->selection, 0 );
@@ -302,7 +303,7 @@ static int pxe_menu_prompt_and_select ( struct pxe_menu *menu ) {
 		if ( ! len )
 			len = printf ( " (%d)", menu->timeout );
 		if ( iskey() ) {
-			key = getkey ( 0 );
+			key = getkey();
 			if ( key == KEY_F8 ) {
 				/* Display menu */
 				printf ( "\n" );
@@ -345,7 +346,8 @@ int pxe_menu_boot ( struct net_device *netdev ) {
 	struct pxe_menu *menu;
 	unsigned int pxe_type;
 	struct settings *pxebs_settings;
-	struct uri *uri;
+	struct in_addr next_server;
+	char filename[256];
 	int rc;
 
 	/* Parse and allocate boot menu */
@@ -370,15 +372,12 @@ int pxe_menu_boot ( struct net_device *netdev ) {
 	if ( ( rc = pxebs ( netdev, pxe_type ) ) != 0 )
 		return rc;
 
-	/* Fetch next server and filename */
+	/* Attempt boot */
 	pxebs_settings = find_settings ( PXEBS_SETTINGS_NAME );
 	assert ( pxebs_settings );
-	uri = fetch_next_server_and_filename ( pxebs_settings );
-	if ( ! uri )
-		return -ENOMEM;
-
-	/* Attempt boot */
-	rc = uriboot ( uri, NULL, 0, 0, NULL, URIBOOT_NO_SAN );
-	uri_put ( uri );
-	return rc;
+	fetch_ipv4_setting ( pxebs_settings, &next_server_setting,
+			     &next_server );
+	fetch_string_setting ( pxebs_settings, &filename_setting,
+			       filename, sizeof ( filename ) );
+	return boot_next_server_and_filename ( next_server, filename );
 }

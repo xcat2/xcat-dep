@@ -33,6 +33,7 @@ FILE_LICENCE(GPL2_ONLY);
 enum vxge_hw_status
 vxge_hw_vpath_intr_enable(struct __vxge_hw_virtualpath *vpath)
 {
+	u64 val64;
 	struct vxge_hw_vpath_reg *vp_reg;
 	enum vxge_hw_status status = VXGE_HW_OK;
 
@@ -78,7 +79,7 @@ vxge_hw_vpath_intr_enable(struct __vxge_hw_virtualpath *vpath)
 	__vxge_hw_pio_mem_write32_upper((u32)VXGE_HW_INTR_MASK_ALL,
 				&vp_reg->xgmac_vp_int_status);
 
-	readq(&vp_reg->vpath_general_int_status);
+	val64 = readq(&vp_reg->vpath_general_int_status);
 
 	/* Mask unwanted interrupts */
 	__vxge_hw_pio_mem_write32_upper((u32)VXGE_HW_INTR_MASK_ALL,
@@ -148,6 +149,7 @@ exit:
 enum vxge_hw_status
 vxge_hw_vpath_intr_disable(struct __vxge_hw_virtualpath *vpath)
 {
+	u64 val64;
 	enum vxge_hw_status status = VXGE_HW_OK;
 	struct vxge_hw_vpath_reg __iomem *vp_reg;
 
@@ -159,6 +161,8 @@ vxge_hw_vpath_intr_disable(struct __vxge_hw_virtualpath *vpath)
 
 	__vxge_hw_pio_mem_write32_upper((u32)VXGE_HW_INTR_MASK_ALL,
 			&vp_reg->vpath_general_int_mask);
+
+	val64 = VXGE_HW_TIM_CLR_INT_EN_VP(1 << (16 - vpath->vp_id));
 
 	writeq(VXGE_HW_INTR_MASK_ALL, &vp_reg->kdfcctl_errors_mask);
 
@@ -667,8 +671,6 @@ enum vxge_hw_status vxge_hw_vpath_poll_rx(struct __vxge_hw_ring *ring)
 		vxge_debug(VXGE_INFO, "%s: rx frame received at offset %d\n",
 			hldev->ndev->name, ring->rxd_offset);
 
-		iobuf = (struct io_buffer *)(intptr_t)rxd->host_control;
-
 		if (tcode != VXGE_HW_RING_T_CODE_OK) {
 			netdev_rx_err(hldev->ndev, NULL, -EINVAL);
 			vxge_debug(VXGE_ERR, "%s:%d, rx error tcode %d\n",
@@ -676,6 +678,8 @@ enum vxge_hw_status vxge_hw_vpath_poll_rx(struct __vxge_hw_ring *ring)
 			status = VXGE_HW_FAIL;
 			goto err1;
 		}
+
+		iobuf = (struct io_buffer *)(intptr_t)rxd->host_control;
 
 		len = VXGE_HW_RING_RXD_1_BUFFER0_SIZE_GET(rxd->control_1);
 		len -= ETH_FCS_LEN;

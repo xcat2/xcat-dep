@@ -7,24 +7,12 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 struct bit_basher;
 
 /** Bit-bashing operations */
 struct bit_basher_operations {
-	/**
-	 * Open bit-bashing interface (optional)
-	 *
-	 * @v basher		Bit-bashing interface
-	 */
-	void ( * open ) ( struct bit_basher *basher );
-	/**
-	 * Close bit-bashing interface (optional)
-	 *
-	 * @v basher		Bit-bashing interface
-	 */
-	void ( * close ) ( struct bit_basher *basher );
 	/**
 	 * Set/clear output bit
 	 *
@@ -56,26 +44,6 @@ struct bit_basher {
 	/** Bit-bashing operations */
 	struct bit_basher_operations *op;
 };
-
-/**
- * Open bit-bashing interface
- *
- * @v basher		Bit-bashing interface
- */
-static inline void open_bit ( struct bit_basher *basher ) {
-	if ( basher->op->open )
-		basher->op->open ( basher );
-}
-
-/**
- * Close bit-bashing interface
- *
- * @v basher		Bit-bashing interface
- */
-static inline void close_bit ( struct bit_basher *basher ) {
-	if ( basher->op->close )
-		basher->op->close ( basher );
-}
 
 extern void write_bit ( struct bit_basher *basher, unsigned int bit_id,
 			unsigned long data );

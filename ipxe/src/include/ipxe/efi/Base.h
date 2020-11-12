@@ -6,7 +6,7 @@
   environment. There are a set of base libraries in the Mde Package that can
   be used to implement base modules.
 
-Copyright (c) 2006 - 2017, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2006 - 2010, Intel Corporation. All rights reserved.<BR>
 Portions copyright (c) 2008 - 2009, Apple Inc. All rights reserved.<BR>
 This program and the accompanying materials
 are licensed and made available under the terms and conditions of the BSD License
@@ -29,12 +29,6 @@ FILE_LICENCE ( BSD3 );
 //
 #include <ipxe/efi/ProcessorBind.h>
 
-#if defined(_MSC_EXTENSIONS)
-//
-// Disable warning when last field of data structure is a zero sized array.
-//
-#pragma warning ( disable : 4200 )
-#endif
 
 /**
   Verifies the storage size of a given data type.
@@ -66,29 +60,6 @@ VERIFY_SIZE_OF (CHAR8, 1);
 VERIFY_SIZE_OF (CHAR16, 2);
 
 //
-// The following three enum types are used to verify that the compiler
-// configuration for enum types is compliant with Section 2.3.1 of the
-// UEFI 2.3 Specification. These enum types and enum values are not
-// intended to be used. A prefix of '__' is used avoid conflicts with
-// other types.
-//
-typedef enum {
-  __VerifyUint8EnumValue = 0xff
-} __VERIFY_UINT8_ENUM_SIZE;
-
-typedef enum {
-  __VerifyUint16EnumValue = 0xffff
-} __VERIFY_UINT16_ENUM_SIZE;
-
-typedef enum {
-  __VerifyUint32EnumValue = 0xffffffff
-} __VERIFY_UINT32_ENUM_SIZE;
-
-VERIFY_SIZE_OF (__VERIFY_UINT8_ENUM_SIZE, 4);
-VERIFY_SIZE_OF (__VERIFY_UINT16_ENUM_SIZE, 4);
-VERIFY_SIZE_OF (__VERIFY_UINT32_ENUM_SIZE, 4);
-
-//
 // The Microsoft* C compiler can removed references to unreferenced data items
 //  if the /OPT:REF linker option is used. We defined a macro as this is a
 //  a non standard extension
@@ -110,131 +81,21 @@ VERIFY_SIZE_OF (__VERIFY_UINT32_ENUM_SIZE, 4);
 #endif
 
 //
-// Should be used in combination with NORETURN to avoid 'noreturn' returns
-// warnings.
+// For symbol name in GNU assembly code, an extra "_" is necessary
 //
-#ifndef UNREACHABLE
-  #if __GNUC__ > 4 || (__GNUC__ == 4 && __GNUC_MINOR__ > 4)
-    ///
-    /// Signal compilers and analyzers that this call is not reachable.  It is
-    /// up to the compiler to remove any code past that point.
-    /// Not implemented by GCC 4.4 or earlier.
-    ///
-    #define UNREACHABLE()  __builtin_unreachable ()
-  #elif defined (__has_feature)
-    #if __has_builtin (__builtin_unreachable)
-      ///
-      /// Signal compilers and analyzers that this call is not reachable.  It is
-      /// up to the compiler to remove any code past that point.
-      ///
-      #define UNREACHABLE()  __builtin_unreachable ()
-    #endif
-  #endif
+#if defined(__GNUC__)
+  ///
+  /// Private worker functions for ASM_PFX()
+  ///
+  #define _CONCATENATE(a, b)  __CONCATENATE(a, b)
+  #define __CONCATENATE(a, b) a ## b
 
-  #ifndef UNREACHABLE
-    ///
-    /// Signal compilers and analyzers that this call is not reachable.  It is
-    /// up to the compiler to remove any code past that point.
-    ///
-    #define UNREACHABLE()
-  #endif
+  ///
+  /// The __USER_LABEL_PREFIX__ macro predefined by GNUC represents the prefix
+  /// on symbols in assembly language.
+  ///
+  #define ASM_PFX(name) _CONCATENATE (__USER_LABEL_PREFIX__, name)
 #endif
-
-//
-// Signaling compilers and analyzers that a certain function cannot return may
-// remove all following code and thus lead to better optimization and less
-// false positives.
-//
-#ifndef NORETURN
-  #if defined (__GNUC__) || defined (__clang__)
-    ///
-    /// Signal compilers and analyzers that the function cannot return.
-    /// It is up to the compiler to remove any code past a call to functions
-    /// flagged with this attribute.
-    ///
-    #define NORETURN  __attribute__((noreturn))
-  #elif defined(_MSC_EXTENSIONS) && !defined(MDE_CPU_EBC)
-    ///
-    /// Signal compilers and analyzers that the function cannot return.
-    /// It is up to the compiler to remove any code past a call to functions
-    /// flagged with this attribute.
-    ///
-    #define NORETURN  __declspec(noreturn)
-  #else
-    ///
-    /// Signal compilers and analyzers that the function cannot return.
-    /// It is up to the compiler to remove any code past a call to functions
-    /// flagged with this attribute.
-    ///
-    #define NORETURN
-  #endif
-#endif
-
-//
-// Should be used in combination with ANALYZER_NORETURN to avoid 'noreturn'
-// returns warnings.
-//
-#ifndef ANALYZER_UNREACHABLE
-  #ifdef __clang_analyzer__
-    #if __has_builtin (__builtin_unreachable)
-      ///
-      /// Signal the analyzer that this call is not reachable.
-      /// This excludes compilers.
-      ///
-      #define ANALYZER_UNREACHABLE()  __builtin_unreachable ()
-    #endif
-  #endif
-
-  #ifndef ANALYZER_UNREACHABLE
-    ///
-    /// Signal the analyzer that this call is not reachable.
-    /// This excludes compilers.
-    ///
-    #define ANALYZER_UNREACHABLE()
-  #endif
-#endif
-
-//
-// Static Analyzers may issue errors about potential NULL-dereferences when
-// dereferencing a pointer, that has been checked before, outside of a
-// NULL-check.  This may lead to false positives, such as when using ASSERT()
-// for verification.
-//
-#ifndef ANALYZER_NORETURN
-  #ifdef __has_feature
-    #if __has_feature (attribute_analyzer_noreturn)
-      ///
-      /// Signal analyzers that the function cannot return.
-      /// This excludes compilers.
-      ///
-      #define ANALYZER_NORETURN  __attribute__((analyzer_noreturn))
-    #endif
-  #endif
-
-  #ifndef ANALYZER_NORETURN
-    ///
-    /// Signal the analyzer that the function cannot return.
-    /// This excludes compilers.
-    ///
-    #define ANALYZER_NORETURN
-  #endif
-#endif
-
-//
-// For symbol name in assembly code, an extra "_" is sometimes necessary
-//
-
-///
-/// Private worker functions for ASM_PFX()
-///
-#define _CONCATENATE(a, b)  __CONCATENATE(a, b)
-#define __CONCATENATE(a, b) a ## b
-
-///
-/// The __USER_LABEL_PREFIX__ macro predefined by GNUC represents the prefix
-/// on symbols in assembly language.
-///
-#define ASM_PFX(name) _CONCATENATE (__USER_LABEL_PREFIX__, name)
 
 #if __APPLE__
   //
@@ -266,20 +127,6 @@ typedef struct {
   UINT16  Data3;
   UINT8   Data4[8];
 } GUID;
-
-///
-/// 4-byte buffer. An IPv4 internet protocol address.
-///
-typedef struct {
-  UINT8 Addr[4];
-} IPv4_ADDRESS;
-
-///
-/// 16-byte buffer. An IPv6 internet protocol address.
-///
-typedef struct {
-  UINT8 Addr[16];
-} IPv6_ADDRESS;
 
 //
 // 8-bytes unsigned value that represents a physical system address.
@@ -341,7 +188,7 @@ struct _LIST_ENTRY {
 
 //
 //  UEFI specification claims 1 and 0. We are concerned about the
-//  compiler portability so we did it this way.
+//  complier portability so we did it this way.
 //
 
 ///
@@ -361,22 +208,6 @@ struct _LIST_ENTRY {
 ///
 #define NULL  ((VOID *) 0)
 
-//
-// Null character
-//
-#define CHAR_NULL             0x0000
-
-///
-/// Maximum values for common UEFI Data Types
-///
-#define MAX_INT8    ((INT8)0x7F)
-#define MAX_UINT8   ((UINT8)0xFF)
-#define MAX_INT16   ((INT16)0x7FFF)
-#define MAX_UINT16  ((UINT16)0xFFFF)
-#define MAX_INT32   ((INT32)0x7FFFFFFF)
-#define MAX_UINT32  ((UINT32)0xFFFFFFFF)
-#define MAX_INT64   ((INT64)0x7FFFFFFFFFFFFFFFULL)
-#define MAX_UINT64  ((UINT64)0xFFFFFFFFFFFFFFFFULL)
 
 #define  BIT0     0x00000001
 #define  BIT1     0x00000002
@@ -564,7 +395,6 @@ struct _LIST_ENTRY {
 //  VA_END (VA_LIST Marker) - Clear Marker
 //  VA_ARG (VA_LIST Marker, var arg size) - Use Marker to get an argument from
 //    the ... list. You must know the size and pass it in this macro.
-//  VA_COPY (VA_LIST Dest, VA_LIST Start) - Initialize Dest as a copy of Start.
 //
 //  example:
 //
@@ -626,38 +456,7 @@ struct _LIST_ENTRY {
 
 #define VA_END(Marker)                ((void)0)
 
-// For some ARM RVCT compilers, __va_copy is not defined
-#ifndef __va_copy
-  #define __va_copy(dest, src) ((void)((dest) = (src)))
-#endif
-
-#define VA_COPY(Dest, Start)          __va_copy (Dest, Start)
-
-#elif defined(__GNUC__)
-
-#if defined(MDE_CPU_X64) && !defined(NO_MSABI_VA_FUNCS)
-//
-// X64 only. Use MS ABI version of GCC built-in macros for variable argument lists.
-//
-///
-/// Both GCC and LLVM 3.8 for X64 support new variable argument intrinsics for Microsoft ABI
-///
-
-///
-/// Variable used to traverse the list of arguments. This type can vary by
-/// implementation and could be an array or structure.
-///
-typedef __builtin_ms_va_list VA_LIST;
-
-#define VA_START(Marker, Parameter)  __builtin_ms_va_start (Marker, Parameter)
-
-#define VA_ARG(Marker, TYPE)         ((sizeof (TYPE) < sizeof (UINTN)) ? (TYPE)(__builtin_va_arg (Marker, UINTN)) : (TYPE)(__builtin_va_arg (Marker, TYPE)))
-
-#define VA_END(Marker)               __builtin_ms_va_end (Marker)
-
-#define VA_COPY(Dest, Start)         __builtin_ms_va_copy (Dest, Start)
-
-#else
+#elif defined(__GNUC__) && !defined(NO_BUILTIN_VA_FUNCS)
 //
 // Use GCC built-in macros for variable argument lists.
 //
@@ -673,10 +472,6 @@ typedef __builtin_va_list VA_LIST;
 #define VA_ARG(Marker, TYPE)         ((sizeof (TYPE) < sizeof (UINTN)) ? (TYPE)(__builtin_va_arg (Marker, UINTN)) : (TYPE)(__builtin_va_arg (Marker, TYPE)))
 
 #define VA_END(Marker)               __builtin_va_end (Marker)
-
-#define VA_COPY(Dest, Start)         __builtin_va_copy (Dest, Start)
-
-#endif
 
 #else
 ///
@@ -701,7 +496,7 @@ typedef CHAR8 *VA_LIST;
   @return  A pointer to the beginning of a variable argument list.
 
 **/
-#define VA_START(Marker, Parameter) (Marker = (VA_LIST) ((UINTN) & (Parameter) + _INT_SIZE_OF (Parameter)))
+#define VA_START(Marker, Parameter) (Marker = (VA_LIST) & (Parameter) + _INT_SIZE_OF (Parameter))
 
 /**
   Returns an argument of a specified type from a variable argument list and updates
@@ -732,19 +527,6 @@ typedef CHAR8 *VA_LIST;
 
 **/
 #define VA_END(Marker)      (Marker = (VA_LIST) 0)
-
-/**
-  Initializes a VA_LIST as a copy of an existing VA_LIST.
-
-  This macro initializes Dest as a copy of Start, as if the VA_START macro had been applied to Dest
-  followed by the same sequence of uses of the VA_ARG macro as had previously been used to reach
-  the present state of Start.
-
-  @param   Dest   VA_LIST used to traverse the list of arguments.
-  @param   Start  VA_LIST used to traverse the list of arguments.
-
-**/
-#define VA_COPY(Dest, Start)  ((void)((Dest) = (Start)))
 
 #endif
 
@@ -793,15 +575,7 @@ typedef UINTN  *BASE_LIST;
   @return  Offset, in bytes, of field.
 
 **/
-#ifdef __GNUC__
-#if __GNUC__ >= 4
-#define OFFSET_OF(TYPE, Field) ((UINTN) __builtin_offsetof(TYPE, Field))
-#endif
-#endif
-
-#ifndef OFFSET_OF
 #define OFFSET_OF(TYPE, Field) ((UINTN) &(((TYPE *)0)->Field))
-#endif
 
 /**
   Macro that returns a pointer to the data structure that contains a specified field of
@@ -896,21 +670,9 @@ typedef UINTN  *BASE_LIST;
   @return  Minimum of two operands.
 
 **/
+
 #define MIN(a, b)                       \
   (((a) < (b)) ? (a) : (b))
-
-/**
-  Return the absolute value of a signed operand.
-
-  This macro returns the absolute value of the signed operand specified by a.
-
-  @param   a        The signed operand.
-
-  @return  The absolute value of the signed operand.
-
-**/
-#define ABS(a)                          \
-  (((a) < 0) ? (-(a)) : (a))
 
 //
 // Status codes common to all execution phases
@@ -1114,17 +876,6 @@ typedef UINTN RETURN_STATUS;
 ///
 #define RETURN_INVALID_LANGUAGE      ENCODE_ERROR (32)
 
-///
-/// The security status of the data is unknown or compromised
-/// and the data must be updated or replaced to restore a valid
-/// security status.
-///
-#define RETURN_COMPROMISED_DATA      ENCODE_ERROR (33)
-
-///
-/// A HTTP error occurred during the network operation.
-///
-#define RETURN_HTTP_ERROR            ENCODE_ERROR (35)
 
 ///
 /// The string contained one or more characters that
@@ -1148,18 +899,6 @@ typedef UINTN RETURN_STATUS;
 /// truncated to the buffer size.
 ///
 #define RETURN_WARN_BUFFER_TOO_SMALL ENCODE_WARNING (4)
-
-///
-/// The data has not been updated within the timeframe set by
-/// local policy for this type of data.
-///
-#define RETURN_WARN_STALE_DATA       ENCODE_WARNING (5)
-
-///
-/// The resulting buffer contains UEFI-compliant file system.
-///
-#define RETURN_WARN_FILE_SYSTEM      ENCODE_WARNING (6)
-
 
 /**
   Returns a 16-bit signature built from 2 ASCII characters.
@@ -1213,60 +952,6 @@ typedef UINTN RETURN_STATUS;
 **/
 #define SIGNATURE_64(A, B, C, D, E, F, G, H) \
     (SIGNATURE_32 (A, B, C, D) | ((UINT64) (SIGNATURE_32 (E, F, G, H)) << 32))
-
-#if defined(_MSC_EXTENSIONS) && !defined (__INTEL_COMPILER) && !defined (MDE_CPU_EBC)
-  #pragma intrinsic(_ReturnAddress)
-  /**
-    Get the return address of the calling function.
-
-    Based on intrinsic function _ReturnAddress that provides the address of
-    the instruction in the calling function that will be executed after
-    control returns to the caller.
-
-    @param L    Return Level.
-
-    @return The return address of the calling function or 0 if L != 0.
-
-  **/
-  #define RETURN_ADDRESS(L)     ((L == 0) ? _ReturnAddress() : (VOID *) 0)
-#elif defined(__GNUC__)
-  void * __builtin_return_address (unsigned int level);
-  /**
-    Get the return address of the calling function.
-
-    Based on built-in Function __builtin_return_address that returns
-    the return address of the current function, or of one of its callers.
-
-    @param L    Return Level.
-
-    @return The return address of the calling function.
-
-  **/
-  #define RETURN_ADDRESS(L)     __builtin_return_address (L)
-#else
-  /**
-    Get the return address of the calling function.
-
-    @param L    Return Level.
-
-    @return 0 as compilers don't support this feature.
-
-  **/
-  #define RETURN_ADDRESS(L)     ((VOID *) 0)
-#endif
-
-/**
-  Return the number of elements in an array.
-
-  @param  Array  An object of array type. Array is only used as an argument to
-                 the sizeof operator, therefore Array is never evaluated. The
-                 caller is responsible for ensuring that Array's type is not
-                 incomplete; that is, Array must have known constant size.
-
-  @return The number of elements in Array. The result has type UINTN.
-
-**/
-#define ARRAY_SIZE(Array) (sizeof (Array) / sizeof ((Array)[0]))
 
 #endif
 

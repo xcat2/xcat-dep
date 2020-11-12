@@ -27,10 +27,10 @@ include_once $top_inc;
 
 ?>
 <form action="build.php" method=POST>
-  <input type="hidden" name="version" value = "<?php echo $version ?>">
+  <input type="hidden" name="version" value = "<? echo $version ?>">
   <h3>To create an image:</h3>
   <ol>
-    <?php require ( "directions.php" ); ?>
+    <? require ( "directions.php" ); ?>
     <li>
       Generate and download an image:
       <input type="submit" name="A" value="Get Image">
@@ -44,4 +44,4 @@ include_once $top_inc;
   </ol>
 </form>
 
-<?php include_once $bottom_inc ?>
+<? include_once $bottom_inc ?>

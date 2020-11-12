@@ -21,8 +21,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 FILE_LICENCE ( GPL2_ONLY );
@@ -246,7 +245,7 @@ static void sky2_power_aux(struct sky2_hw *hw)
 			    Y2_COR_CLK_LNK2_DIS | Y2_CLK_GAT_LNK2_DIS);
 
 	/* switch power to VAUX */
-	if (sky2_read32(hw, B0_CTST) & Y2_VAUX_AVAIL)
+	if (sky2_read16(hw, B0_CTST) & Y2_VAUX_AVAIL)
 		sky2_write8(hw, B0_POWER_CTRL,
 			    (PC_VAUX_ENA | PC_VCC_ENA |
 			     PC_VAUX_ON | PC_VCC_OFF));
@@ -783,7 +782,7 @@ static void sky2_mac_init(struct sky2_hw *hw, unsigned port)
 	sky2_write8(hw, SK_REG(port, TX_GMF_CTRL_T), GMF_RST_CLR);
 	sky2_write16(hw, SK_REG(port, TX_GMF_CTRL_T), GMF_OPER_ON);
 
-	/* On chips without ram buffer, pause is controlled by MAC level */
+	/* On chips without ram buffer, pause is controled by MAC level */
 	if (!(hw->flags & SKY2_HW_RAM_BUFFER)) {
 		sky2_write8(hw, SK_REG(port, RX_GMF_LP_THR), 768/8);
 		sky2_write8(hw, SK_REG(port, RX_GMF_UP_THR), 1024/8);
@@ -1646,6 +1645,7 @@ static void sky2_status_intr(struct sky2_hw *hw, u16 idx)
 
 	rmb();
 	do {
+		struct sky2_port *sky2;
 		struct sky2_status_le *le  = hw->st_le + hw->st_idx;
 		unsigned port;
 		struct net_device *dev;
@@ -1659,6 +1659,7 @@ static void sky2_status_intr(struct sky2_hw *hw, u16 idx)
 
 		port = le->css & CSS_LINK_BIT;
 		dev = hw->dev[port];
+		sky2 = netdev_priv(dev);
 		length = le16_to_cpu(le->length);
 		status = le32_to_cpu(le->status);
 
@@ -2157,6 +2158,9 @@ static void sky2_set_multicast(struct net_device *dev)
 	unsigned port = sky2->port;
 	u16 reg;
 	u8 filter[8];
+	int rx_pause;
+
+	rx_pause = (sky2->flow_status == FC_RX || sky2->flow_status == FC_BOTH);
 
 	reg = gma_read16(hw, port, GM_RX_CTRL);
 	reg |= GM_RXCR_UCF_ENA;
@@ -2260,7 +2264,8 @@ static struct net_device_operations sky2_operations = {
 	.irq      = sky2_net_irq
 };
 
-static int sky2_probe(struct pci_device *pdev)
+static int sky2_probe(struct pci_device *pdev,
+		      const struct pci_device_id *ent __unused)
 {
 	struct net_device *dev;
 	struct sky2_hw *hw;
@@ -2278,7 +2283,7 @@ static int sky2_probe(struct pci_device *pdev)
 
 	hw->pdev = pdev;
 
-	hw->regs = (unsigned long)pci_ioremap(pdev, pci_bar_start(pdev, PCI_BASE_ADDRESS_0), 0x4000);
+	hw->regs = (unsigned long)ioremap(pci_bar_start(pdev, PCI_BASE_ADDRESS_0), 0x4000);
 	if (!hw->regs) {
 		DBG(PFX "cannot map device registers\n");
 		goto err_out_free_hw;
@@ -2335,7 +2340,7 @@ static int sky2_probe(struct pci_device *pdev)
 			sky2_show_addr(dev1);
 	}
 
-	pci_set_drvdata(pdev, hw);
+	pci_set_drvdata(pdev, dev);
 
 	return 0;
 

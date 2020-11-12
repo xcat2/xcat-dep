@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <ipxe/dhcpopts.h>
@@ -17,6 +17,16 @@ struct nvs_device;
 struct refcnt;
 
 /**
+ * A fragment of a non-volatile storage device used for stored options
+ */
+struct nvo_fragment {
+	/** Starting address of fragment within NVS device */
+	unsigned int address;
+	/** Length of fragment */
+	size_t len;
+};
+
+/**
  * A block of non-volatile stored options
  */
 struct nvo_block {
@@ -24,33 +34,21 @@ struct nvo_block {
 	struct settings settings;
 	/** Underlying non-volatile storage device */
 	struct nvs_device *nvs;
-	/** Address within NVS device */
-	unsigned int address;
-	/** Length of options data */
-	size_t len;
+	/** List of option-containing fragments
+	 *
+	 * The list is terminated by a fragment with a length of zero.
+	 */
+	struct nvo_fragment *fragments;
+	/** Total length of option-containing fragments */
+	size_t total_len;
 	/** Option-containing data */
 	void *data;
-	/**
-	 * Resize non-volatile stored option block
-	 *
-	 * @v nvo		Non-volatile options block
-	 * @v len		New size
-	 * @ret rc		Return status code
-	 */
-	int ( * resize ) ( struct nvo_block *nvo, size_t len );
 	/** DHCP options block */
 	struct dhcp_options dhcpopts;
 };
 
-/** Name of non-volatile options settings block */
-#define NVO_SETTINGS_NAME "nvo"
-
-extern int nvo_applies ( struct settings *settings,
-			 const struct setting *setting );
 extern void nvo_init ( struct nvo_block *nvo, struct nvs_device *nvs,
-		       size_t address, size_t len,
-		       int ( * resize ) ( struct nvo_block *nvo, size_t len ),
-		       struct refcnt *refcnt );
+		       struct nvo_fragment *fragments, struct refcnt *refcnt );
 extern int register_nvo ( struct nvo_block *nvo, struct settings *parent );
 extern void unregister_nvo ( struct nvo_block *nvo );
 

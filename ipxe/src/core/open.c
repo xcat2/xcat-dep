@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdarg.h>
 #include <string.h>
@@ -38,22 +33,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 
 /**
- * Find opener for URI scheme
- *
- * @v scheme		URI scheme
- * @ret opener		Opener, or NULL
- */
-struct uri_opener * xfer_uri_opener ( const char *scheme ) {
-	struct uri_opener *opener;
-
-	for_each_table_entry ( opener, URI_OPENERS ) {
-		if ( strcmp ( scheme, opener->scheme ) == 0 )
-			return opener;
-	}
-	return NULL;
-}
-
-/**
  * Open URI
  *
  * @v intf		Data transfer interface
@@ -66,38 +45,29 @@ struct uri_opener * xfer_uri_opener ( const char *scheme ) {
 int xfer_open_uri ( struct interface *intf, struct uri *uri ) {
 	struct uri_opener *opener;
 	struct uri *resolved_uri;
-	int rc;
+	int rc = -ENOTSUP;
 
 	/* Resolve URI */
 	resolved_uri = resolve_uri ( cwuri, uri );
-	if ( ! resolved_uri ) {
-		rc = -ENOMEM;
-		goto err_resolve_uri;
-	}
+	if ( ! resolved_uri )
+		return -ENOMEM;
 
 	/* Find opener which supports this URI scheme */
-	opener = xfer_uri_opener ( resolved_uri->scheme );
-	if ( ! opener ) {
-		DBGC ( INTF_COL ( intf ), "INTF " INTF_FMT " attempted to open "
-		       "unsupported URI scheme \"%s\"\n",
-		       INTF_DBG ( intf ), resolved_uri->scheme );
-		rc = -ENOTSUP;
-		goto err_opener;
+	for_each_table_entry ( opener, URI_OPENERS ) {
+		if ( strcmp ( resolved_uri->scheme, opener->scheme ) == 0 ) {
+			DBGC ( INTF_COL ( intf ), "INTF " INTF_FMT
+			       " opening %s URI\n", INTF_DBG ( intf ),
+			       resolved_uri->scheme );
+			rc = opener->open ( intf, resolved_uri );
+			goto done;
+		}
 	}
-
-	/* Call opener */
-	DBGC ( INTF_COL ( intf ), "INTF " INTF_FMT " opening %s URI\n",
+	DBGC ( INTF_COL ( intf ), "INTF " INTF_FMT " attempted to open "
+	       "unsupported URI scheme \"%s\"\n",
 	       INTF_DBG ( intf ), resolved_uri->scheme );
-	if ( ( rc = opener->open ( intf, resolved_uri ) ) != 0 ) {
-		DBGC ( INTF_COL ( intf ), "INTF " INTF_FMT " could not open: "
-		       "%s\n", INTF_DBG ( intf ), strerror ( rc ) );
-		goto err_open;
-	}
 
- err_open:
- err_opener:
+ done:
 	uri_put ( resolved_uri );
- err_resolve_uri:
 	return rc;
 }
 
@@ -147,8 +117,10 @@ int xfer_open_socket ( struct interface *intf, int semantics,
 	       socket_family_name ( peer->sa_family ) );
 
 	for_each_table_entry ( opener, SOCKET_OPENERS ) {
-		if ( opener->semantics == semantics )
+		if ( ( opener->semantics == semantics ) &&
+		     ( opener->family == peer->sa_family ) ) {
 			return opener->open ( intf, peer, local );
+		}
 	}
 
 	DBGC ( INTF_COL ( intf ), "INTF " INTF_FMT " attempted to open "

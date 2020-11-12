@@ -13,22 +13,16 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stddef.h>
-#include <string.h>
-#include <errno.h>
 #include <assert.h>
 #include <ipxe/efi/efi.h>
-#include <ipxe/efi/Protocol/ConsoleControl/ConsoleControl.h>
 #include <ipxe/ansiesc.h>
-#include <ipxe/console.h>
-#include <ipxe/init.h>
-#include <config/console.h>
+#include <console.h>
 
 #define ATTR_BOLD		0x08
 
@@ -54,29 +48,17 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 #define ATTR_DEFAULT		ATTR_FCOL_WHITE
 
-/* Set default console usage if applicable */
-#if ! ( defined ( CONSOLE_EFI ) && CONSOLE_EXPLICIT ( CONSOLE_EFI ) )
-#undef CONSOLE_EFI
-#define CONSOLE_EFI ( CONSOLE_USAGE_ALL & ~CONSOLE_USAGE_LOG )
-#endif
-
 /** Current character attribute */
 static unsigned int efi_attr = ATTR_DEFAULT;
-
-/** Console control protocol */
-static EFI_CONSOLE_CONTROL_PROTOCOL *conctrl;
-EFI_REQUEST_PROTOCOL ( EFI_CONSOLE_CONTROL_PROTOCOL, &conctrl );
 
 /**
  * Handle ANSI CUP (cursor position)
  *
- * @v ctx		ANSI escape sequence context
  * @v count		Parameter count
  * @v params[0]		Row (1 is top)
  * @v params[1]		Column (1 is left)
  */
-static void efi_handle_cup ( struct ansiesc_context *ctx __unused,
-			     unsigned int count __unused, int params[] ) {
+static void efi_handle_cup ( unsigned int count __unused, int params[] ) {
 	EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *conout = efi_systab->ConOut;
 	int cx = ( params[1] - 1 );
 	int cy = ( params[0] - 1 );
@@ -92,13 +74,11 @@ static void efi_handle_cup ( struct ansiesc_context *ctx __unused,
 /**
  * Handle ANSI ED (erase in page)
  *
- * @v ctx		ANSI escape sequence context
  * @v count		Parameter count
  * @v params[0]		Region to erase
  */
-static void efi_handle_ed ( struct ansiesc_context *ctx __unused,
-			    unsigned int count __unused,
-			    int params[] __unused ) {
+static void efi_handle_ed ( unsigned int count __unused,
+			     int params[] __unused ) {
 	EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *conout = efi_systab->ConOut;
 
 	/* We assume that we always clear the whole screen */
@@ -110,12 +90,10 @@ static void efi_handle_ed ( struct ansiesc_context *ctx __unused,
 /**
  * Handle ANSI SGR (set graphics rendition)
  *
- * @v ctx		ANSI escape sequence context
  * @v count		Parameter count
  * @v params		List of graphic rendition aspects
  */
-static void efi_handle_sgr ( struct ansiesc_context *ctx __unused,
-			     unsigned int count, int params[] ) {
+static void efi_handle_sgr ( unsigned int count, int params[] ) {
 	EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *conout = efi_systab->ConOut;
 	static const uint8_t efi_attr_fcols[10] = {
 		ATTR_FCOL_BLACK, ATTR_FCOL_RED, ATTR_FCOL_GREEN,
@@ -152,43 +130,11 @@ static void efi_handle_sgr ( struct ansiesc_context *ctx __unused,
 	conout->SetAttribute ( conout, efi_attr );
 }
 
-/**
- * Handle ANSI DECTCEM set (show cursor)
- *
- * @v ctx		ANSI escape sequence context
- * @v count		Parameter count
- * @v params		List of graphic rendition aspects
- */
-static void efi_handle_dectcem_set ( struct ansiesc_context *ctx __unused,
-				     unsigned int count __unused,
-				     int params[] __unused ) {
-	EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *conout = efi_systab->ConOut;
-
-	conout->EnableCursor ( conout, TRUE );
-}
-
-/**
- * Handle ANSI DECTCEM reset (hide cursor)
- *
- * @v ctx		ANSI escape sequence context
- * @v count		Parameter count
- * @v params		List of graphic rendition aspects
- */
-static void efi_handle_dectcem_reset ( struct ansiesc_context *ctx __unused,
-				       unsigned int count __unused,
-				       int params[] __unused ) {
-	EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *conout = efi_systab->ConOut;
-
-	conout->EnableCursor ( conout, FALSE );
-}
-
 /** EFI console ANSI escape sequence handlers */
 static struct ansiesc_handler efi_ansiesc_handlers[] = {
 	{ ANSIESC_CUP, efi_handle_cup },
 	{ ANSIESC_ED, efi_handle_ed },
 	{ ANSIESC_SGR, efi_handle_sgr },
-	{ ANSIESC_DECTCEM_SET, efi_handle_dectcem_set },
-	{ ANSIESC_DECTCEM_RESET, efi_handle_dectcem_reset },
 	{ 0, NULL }
 };
 
@@ -239,14 +185,6 @@ static const char *ansi_sequences[] = {
 	[SCAN_DELETE] = "[3~",
 	[SCAN_PAGE_UP] = "[5~",
 	[SCAN_PAGE_DOWN] = "[6~",
-	[SCAN_F5] = "[15~",
-	[SCAN_F6] = "[17~",
-	[SCAN_F7] = "[18~",
-	[SCAN_F8] = "[19~",
-	[SCAN_F9] = "[20~",
-	[SCAN_F10] = "[21~",
-	[SCAN_F11] = "[23~",
-	[SCAN_F12] = "[24~",
 	/* EFI translates some (but not all) incoming escape sequences
 	 * via the serial console into equivalent scancodes.  When it
 	 * doesn't recognise a sequence, it helpfully(!) translates
@@ -281,7 +219,6 @@ static int efi_getchar ( void ) {
 	const char *ansi_seq;
 	EFI_INPUT_KEY key;
 	EFI_STATUS efirc;
-	int rc;
 
 	/* If we are mid-sequence, pass out the next byte */
 	if ( *ansi_input )
@@ -289,8 +226,8 @@ static int efi_getchar ( void ) {
 
 	/* Read key from real EFI console */
 	if ( ( efirc = conin->ReadKeyStroke ( conin, &key ) ) != 0 ) {
-		rc = -EEFI ( efirc );
-		DBG ( "EFI could not read keystroke: %s\n", strerror ( rc ) );
+		DBG ( "EFI could not read keystroke: %s\n",
+		      efi_strerror ( efirc ) );
 		return 0;
 	}
 	DBG2 ( "EFI read key stroke with unicode %04x scancode %04x\n",
@@ -332,37 +269,8 @@ static int efi_iskey ( void ) {
 	return 0;
 }
 
-/** EFI console driver */
 struct console_driver efi_console __console_driver = {
 	.putchar = efi_putchar,
 	.getchar = efi_getchar,
 	.iskey = efi_iskey,
-	.usage = CONSOLE_EFI,
-};
-
-/**
- * Initialise EFI console
- *
- */
-static void efi_console_init ( void ) {
-	EFI_CONSOLE_CONTROL_SCREEN_MODE mode;
-
-	/* On some older EFI 1.10 implementations, we must use the
-	 * (now obsolete) EFI_CONSOLE_CONTROL_PROTOCOL to switch the
-	 * console into text mode.
-	 */
-	if ( conctrl ) {
-		conctrl->GetMode ( conctrl, &mode, NULL, NULL );
-		if ( mode != EfiConsoleControlScreenText ) {
-			conctrl->SetMode ( conctrl,
-					   EfiConsoleControlScreenText );
-		}
-	}
-}
-
-/**
- * EFI console initialisation function
- */
-struct init_fn efi_console_init_fn __init_fn ( INIT_EARLY ) = {
-	.initialise = efi_console_init,
 };

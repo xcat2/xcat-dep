@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <string.h>
@@ -35,8 +35,7 @@ static inline size_t base64_decoded_max_len ( const char *encoded ) {
 	return ( ( ( strlen ( encoded ) + 4 - 1 ) / 4 ) * 3 );
 }
 
-extern size_t base64_encode ( const void *raw, size_t raw_len, char *data,
-			      size_t len );
-extern int base64_decode ( const char *encoded, void *data, size_t len );
+extern void base64_encode ( const uint8_t *raw, size_t len, char *encoded );
+extern int base64_decode ( const char *encoded, uint8_t *raw );
 
 #endif /* _IPXE_BASE64_H */

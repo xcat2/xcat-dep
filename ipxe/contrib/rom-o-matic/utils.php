@@ -1,4 +1,4 @@
-<?php // -*- Mode: PHP; -*-
+<? // -*- Mode: PHP; -*-
 
 /**
  * Copyright (C) 2009 Marty Connor <mdc@etherboot.org>.
@@ -131,8 +131,7 @@ function parse_nic_file ()
         if ( strpos ( $first_eight_chars, "family" ) === 0 ) {
 
             // get pathname of NIC driver
-            #list ( $dummy, $nic ) = split( "[ \t]+", $line );
-            list ( $dummy, $nic ) = explode("\t", $line);
+            list ( $dummy, $nic ) = split( "[ \t]+", $line );
             settype ( $nic, "string" );
 
             // extract filename name of driver from pathname

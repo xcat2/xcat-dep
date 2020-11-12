@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ipxe/list.h>
 #include <ipxe/init.h>
@@ -39,16 +34,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 static LIST_HEAD ( run_queue );
 
 /**
- * Get pointer to object containing process
- *
- * @v process		Process
- * @ret object		Containing object
- */
-void * process_object ( struct process *process ) {
-	return ( ( ( void * ) process ) - process->desc->offset );
-}
-
-/**
  * Add process to process list
  *
  * @v process		Process
@@ -58,13 +43,13 @@ void * process_object ( struct process *process ) {
  */
 void process_add ( struct process *process ) {
 	if ( ! process_running ( process ) ) {
-		DBGC ( PROC_COL ( process ), "PROCESS " PROC_FMT
-		       " starting\n", PROC_DBG ( process ) );
+		DBGC ( process, "PROCESS %p (%p) starting\n",
+		       process, process->step );
 		ref_get ( process->refcnt );
 		list_add_tail ( &process->list, &run_queue );
 	} else {
-		DBGC ( PROC_COL ( process ), "PROCESS " PROC_FMT
-		       " already started\n", PROC_DBG ( process ) );
+		DBGC ( process, "PROCESS %p (%p) already started\n",
+		       process, process->step );
 	}
 }
 
@@ -78,14 +63,14 @@ void process_add ( struct process *process ) {
  */
 void process_del ( struct process *process ) {
 	if ( process_running ( process ) ) {
-		DBGC ( PROC_COL ( process ), "PROCESS " PROC_FMT
-		       " stopping\n", PROC_DBG ( process ) );
+		DBGC ( process, "PROCESS %p (%p) stopping\n",
+		       process, process->step );
 		list_del ( &process->list );
 		INIT_LIST_HEAD ( &process->list );
 		ref_put ( process->refcnt );
 	} else {
-		DBGC ( PROC_COL ( process ), "PROCESS " PROC_FMT
-		       " already stopped\n", PROC_DBG ( process ) );
+		DBGC ( process, "PROCESS %p (%p) already stopped\n",
+		       process, process->step );
 	}
 }
 
@@ -97,25 +82,17 @@ void process_del ( struct process *process ) {
  */
 void step ( void ) {
 	struct process *process;
-	struct process_descriptor *desc;
-	void *object;
 
 	if ( ( process = list_first_entry ( &run_queue, struct process,
 					    list ) ) ) {
+		list_del ( &process->list );
+		list_add_tail ( &process->list, &run_queue );
 		ref_get ( process->refcnt ); /* Inhibit destruction mid-step */
-		desc = process->desc;
-		object = process_object ( process );
-		if ( desc->reschedule ) {
-			list_del ( &process->list );
-			list_add_tail ( &process->list, &run_queue );
-		} else {
-			process_del ( process );
-		}
-		DBGC2 ( PROC_COL ( process ), "PROCESS " PROC_FMT
-			" executing\n", PROC_DBG ( process ) );
-		desc->step ( object );
-		DBGC2 ( PROC_COL ( process ), "PROCESS " PROC_FMT
-			" finished executing\n", PROC_DBG ( process ) );
+		DBGC2 ( process, "PROCESS %p (%p) executing\n",
+			process, process->step );
+		process->step ( process );
+		DBGC2 ( process, "PROCESS %p (%p) finished executing\n",
+			process, process->step );
 		ref_put ( process->refcnt ); /* Allow destruction */
 	}
 }

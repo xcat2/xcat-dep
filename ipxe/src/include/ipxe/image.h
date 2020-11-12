@@ -4,11 +4,11 @@
 /**
  * @file
  *
- * Executable images
+ * Executable/loadable images
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ipxe/tables.h>
 #include <ipxe/list.h>
@@ -16,11 +16,9 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #include <ipxe/refcnt.h>
 
 struct uri;
-struct pixel_buffer;
-struct asn1_cursor;
 struct image_type;
 
-/** An executable image */
+/** An executable or loadable image */
 struct image {
 	/** Reference count */
 	struct refcnt refcnt;
@@ -31,7 +29,7 @@ struct image {
 	/** URI of image */
 	struct uri *uri;
 	/** Name */
-	char *name;
+	char name[16];
 	/** Flags */
 	unsigned int flags;
 
@@ -44,13 +42,20 @@ struct image {
 
 	/** Image type, if known */
 	struct image_type *type;
+	/** Image type private data */
+	union {
+		physaddr_t phys;
+		userptr_t user;
+		unsigned long ul;
+	} priv;
 
 	/** Replacement image
 	 *
 	 * An image wishing to replace itself with another image (in a
 	 * style similar to a Unix exec() call) should return from its
 	 * exec() method with the replacement image set to point to
-	 * the new image.
+	 * the new image.  The new image must already be in a suitable
+	 * state for execution (i.e. loaded).
 	 *
 	 * If an image unregisters itself as a result of being
 	 * executed, it must make sure that its replacement image (if
@@ -60,59 +65,43 @@ struct image {
 	struct image *replacement;
 };
 
-/** Image is registered */
-#define IMAGE_REGISTERED 0x00001
+/** Image is loaded */
+#define IMAGE_LOADED 0x0001
 
-/** Image is selected for execution */
-#define IMAGE_SELECTED 0x0002
-
-/** Image is trusted */
-#define IMAGE_TRUSTED 0x0004
-
-/** Image will be automatically unregistered after execution */
-#define IMAGE_AUTO_UNREGISTER 0x0008
-
-/** An executable image type */
+/** An executable or loadable image type */
 struct image_type {
 	/** Name of this image type */
 	char *name;
 	/**
-	 * Probe image
+	 * Load image into memory
 	 *
-	 * @v image		Image
+	 * @v image		Executable/loadable image
 	 * @ret rc		Return status code
 	 *
-	 * Return success if the image is of this image type.
+	 * Load the image into memory at the correct location as
+	 * determined by the file format.
+	 *
+	 * If the file image is in the correct format, the method must
+	 * update @c image->type to point to its own type (unless @c
+	 * image->type is already set).  This allows the autoloading
+	 * code to disambiguate between "this is not my image format"
+	 * and "there is something wrong with this image".  In
+	 * particular, setting @c image->type and then returning an
+	 * error will cause image_autoload() to abort and return an
+	 * error, rather than continuing to the next image type.
 	 */
-	int ( * probe ) ( struct image *image );
+	int ( * load ) ( struct image *image );
 	/**
-	 * Execute image
+	 * Execute loaded image
 	 *
-	 * @v image		Image
+	 * @v image		Loaded image
 	 * @ret rc		Return status code
+	 *
+	 * Note that the image may be invalidated by the act of
+	 * execution, i.e. an image is allowed to choose to unregister
+	 * (and so potentially free) itself.
 	 */
 	int ( * exec ) ( struct image *image );
-	/**
-	 * Create pixel buffer from image
-	 *
-	 * @v image		Image
-	 * @v pixbuf		Pixel buffer to fill in
-	 * @ret rc		Return status code
-	 */
-	int ( * pixbuf ) ( struct image *image, struct pixel_buffer **pixbuf );
-	/**
-	 * Extract ASN.1 object from image
-	 *
-	 * @v image		Image
-	 * @v offset		Offset within image
-	 * @v cursor		ASN.1 cursor to fill in
-	 * @ret next		Offset to next image, or negative error
-	 *
-	 * The caller is responsible for eventually calling free() on
-	 * the allocated ASN.1 cursor.
-	 */
-	int ( * asn1 ) ( struct image *image, size_t offset,
-			 struct asn1_cursor **cursor );
 };
 
 /**
@@ -136,22 +125,17 @@ struct image_type {
  */
 #define PROBE_PXE 03
 
-/** Executable image type table */
+/** Executable or loadable image type table */
 #define IMAGE_TYPES __table ( struct image_type, "image_types" )
 
-/** An executable image type */
+/** An executable or loadable image type */
 #define __image_type( probe_order ) __table_entry ( IMAGE_TYPES, probe_order )
 
 extern struct list_head images;
-extern struct image *current_image;
 
 /** Iterate over all registered images */
 #define for_each_image( image ) \
 	list_for_each_entry ( (image), &images, list )
-
-/** Iterate over all registered images, safe against deletion */
-#define for_each_image_safe( image, tmp ) \
-	list_for_each_entry_safe ( (image), (tmp), &images, list )
 
 /**
  * Test for existence of images
@@ -162,30 +146,18 @@ static inline int have_images ( void ) {
 	return ( ! list_empty ( &images ) );
 }
 
-/**
- * Retrieve first image
- *
- * @ret image		Image, or NULL
- */
-static inline struct image * first_image ( void ) {
-	return list_first_entry ( &images, struct image, list );
-}
-
-extern struct image * alloc_image ( struct uri *uri );
+extern struct image * alloc_image ( void );
 extern int image_set_uri ( struct image *image, struct uri *uri );
-extern int image_set_name ( struct image *image, const char *name );
 extern int image_set_cmdline ( struct image *image, const char *cmdline );
 extern int register_image ( struct image *image );
 extern void unregister_image ( struct image *image );
+extern void promote_image ( struct image *image );
 struct image * find_image ( const char *name );
+extern int image_load ( struct image *image );
+extern int image_autoload ( struct image *image );
 extern int image_exec ( struct image *image );
-extern int image_replace ( struct image *replacement );
-extern int image_select ( struct image *image );
-extern struct image * image_find_selected ( void );
-extern int image_set_trust ( int require_trusted, int permanent );
-extern int image_pixbuf ( struct image *image, struct pixel_buffer **pixbuf );
-extern int image_asn1 ( struct image *image, size_t offset,
-			struct asn1_cursor **cursor );
+extern int register_and_autoload_image ( struct image *image );
+extern int register_and_autoexec_image ( struct image *image );
 
 /**
  * Increment reference count on an image
@@ -208,30 +180,15 @@ static inline void image_put ( struct image *image ) {
 }
 
 /**
- * Clear image command line
+ * Set image name
  *
  * @v image		Image
+ * @v name		New image name
+ * @ret rc		Return status code
  */
-static inline void image_clear_cmdline ( struct image *image ) {
-	image_set_cmdline ( image, NULL );
-}
-
-/**
- * Set image as trusted
- *
- * @v image		Image
- */
-static inline void image_trust ( struct image *image ) {
-	image->flags |= IMAGE_TRUSTED;
-}
-
-/**
- * Set image as untrusted
- *
- * @v image		Image
- */
-static inline void image_untrust ( struct image *image ) {
-	image->flags &= ~IMAGE_TRUSTED;
+static inline int image_set_name ( struct image *image, const char *name ) {
+	strncpy ( image->name, name, ( sizeof ( image->name ) - 1 ) );
+	return 0;
 }
 
 #endif /* _IPXE_IMAGE_H */

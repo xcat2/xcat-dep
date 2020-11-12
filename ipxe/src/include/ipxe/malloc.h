@@ -9,7 +9,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 /*
  * Prototypes for the standard functions (malloc() et al) are in
@@ -19,38 +19,13 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 #include <stdlib.h>
 #include <ipxe/tables.h>
-#include <valgrind/memcheck.h>
 
 extern size_t freemem;
-extern size_t usedmem;
-extern size_t maxusedmem;
 
-extern void * __malloc alloc_memblock ( size_t size, size_t align,
-					size_t offset );
+extern void * __malloc alloc_memblock ( size_t size, size_t align );
 extern void free_memblock ( void *ptr, size_t size );
 extern void mpopulate ( void *start, size_t len );
 extern void mdumpfree ( void );
-
-/**
- * Allocate memory for DMA
- *
- * @v size		Requested size
- * @v align		Physical alignment
- * @v offset		Offset from physical alignment
- * @ret ptr		Memory, or NULL
- *
- * Allocates physically-aligned memory for DMA.
- *
- * @c align must be a power of two.  @c size may not be zero.
- */
-static inline void * __malloc malloc_dma_offset ( size_t size,
-						  size_t phys_align,
-						  size_t offset ) {
-	void * ptr = alloc_memblock ( size, phys_align, offset );
-	if ( ptr && size )
-		VALGRIND_MALLOCLIKE_BLOCK ( ptr, size, 0, 0 );
-	return ptr;
-}
 
 /**
  * Allocate memory for DMA
@@ -64,7 +39,7 @@ static inline void * __malloc malloc_dma_offset ( size_t size,
  * @c align must be a power of two.  @c size may not be zero.
  */
 static inline void * __malloc malloc_dma ( size_t size, size_t phys_align ) {
-	return malloc_dma_offset ( size, phys_align, 0 );
+	return alloc_memblock ( size, phys_align );
 }
 
 /**
@@ -79,7 +54,6 @@ static inline void * __malloc malloc_dma ( size_t size, size_t phys_align ) {
  * If @c ptr is NULL, no action is taken.
  */
 static inline void free_dma ( void *ptr, size_t size ) {
-	VALGRIND_FREELIKE_BLOCK ( ptr, 0 );
 	free_memblock ( ptr, size );
 }
 
@@ -97,17 +71,6 @@ struct cache_discarder {
 #define CACHE_DISCARDERS __table ( struct cache_discarder, "cache_discarders" )
 
 /** Declare a cache discarder */
-#define __cache_discarder( cost ) __table_entry ( CACHE_DISCARDERS, cost )
-
-/** @defgroup cache_cost Cache discarder costs
- *
- * @{
- */
-
-#define CACHE_CHEAP	01	/**< Items with a low replacement cost */
-#define CACHE_NORMAL	02	/**< Items with a normal replacement cost */
-#define CACHE_EXPENSIVE	03	/**< Items with a high replacement cost */
-
-/** @} */
+#define __cache_discarder __table_entry ( CACHE_DISCARDERS, 01 )
 
 #endif /* _IPXE_MALLOC_H */

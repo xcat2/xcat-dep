@@ -14,8 +14,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  */
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -1176,7 +1175,7 @@ jme_load_macaddr(struct net_device *netdev)
  * @ret rc	Return status code
  */
 static int
-jme_probe(struct pci_device *pci)
+jme_probe(struct pci_device *pci, const struct pci_device_id *id __unused)
 {
 	struct net_device *netdev;
 	struct jme_adapter *jme;
@@ -1191,7 +1190,7 @@ jme_probe(struct pci_device *pci)
 	jme = netdev->priv;
 	pci_set_drvdata(pci, netdev);
 	netdev->dev = &pci->dev;
-	jme->regs = pci_ioremap(pci, pci->membase, JME_REGS_SIZE);
+	jme->regs = ioremap(pci->membase, JME_REGS_SIZE);
 	if (!(jme->regs)) {
 		DBG("Mapping PCI resource region error.\n");
 		rc = -ENOMEM;

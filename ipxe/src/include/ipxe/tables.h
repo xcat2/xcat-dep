@@ -1,7 +1,7 @@
 #ifndef _IPXE_TABLES_H
 #define _IPXE_TABLES_H
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 /** @page ifdef_harmful #ifdef considered harmful
  *
@@ -248,8 +248,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 #define __table_entries( table, idx ) ( {				\
 	static __table_type ( table ) __table_entries[0]		\
-		__table_entry ( table, idx ) 				\
-		__attribute__ (( unused ));				\
+		__table_entry ( table, idx ); 				\
 	__table_entries; } )
 
 /**

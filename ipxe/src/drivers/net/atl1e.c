@@ -17,8 +17,8 @@
  * more details.
  *
  * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc., 51
- * Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+ * this program; if not, write to the Free Software Foundation, Inc., 59
+ * Temple Place - Suite 330, Boston, MA  02111-1307, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -224,7 +224,7 @@ static int atl1e_sw_init(struct atl1e_adapter *adapter)
 	adapter->link_duplex = FULL_DUPLEX;
 
 	/* PCI config space info */
-	pci_read_config_byte(pdev, PCI_REVISION, &rev_id);
+	pci_read_config_byte(pdev, PCI_REVISION_ID, &rev_id);
 
 	phy_status_data = AT_READ_REG(hw, REG_PHY_STATUS);
 	/* nic type */
@@ -319,7 +319,11 @@ static void atl1e_cal_ring_size(struct atl1e_adapter *adapter, u32 *ring_size)
 
 static void atl1e_init_ring_resources(struct atl1e_adapter *adapter)
 {
-	struct atl1e_rx_ring *rx_ring = &adapter->rx_ring;
+	struct atl1e_tx_ring *tx_ring = NULL;
+	struct atl1e_rx_ring *rx_ring = NULL;
+
+	tx_ring = &adapter->tx_ring;
+	rx_ring = &adapter->rx_ring;
 
 	rx_ring->real_page_size = adapter->rx_ring.page_size
 				 + MAX_FRAME_SIZE
@@ -1119,7 +1123,8 @@ static void atl1e_init_netdev(struct net_device *netdev, struct pci_device *pdev
  * The OS initialization, configuring of the adapter private structure,
  * and a hardware reset occur.
  */
-static int atl1e_probe(struct pci_device *pdev)
+static int atl1e_probe(struct pci_device *pdev,
+		       const struct pci_device_id *ent __unused)
 {
 	struct net_device *netdev;
 	struct atl1e_adapter *adapter = NULL;

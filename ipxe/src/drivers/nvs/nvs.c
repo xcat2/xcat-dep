@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <string.h>
@@ -34,34 +29,6 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * Non-volatile storage
  *
  */
-
-/**
- * Calculate length up to next block boundary
- *
- * @v nvs		NVS device
- * @v address		Starting address
- * @v max_len		Maximum length
- * @ret len		Length to use, stopping at block boundaries
- */
-static size_t nvs_frag_len ( struct nvs_device *nvs, unsigned int address,
-			     size_t max_len ) {
-	size_t frag_len;
-
-	/* If there are no block boundaries, return the maximum length */
-	if ( ! nvs->block_size )
-		return max_len;
-
-	/* Calculate space remaining up to next block boundary */
-	frag_len = ( ( nvs->block_size -
-		       ( address & ( nvs->block_size - 1 ) ) )
-		     << nvs->word_len_log2 );
-
-	/* Limit to maximum length */
-	if ( max_len < frag_len )
-		return max_len;
-
-	return frag_len;
-}
 
 /**
  * Read from non-volatile storage device
@@ -84,8 +51,14 @@ int nvs_read ( struct nvs_device *nvs, unsigned int address,
 
 	while ( len ) {
 
-		/* Calculate length to read, stopping at block boundaries */
-		frag_len = nvs_frag_len ( nvs, address, len );
+		/* Calculate space remaining up to next block boundary */
+		frag_len = ( ( nvs->block_size -
+			       ( address & ( nvs->block_size - 1 ) ) )
+			     << nvs->word_len_log2 );
+
+		/* Limit to space remaining in buffer */
+		if ( frag_len > len )
+			frag_len = len;
 
 		/* Read this portion of the buffer from the device */
 		if ( ( rc = nvs->read ( nvs, address, data, frag_len ) ) != 0 )
@@ -149,8 +122,14 @@ int nvs_write ( struct nvs_device *nvs, unsigned int address,
 
 	while ( len ) {
 
-		/* Calculate length to write, stopping at block boundaries */
-		frag_len = nvs_frag_len ( nvs, address, len );
+		/* Calculate space remaining up to next block boundary */
+		frag_len = ( ( nvs->block_size -
+			       ( address & ( nvs->block_size - 1 ) ) )
+			     << nvs->word_len_log2 );
+
+		/* Limit to space remaining in buffer */
+		if ( frag_len > len )
+			frag_len = len;
 
 		/* Write this portion of the buffer to the device */
 		if ( ( rc = nvs->write ( nvs, address, data, frag_len ) ) != 0)

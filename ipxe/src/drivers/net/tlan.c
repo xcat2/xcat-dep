@@ -15,8 +15,7 @@
 *
 *    You should have received a copy of the GNU General Public License
 *    along with this program; if not, write to the Free Software
-*    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
-*    02110-1301, USA.
+*    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 *
 *    Portions of this code based on:
 *	lan.c: Linux ThunderLan Driver:
@@ -94,7 +93,7 @@ static void TLan_MiiWriteReg(struct nic *nic __unused, u16, u16, u16);
 
 static const char *media[] = {
 	"10BaseT-HD ", "10BaseT-FD ", "100baseTx-HD ",
-	"100baseTx-FD", "100baseT4", NULL
+	"100baseTx-FD", "100baseT4", 0
 };
 
 /* This much match tlan_pci_tbl[]!  */
@@ -164,7 +163,7 @@ static const struct pci_id_info tlan_pci_tbl[] = {
 	{"Compaq NetFlex-3/E", 0,	/* EISA card */
 	 {0, 0, 0, 0, 0, 0},
 	 TLAN_ADAPTER_ACTIVITY_LED, 0x83},
-	{NULL, 0,
+	{0, 0,
 	 {0, 0, 0, 0, 0, 0},
 	 0, 0},
 };
@@ -202,7 +201,7 @@ static struct tlan_private {
 	unsigned short vendor_id;	/* PCI Vendor code */
 	unsigned short dev_id;	/* PCI Device code */
 	const char *nic_name;
-	unsigned int cur_rx, dirty_rx;	/* Producer/consumer ring indices */
+	unsigned int cur_rx, dirty_rx;	/* Producer/consumer ring indicies */
 	unsigned rx_buf_sz;	/* Based on mtu + Slack */
 	struct TLanList *txList;
 	u32 txHead;
@@ -808,12 +807,10 @@ static int tlan_probe ( struct nic *nic, struct pci_device *pci ) {
 		}
 		i++;
 	}
-	if (chip_idx == -1)
-		return 0;
 
 	priv->vendor_id = pci->vendor;
 	priv->dev_id = pci->device;
-	priv->nic_name = pci->id->name;
+	priv->nic_name = pci->driver_name;
 	priv->eoc = 0;
 
 	err = 0;
@@ -824,10 +821,10 @@ static int tlan_probe ( struct nic *nic, struct pci_device *pci ) {
 				       (u8 *) & nic->node_addr[i]);
 	if (err) {
   	    printf ( "TLAN: %s: Error reading MAC from eeprom: %d\n",
-		    pci->id->name, err);
+		    pci->driver_name, err);
 	} else {
 	    DBG ( "%s: %s at ioaddr %#lX, ", 
-		  pci->id->name, eth_ntoa ( nic->node_addr ), pci->ioaddr );
+		  pci->driver_name, eth_ntoa ( nic->node_addr ), pci->ioaddr );
 	}
 
 	priv->tlanRev = TLan_DioRead8(BASE, TLAN_DEF_REVISION);
@@ -1087,11 +1084,11 @@ These routines are based on the information in Chap. 2 of the
 *				for this device.
 *		phy		The address of the PHY to be queried.
 *		reg		The register whose contents are to be
-*				retrieved.
+*				retreived.
 *		val		A pointer to a variable to store the
 *				retrieved value.
 *
-*	This function uses the TLAN's MII bus to retrieve the contents
+*	This function uses the TLAN's MII bus to retreive the contents
 *	of a given register on a PHY.  It sends the appropriate info
 *	and then reads the 16-bit register value from the MII bus via
 *	the TLAN SIO register.

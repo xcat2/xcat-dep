@@ -1,20 +1,20 @@
 #ifndef _SYS_TIME_H
 #define _SYS_TIME_H
 
-/** @file
- *
- * Date and time
- */
+#include <time.h>
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+typedef unsigned long suseconds_t;
 
-#include <stdint.h>
+struct timeval {
+	time_t tv_sec;		/* seconds */
+	suseconds_t tv_usec;	/* microseconds */
+};
 
-/** Seconds since the Epoch
- *
- * We use a 64-bit type to avoid Y2K38 issues, since we may have to
- * handle distant future dates (e.g. X.509 certificate expiry dates).
- */
-typedef int64_t time_t;
+struct timezone {
+	int tz_minuteswest;	/* minutes W of Greenwich */
+	int tz_dsttime;		/* type of dst correction */
+};
+
+extern int gettimeofday ( struct timeval *tv, struct timezone *tz );
 
 #endif /* _SYS_TIME_H */

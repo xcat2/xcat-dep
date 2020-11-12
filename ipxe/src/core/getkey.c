@@ -13,22 +13,16 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ctype.h>
-#include <ipxe/console.h>
+#include <console.h>
 #include <ipxe/process.h>
 #include <ipxe/keys.h>
 #include <ipxe/timer.h>
-#include <ipxe/nap.h>
 
 /** @file
  *
@@ -41,17 +35,16 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /**
  * Read character from console if available within timeout period
  *
- * @v timeout		Timeout period, in ticks (0=indefinite)
+ * @v timeout		Timeout period, in ticks
  * @ret character	Character read from console
  */
-static int getchar_timeout ( unsigned long timeout ) {
-	unsigned long start = currticks();
+int getchar_timeout ( unsigned long timeout ) {
+	unsigned long expiry = ( currticks() + timeout );
 
-	while ( ( timeout == 0 ) || ( ( currticks() - start ) < timeout ) ) {
+	while ( currticks() < expiry ) {
 		step();
 		if ( iskey() )
 			return getchar();
-		cpu_nap();
 	}
 
 	return -1;
@@ -60,7 +53,6 @@ static int getchar_timeout ( unsigned long timeout ) {
 /**
  * Get single keypress
  *
- * @v timeout		Timeout period, in ticks (0=indefinite)
  * @ret key		Key pressed
  *
  * The returned key will be an ASCII value or a KEY_XXX special
@@ -68,22 +60,17 @@ static int getchar_timeout ( unsigned long timeout ) {
  * will return "special" keys (e.g. cursor keys) as a series of
  * characters forming an ANSI escape sequence.
  */
-int getkey ( unsigned long timeout ) {
+int getkey ( void ) {
 	int character;
 	unsigned int n = 0;
 
-	character = getchar_timeout ( timeout );
+	character = getchar();
 	if ( character != ESC )
 		return character;
 
-	character = getchar_timeout ( GETKEY_TIMEOUT );
-	if ( character < 0 )
-		return ESC;
-
-	if ( isalpha ( character ) )
-		return ( toupper ( character ) - 'A' + 1 );
-
 	while ( ( character = getchar_timeout ( GETKEY_TIMEOUT ) ) >= 0 ) {
+		if ( character == '[' )
+			continue;
 		if ( isdigit ( character ) ) {
 			n = ( ( n * 10 ) + ( character - '0' ) );
 			continue;

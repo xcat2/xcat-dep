@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <string.h>
 #include <assert.h>
@@ -36,20 +31,19 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 /**
  * Call ANSI escape sequence handler
  *
- * @v ctx		ANSI escape sequence context
+ * @v handlers		List of escape sequence handlers
  * @v function		Control function identifier
  * @v count		Parameter count
  * @v params		Parameter list
  */
-static void ansiesc_call_handler ( struct ansiesc_context *ctx,
+static void ansiesc_call_handler ( struct ansiesc_handler *handlers,
 				   unsigned int function, int count,
 				   int params[] ) {
-	struct ansiesc_handler *handlers = ctx->handlers;
 	struct ansiesc_handler *handler;
 
 	for ( handler = handlers ; handler->function ; handler++ ) {
 		if ( handler->function == function ) {
-			handler->handle ( ctx, count, params );
+			handler->handle ( count, params );
 			break;
 		}
 	}
@@ -72,7 +66,6 @@ static void ansiesc_call_handler ( struct ansiesc_context *ctx,
  * sequences we are prepared to accept as valid.
  */
 int ansiesc_process ( struct ansiesc_context *ctx, int c ) {
-
 	if ( ctx->count == 0 ) {
 		if ( c == ESC ) {
 			/* First byte of CSI : begin escape sequence */
@@ -103,8 +96,7 @@ int ansiesc_process ( struct ansiesc_context *ctx, int c ) {
 				DBG ( "Too many parameters in ANSI escape "
 				      "sequence\n" );
 			}
-		} else if ( ( ( c >= 0x20 ) && ( c <= 0x2f ) ) ||
-			    ( c == '?' ) ) {
+		} else if ( ( c >= 0x20 ) && ( c <= 0x2f ) ) {
 			/* Intermediate Byte */
 			ctx->function <<= 8;
 			ctx->function |= c;
@@ -116,7 +108,7 @@ int ansiesc_process ( struct ansiesc_context *ctx, int c ) {
 			ctx->count = 0;
 			ctx->function <<= 8;
 			ctx->function |= c;
-			ansiesc_call_handler ( ctx, ctx->function,
+			ansiesc_call_handler ( ctx->handlers, ctx->function,
 					       count, ctx->params );
 		}
 		return -1;

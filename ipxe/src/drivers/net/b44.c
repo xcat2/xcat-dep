@@ -14,8 +14,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * This driver is a port of the b44 linux driver version 1.01
  *
@@ -79,20 +78,23 @@ static inline void bflush(const struct b44_private *bp, u32 reg, u32 timeout)
 
 
 /**
- * Check if card can access address
- *
- * @v address		Virtual address
- * @v address_ok	Card can access address
+ * Return non-zero if the installed RAM is within
+ * the limit given and zero if it is outside.
+ * Hopefully will be removed soon.
  */
-static inline __attribute__ (( always_inline )) int
-b44_address_ok ( void *address ) {
+int phys_ram_within_limit(u64 limit)
+{
+	struct memory_map memmap;
+	struct memory_region *highest = NULL;
+	get_memmap(&memmap);
 
-	/* Card can address anything with a 30-bit address */
-	if ( ( virt_to_bus ( address ) & ~B44_30BIT_DMA_MASK ) == 0 )
-		return 1;
+	if (memmap.count == 0)
+		return 0;
+	highest = &memmap.regions[memmap.count - 1];
 
-	return 0;
+	return (highest->end < limit);
 }
+
 
 /**
  * Ring cells waiting to be processed are between 'tx_cur' and 'pending'
@@ -402,7 +404,6 @@ static void b44_populate_rx_descriptor(struct b44_private *bp, u32 idx)
  */
 static void b44_rx_refill(struct b44_private *bp, u32 pending)
 {
-	struct io_buffer *iobuf;
 	u32 i;
 
 	// skip pending
@@ -410,17 +411,11 @@ static void b44_rx_refill(struct b44_private *bp, u32 pending)
 		if (bp->rx_iobuf[i] != NULL)
 			continue;
 
-		iobuf = alloc_iob(RX_PKT_BUF_SZ);
-		if (!iobuf) {
+		bp->rx_iobuf[i] = alloc_iob(RX_PKT_BUF_SZ);
+		if (!bp->rx_iobuf[i]) {
 			DBG("Refill rx ring failed!!\n");
 			break;
 		}
-		if (!b44_address_ok(iobuf->data)) {
-			DBG("Refill rx ring bad address!!\n");
-			free_iob(iobuf);
-			break;
-		}
-		bp->rx_iobuf[i] = iobuf;
 
 		b44_populate_rx_descriptor(bp, i);
 	}
@@ -449,10 +444,6 @@ static int b44_init_rx_ring(struct b44_private *bp)
 	bp->rx = malloc_dma(B44_RX_RING_LEN_BYTES, B44_DMA_ALIGNMENT);
 	if (!bp->rx)
 		return -ENOMEM;
-	if (!b44_address_ok(bp->rx)) {
-		free_dma(bp->rx, B44_RX_RING_LEN_BYTES);
-		return -ENOTSUP;
-	}
 
 	memset(bp->rx_iobuf, 0, sizeof(bp->rx_iobuf));
 
@@ -481,10 +472,6 @@ static int b44_init_tx_ring(struct b44_private *bp)
 	bp->tx = malloc_dma(B44_TX_RING_LEN_BYTES, B44_DMA_ALIGNMENT);
 	if (!bp->tx)
 		return -ENOMEM;
-	if (!b44_address_ok(bp->tx)) {
-		free_dma(bp->tx, B44_TX_RING_LEN_BYTES);
-		return -ENOTSUP;
-	}
 
 	memset(bp->tx, 0, B44_TX_RING_LEN_BYTES);
 	memset(bp->tx_iobuf, 0, sizeof(bp->tx_iobuf));
@@ -651,11 +638,22 @@ static void b44_set_rx_mode(struct net_device *netdev)
  * @v id	Matching entry in ID table
  * @ret rc	Return status code
  */
-static int b44_probe(struct pci_device *pci)
+static int b44_probe(struct pci_device *pci, const struct pci_device_id *id)
 {
 	struct net_device *netdev;
 	struct b44_private *bp;
 	int rc;
+
+	/*
+	 * Bail out if more than 1GB of physical RAM is installed.
+	 * This limitation will be removed later when dma mapping
+	 * is merged into mainline.
+	 */
+	if (!phys_ram_within_limit(B44_30BIT_DMA_MASK)) {
+		DBG("Sorry, this version of the driver does not\n"
+		    "support systems with more than 1GB of RAM.\n");
+		return -ENOMEM;
+	}
 
 	/* Set up netdev */
 	netdev = alloc_etherdev(sizeof(*bp));
@@ -673,7 +671,7 @@ static int b44_probe(struct pci_device *pci)
 	bp->pci = pci;
 
 	/* Map device registers */
-	bp->regs = pci_ioremap(pci, pci->membase, B44_REGS_SIZE);
+	bp->regs = ioremap(pci->membase, B44_REGS_SIZE);
 	if (!bp->regs) {
 		netdev_put(netdev);
 		return -ENOMEM;
@@ -696,9 +694,8 @@ static int b44_probe(struct pci_device *pci)
 
 	b44_chip_reset(bp, B44_CHIP_RESET_FULL);
 
-	DBG("b44 %s (%04x:%04x) regs=%p MAC=%s\n", pci->id->name,
-	    pci->id->vendor, pci->id->device, bp->regs,
-	    eth_ntoa(netdev->ll_addr));
+	DBG("b44 %s (%04x:%04x) regs=%p MAC=%s\n", id->name, id->vendor,
+	    id->device, bp->regs, eth_ntoa(netdev->ll_addr));
 
 	return 0;
 }
@@ -794,10 +791,6 @@ static int b44_transmit(struct net_device *netdev, struct io_buffer *iobuf)
 		DBG("tx overflow\n");
 		return -ENOBUFS;
 	}
-
-	/* Check for addressability */
-	if (!b44_address_ok(iobuf->data))
-		return -ENOTSUP;
 
 	/* Will call netdev_tx_complete() on the iobuf later */
 	bp->tx_iobuf[cur] = iobuf;

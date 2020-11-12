@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdarg.h>
 #include <ipxe/tables.h>
@@ -70,6 +70,8 @@ struct uri_opener {
 struct socket_opener {
 	/** Communication semantics (e.g. SOCK_STREAM) */
 	int semantics;
+	/** Address family (e.g. AF_INET) */
+	int family;
 	/** Open socket
 	 *
 	 * @v intf		Object interface
@@ -87,7 +89,6 @@ struct socket_opener {
 /** Register a socket opener */
 #define __socket_opener __table_entry ( SOCKET_OPENERS, 01 )
 
-extern struct uri_opener * xfer_uri_opener ( const char *scheme );
 extern int xfer_open_uri ( struct interface *intf, struct uri *uri );
 extern int xfer_open_uri_string ( struct interface *intf,
 				  const char *uri_string );

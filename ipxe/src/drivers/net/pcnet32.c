@@ -13,8 +13,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  */
 
@@ -407,14 +406,15 @@ pcnet32_chip_detect ( struct pcnet32_private *priv )
 	/*
 	 * On selected chips turn on the BCR18:NOUFLO bit. This stops transmit
 	 * starting until the packet is loaded. Strike one for reliability, lose
-	 * one for latency - although on PCI this isn't a big loss. Older chips
+	 * one for latency - although on PCI this isnt a big loss. Older chips
 	 * have FIFO's smaller than a packet, so you can't do this.
 	 * Turn on BCR18:BurstRdEn and BCR18:BurstWrEn.
 	 */
 	if (fset) {
 		a->write_bcr ( ioaddr, 18,
 			( a->read_bcr ( ioaddr, 18 ) | 0x0860 ) );
-		a->write_csr ( ioaddr, 80, 0x0c00 );
+		a->write_csr ( ioaddr, 80,
+			( a->read_csr ( ioaddr, 80 ) & 0x0C00) | 0x0C00 );
 	}
 
 	priv->full_duplex = fdx;
@@ -1034,7 +1034,7 @@ static struct net_device_operations pcnet32_operations = {
  * @ret rc	Return status code
  **/
 static int
-pcnet32_probe ( struct pci_device *pdev )
+pcnet32_probe ( struct pci_device *pdev, const struct pci_device_id *ent )
 {
 	struct net_device *netdev;
 	struct pcnet32_private *priv;
@@ -1044,7 +1044,7 @@ pcnet32_probe ( struct pci_device *pdev )
 	DBGP ( "pcnet32_probe\n" );
 
 	DBG ( "Found %s, vendor = %#04x, device = %#04x\n",
-		pdev->id->name, pdev->id->vendor, pdev->id->device );
+		pdev->driver_name, ent->vendor, ent->device );
 
 	/* Allocate our private data */
 	netdev = alloc_etherdev ( sizeof ( *priv ) );

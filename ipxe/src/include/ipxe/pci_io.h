@@ -7,11 +7,10 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <ipxe/api.h>
-#include <ipxe/iomap.h>
 #include <config/ioapi.h>
 
 /**
@@ -44,18 +43,17 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	PROVIDE_SINGLE_API_INLINE ( PCIAPI_PREFIX_ ## _subsys, _api_func )
 
 /* Include all architecture-independent I/O API headers */
-#include <ipxe/efi/efi_pci_api.h>
-#include <ipxe/linux/linux_pci.h>
+#include <ipxe/efi/efi_pci.h>
 
 /* Include all architecture-dependent I/O API headers */
 #include <bits/pci_io.h>
 
 /**
- * Determine number of PCI buses within system
+ * Determine maximum PCI bus number within system
  *
- * @ret num_bus		Number of buses
+ * @ret max_bus		Maximum bus number
  */
-int pci_num_bus ( void );
+int pci_max_bus ( void );
 
 /**
  * Read byte from PCI configuration space
@@ -122,15 +120,5 @@ int pci_write_config_word ( struct pci_device *pci, unsigned int where,
  */
 int pci_write_config_dword ( struct pci_device *pci, unsigned int where,
 			     uint32_t value );
-
-/**
- * Map PCI bus address as an I/O address
- *
- * @v bus_addr		PCI bus address
- * @v len		Length of region
- * @ret io_addr		I/O address, or NULL on error
- */
-void * pci_ioremap ( struct pci_device *pci, unsigned long bus_addr,
-		     size_t len );
 
 #endif /* _IPXE_PCI_IO_H */

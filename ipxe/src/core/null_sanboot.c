@@ -13,23 +13,16 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <errno.h>
 #include <ipxe/sanboot.h>
 
-static int null_san_hook ( unsigned int drive __unused,
-			   struct uri **uris __unused,
-			   unsigned int count __unused,
-			   unsigned int flags __unused ) {
+static int null_san_hook ( struct uri *uri __unused,
+			   unsigned int drive __unused ) {
 	return -EOPNOTSUPP;
 }
 
@@ -37,12 +30,11 @@ static void null_san_unhook ( unsigned int drive __unused ) {
 	/* Do nothing */
 }
 
-static int null_san_boot ( unsigned int drive __unused,
-			   const char *filename __unused ) {
+static int null_san_boot ( unsigned int drive __unused ) {
 	return -EOPNOTSUPP;
 }
 
-static int null_san_describe ( void ) {
+static int null_san_describe ( unsigned int drive __unused ) {
 	return -EOPNOTSUPP;
 }
 

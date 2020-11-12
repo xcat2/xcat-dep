@@ -7,24 +7,24 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stddef.h>
 
 /** A line buffer */
 struct line_buffer {
-	/** Data buffer */
+	/** Current string in the buffer */
 	char *data;
-	/** Length of buffered data */
+	/** Length of current string, excluding the terminating NUL */
 	size_t len;
-	/** Most recently consumed length */
-	size_t consumed;
+	/** String is ready to read */
+	int ready;
 };
 
 extern char * buffered_line ( struct line_buffer *linebuf );
-extern int line_buffer ( struct line_buffer *linebuf,
-			 const char *data, size_t len );
+extern ssize_t line_buffer ( struct line_buffer *linebuf,
+			     const char *data, size_t len );
 extern void empty_line_buffer ( struct line_buffer *linebuf );
 
 #endif /* _IPXE_LINEBUF_H */

@@ -13,18 +13,12 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <string.h>
-#include <stdlib.h>
 #include <stdio.h>
 #include <errno.h>
 #include <ipxe/iobuf.h>
@@ -60,7 +54,6 @@ static struct xfer_metadata dummy_metadata;
  * @ret rc		Return status code
  */
 int xfer_vredirect ( struct interface *intf, int type, va_list args ) {
-	struct interface tmp = INTF_INIT ( null_intf_desc );
 	struct interface *dest;
 	xfer_vredirect_TYPE ( void * ) *op =
 		intf_get_dest_op_no_passthru ( intf, xfer_vredirect, &dest );
@@ -73,27 +66,8 @@ int xfer_vredirect ( struct interface *intf, int type, va_list args ) {
 	if ( op ) {
 		rc = op ( object, type, args );
 	} else {
-		/* Default is to reopen the interface as instructed,
-		 * then send xfer_window_changed() messages to both
-		 * new child and parent interfaces.  Since our
-		 * original child interface is likely to be closed and
-		 * unplugged as a result of the call to
-		 * xfer_vreopen(), we create a temporary interface in
-		 * order to be able to send xfer_window_changed() to
-		 * the parent.
-		 *
-		 * If redirection fails, then send intf_close() to the
-		 * parent interface.
-		 */
-		intf_plug ( &tmp, dest );
+		/* Default is to reopen the interface as instructed */
 		rc = xfer_vreopen ( dest, type, args );
-		if ( rc == 0 ) {
-			xfer_window_changed ( dest );
-			xfer_window_changed ( &tmp );
-		} else {
-			intf_close ( &tmp, rc );
-		}
-		intf_unplug ( &tmp );
 	}
 
 	if ( rc != 0 ) {
@@ -143,8 +117,18 @@ size_t xfer_window ( struct interface *intf ) {
  * generating an xfer_window_changed() message.
  */
 void xfer_window_changed ( struct interface *intf ) {
+	struct interface *dest;
+	xfer_window_changed_TYPE ( void * ) *op =
+		intf_get_dest_op ( intf, xfer_window_changed, &dest );
+	void *object = intf_object ( dest );
 
-	intf_poke ( intf, xfer_window_changed );
+	if ( op ) {
+		op ( object );
+	} else {
+		/* Default is to do nothing */
+	}
+
+	intf_put ( dest );
 }
 
 /**
@@ -298,28 +282,17 @@ int xfer_deliver_raw ( struct interface *intf, const void *data, size_t len ) {
  */
 int xfer_vprintf ( struct interface *intf, const char *format,
 		   va_list args ) {
+	size_t len;
 	va_list args_tmp;
-	char *buf;
-	int len;
-	int rc;
 
-	/* Create temporary string */
 	va_copy ( args_tmp, args );
-	len = vasprintf ( &buf, format, args );
-	va_end ( args_tmp );
-	if ( len < 0 ) {
-		rc = len;
-		goto err_asprintf;
+	len = vsnprintf ( NULL, 0, format, args );
+	{
+		char buf[len + 1];
+		vsnprintf ( buf, sizeof ( buf ), format, args_tmp );
+		va_end ( args_tmp );
+		return xfer_deliver_raw ( intf, buf, len );
 	}
-
-	/* Transmit string */
-	if ( ( rc = xfer_deliver_raw ( intf, buf, len ) ) != 0 )
-		goto err_deliver;
-
- err_deliver:
-	free ( buf );
- err_asprintf:
-	return rc;
 }
 
 /**
@@ -363,35 +336,4 @@ int xfer_seek ( struct interface *intf, off_t offset ) {
 		return -ENOMEM;
 
 	return xfer_deliver ( intf, iobuf, &meta );
-}
-
-/**
- * Check that data is delivered strictly in order
- *
- * @v meta		Data transfer metadata
- * @v pos		Current position
- * @v len		Length of data
- * @ret rc		Return status code
- */
-int xfer_check_order ( struct xfer_metadata *meta, size_t *pos, size_t len ) {
-	size_t new_pos;
-
-	/* Allow out-of-order zero-length packets (as used by xfer_seek()) */
-	if ( len == 0 )
-		return 0;
-
-	/* Calculate position of this delivery */
-	new_pos = *pos;
-	if ( meta->flags & XFER_FL_ABS_OFFSET )
-		new_pos = 0;
-	new_pos += meta->offset;
-
-	/* Fail if delivery position is not equal to current position */
-	if ( new_pos != *pos )
-		return -EPROTO;
-
-	/* Update current position */
-	*pos += len;
-
-	return 0;
 }

@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stddef.h>
 #include <stdint.h>
@@ -243,7 +238,6 @@ static int i2c_reset ( struct bit_basher *basher ) {
 	 * pull SDA low while SCL is high (which creates a start
 	 * condition).
 	 */
-	open_bit ( basher );
 	setscl ( basher, 0 );
 	setsda ( basher, 1 );
 	for ( i = 0 ; i < I2C_RESET_MAX_CYCLES ; i++ ) {
@@ -256,7 +250,6 @@ static int i2c_reset ( struct bit_basher *basher ) {
 			i2c_stop ( basher );
 			DBGC ( basher, "I2CBIT %p reset after %d attempts\n",
 			       basher, ( i + 1 ) );
-			close_bit ( basher );
 			return 0;
 		}
 		setscl ( basher, 0 );
@@ -264,7 +257,6 @@ static int i2c_reset ( struct bit_basher *basher ) {
 
 	DBGC ( basher, "I2CBIT %p could not reset after %d attempts\n",
 	       basher, i );
-	close_bit ( basher );
 	return -ETIMEDOUT;
 }
 
@@ -291,8 +283,6 @@ static int i2c_bit_read ( struct i2c_interface *i2c,
 
 	DBGC ( basher, "I2CBIT %p reading from device %x: ",
 	       basher, i2cdev->dev_addr );
-
-	open_bit ( basher );
 
 	for ( ; ; data++, offset++ ) {
 
@@ -321,7 +311,6 @@ static int i2c_bit_read ( struct i2c_interface *i2c,
 	
 	DBGC ( basher, "%s\n", ( rc ? "failed" : "" ) );
 	i2c_stop ( basher );
-	close_bit ( basher );
 	return rc;
 }
 
@@ -349,8 +338,6 @@ static int i2c_bit_write ( struct i2c_interface *i2c,
 	DBGC ( basher, "I2CBIT %p writing to device %x: ",
 	       basher, i2cdev->dev_addr );
 
-	open_bit ( basher );
-
 	for ( ; ; data++, offset++ ) {
 
 		/* Select device for writing */
@@ -371,10 +358,9 @@ static int i2c_bit_write ( struct i2c_interface *i2c,
 		if ( ( rc = i2c_send_byte ( basher, *data ) ) != 0 )
 			break;
 	}
-
+	
 	DBGC ( basher, "%s\n", ( rc ? "failed" : "" ) );
 	i2c_stop ( basher );
-	close_bit ( basher );
 	return rc;
 }
 

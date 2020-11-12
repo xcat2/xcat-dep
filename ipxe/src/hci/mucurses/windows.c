@@ -9,8 +9,6 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
-
 /**
  * Delete a window
  *
@@ -18,6 +16,9 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  * @ret rc	return status code
  */
 int delwin ( WINDOW *win ) {
+	if ( win == NULL )
+		return ERR;
+
 	/* I think we should blank the region covered by the window -
 	   ncurses doesn't do this, but they have a buffer, so they
 	   may just be deleting from an offscreen context whereas we
@@ -48,10 +49,12 @@ int delwin ( WINDOW *win ) {
 WINDOW *derwin ( WINDOW *parent, int nlines, int ncols,
 	     		  	 int begin_y, int begin_x ) {
 	WINDOW *child;
-	if ( ( (unsigned)ncols > parent->width ) || 
-	     ( (unsigned)nlines > parent->height ) )
+	if ( parent == NULL )
 		return NULL;
 	if ( ( child = malloc( sizeof( WINDOW ) ) ) == NULL )
+		return NULL;
+	if ( ( (unsigned)ncols > parent->width ) || 
+	     ( (unsigned)nlines > parent->height ) )
 		return NULL;
 	child->ori_y = parent->ori_y + begin_y;
 	child->ori_x = parent->ori_x + begin_x;
@@ -70,6 +73,8 @@ WINDOW *derwin ( WINDOW *parent, int nlines, int ncols,
  */
 WINDOW *dupwin ( WINDOW *orig ) {
 	WINDOW *copy;
+	if ( orig == NULL )
+		return NULL;
 	if ( ( copy = malloc( sizeof( WINDOW ) ) ) == NULL )
 		return NULL;
 	copy->scr = orig->scr;
@@ -92,6 +97,8 @@ WINDOW *dupwin ( WINDOW *orig ) {
  * @ret rc	return status code
  */
 int mvwin ( WINDOW *win, int y, int x ) {
+	if ( win == NULL )
+		return ERR;
 	if ( ( ( (unsigned)y + win->height ) > LINES ) ||
 	     ( ( (unsigned)x + win->width ) > COLS ) )
 		return ERR;
@@ -113,10 +120,10 @@ int mvwin ( WINDOW *win, int y, int x ) {
  */
 WINDOW *newwin ( int nlines, int ncols, int begin_y, int begin_x ) {
 	WINDOW *win;
+	if ( ( win = malloc( sizeof(WINDOW) ) ) == NULL )
+		return NULL;
 	if ( ( (unsigned)( begin_y + nlines ) > stdscr->height ) &&
 	     ( (unsigned)( begin_x + ncols ) > stdscr->width ) )
-		return NULL;
-	if ( ( win = malloc( sizeof(WINDOW) ) ) == NULL )
 		return NULL;
 	win->ori_y = begin_y;
 	win->ori_x = begin_x;
@@ -140,6 +147,10 @@ WINDOW *newwin ( int nlines, int ncols, int begin_y, int begin_x ) {
 WINDOW *subwin ( WINDOW *parent, int nlines, int ncols,
 			         int begin_y, int begin_x ) {
 	WINDOW *child;
+	if ( parent == NULL )
+		return NULL;
+	if ( ( child = malloc( sizeof( WINDOW ) ) ) == NULL )
+		return NULL;
 	child = newwin( nlines, ncols, begin_y, begin_x );
 	child->parent = parent;
 	child->scr = parent->scr;

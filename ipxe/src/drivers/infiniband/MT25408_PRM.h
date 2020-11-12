@@ -606,8 +606,7 @@ struct hermonprm_multicastparam_st {	/* Little Endian */
     pseudo_bit_t	mc_hash_fn[0x00003];   /* Multicast hash function
                                                  0 - Default hash function
                                                  other - reserved */
-    pseudo_bit_t	uc_group_steering[0x00001];
-    pseudo_bit_t	reserved5[0x00004];
+    pseudo_bit_t	reserved5[0x00005];
 /* -------------- */
     pseudo_bit_t	reserved6[0x00020];
 /* -------------- */
@@ -897,7 +896,7 @@ struct hermonprm_queue_pair_ee_context_entry_st {	/* Little Endian */
     pseudo_bit_t	reserved28[0x00005];
     pseudo_bit_t	rra_max[0x00003];      /* Maximum number of outstanding RDMA-read/Atomic operations allowed on receive queue is 2^RRA_Max. 
                                                  Must be 0 for EE context. */
-    pseudo_bit_t	physical_function[0x00008];
+    pseudo_bit_t	reserved29[0x00008];
 /* -------------- */
     pseudo_bit_t	next_rcv_psn[0x00018]; /* Next (expected) PSN on receive */
     pseudo_bit_t	min_rnr_nak[0x00005];  /* Minimum RNR NAK timer value (TTTTT field encoding according to the IB spec Vol1 9.7.5.2.8). 
@@ -1335,11 +1334,7 @@ struct hermonprm_virtual_physical_mapping_st {	/* Little Endian */
 /* MOD_STAT_CFG            #### michal - gdror fix */
 
 struct hermonprm_mod_stat_cfg_st {	/* Little Endian */
-    pseudo_bit_t	log_pg_sz[0x00008];
-    pseudo_bit_t	log_pg_sz_m[0x00001];
-    pseudo_bit_t	reserved0[0x00005];
-    pseudo_bit_t	dife[0x00001];
-    pseudo_bit_t	dife_m[0x00001];
+    pseudo_bit_t	reserved0[0x00010];
     pseudo_bit_t	rx_options[0x00004];   /* number of RX options to sweep when doing SerDes parameters AutoNegotiation. */
     pseudo_bit_t	reserved1[0x00003];
     pseudo_bit_t	rx_options_m[0x00001]; /* Modify rx_options */
@@ -1347,129 +1342,46 @@ struct hermonprm_mod_stat_cfg_st {	/* Little Endian */
     pseudo_bit_t	reserved2[0x00003];
     pseudo_bit_t	tx_options_m[0x00001]; /* Modify tx_options */
 /* -------------- */
-    pseudo_bit_t	reserved3[0x00010];
-    pseudo_bit_t	qdr_rx_options[0x00004];
-    pseudo_bit_t	reserved4[0x00003];
-    pseudo_bit_t	qdr_rx_options_m[0x00001];
-    pseudo_bit_t	qdr_tx_options[0x00004];
-    pseudo_bit_t	reserved5[0x00003];
-    pseudo_bit_t	qdr_tx_options_m[0x00001];
+    pseudo_bit_t	reserved3[0x00020];
 /* -------------- */
-    pseudo_bit_t	reserved6[0x00020];
+    pseudo_bit_t	pre_amp[0x00004];      /* Pre Amplitude */
+    pseudo_bit_t	pre_emp_pre_amp[0x00004];
+    pseudo_bit_t	pre_emp_out[0x00004];  /* Pre Emphasis Out */
+    pseudo_bit_t	voltage[0x00004];
+    pseudo_bit_t	equ[0x00004];          /* Equalization */
+    pseudo_bit_t	reserved4[0x0000b];
+    pseudo_bit_t	serdes_m[0x00001];     /* Modify serdes parameters */
 /* -------------- */
     pseudo_bit_t	lid[0x00010];          /* default LID */
     pseudo_bit_t	lid_m[0x00001];        /* Modify default LID */
-    pseudo_bit_t	reserved7[0x00003];
+    pseudo_bit_t	reserved5[0x00003];
     pseudo_bit_t	port_en[0x00001];      /* enable port (E_Key) */
     pseudo_bit_t	port_en_m[0x00001];    /* Modify  port_en */
-    pseudo_bit_t	reserved8[0x00002];
-    pseudo_bit_t	port_pause_mode[0x00002];
-    pseudo_bit_t	reserved9[0x00001];
-    pseudo_bit_t	port_pause_mode_m[0x00001];
-    pseudo_bit_t	reserved10[0x00004];
+    pseudo_bit_t	reserved6[0x0000a];
 /* -------------- */
-    pseudo_bit_t	reserved11[0x0001f];
+    pseudo_bit_t	reserved7[0x0001f];
     pseudo_bit_t	guid_hi_m[0x00001];    /* Modify guid_hi */
 /* -------------- */
     pseudo_bit_t	guid_hi[0x00020];
 /* -------------- */
-    pseudo_bit_t	reserved12[0x0001f];
+    pseudo_bit_t	reserved8[0x0001f];
     pseudo_bit_t	guid_lo_m[0x00001];    /* Modify guid_lo */
 /* -------------- */
     pseudo_bit_t	guid_lo[0x00020];
 /* -------------- */
-    pseudo_bit_t	reserved13[0x0001f];
+    pseudo_bit_t	reserved9[0x0001f];
     pseudo_bit_t	nodeguid_hi_m[0x00001];
 /* -------------- */
     pseudo_bit_t	nodeguid_hi[0x00020];
 /* -------------- */
-    pseudo_bit_t	reserved14[0x0001f];
+    pseudo_bit_t	reserved10[0x0001f];
     pseudo_bit_t	nodeguid_lo_m[0x00001];
 /* -------------- */
     pseudo_bit_t	nodeguid_lo[0x00020];
 /* -------------- */
-    pseudo_bit_t	ob_preemp_pre[0x00005];
-    pseudo_bit_t	reserved15[0x00003];
-    pseudo_bit_t	ob_preemp_post[0x00005];
-    pseudo_bit_t	reserved16[0x00003];
-    pseudo_bit_t	ob_preemp_main[0x00005];
-    pseudo_bit_t	reserved17[0x00003];
-    pseudo_bit_t	ob_preemp[0x00005];
-    pseudo_bit_t	reserved18[0x00002];
-    pseudo_bit_t	serdes_m[0x00001];
+    pseudo_bit_t	reserved11[0x00680];
 /* -------------- */
-    pseudo_bit_t	inbuf_ind_en[0x00003];
-    pseudo_bit_t	reserved19[0x00001];
-    pseudo_bit_t	sd_main[0x00004];
-    pseudo_bit_t	reserved20[0x00004];
-    pseudo_bit_t	sd_equal[0x00004];
-    pseudo_bit_t	reserved21[0x00004];
-    pseudo_bit_t	sd_mux_main[0x00002];
-    pseudo_bit_t	reserved22[0x00002];
-    pseudo_bit_t	mux_eq[0x00002];
-    pseudo_bit_t	reserved23[0x00002];
-    pseudo_bit_t	sigdet_th[0x00003];
-    pseudo_bit_t	reserved24[0x00001];
-/* -------------- */
-    pseudo_bit_t	reserved25[0x00040];
-/* -------------- */
-    pseudo_bit_t	port_protocol[0x00008];
-    pseudo_bit_t	port_dual[0x00001];
-    pseudo_bit_t	reserved26[0x00006];
-    pseudo_bit_t	port_protocol_m[0x00001];
-    pseudo_bit_t	num_port[0x00008];
-    pseudo_bit_t	reserved27[0x00008];
-/* -------------- */
-    pseudo_bit_t	port_protocol_vpi[0x00008];
-    pseudo_bit_t	reserved28[0x00018];
-/* -------------- */
-    pseudo_bit_t	reserved29[0x00180];
-/* -------------- */
-    pseudo_bit_t	fw_rev_major[0x00010];
-    pseudo_bit_t	reserved30[0x0000f];
-    pseudo_bit_t	fw_rev_support[0x00001];
-/* -------------- */
-    pseudo_bit_t	fw_rev_minor[0x00010];
-    pseudo_bit_t	fw_rev_subminor[0x00010];
-/* -------------- */
-    pseudo_bit_t	cmd_interface_rev[0x00010];
-    pseudo_bit_t	reserved31[0x00010];
-/* -------------- */
-    pseudo_bit_t	reserved32[0x00060];
-/* -------------- */
-    pseudo_bit_t	mac_high[0x00010];
-    pseudo_bit_t	reserved33[0x0000f];
-    pseudo_bit_t	mac_m[0x00001];
-/* -------------- */
-    pseudo_bit_t	mac_low[0x00020];
-/* -------------- */
-    pseudo_bit_t	reserved34[0x00010];
-    pseudo_bit_t	num_veps[0x00008];
-    pseudo_bit_t	num_vep_groups[0x00008];
-/* -------------- */
-    pseudo_bit_t	reserved35[0x00020];
-/* -------------- */
-    pseudo_bit_t	reserved36[0x00018];
-    pseudo_bit_t	outer_vlan_en[0x00001];
-    pseudo_bit_t	reserved37[0x00002];
-    pseudo_bit_t	outer_vlan_en_m[0x00001];
-    pseudo_bit_t	port_net_boot[0x00001];
-    pseudo_bit_t	reserved38[0x00002];
-    pseudo_bit_t	port_net_boot_m[0x00001];
-/* -------------- */
-    pseudo_bit_t	reserved39[0x00060];
-/* -------------- */
-    pseudo_bit_t	port_eth_mode_capability[0x0001f];
-    pseudo_bit_t	reserved40[0x00001];
-/* -------------- */
-    pseudo_bit_t	port_eth_mode_enabled[0x0001f];
-    pseudo_bit_t	port_eth_mod_m[0x00001];
-/* -------------- */
-    pseudo_bit_t	port_eth_mode_current[0x0001f];
-    pseudo_bit_t	reserved41[0x00001];
-/* -------------- */
-    pseudo_bit_t	reserved42[0x00220];
-};
+}; 
 
 /* SRQ Context */
 
@@ -2070,13 +1982,11 @@ struct hermonprm_query_dev_cap_st {	/* Little Endian */
                                                  The reserved resources are numbered from 0 to 2^log2_rsrvd_cqs-1 */
     pseudo_bit_t	reserved7[0x00004];
     pseudo_bit_t	log_max_cq_sz[0x00008];/* Log2 of the Maximum CQEs allowed in a CQ */
-    pseudo_bit_t	num_rsvd_eqs[0x00008]; /* The number of EQs reserved for firmware use
-                                                 The reserved resources are numbered from 0 to num_rsvd_eqs-1
-                                                 If 0 - no resources are reserved. */
+    pseudo_bit_t	reserved8[0x00008];
 /* -------------- */
     pseudo_bit_t	log_max_eq[0x00004];   /* Log2 of the Maximum number of EQs */
     pseudo_bit_t	reserved9[0x00004];
-    pseudo_bit_t	log2_rsvd_eqs[0x00004]; /* The number of EQs reserved for firmware use
+    pseudo_bit_t	num_rsvd_eqs[0x00004]; /* The number of EQs reserved for firmware use
                                                  The reserved resources are numbered from 0 to num_rsvd_eqs-1
                                                  If 0 - no resources are reserved. */
     pseudo_bit_t	reserved10[0x00004];
@@ -2109,8 +2019,20 @@ struct hermonprm_query_dev_cap_st {	/* Little Endian */
     pseudo_bit_t	reserved19[0x0001f];
 /* -------------- */
     pseudo_bit_t	num_ports[0x00004];    /* Number of IB ports. */
-    pseudo_bit_t	reserved47[0x00004];
-    pseudo_bit_t	pci_pf_num[0x00008];    /* Number of supported physical functions */
+    pseudo_bit_t	max_vl_ib[0x00004];    /* Maximum VLs supported on each port, excluding VL15 */
+    pseudo_bit_t	ib_port_width[0x00004];/* IB Port Width
+                                                 1   - 1x
+                                                 3   - 1x, 4x
+                                                 11 - 1x, 4x or 12x
+                                                 else - Reserved */
+    pseudo_bit_t	ib_mtu[0x00004];       /* Maximum MTU Supported
+                                                 0x0 - Reserved
+                                                 0x1 - 256
+                                                 0x2 - 512
+                                                 0x3 - 1024
+                                                 0x4 - 2048
+                                                 0x5 - 4096
+                                                 0x6-0xF Reserved */
     pseudo_bit_t	local_ca_ack_delay[0x00005];/* The Local CA ACK Delay. This is the value recommended to be returned in Query HCA verb.
                                                  The delay value in microseconds is computed using 4.096us * 2^(local_ca_ack_delay). */
     pseudo_bit_t	port_type[0x00004];    /* Hermon New. bit per port. bit0 is first port. value '1' is ehternet. '0' is IB */
@@ -2135,12 +2057,7 @@ struct hermonprm_query_dev_cap_st {	/* Little Endian */
                                                  bit 2 - 1/8 bw
                                                  bit 3 - 1/2 bw; */
 /* -------------- */
-    pseudo_bit_t	reserved26[0x00008];
-    pseudo_bit_t	rss_udp[0x00001];
-    pseudo_bit_t	vep_uc_steering[0x00001];
-    pseudo_bit_t	vep_mc_steering[0x00001];
-    pseudo_bit_t	reserved27[0x00015];
-
+    pseudo_bit_t	reserved26[0x00020];
 /* -------------- */
     pseudo_bit_t	rc[0x00001];           /* RC Transport supported */
     pseudo_bit_t	uc[0x00001];           /* UC Transport Supported */
@@ -3068,9 +2985,7 @@ struct hermonprm_mcg_hdr_st {	/* Little Endian */
     pseudo_bit_t	next_mcg[0x0001a];
 /* -------------- */
     pseudo_bit_t	members_count[0x00018];
-    pseudo_bit_t	member_remove[0x00001];
-    pseudo_bit_t	reserved1[0x00005];
-    pseudo_bit_t	protocol[0x00002];
+    pseudo_bit_t	reserved1[0x00008];
 /* -------------- */
     pseudo_bit_t	reserved2[0x00020];
 /* -------------- */

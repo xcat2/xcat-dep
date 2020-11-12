@@ -24,7 +24,7 @@ FILE_LICENCE(GPL2_OR_LATER);
  *
  */
 
-#include <ipxe/console.h>
+#include <console.h>
 
 #include <ipxe/init.h>
 #include <ipxe/keys.h>
@@ -32,14 +32,6 @@ FILE_LICENCE(GPL2_OR_LATER);
 
 #include <linux/termios.h>
 #include <asm/errno.h>
-
-#include <config/console.h>
-
-/* Set default console usage if applicable */
-#if ! ( defined ( CONSOLE_LINUX ) && CONSOLE_EXPLICIT ( CONSOLE_LINUX ) )
-#undef CONSOLE_LINUX
-#define CONSOLE_LINUX ( CONSOLE_USAGE_ALL & ~CONSOLE_USAGE_LOG )
-#endif
 
 static void linux_console_putchar(int c)
 {
@@ -87,7 +79,6 @@ struct console_driver linux_console __console_driver = {
 	.putchar = linux_console_putchar,
 	.getchar = linux_console_getchar,
 	.iskey = linux_console_iskey,
-	.usage = CONSOLE_LINUX,
 };
 
 static int linux_tcgetattr(int fd, struct termios *termios_p)
@@ -150,7 +141,6 @@ static void linux_console_shutdown(int flags __unused)
 }
 
 struct startup_fn linux_console_startup_fn __startup_fn(STARTUP_EARLY) = {
-	.name = "linux_console",
 	.startup = linux_console_startup,
 	.shutdown = linux_console_shutdown,
 };

@@ -1,14 +1,10 @@
 #ifndef _STDIO_H
 #define _STDIO_H
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stdarg.h>
-
-extern void putchar ( int character );
-
-extern int getchar ( void );
 
 extern int __attribute__ (( format ( printf, 1, 2 ) ))
 printf ( const char *fmt, ... );

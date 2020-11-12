@@ -54,8 +54,6 @@ CFLAGS		+= -m32
 ASFLAGS		+= --32
 ifeq ($(HOST_OS),FreeBSD)
 LDFLAGS		+= -m elf_i386_fbsd
-else ifeq ($(HOST_OS),OpenBSD)
-LDFLAGS		+= -m elf_i386_obsd
 else
 LDFLAGS		+= -m elf_i386
 endif
@@ -69,26 +67,32 @@ CFLAGS		+= -fshort-wchar
 #
 CFLAGS			+= -Ui386
 
-# Some widespread patched versions of gcc include -fPIE -Wl,-pie by
-# default.  Note that gcc will exit *successfully* if it fails to
-# recognise an option that starts with "no", so we have to test for
-# output on stderr instead of checking the exit status.
+# Locations of utilities
 #
-# Current versions of gcc require -no-pie; older versions require
-# -nopie.  We therefore test for both.
-#
-ifeq ($(CCTYPE),gcc)
-PIE_TEST = [ -z "`$(CC) -fno-PIE -no-pie -x c -c /dev/null -o /dev/null 2>&1`" ]
-PIE_FLAGS := $(shell $(PIE_TEST) && $(ECHO) '-fno-PIE -no-pie')
-PIE_TEST2 = [ -z "`$(CC) -fno-PIE -nopie -x c -c /dev/null -o /dev/null 2>&1`" ]
-PIE_FLAGS2 := $(shell $(PIE_TEST2) && $(ECHO) '-fno-PIE -nopie')
-WORKAROUND_CFLAGS += $(PIE_FLAGS) $(PIE_FLAGS2)
-endif
+ISOLINUX_BIN_LIST	:= \
+	$(ISOLINUX_BIN) \
+	/usr/lib/syslinux/isolinux.bin \
+	/usr/share/syslinux/isolinux.bin \
+	/usr/local/share/syslinux/isolinux.bin
+ISOLINUX_BIN	= $(firstword $(wildcard $(ISOLINUX_BIN_LIST)))
 
 # i386-specific directories containing source files
 #
-SRCDIRS		+= arch/i386/core
-SRCDIRS		+= arch/i386/tests
+SRCDIRS		+= arch/i386/core arch/i386/transitions arch/i386/prefix
+SRCDIRS		+= arch/i386/firmware/pcbios
+SRCDIRS		+= arch/i386/image
+SRCDIRS		+= arch/i386/interface/pcbios
+SRCDIRS		+= arch/i386/interface/pxe
+SRCDIRS		+= arch/i386/interface/pxeparent
+SRCDIRS 	+= arch/i386/interface/syslinux
+SRCDIRS		+= arch/i386/hci/commands
+
+# The various xxx_loader.c files are #included into core/loader.c and
+# should not be compiled directly.
+#
+NON_AUTO_SRCS	+= arch/i386/core/aout_loader.c
+NON_AUTO_SRCS	+= arch/i386/core/freebsd_loader.c
+NON_AUTO_SRCS	+= arch/i386/core/wince_loader.c
 
 # Include common x86 Makefile
 #

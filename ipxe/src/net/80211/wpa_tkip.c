@@ -13,13 +13,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
 
-#include <string.h>
 #include <ipxe/net80211.h>
 #include <ipxe/crypto.h>
 #include <ipxe/hmac.h>
@@ -136,7 +134,7 @@ static const u16 Sbox[256] = {
  */
 static inline u16 S ( u16 v )
 {
-	return Sbox[v & 0xFF] ^ bswap_16 ( Sbox[v >> 8] );
+	return Sbox[v & 0xFF] ^ swap16 ( Sbox[v >> 8] );
 }
 
 /**
@@ -545,15 +543,15 @@ struct net80211_crypto tkip_crypto __net80211_crypto = {
 static void tkip_kie_mic ( const void *kck, const void *msg, size_t len,
 			   void *mic )
 {
-	uint8_t ctx[MD5_CTX_SIZE];
+	struct md5_ctx md5;
 	u8 kckb[16];
 	size_t kck_len = 16;
 
 	memcpy ( kckb, kck, kck_len );
 
-	hmac_init ( &md5_algorithm, ctx, kckb, &kck_len );
-	hmac_update ( &md5_algorithm, ctx, msg, len );
-	hmac_final ( &md5_algorithm, ctx, kckb, &kck_len, mic );
+	hmac_init ( &md5_algorithm, &md5, kckb, &kck_len );
+	hmac_update ( &md5_algorithm, &md5, msg, len );
+	hmac_final ( &md5_algorithm, &md5, kckb, &kck_len, mic );
 }
 
 /**

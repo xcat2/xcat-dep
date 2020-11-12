@@ -13,8 +13,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  ****************************************************************/
 
 FILE_LICENCE ( GPL2_ONLY );
@@ -81,7 +80,7 @@ struct mcp_cmd {
   /* 16 */
   struct mcp_dma_addr response_addr;
   /* 24 */
-  uint32_t pad[10];
+  uint8_t pad[40];
 };
 typedef struct mcp_cmd mcp_cmd_t;
 

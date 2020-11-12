@@ -13,8 +13,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
@@ -55,8 +54,6 @@ static int efi_find_smbios ( struct smbios *smbios ) {
 	smbios->address = phys_to_user ( smbios_entry->smbios_address );
 	smbios->len = smbios_entry->smbios_len;
 	smbios->count = smbios_entry->smbios_count;
-	smbios->version =
-		SMBIOS_VERSION ( smbios_entry->major, smbios_entry->minor );
 	DBG ( "Found SMBIOS v%d.%d entry point at %p (%x+%zx)\n",
 	      smbios_entry->major, smbios_entry->minor, smbios_entry,
 	      smbios_entry->smbios_address, smbios->len );

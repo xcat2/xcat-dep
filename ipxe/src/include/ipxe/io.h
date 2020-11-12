@@ -16,18 +16,12 @@
  * the address parameter.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <ipxe/api.h>
-#include <ipxe/iomap.h>
 #include <config/ioapi.h>
-
-/** Page size */
-#define PAGE_SIZE ( 1 << PAGE_SHIFT )
-
-/** Page mask */
-#define PAGE_MASK ( PAGE_SIZE - 1 )
+#include <ipxe/uaccess.h>
 
 /**
  * Calculate static inline I/O API function name
@@ -59,6 +53,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 	PROVIDE_SINGLE_API_INLINE ( IOAPI_PREFIX_ ## _subsys, _api_func )
 
 /* Include all architecture-independent I/O API headers */
+#include <ipxe/efi/efi_io.h>
 
 /* Include all architecture-dependent I/O API headers */
 #include <bits/io.h>
@@ -195,6 +190,30 @@ virt_to_bus ( volatile const void *addr ) {
 static inline __always_inline void * bus_to_virt ( unsigned long bus_addr ) {
 	return phys_to_virt ( bus_to_phys ( bus_addr ) );
 }
+
+/**
+ * Map bus address as an I/O address
+ *
+ * @v bus_addr		Bus address
+ * @v len		Length of region
+ * @ret io_addr		I/O address
+ */
+void * ioremap ( unsigned long bus_addr, size_t len );
+
+/**
+ * Unmap I/O address
+ *
+ * @v io_addr		I/O address
+ */
+void iounmap ( volatile const void *io_addr );
+
+/**
+ * Convert I/O address to bus address (for debug only)
+ *
+ * @v io_addr		I/O address
+ * @ret bus_addr	Bus address
+ */
+unsigned long io_to_bus ( volatile const void *io_addr );
 
 /**
  * Read byte from memory-mapped device

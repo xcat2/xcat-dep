@@ -5,7 +5,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #ifndef MCA_H
 #define MCA_H
@@ -50,6 +50,8 @@ struct mca_device {
 	 * this field.
 	 */
 	void *priv;
+	/** Driver name */
+	const char *driver_name;
 };
 
 #define MCA_ID(mca) ( ( (mca)->pos[1] << 8 ) + (mca)->pos[0] )

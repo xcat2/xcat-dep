@@ -1,7 +1,7 @@
 #ifndef _IPXE_INIT_H
 #define _IPXE_INIT_H
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ipxe/tables.h>
 
@@ -26,11 +26,21 @@ struct init_fn {
  */
 
 #define INIT_EARLY	01	/**< Early initialisation */
-#define	INIT_CONSOLE	02	/**< Console initialisation */
-#define INIT_NORMAL	03	/**< Normal initialisation */
-#define INIT_LATE	04	/**< Late initialisation */
+#define INIT_SERIAL	02	/**< Serial driver initialisation */
+#define	INIT_CONSOLE	03	/**< Console initialisation */
+#define INIT_NORMAL	04	/**< Normal initialisation */
 
 /** @} */
+
+/** Shutdown flags */
+enum shutdown_flags {
+	/** Shutdown is in order to exit (return to iPXE's caller) */
+	SHUTDOWN_EXIT = 0x0001,
+	/** Shutdown is in order to boot an OS */
+	SHUTDOWN_BOOT = 0x0002,
+	/** Do not remove devices */
+	SHUTDOWN_KEEP_DEVICES = 0x0004,
+};
 
 /**
  * A startup/shutdown function
@@ -39,9 +49,8 @@ struct init_fn {
  * part of the calls to startup() and shutdown().
  */
 struct startup_fn {
-	const char *name;
 	void ( * startup ) ( void );
-	void ( * shutdown ) ( int booting );
+	void ( * shutdown ) ( int flags );
 };
 
 /** Startup/shutdown function table */
@@ -67,22 +76,6 @@ struct startup_fn {
 
 extern void initialise ( void );
 extern void startup ( void );
-extern void shutdown ( int booting );
-
-/**
- * Shut down system for OS boot
- *
- */
-static inline void shutdown_boot ( void ) {
-	shutdown ( 1 );
-}
-
-/**
- * Shut down system for exit back to firmware
- *
- */
-static inline void shutdown_exit ( void ) {
-	shutdown ( 0 );
-}
+extern void shutdown ( int flags );
 
 #endif /* _IPXE_INIT_H */

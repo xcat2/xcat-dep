@@ -1,28 +1,22 @@
 #include "stddef.h"
-#include <ipxe/console.h>
+#include "console.h"
 #include <ipxe/process.h>
 #include <ipxe/nap.h>
 
 /** @file */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
-
-/** Current console usage */
-int console_usage = CONSOLE_USAGE_STDOUT;
-
-/** Console width */
-unsigned int console_width = CONSOLE_DEFAULT_WIDTH;
-
-/** Console height */
-unsigned int console_height = CONSOLE_DEFAULT_HEIGHT;
+FILE_LICENCE ( GPL2_OR_LATER );
 
 /**
- * Write a single character to each console device
+ * Write a single character to each console device.
  *
  * @v character		Character to be written
+ * @ret None		-
+ * @err None		-
  *
  * The character is written out to all enabled console devices, using
  * each device's console_driver::putchar() method.
+ *
  */
 void putchar ( int character ) {
 	struct console_driver *console;
@@ -32,28 +26,29 @@ void putchar ( int character ) {
 		putchar ( '\r' );
 
 	for_each_table_entry ( console, CONSOLES ) {
-		if ( ( ! ( console->disabled & CONSOLE_DISABLED_OUTPUT ) ) &&
-		     ( console_usage & console->usage ) &&
-		     console->putchar )
+		if ( ( ! console->disabled ) && console->putchar )
 			console->putchar ( character );
 	}
 }
 
 /**
- * Check to see if any input is available on any console
+ * Check to see if any input is available on any console.
  *
- * @ret console		Console device that has input available, or NULL
+ * @v None		-
+ * @ret console		Console device that has input available, if any.
+ * @ret NULL		No console device has input available.
+ * @err None		-
  *
  * All enabled console devices are checked once for available input
  * using each device's console_driver::iskey() method.  The first
  * console device that has available input will be returned, if any.
+ *
  */
 static struct console_driver * has_input ( void ) {
 	struct console_driver *console;
 
 	for_each_table_entry ( console, CONSOLES ) {
-		if ( ( ! ( console->disabled & CONSOLE_DISABLED_INPUT ) ) &&
-		     console->iskey ) {
+		if ( ( ! console->disabled ) && console->iskey ) {
 			if ( console->iskey () )
 				return console;
 		}
@@ -62,9 +57,11 @@ static struct console_driver * has_input ( void ) {
 }
 
 /**
- * Read a single character from any console
+ * Read a single character from any console.
  *
+ * @v None		-
  * @ret character	Character read from a console.
+ * @err None		-
  *
  * A character will be read from the first enabled console device that
  * has input available using that console's console_driver::getchar()
@@ -78,6 +75,7 @@ static struct console_driver * has_input ( void ) {
  * @endcode
  *
  * The character read will not be echoed back to any console.
+ *
  */
 int getchar ( void ) {
 	struct console_driver *console;
@@ -113,52 +111,20 @@ int getchar ( void ) {
 	return character;
 }
 
-/**
- * Check for available input on any console
+/** Check for available input on any console.
  *
- * @ret is_available	Input is available on a console
+ * @v None		-
+ * @ret True		Input is available on a console
+ * @ret False		Input is not available on any console
+ * @err None		-
  *
  * All enabled console devices are checked once for available input
  * using each device's console_driver::iskey() method.  If any console
- * device has input available, this call will return true.  If this
- * call returns true, you can then safely call getchar() without
+ * device has input available, this call will return True.  If this
+ * call returns True, you can then safely call getchar() without
  * blocking.
+ *
  */
 int iskey ( void ) {
 	return has_input() ? 1 : 0;
-}
-
-/**
- * Configure console
- *
- * @v config		Console configuration
- * @ret rc		Return status code
- *
- * The configuration is passed to all configurable consoles, including
- * those which are currently disabled.  Consoles may choose to enable
- * or disable themselves depending upon the configuration.
- *
- * If configuration fails, then all consoles will be reset.
- */
-int console_configure ( struct console_configuration *config ) {
-	struct console_driver *console;
-	int rc;
-
-	/* Reset console width and height */
-	console_set_size ( CONSOLE_DEFAULT_WIDTH, CONSOLE_DEFAULT_HEIGHT );
-
-	/* Try to configure each console */
-	for_each_table_entry ( console, CONSOLES ) {
-		if ( ( console->configure ) &&
-		     ( ( rc = console->configure ( config ) ) != 0 ) )
-				goto err;
-	}
-
-	return 0;
-
- err:
-	/* Reset all consoles, avoiding a potential infinite loop */
-	if ( config )
-		console_reset();
-	return rc;
 }

@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stddef.h>
 #include <stdarg.h>
@@ -103,7 +103,5 @@ extern int xfer_vprintf ( struct interface *intf,
 extern int __attribute__ (( format ( printf, 2, 3 ) ))
 xfer_printf ( struct interface *intf, const char *format, ... );
 extern int xfer_seek ( struct interface *intf, off_t offset );
-extern int xfer_check_order ( struct xfer_metadata *meta, size_t *pos,
-			      size_t len );
 
 #endif /* _IPXE_XFER_H */

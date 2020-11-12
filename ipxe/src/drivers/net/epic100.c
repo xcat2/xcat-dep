@@ -10,6 +10,7 @@ FILE_LICENCE ( GPL2_OR_LATER );
 #include <ipxe/pci.h>
 #include <ipxe/ethernet.h>
 #include "nic.h"
+#include "console.h"
 #include "epic100.h"
 
 /* Condensed operations for readability */
@@ -230,6 +231,7 @@ static void set_rx_mode(void)
 epic100_open(void)
 {
     int mii_reg5;
+    int full_duplex = 0;
     unsigned long tmp;
 
     epic100_init_ring();
@@ -243,6 +245,7 @@ epic100_open(void)
 
     mii_reg5 = mii_read(phys[0], 5);
     if (mii_reg5 != 0xffff && (mii_reg5 & 0x0100)) {
+	full_duplex = 1;
 	printf(" full-duplex mode");
 	tmp |= TC_LM_FULL_DPX;
     } else
@@ -250,7 +253,7 @@ epic100_open(void)
 
     outl(tmp, txcon);
 
-    /* Give address of RX and TX ring to the chip */
+    /* Give adress of RX and TX ring to the chip */
     outl(virt_to_le32desc(&rx_ring), prcdar);
     outl(virt_to_le32desc(&tx_ring), ptcdar);
 
@@ -365,7 +368,7 @@ epic100_transmit(struct nic *nic, const char *destaddr, unsigned int type,
  * Arguments: none
  *
  * returns:   1 if a packet was received.
- *            0 if no packet was received.
+ *            0 if no pacet was received.
  * side effects:
  *            returns the packet in the array nic->packet.
  *            returns the length of the packet in nic->packetlen.
@@ -376,7 +379,7 @@ epic100_poll(struct nic *nic, int retrieve)
 {
     int entry;
     int retcode;
-    unsigned long status;
+    int status;
     entry = cur_rx % RX_RING_SIZE;
 
     if ((rx_ring[entry].status & cpu_to_le32(RRING_OWN)) == RRING_OWN)
@@ -401,7 +404,7 @@ epic100_poll(struct nic *nic, int retrieve)
 	retcode = 0;
     } else {
 	/* Omit the four octet CRC from the length. */
-	nic->packetlen = (status >> 16) - 4;
+	nic->packetlen = le32_to_cpu((rx_ring[entry].buflength))- 4;
 	memcpy(nic->packet, &rx_packet[entry * PKT_BUF_SZ], nic->packetlen);
 	retcode = 1;
     }

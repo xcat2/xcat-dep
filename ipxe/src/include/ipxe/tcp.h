@@ -9,7 +9,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ipxe/tcpip.h>
 
@@ -26,7 +26,7 @@ struct tcp_header {
 	uint16_t win;		/* Advertised window */
 	uint16_t csum;		/* Checksum */
 	uint16_t urg;		/* Urgent pointer */
-} __attribute__ (( packed ));
+};
 
 /** @defgroup tcpopts TCP options
  * @{
@@ -54,73 +54,6 @@ struct tcp_mss_option {
 /** Code for the TCP MSS option */
 #define TCP_OPTION_MSS 2
 
-/** TCP window scale option */
-struct tcp_window_scale_option {
-	uint8_t kind;
-	uint8_t length;
-	uint8_t scale;
-} __attribute__ (( packed ));
-
-/** Padded TCP window scale option (used for sending) */
-struct tcp_window_scale_padded_option {
-	uint8_t nop;
-	struct tcp_window_scale_option wsopt;
-} __attribute (( packed ));
-
-/** Code for the TCP window scale option */
-#define TCP_OPTION_WS 3
-
-/** Advertised TCP window scale
- *
- * Using a scale factor of 2**9 provides for a maximum window of 32MB,
- * which is sufficient to allow Gigabit-speed transfers with a 200ms
- * RTT.  The minimum advertised window is 512 bytes, which is still
- * less than a single packet.
- */
-#define TCP_RX_WINDOW_SCALE 9
-
-/** TCP selective acknowledgement permitted option */
-struct tcp_sack_permitted_option {
-	uint8_t kind;
-	uint8_t length;
-} __attribute__ (( packed ));
-
-/** Padded TCP selective acknowledgement permitted option (used for sending) */
-struct tcp_sack_permitted_padded_option {
-	uint8_t nop[2];
-	struct tcp_sack_permitted_option spopt;
-} __attribute__ (( packed ));
-
-/** Code for the TCP selective acknowledgement permitted option */
-#define TCP_OPTION_SACK_PERMITTED 4
-
-/** TCP selective acknowledgement option */
-struct tcp_sack_option {
-	uint8_t kind;
-	uint8_t length;
-} __attribute__ (( packed ));
-
-/** TCP selective acknowledgement block */
-struct tcp_sack_block {
-	uint32_t left;
-	uint32_t right;
-} __attribute__ (( packed ));
-
-/** Maximum number of selective acknowledgement blocks
- *
- * This allows for the presence of the TCP timestamp option.
- */
-#define TCP_SACK_MAX 3
-
-/** Padded TCP selective acknowledgement option (used for sending) */
-struct tcp_sack_padded_option {
-	uint8_t nop[2];
-	struct tcp_sack_option sackopt;
-} __attribute__ (( packed ));
-
-/** Code for the TCP selective acknowledgement option */
-#define TCP_OPTION_SACK 5
-
 /** TCP timestamp option */
 struct tcp_timestamp_option {
 	uint8_t kind;
@@ -140,11 +73,9 @@ struct tcp_timestamp_padded_option {
 
 /** Parsed TCP options */
 struct tcp_options {
-	/** Window scale option, if present */
-	const struct tcp_window_scale_option *wsopt;
-	/** SACK permitted option, if present */
-	const struct tcp_sack_permitted_option *spopt;
-	/** Timestamp option, if present */
+	/** MSS option, if present */
+	const struct tcp_mss_option *mssopt;
+	/** Timestampe option, if present */
 	const struct tcp_timestamp_option *tsopt;
 };
 
@@ -326,76 +257,61 @@ struct tcp_options {
 /** Smallest port number on which a TCP connection can listen */
 #define TCP_MIN_PORT 1
 
+/* Some IOB constants */
+#define MAX_HDR_LEN	100
+#define MAX_IOB_LEN	1500
+#define MIN_IOB_LEN	MAX_HDR_LEN + 100 /* To account for padding by LL */
+
 /**
  * Maxmimum advertised TCP window size
  *
- * The maximum bandwidth on any link is limited by
+ * We estimate the TCP window size as the amount of free memory we
+ * have.  This is not strictly accurate (since it ignores any space
+ * already allocated as RX buffers), but it will do for now.
  *
- *    max_bandwidth * round_trip_time = tcp_window
+ * Since we don't store out-of-order received packets, the
+ * retransmission penalty is that the whole window contents must be
+ * resent.  This suggests keeping the window size small, but bear in
+ * mind that the maximum bandwidth on any link is limited to
  *
- * Some rough expectations for achievable bandwidths over various
- * links are:
+ *    max_bandwidth = ( tcp_window / round_trip_time )
  *
- *    a) Gigabit LAN: expected bandwidth 125MB/s, typical RTT 0.5ms,
- *       minimum required window 64kB
+ * With a 48kB window, which probably accurately reflects our amount
+ * of free memory, and a WAN RTT of say 200ms, this gives a maximum
+ * bandwidth of 240kB/s.  This is sufficiently close to realistic that
+ * we will need to be careful that our advertised window doesn't end
+ * up limiting WAN download speeds.
  *
- *    b) Home Internet connection: expected bandwidth 10MB/s, typical
- *       RTT 25ms, minimum required window 256kB
- *
- *    c) WAN: expected bandwidth 2MB/s, typical RTT 100ms, minimum
- *       required window 200kB.
- *
- * The maximum possible value for the TCP window size is 1GB (using
- * the maximum window scale of 2**14).  However, it is advisable to
- * keep the window size as small as possible (without limiting
- * bandwidth), since in the event of a lost packet the window size
- * represents the maximum amount that will need to be retransmitted.
- *
- * We therefore choose a maximum window size of 256kB.
+ * Finally, since the window goes into a 16-bit field and we cannot
+ * actually use 65536, we use a window size of (65536-4) to ensure
+ * that payloads remain dword-aligned.
  */
-#define TCP_MAX_WINDOW_SIZE	( 256 * 1024 )
+//#define TCP_MAX_WINDOW_SIZE	( 65536 - 4 )
+#define TCP_MAX_WINDOW_SIZE	8192
 
 /**
  * Path MTU
  *
- * IPv6 requires all data link layers to support a datagram size of
- * 1280 bytes.  We choose to use this as our maximum transmitted
- * datagram size, on the assumption that any practical link layer we
- * encounter will allow this size.  This is a very conservative
- * assumption in practice, but the impact of making such a
- * conservative assumption is insignificant since the amount of data
- * that we transmit (rather than receive) is negligible.
- *
- * We allow space within this 1280 bytes for an IPv6 header, a TCP
- * header, and a (padded) TCP timestamp option.
+ * We really ought to implement Path MTU discovery.  Until we do,
+ * anything with a path MTU greater than this may fail.
  */
-#define TCP_PATH_MTU							\
-	( 1280 - 40 /* IPv6 */ - 20 /* TCP */ - 12 /* TCP timestamp */ )
+#define TCP_PATH_MTU 1460
+
+/**
+ * Advertised TCP MSS
+ *
+ * We currently hardcode this to a reasonable value and hope that the
+ * sender uses path MTU discovery.  The alternative is breaking the
+ * abstraction layer so that we can find out the MTU from the IP layer
+ * (which would have to find out from the net device layer).
+ */
+#define TCP_MSS 1460
 
 /** TCP maximum segment lifetime
  *
  * Currently set to 2 minutes, as per RFC 793.
  */
 #define TCP_MSL ( 2 * 60 * TICKS_PER_SEC )
-
-/**
- * TCP keepalive period
- *
- * We send keepalive ACKs after this period of inactivity has elapsed
- * on an established connection.
- */
-#define TCP_KEEPALIVE_DELAY ( 15 * TICKS_PER_SEC )
-
-/**
- * TCP maximum header length
- *
- */
-#define TCP_MAX_HEADER_LEN					\
-	( MAX_LL_NET_HEADER_LEN +				\
-	  sizeof ( struct tcp_header ) +			\
-	  sizeof ( struct tcp_mss_option ) +			\
-	  sizeof ( struct tcp_window_scale_padded_option ) +	\
-	  sizeof ( struct tcp_timestamp_padded_option ) )
 
 /**
  * Compare TCP sequence numbers
@@ -425,13 +341,6 @@ static inline int tcp_in_window ( uint32_t seq, uint32_t start,
 				  uint32_t len ) {
 	return ( ( seq - start ) < len );
 }
-
-/** TCP finish wait time
- *
- * Currently set to one second, since we should not allow a slowly
- * responding server to substantially delay a call to shutdown().
- */
-#define TCP_FINISH_TIMEOUT ( 1 * TICKS_PER_SEC )
 
 extern struct tcpip_protocol tcp_protocol __tcpip_protocol;
 

@@ -1,7 +1,7 @@
 #ifndef LIMITS_H
 #define LIMITS_H	1
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 /* Number of bits in a `char' */
 #define CHAR_BIT	8

@@ -52,116 +52,102 @@
 /** Stringify expanded argument */
 #define _S2( x ) _S1 ( x )
 
-/* Assembler section types */
-#ifdef ASSEMBLY
-#define PROGBITS _C2 ( ASM_TCHAR, progbits )
-#define NOBITS _C2 ( ASM_TCHAR, nobits )
-#else
-#define PROGBITS_OPS _S2 ( ASM_TCHAR_OPS ) "progbits"
-#define PROGBITS _S2 ( ASM_TCHAR ) "progbits"
-#define NOBITS_OPS _S2 ( ASM_TCHAR_OPS ) "nobits"
-#define NOBITS _S2 ( ASM_TCHAR ) "nobits"
-#endif
-
 /**
  * @defgroup symmacros Macros to provide or require explicit symbols
  * @{
  */
 
-/**
- * Provide a symbol within this object file
+/** Provide a symbol within this object file */
+#ifdef ASSEMBLY
+#define PROVIDE_SYMBOL( _sym )				\
+	.globl	_sym ;					\
+	.comm	_sym, 0
+#else /* ASSEMBLY */
+#define PROVIDE_SYMBOL( _sym )				\
+	char _sym[0]
+#endif /* ASSEMBLY */
+
+/** Require a symbol within this object file
  *
- * @v symbol		Symbol name
+ * The symbol is referenced by a relocation in a discarded section, so
+ * if it is not available at link time the link will fail.
  */
 #ifdef ASSEMBLY
-#define PROVIDE_SYMBOL( symbol )				\
-	.section ".provided", "a", NOBITS ;			\
-	.hidden symbol ;					\
-	.globl	symbol ;					\
-	symbol: ;						\
+#define REQUIRE_SYMBOL( _sym )				\
+	.section ".discard", "a", @progbits ;		\
+	.extern	_sym ;					\
+	.long	_sym ;					\
 	.previous
-#else
-#define PROVIDE_SYMBOL( symbol )				\
-	char symbol[0]						\
-	  __attribute__ (( section ( ".provided" ) ))
+#else /* ASSEMBLY */
+#define REQUIRE_SYMBOL( _sym )				\
+	extern char _sym;				\
+	static char * _C2 ( _C2 ( __require_, _sym ), _C2 ( _, __LINE__ ) ) \
+		__attribute__ (( section ( ".discard" ), used )) \
+		= &_sym
 #endif
 
-/**
- * Request a symbol
+/** Request that a symbol be available at runtime
  *
- * @v symbol		Symbol name
+ * The requested symbol is entered as undefined into the symbol table
+ * for this object, so the linker will pull in other object files as
+ * necessary to satisfy the reference. However, the undefined symbol
+ * is not referenced in any relocations, so the link can still succeed
+ * if no file contains it.
  *
- * Request a symbol to be included within the link.  If the symbol
- * cannot be found, the link will succeed anyway.
+ * A symbol passed to this macro may not be referenced anywhere
+ * else in the file. If you want to do that, see IMPORT_SYMBOL().
  */
 #ifdef ASSEMBLY
-#define REQUEST_SYMBOL( symbol )				\
-	.equ __request_ ## symbol, symbol
-#else
-#define REQUEST_SYMBOL( symbol )				\
-	__asm__ ( ".equ __request_" #symbol ", " #symbol )
-#endif
+#define REQUEST_SYMBOL( _sym )				\
+	.equ	__need_ ## _sym, _sym
+#else /* ASSEMBLY */
+#define REQUEST_SYMBOL( _sym )				\
+	__asm__ ( ".equ\t__need_" #_sym ", " #_sym )
+#endif /* ASSEMBLY */
 
-/**
- * Require a symbol
+/** Set up a symbol to be usable in another file by IMPORT_SYMBOL()
  *
- * @v symbol		Symbol name
- *
- * Require a symbol to be included within the link.  If the symbol
- * cannot be found, the link will fail.
- *
- * To use this macro within a file, you must also specify the file's
- * "requiring symbol" using the REQUIRING_SYMBOL() or
- * PROVIDE_REQUIRING_SYMBOL() macros.
+ * The symbol must already be marked as global.
  */
-#ifdef ASSEMBLY
-#define REQUIRE_SYMBOL( symbol )				\
-	.reloc __requiring_symbol__, RELOC_TYPE_NONE, symbol
-#else
-#define REQUIRE_SYMBOL( symbol )				\
-	__asm__ ( ".reloc __requiring_symbol__, "		\
-		  _S2 ( RELOC_TYPE_NONE ) ", " #symbol )
-#endif
+#define EXPORT_SYMBOL( _sym )	PROVIDE_SYMBOL ( __export_ ## _sym )
 
-/**
- * Specify the file's requiring symbol
+/** Make a symbol usable to this file if available at link time
  *
- * @v symbol		Symbol name
+ * If no file passed to the linker contains the symbol, it will have
+ * @c NULL value to future uses. Keep in mind that the symbol value is
+ * really the @e address of a variable or function; see the code
+ * snippet below.
  *
- * REQUIRE_SYMBOL() works by defining a dummy relocation record
- * against a nominated "requiring symbol".  The presence of the
- * nominated requiring symbol will drag in all of the symbols
- * specified using REQUIRE_SYMBOL().
+ * In C using IMPORT_SYMBOL, you must specify the declaration as the
+ * second argument, for instance
+ *
+ * @code
+ *   IMPORT_SYMBOL ( my_func, int my_func ( int arg ) );
+ *   IMPORT_SYMBOL ( my_var, int my_var );
+ *
+ *   void use_imports ( void ) {
+ * 	if ( my_func && &my_var )
+ * 	   my_var = my_func ( my_var );
+ *   }
+ * @endcode
+ *
+ * GCC considers a weak declaration to override a strong one no matter
+ * which comes first, so it is safe to include a header file declaring
+ * the imported symbol normally, but providing the declaration to
+ * IMPORT_SYMBOL is still required.
+ *
+ * If no EXPORT_SYMBOL declaration exists for the imported symbol in
+ * another file, the behavior will be most likely be identical to that
+ * for an unavailable symbol.
  */
 #ifdef ASSEMBLY
-#define REQUIRING_SYMBOL( symbol )				\
-	.equ __requiring_symbol__, symbol
-#else
-#define REQUIRING_SYMBOL( symbol )				\
-	__asm__ ( ".equ __requiring_symbol__, " #symbol )
-#endif
-
-/**
- * Provide a file's requiring symbol
- *
- * If the file contains no symbols that can be used as the requiring
- * symbol, you can provide a dummy one-byte-long symbol using
- * PROVIDE_REQUIRING_SYMBOL().
- */
-#ifdef ASSEMBLY
-#define PROVIDE_REQUIRING_SYMBOL()				\
-	.section ".tbl.requiring_symbols", "a", PROGBITS ;	\
-	__requiring_symbol__:	.byte 0 ;			\
-	.size __requiring_symbol__, . - __requiring_symbol__ ;	\
-	.previous
-#else
-#define PROVIDE_REQUIRING_SYMBOL()				\
-	__asm__ ( ".section \".tbl.requiring_symbols\", "	\
-		  "         \"a\", " PROGBITS "\n"		\
-		  "__requiring_symbol__:\t.byte 0\n"		\
-		  ".size __requiring_symbol__, "		\
-		  "      . - __requiring_symbol__\n"		\
-		  ".previous" )
+#define IMPORT_SYMBOL( _sym )				\
+	REQUEST_SYMBOL ( __export_ ## _sym ) ;		\
+	.weak	_sym
+#else /* ASSEMBLY */
+#define IMPORT_SYMBOL( _sym, _decl )			\
+	REQUEST_SYMBOL ( __export_ ## _sym ) ;		\
+	extern _decl __attribute__ (( weak ))
 #endif
 
 /** @} */
@@ -173,33 +159,20 @@
 
 #define PREFIX_OBJECT( _prefix ) _C2 ( _prefix, OBJECT )
 #define OBJECT_SYMBOL PREFIX_OBJECT ( obj_ )
+#define REQUEST_EXPANDED( _sym ) REQUEST_SYMBOL ( _sym )
+#define CONFIG_SYMBOL PREFIX_OBJECT ( obj_config_ )
 
 /** Always provide the symbol for the current object (defined by -DOBJECT) */
 PROVIDE_SYMBOL ( OBJECT_SYMBOL );
 
-/**
- * Request an object
- *
- * @v object		Object name
- *
- * Request an object to be included within the link.  If the object
- * cannot be found, the link will succeed anyway.
- */
-#define REQUEST_OBJECT( object ) REQUEST_SYMBOL ( obj_ ## object )
+/** Pull in an object-specific configuration file if available */
+REQUEST_EXPANDED ( CONFIG_SYMBOL );
 
-/**
- * Require an object
- *
- * @v object		Object name
- *
- * Require an object to be included within the link.  If the object
- * cannot be found, the link will fail.
- *
- * To use this macro within a file, you must also specify the file's
- * "requiring symbol" using the REQUIRING_SYMBOL() or
- * PROVIDE_REQUIRING_SYMBOL() macros.
- */
-#define REQUIRE_OBJECT( object ) REQUIRE_SYMBOL ( obj_ ## object )
+/** Explicitly require another object */
+#define REQUIRE_OBJECT( _obj ) REQUIRE_SYMBOL ( obj_ ## _obj )
+
+/** Pull in another object if it exists */
+#define REQUEST_OBJECT( _obj ) REQUEST_SYMBOL ( obj_ ## _obj )
 
 /** @} */
 
@@ -218,11 +191,20 @@ PROVIDE_SYMBOL ( OBJECT_SYMBOL );
  */
 #define __weak		__attribute__ (( weak, noinline ))
 
+/** Prevent a function from being optimized away without inlining
+ *
+ * Calls to functions with void return type that contain no code in their body
+ * may be removed by gcc's optimizer even when inlining is inhibited. Placing
+ * this macro in the body of the function prevents that from occurring.
+ */
+#define __keepme	asm("");
+
 #endif
 
 /** @defgroup dbg Debugging infrastructure
  * @{
  */
+#ifndef ASSEMBLY
 
 /** @def DBG
  *
@@ -265,47 +247,49 @@ PROVIDE_SYMBOL ( OBJECT_SYMBOL );
  *
  */
 
-#ifndef DBGLVL_MAX
-#define NDEBUG
-#define DBGLVL_MAX 0
-#endif
+/*
+ * If debug_OBJECT is set to a true value, the macro DBG(...) will
+ * expand to printf(...) when compiling OBJECT, and the symbol
+ * DEBUG_LEVEL will be inserted into the object file.
+ *
+ */
+#define DEBUG_SYMBOL PREFIX_OBJECT ( debug_ )
 
-#ifndef DBGLVL_DFLT
-#define DBGLVL_DFLT DBGLVL_MAX
-#endif
+/** printf() for debugging
+ *
+ * This function exists so that the DBG() macros can expand to
+ * printf() calls without dragging the printf() prototype into scope.
+ *
+ * As far as the compiler is concerned, dbg_printf() and printf() are
+ * completely unrelated calls; it's only at the assembly stage that
+ * references to the dbg_printf symbol are collapsed into references
+ * to the printf symbol.
+ */
+extern int __attribute__ (( format ( printf, 1, 2 ) )) 
+dbg_printf ( const char *fmt, ... ) asm ( "printf" );
 
-#ifndef ASSEMBLY
-
-/** printf() for debugging */
-extern void __attribute__ (( format ( printf, 1, 2 ) ))
-dbg_printf ( const char *fmt, ... );
 extern void dbg_autocolourise ( unsigned long id );
 extern void dbg_decolourise ( void );
 extern void dbg_hex_dump_da ( unsigned long dispaddr,
 			      const void *data, unsigned long len );
-extern void dbg_md5_da ( unsigned long dispaddr,
-			 const void *data, unsigned long len );
 extern void dbg_pause ( void );
 extern void dbg_more ( void );
 
+#if DEBUG_SYMBOL
+#define DBGLVL_MAX DEBUG_SYMBOL
+#else
+#define DBGLVL_MAX 0
+#endif
+
 /* Allow for selective disabling of enabled debug levels */
-#define __debug_disable( object ) _C2 ( __debug_disable_, object )
-char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
-#define DBG_DISABLE_OBJECT( object, level ) do {		\
-	extern char __debug_disable(object);			\
-	__debug_disable(object) |= (level);			\
-	} while ( 0 )
-#define DBG_ENABLE_OBJECT( object, level ) do {			\
-	extern char __debug_disable(object);			\
-	__debug_disable(object) &= ~(level);			\
-	} while ( 0 )
 #if DBGLVL_MAX
-#define DBGLVL ( DBGLVL_MAX & ~__debug_disable(OBJECT) )
+int __debug_disable;
+#define DBGLVL ( DBGLVL_MAX & ~__debug_disable )
 #define DBG_DISABLE( level ) do {				\
-	__debug_disable(OBJECT) |= ( (level) & DBGLVL_MAX );	\
+	__debug_disable |= (level);				\
 	} while ( 0 )
 #define DBG_ENABLE( level ) do {				\
-	__debug_disable(OBJECT) &= ~( (level) & DBGLVL_MAX );	\
+	__debug_disable &= ~(level);				\
 	} while ( 0 )
 #else
 #define DBGLVL 0
@@ -348,7 +332,6 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 				unsigned long ul;		\
 				typeof ( dispaddr ) raw;	\
 			} da;					\
-			da.ul = 0;				\
 			da.raw = dispaddr;			\
 			dbg_hex_dump_da ( da.ul, data, len );	\
 		}						\
@@ -367,43 +350,11 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 	} while ( 0 )
 
 /**
- * Print an MD5 checksum if we are at a certain debug level
- *
- * @v level		Debug level
- * @v dispaddr		Display address
- * @v data		Data to print
- * @v len		Length of data
- */
-#define DBG_MD5A_IF( level, dispaddr, data, len )  do {		\
-		if ( DBG_ ## level ) {				\
-			union {					\
-				unsigned long ul;		\
-				typeof ( dispaddr ) raw;	\
-			} da;					\
-			da.ul = 0;				\
-			da.raw = dispaddr;			\
-			dbg_md5_da ( da.ul, data, len );	\
-		}						\
-	} while ( 0 )
-
-/**
- * Print an MD5 checksum if we are at a certain debug level
- *
- * @v level		Debug level
- * @v data		Data to print
- * @v len		Length of data
- */
-#define DBG_MD5_IF( level, data, len ) do {			\
-		const void *_data = data;			\
-		DBG_MD5A_IF ( level, _data, _data, len );	\
-	} while ( 0 )
-
-/**
  * Prompt for key press if we are at a certain debug level
  *
  * @v level		Debug level
  */
-#define DBG_PAUSE_IF( level, ... ) do {				\
+#define DBG_PAUSE_IF( level ) do {				\
 		if ( DBG_ ## level ) {				\
 			dbg_pause();				\
 		}						\
@@ -414,7 +365,7 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  *
  * @v level		Debug level
  */
-#define DBG_MORE_IF( level, ... ) do {				\
+#define DBG_MORE_IF( level ) do {				\
 		if ( DBG_ ## level ) {				\
 			dbg_more();				\
 		}						\
@@ -432,7 +383,6 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 				unsigned long ul;		\
 				typeof ( id ) raw;		\
 			} dbg_stream;				\
-			dbg_stream.ul = 0;			\
 			dbg_stream.raw = id;			\
 			dbg_autocolourise ( dbg_stream.ul );	\
 		}						\
@@ -469,18 +419,6 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 		DBG_DC_IF ( level );				\
 	} while ( 0 )
 
-#define DBGC_MD5A_IF( level, id, ... ) do {			\
-		DBG_AC_IF ( level, id );			\
-		DBG_MD5A_IF ( level, __VA_ARGS__ );		\
-		DBG_DC_IF ( level );				\
-	} while ( 0 )
-
-#define DBGC_MD5_IF( level, id, ... ) do {			\
-		DBG_AC_IF ( level, id );			\
-		DBG_MD5_IF ( level, __VA_ARGS__ );		\
-		DBG_DC_IF ( level );				\
-	} while ( 0 )
-
 #define DBGC_PAUSE_IF( level, id ) do {				\
 		DBG_AC_IF ( level, id );			\
 		DBG_PAUSE_IF ( level );				\
@@ -498,15 +436,11 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 #define DBG( ... )		DBG_IF		( LOG, ##__VA_ARGS__ )
 #define DBG_HDA( ... )		DBG_HDA_IF	( LOG, ##__VA_ARGS__ )
 #define DBG_HD( ... )		DBG_HD_IF	( LOG, ##__VA_ARGS__ )
-#define DBG_MD5A( ... )		DBG_MD5A_IF	( LOG, ##__VA_ARGS__ )
-#define DBG_MD5( ... )		DBG_MD5_IF	( LOG, ##__VA_ARGS__ )
 #define DBG_PAUSE( ... )	DBG_PAUSE_IF	( LOG, ##__VA_ARGS__ )
 #define DBG_MORE( ... )		DBG_MORE_IF	( LOG, ##__VA_ARGS__ )
 #define DBGC( ... )		DBGC_IF		( LOG, ##__VA_ARGS__ )
 #define DBGC_HDA( ... )		DBGC_HDA_IF	( LOG, ##__VA_ARGS__ )
 #define DBGC_HD( ... )		DBGC_HD_IF	( LOG, ##__VA_ARGS__ )
-#define DBGC_MD5A( ... )	DBGC_MD5A_IF	( LOG, ##__VA_ARGS__ )
-#define DBGC_MD5( ... )		DBGC_MD5_IF	( LOG, ##__VA_ARGS__ )
 #define DBGC_PAUSE( ... )	DBGC_PAUSE_IF	( LOG, ##__VA_ARGS__ )
 #define DBGC_MORE( ... )	DBGC_MORE_IF	( LOG, ##__VA_ARGS__ )
 
@@ -515,15 +449,11 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 #define DBG2( ... )		DBG_IF		( EXTRA, ##__VA_ARGS__ )
 #define DBG2_HDA( ... )		DBG_HDA_IF	( EXTRA, ##__VA_ARGS__ )
 #define DBG2_HD( ... )		DBG_HD_IF	( EXTRA, ##__VA_ARGS__ )
-#define DBG2_MD5A( ... )	DBG_MD5A_IF	( EXTRA, ##__VA_ARGS__ )
-#define DBG2_MD5( ... )		DBG_MD5_IF	( EXTRA, ##__VA_ARGS__ )
 #define DBG2_PAUSE( ... )	DBG_PAUSE_IF	( EXTRA, ##__VA_ARGS__ )
 #define DBG2_MORE( ... )	DBG_MORE_IF	( EXTRA, ##__VA_ARGS__ )
 #define DBGC2( ... )		DBGC_IF		( EXTRA, ##__VA_ARGS__ )
 #define DBGC2_HDA( ... )	DBGC_HDA_IF	( EXTRA, ##__VA_ARGS__ )
 #define DBGC2_HD( ... )		DBGC_HD_IF	( EXTRA, ##__VA_ARGS__ )
-#define DBGC2_MD5A( ... )	DBGC_MD5A_IF	( EXTRA, ##__VA_ARGS__ )
-#define DBGC2_MD5( ... )	DBGC_MD5_IF	( EXTRA, ##__VA_ARGS__ )
 #define DBGC2_PAUSE( ... )	DBGC_PAUSE_IF	( EXTRA, ##__VA_ARGS__ )
 #define DBGC2_MORE( ... )	DBGC_MORE_IF	( EXTRA, ##__VA_ARGS__ )
 
@@ -532,15 +462,11 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 #define DBGP( ... )		DBG_IF		( PROFILE, ##__VA_ARGS__ )
 #define DBGP_HDA( ... )		DBG_HDA_IF	( PROFILE, ##__VA_ARGS__ )
 #define DBGP_HD( ... )		DBG_HD_IF	( PROFILE, ##__VA_ARGS__ )
-#define DBGP_MD5A( ... )	DBG_MD5A_IF	( PROFILE, ##__VA_ARGS__ )
-#define DBGP_MD5( ... )		DBG_MD5_IF	( PROFILE, ##__VA_ARGS__ )
 #define DBGP_PAUSE( ... )	DBG_PAUSE_IF	( PROFILE, ##__VA_ARGS__ )
 #define DBGP_MORE( ... )	DBG_MORE_IF	( PROFILE, ##__VA_ARGS__ )
 #define DBGCP( ... )		DBGC_IF		( PROFILE, ##__VA_ARGS__ )
 #define DBGCP_HDA( ... )	DBGC_HDA_IF	( PROFILE, ##__VA_ARGS__ )
 #define DBGCP_HD( ... )		DBGC_HD_IF	( PROFILE, ##__VA_ARGS__ )
-#define DBGCP_MD5A( ... )	DBGC_MD5A_IF	( PROFILE, ##__VA_ARGS__ )
-#define DBGCP_MD5( ... )	DBGC_MD5_IF	( PROFILE, ##__VA_ARGS__ )
 #define DBGCP_PAUSE( ... )	DBGC_PAUSE_IF	( PROFILE, ##__VA_ARGS__ )
 #define DBGCP_MORE( ... )	DBGC_MORE_IF	( PROFILE, ##__VA_ARGS__ )
 
@@ -549,17 +475,18 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 #define DBGIO( ... )		DBG_IF		( IO, ##__VA_ARGS__ )
 #define DBGIO_HDA( ... )	DBG_HDA_IF	( IO, ##__VA_ARGS__ )
 #define DBGIO_HD( ... )		DBG_HD_IF	( IO, ##__VA_ARGS__ )
-#define DBGIO_MD5A( ... )	DBG_MD5A_IF	( IO, ##__VA_ARGS__ )
-#define DBGIO_MD5( ... )	DBG_MD5_IF	( IO, ##__VA_ARGS__ )
 #define DBGIO_PAUSE( ... )	DBG_PAUSE_IF	( IO, ##__VA_ARGS__ )
 #define DBGIO_MORE( ... )	DBG_MORE_IF	( IO, ##__VA_ARGS__ )
 #define DBGCIO( ... )		DBGC_IF		( IO, ##__VA_ARGS__ )
 #define DBGCIO_HDA( ... )	DBGC_HDA_IF	( IO, ##__VA_ARGS__ )
 #define DBGCIO_HD( ... )	DBGC_HD_IF	( IO, ##__VA_ARGS__ )
-#define DBGCIO_MD5A( ... )	DBGC_MD5A_IF	( IO, ##__VA_ARGS__ )
-#define DBGCIO_MD5( ... )	DBGC_MD5_IF	( IO, ##__VA_ARGS__ )
 #define DBGCIO_PAUSE( ... )	DBGC_PAUSE_IF	( IO, ##__VA_ARGS__ )
 #define DBGCIO_MORE( ... )	DBGC_MORE_IF	( IO, ##__VA_ARGS__ )
+
+
+#if DEBUG_SYMBOL == 0
+#define NDEBUG
+#endif
 
 #endif /* ASSEMBLY */
 /** @} */
@@ -610,19 +537,6 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 /** Declare a function to be always inline */
 #define __always_inline __attribute__ (( always_inline ))
 
-/* Force all inline functions to not be instrumented
- *
- * This is required to cope with what seems to be a long-standing gcc
- * bug, in which -finstrument-functions will cause instances of
- * inlined functions to be reported as further calls to the
- * *containing* function.  This makes instrumentation very difficult
- * to use.
- *
- * Work around this problem by adding the no_instrument_function
- * attribute to all inlined functions.
- */
-#define inline inline __attribute__ (( no_instrument_function ))
-
 /**
  * Shared data.
  *
@@ -656,13 +570,6 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
 #endif /* ASSEMBLY */
 
 /**
- * Array size
- */
-#ifndef ASSEMBLY
-#define ARRAY_SIZE(array) ( sizeof (array) / sizeof ( (array)[0] ) )
-#endif /* ASSEMBLY */
-
-/**
  * @defgroup licences Licence declarations
  *
  * For reasons that are partly historical, various different files
@@ -677,7 +584,7 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  * be in the public domain.
  */
 #define FILE_LICENCE_PUBLIC_DOMAIN \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__public_domain__ ) )
+	PROVIDE_SYMBOL ( __licence_public_domain )
 
 /** Declare a file as being under version 2 (or later) of the GNU GPL
  *
@@ -686,7 +593,7 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  * (at your option) any later version".
  */
 #define FILE_LICENCE_GPL2_OR_LATER \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__gpl2_or_later__ ) )
+	PROVIDE_SYMBOL ( __licence_gpl2_or_later )
 
 /** Declare a file as being under version 2 of the GNU GPL
  *
@@ -695,7 +602,7 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  * "or, at your option, any later version" clause.
  */
 #define FILE_LICENCE_GPL2_ONLY \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__gpl2_only__ ) )
+	PROVIDE_SYMBOL ( __licence_gpl2_only )
 
 /** Declare a file as being under any version of the GNU GPL
  *
@@ -707,7 +614,7 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  * version ever published by the Free Software Foundation".
  */
 #define FILE_LICENCE_GPL_ANY \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__gpl_any__ ) )
+	PROVIDE_SYMBOL ( __licence_gpl_any )
 
 /** Declare a file as being under the three-clause BSD licence
  *
@@ -732,7 +639,7 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  * functionally equivalent to the standard three-clause BSD licence.
  */
 #define FILE_LICENCE_BSD3 \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__bsd3__ ) )
+	PROVIDE_SYMBOL ( __licence_bsd3 )
 
 /** Declare a file as being under the two-clause BSD licence
  *
@@ -753,7 +660,7 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  * functionally equivalent to the standard two-clause BSD licence.
  */
 #define FILE_LICENCE_BSD2 \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__bsd2__ ) )
+	PROVIDE_SYMBOL ( __licence_bsd2 )
 
 /** Declare a file as being under the one-clause MIT-style licence
  *
@@ -763,26 +670,15 @@ char __debug_disable(OBJECT) = ( DBGLVL_MAX & ~DBGLVL_DFLT );
  * permission notice appear in all copies.
  */
 #define FILE_LICENCE_MIT \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__mit__ ) )
-
-/** Declare a file as being under GPLv2+ or UBDL
- *
- * This licence declaration is applicable when a file states itself to
- * be licensed under the GNU GPL; "either version 2 of the License, or
- * (at your option) any later version" and also states that it may be
- * distributed under the terms of the Unmodified Binary Distribution
- * Licence (as given in the file COPYING.UBDL).
- */
-#define FILE_LICENCE_GPL2_OR_LATER_OR_UBDL \
-	PROVIDE_SYMBOL ( PREFIX_OBJECT ( __licence__gpl2_or_later_or_ubdl__ ) )
+	PROVIDE_SYMBOL ( __licence_mit )
 
 /** Declare a particular licence as applying to a file */
 #define FILE_LICENCE( _licence ) FILE_LICENCE_ ## _licence
 
 /** @} */
 
-/* This file itself is under GPLv2+/UBDL */
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+/* This file itself is under GPLv2-or-later */
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <bits/compiler.h>
 

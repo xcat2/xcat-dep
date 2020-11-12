@@ -1,7 +1,7 @@
 /** @file
   This includes some definitions introduced in UEFI that will be used in both PEI and DXE phases.
 
-Copyright (c) 2006 - 2015, Intel Corporation. All rights reserved.<BR>
+Copyright (c) 2006 - 2010, Intel Corporation. All rights reserved.<BR>
 This program and the accompanying materials are licensed and made available under
 the terms and conditions of the BSD License that accompanies this distribution.
 The full text of the license may be found at
@@ -84,46 +84,8 @@ typedef enum {
   /// Address space reserved by the firmware for code that is part of the processor.
   ///
   EfiPalCode,
-  ///
-  /// A memory region that operates as EfiConventionalMemory,
-  /// however it happens to also support byte-addressable non-volatility.
-  ///
-  EfiPersistentMemory,
   EfiMaxMemoryType
 } EFI_MEMORY_TYPE;
-
-///
-/// Enumeration of reset types.
-///
-typedef enum {
-  ///
-  /// Used to induce a system-wide reset. This sets all circuitry within the
-  /// system to its initial state.  This type of reset is asynchronous to system
-  /// operation and operates withgout regard to cycle boundaries.  EfiColdReset
-  /// is tantamount to a system power cycle.
-  ///
-  EfiResetCold,
-  ///
-  /// Used to induce a system-wide initialization. The processors are set to their
-  /// initial state, and pending cycles are not corrupted.  If the system does
-  /// not support this reset type, then an EfiResetCold must be performed.
-  ///
-  EfiResetWarm,
-  ///
-  /// Used to induce an entry into a power state equivalent to the ACPI G2/S5 or G3
-  /// state.  If the system does not support this reset type, then when the system
-  /// is rebooted, it should exhibit the EfiResetCold attributes.
-  ///
-  EfiResetShutdown,
-  ///
-  /// Used to induce a system-wide reset. The exact type of the reset is defined by
-  /// the EFI_GUID that follows the Null-terminated Unicode string passed into
-  /// ResetData. If the platform does not recognize the EFI_GUID in ResetData the
-  /// platform must pick a supported reset type to perform. The platform may
-  /// optionally log the parameters from any non-normal reset that occurs.
-  ///
-  EfiResetPlatformSpecific
-} EFI_RESET_TYPE;
 
 ///
 /// Data structure that precedes all of the standard EFI table types.
@@ -160,26 +122,21 @@ typedef struct {
 ///
 /// Attributes of variable.
 ///
-#define EFI_VARIABLE_NON_VOLATILE                            0x00000001
-#define EFI_VARIABLE_BOOTSERVICE_ACCESS                      0x00000002
-#define EFI_VARIABLE_RUNTIME_ACCESS                          0x00000004
+#define EFI_VARIABLE_NON_VOLATILE                 0x00000001
+#define EFI_VARIABLE_BOOTSERVICE_ACCESS           0x00000002
+#define EFI_VARIABLE_RUNTIME_ACCESS               0x00000004
+#define EFI_VARIABLE_HARDWARE_ERROR_RECORD        0x00000008
+
 ///
 /// This attribute is identified by the mnemonic 'HR'
 /// elsewhere in this specification.
 ///
-#define EFI_VARIABLE_HARDWARE_ERROR_RECORD                   0x00000008
-///
-/// Attributes of Authenticated Variable
-///
-#define EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS              0x00000010
-#define EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS   0x00000020
-#define EFI_VARIABLE_APPEND_WRITE                            0x00000040
-
+#define EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS   0x00000010
 
 ///
 /// AuthInfo is a WIN_CERTIFICATE using the wCertificateType
 /// WIN_CERTIFICATE_UEFI_GUID and the CertType
-/// EFI_CERT_TYPE_RSA2048_SHA256_GUID. If the attribute specifies
+/// EFI_CERT_TYPE_RSA2048_SHA256. If the attribute specifies
 /// authenticated access, then the Data buffer should begin with an
 /// authentication descriptor prior to the data payload and DataSize
 /// should reflect the the data.and descriptor size. The caller
@@ -210,24 +167,5 @@ typedef struct {
   WIN_CERTIFICATE_UEFI_GUID   AuthInfo;
 } EFI_VARIABLE_AUTHENTICATION;
 
-///
-/// When the attribute EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS is
-/// set, then the Data buffer shall begin with an instance of a complete (and serialized)
-/// EFI_VARIABLE_AUTHENTICATION_2 descriptor. The descriptor shall be followed by the new
-/// variable value and DataSize shall reflect the combined size of the descriptor and the new
-/// variable value. The authentication descriptor is not part of the variable data and is not
-/// returned by subsequent calls to GetVariable().
-///
-typedef struct {
-  ///
-  /// For the TimeStamp value, components Pad1, Nanosecond, TimeZone, Daylight and
-  /// Pad2 shall be set to 0. This means that the time shall always be expressed in GMT.
-  ///
-  EFI_TIME                    TimeStamp;
-  ///
-  /// Only a CertType of  EFI_CERT_TYPE_PKCS7_GUID is accepted.
-  ///
-  WIN_CERTIFICATE_UEFI_GUID   AuthInfo;
- } EFI_VARIABLE_AUTHENTICATION_2;
-
 #endif
+

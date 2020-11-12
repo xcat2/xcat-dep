@@ -13,15 +13,10 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -53,8 +48,8 @@ static int copy_encap_settings ( struct dhcp_packet *dest,
 	struct setting setting = { .name = "" };
 	unsigned int subtag;
 	unsigned int tag;
-	void *data;
 	int len;
+	int check_len;
 	int rc;
 
 	for ( subtag = DHCP_MIN_OPTION; subtag <= DHCP_MAX_OPTION; subtag++ ) {
@@ -70,11 +65,17 @@ static int copy_encap_settings ( struct dhcp_packet *dest,
 		default:
 			/* Copy setting, if present */
 			setting.tag = tag;
-			len = fetch_raw_setting_copy ( source, &setting, &data);
-			if ( len >= 0 ) {
-				rc = dhcppkt_store ( dest, tag, data, len );
-				free ( data );
-				if ( rc != 0 )
+			len = fetch_setting_len ( source, &setting );
+			if ( len < 0 )
+				break;
+			{
+				char buf[len];
+
+				check_len = fetch_setting ( source, &setting,
+							    buf, sizeof (buf));
+				assert ( check_len == len );
+				if ( ( rc = dhcppkt_store ( dest, tag, buf,
+							    sizeof(buf) )) !=0)
 					return rc;
 			}
 			break;
@@ -113,8 +114,7 @@ int create_fakedhcpdiscover ( struct net_device *netdev,
 	int rc;
 
 	if ( ( rc = dhcp_create_request ( &dhcppkt, netdev, DHCPDISCOVER,
-					  dhcp_last_xid, ciaddr, data,
-					  max_len ) ) != 0 ) {
+					  ciaddr, data, max_len ) ) != 0 ) {
 		DBG ( "Could not create DHCPDISCOVER: %s\n",
 		      strerror ( rc ) );
 		return rc;
@@ -139,8 +139,7 @@ int create_fakedhcpack ( struct net_device *netdev,
 	int rc;
 
 	/* Create base DHCPACK packet */
-	if ( ( rc = dhcp_create_packet ( &dhcppkt, netdev, DHCPACK,
-					 dhcp_last_xid, NULL, 0,
+	if ( ( rc = dhcp_create_packet ( &dhcppkt, netdev, DHCPACK, NULL, 0,
 					 data, max_len ) ) != 0 ) {
 		DBG ( "Could not create DHCPACK: %s\n", strerror ( rc ) );
 		return rc;
@@ -191,17 +190,12 @@ int create_fakepxebsack ( struct net_device *netdev,
 	}
 
 	/* Create base DHCPACK packet */
-	if ( ( rc = dhcp_create_packet ( &dhcppkt, netdev, DHCPACK,
-					 dhcp_last_xid, NULL, 0,
+	if ( ( rc = dhcp_create_packet ( &dhcppkt, netdev, DHCPACK, NULL, 0,
 					 data, max_len ) ) != 0 ) {
 		DBG ( "Could not create PXE BS ACK: %s\n",
 		      strerror ( rc ) );
 		return rc;
 	}
-
-	/* Populate ciaddr */
-	fetch_ipv4_setting ( netdev_settings ( netdev ), &ip_setting,
-			     &dhcppkt.dhcphdr->ciaddr );
 
 	/* Merge in ProxyDHCP options */
 	if ( proxy_settings &&

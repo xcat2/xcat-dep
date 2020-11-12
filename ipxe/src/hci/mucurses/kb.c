@@ -8,8 +8,6 @@
  * MuCurses keyboard input handling functions
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
-
 #define INPUT_DELAY 		200 // half-blocking delay timer resolution (ms)
 #define INPUT_DELAY_TIMEOUT 	1000 // half-blocking delay timeout
 
@@ -90,7 +88,7 @@ int wgetnstr ( WINDOW *win, char *str, int n ) {
 	int c;
 
 	if ( n == 0 ) {
-		*str = '\0';
+		str = '\0';
 		return OK;
 	}
 
@@ -103,9 +101,7 @@ int wgetnstr ( WINDOW *win, char *str, int n ) {
 			_wcursback( win );
 			wdelch( win );
 		} else {
-			if ( c >= 32 && c <= 126 ) {
-				*(_str++) = c; n--;
-			} else {
+			if ( c >= KEY_MIN ) {
 				switch(c) {
 				case KEY_LEFT :
 				case KEY_BACKSPACE :
@@ -119,6 +115,9 @@ int wgetnstr ( WINDOW *win, char *str, int n ) {
 					beep();
 					break;
 				}
+			}
+			if ( c >= 32 && c <= 126 ) {
+				*(_str++) = c; n--;
 			}
 		}
 	}

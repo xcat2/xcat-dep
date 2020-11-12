@@ -22,6 +22,8 @@ struct isa_device {
 	 * this field.
 	 */
 	void *priv;
+	/** Driver name */
+	const char *driver_name;
 };
 
 /*

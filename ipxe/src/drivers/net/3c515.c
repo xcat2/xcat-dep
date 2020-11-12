@@ -14,8 +14,7 @@
 *
 *    You should have received a copy of the GNU General Public License
 *    along with this program; if not, write to the Free Software
-*    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
-*    02110-1301, USA.
+*    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 *
 * Portions of this code:
 * Copyright (C) 1997-2002 Donald Becker  3c515.c: A 3Com ISA EtherLink XL "Corkscrew" ethernet driver for linux.
@@ -389,7 +388,7 @@ static void t515_reset(struct nic *nic)
 		outb(PKT_BUF_SZ >> 8, nic->ioaddr + TxFreeThreshold);	/* Room for a packet. */
 		/* Clear the Tx ring. */
 		for (i = 0; i < TX_RING_SIZE; i++)
-			vp->tx_skbuff[i] = NULL;
+			vp->tx_skbuff[i] = 0;
 		outl(0, nic->ioaddr + DownListPtr);
 	}
 	/* Set receiver mode: presumably accept b-case and phys addr only. */
@@ -656,7 +655,7 @@ static int
 corkscrew_found_device(int ioaddr, int irq,
 		       int product_index, int options, struct nic *nic)
 {
-	/* Direct copy from Becker 3c515.c with unnecessary parts removed */
+	/* Direct copy from Becker 3c515.c with unecessary parts removed */
 	vp->product_name = "3c515";
 	vp->options = options;
 	if (options >= 0) {

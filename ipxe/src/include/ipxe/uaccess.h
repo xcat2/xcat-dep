@@ -19,7 +19,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <string.h>
@@ -83,18 +83,6 @@ trivial_userptr_add ( userptr_t userptr, off_t offset ) {
 }
 
 /**
- * Subtract user pointers
- *
- * @v userptr		User pointer
- * @v subtrahend	User pointer to be subtracted
- * @ret offset		Offset
- */
-static inline __always_inline off_t
-trivial_userptr_sub ( userptr_t userptr, userptr_t subtrahend ) {
-	return ( userptr - subtrahend );
-}
-
-/**
  * Copy data between user buffers
  *
  * @v dest		Destination
@@ -124,23 +112,6 @@ trivial_memmove_user ( userptr_t dest, off_t dest_off,
 		       userptr_t src, off_t src_off, size_t len ) {
 	memmove ( ( ( void * ) dest + dest_off ),
 		  ( ( void * ) src + src_off ), len );
-}
-
-/**
- * Compare data between user buffers
- *
- * @v first		First buffer
- * @v first_off		First buffer offset
- * @v second		Second buffer
- * @v second_off	Second buffer offset
- * @v len		Length
- * @ret diff		Difference
- */
-static inline __always_inline int
-trivial_memcmp_user ( userptr_t first, off_t first_off,
-		      userptr_t second, off_t second_off, size_t len ) {
-	return memcmp ( ( ( void * ) first + first_off ),
-			( ( void * ) second + second_off ), len );
 }
 
 /**
@@ -269,15 +240,6 @@ void * user_to_virt ( userptr_t userptr, off_t offset );
 userptr_t userptr_add ( userptr_t userptr, off_t offset );
 
 /**
- * Subtract user pointers
- *
- * @v userptr		User pointer
- * @v subtrahend	User pointer to be subtracted
- * @ret offset		Offset
- */
-off_t userptr_sub ( userptr_t userptr, userptr_t subtrahend );
-
-/**
  * Convert virtual address to a physical address
  *
  * @v addr		Virtual address
@@ -349,19 +311,6 @@ copy_from_user ( void *dest, userptr_t src, off_t src_off, size_t len ) {
  */
 void memmove_user ( userptr_t dest, off_t dest_off,
 		    userptr_t src, off_t src_off, size_t len );
-
-/**
- * Compare data between user buffers
- *
- * @v first		First buffer
- * @v first_off		First buffer offset
- * @v second		Second buffer
- * @v second_off	Second buffer offset
- * @v len		Length
- * @ret diff		Difference
- */
-int memcmp_user ( userptr_t first, off_t first_off,
-		  userptr_t second, off_t second_off, size_t len );
 
 /**
  * Fill user buffer with a constant byte

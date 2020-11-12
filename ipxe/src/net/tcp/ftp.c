@@ -1,29 +1,9 @@
-/*
- * Copyright (C) 2007 Michael Brown <mbrown@fensystems.co.uk>.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the
- * License, or any later version.
- *
- * This program is distributed in the hope that it will be useful, but
- * WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- * General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- */
-
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
-#include <ctype.h>
 #include <byteswap.h>
 #include <ipxe/socket.h>
 #include <ipxe/tcpip.h>
@@ -54,7 +34,6 @@ enum ftp_state {
 	FTP_USER,
 	FTP_PASS,
 	FTP_TYPE,
-	FTP_SIZE,
 	FTP_PASV,
 	FTP_RETR,
 	FTP_WAIT,
@@ -89,8 +68,6 @@ struct ftp_request {
 	char status_text[5];
 	/** Passive-mode parameters, as text */
 	char passive_text[24]; /* "aaa,bbb,ccc,ddd,eee,fff" */
-	/** File size, as text */
-	char filesize[20];
 };
 
 /**
@@ -180,7 +157,6 @@ static struct ftp_control_string ftp_strings[] = {
 	[FTP_USER]	= { "USER ", ftp_user },
 	[FTP_PASS]	= { "PASS ", ftp_password },
 	[FTP_TYPE]	= { "TYPE I", NULL },
-	[FTP_SIZE]	= { "SIZE ", ftp_uri_path },
 	[FTP_PASV]	= { "PASV", NULL },
 	[FTP_RETR]	= { "RETR ", ftp_uri_path },
 	[FTP_WAIT]	= { NULL, NULL },
@@ -258,14 +234,6 @@ static void ftp_reply ( struct ftp_request *ftp ) {
 	if ( status_major == '1' )
 		return;
 
-	/* If the SIZE command is not supported by the server, we go to
-	 * the next step.
-	 */
-	if ( ( status_major == '5' ) && ( ftp->state == FTP_SIZE ) ) {
-		ftp_next_state ( ftp );
-		return;
-	}
-
 	/* Anything other than success (2xx) or, in the case of a
 	 * repsonse to a "USER" command, a password prompt (3xx), is a
 	 * fatal error.
@@ -275,26 +243,6 @@ static void ftp_reply ( struct ftp_request *ftp ) {
 		/* Flag protocol error and close connections */
 		ftp_done ( ftp, -EPROTO );
 		return;
-	}
-
-	/* Parse file size */
-	if ( ftp->state == FTP_SIZE ) {
-		size_t filesize;
-		char *endptr;
-
-		/* Parse size */
-		filesize = strtoul ( ftp->filesize, &endptr, 10 );
-		if ( *endptr != '\0' ) {
-			DBGC ( ftp, "FTP %p invalid SIZE \"%s\"\n",
-			       ftp, ftp->filesize );
-			ftp_done ( ftp, -EPROTO );
-			return;
-		}
-
-		/* Use seek() to notify recipient of filesize */
-		DBGC ( ftp, "FTP %p file size is %zd bytes\n", ftp, filesize );
-		xfer_seek ( &ftp->xfer, filesize );
-		xfer_seek ( &ftp->xfer, 0 );
 	}
 
 	/* Open passive connection when we get "PASV" response */
@@ -347,33 +295,35 @@ static int ftp_control_deliver ( struct ftp_request *ftp,
 	
 	while ( len-- ) {
 		c = *(data++);
-		if ( ( c == '\r' ) || ( c == '\n' ) ) {
+		switch ( c ) {
+		case '\r' :
+		case '\n' :
 			/* End of line: call ftp_reply() to handle
 			 * completed reply.  Avoid calling ftp_reply()
 			 * twice if we receive both \r and \n.
 			 */
-			if ( recvbuf != ftp->status_text )
+			if ( recvsize == 0 )
 				ftp_reply ( ftp );
 			/* Start filling up the status code buffer */
 			recvbuf = ftp->status_text;
 			recvsize = sizeof ( ftp->status_text ) - 1;
-		} else if ( ( ftp->state == FTP_PASV ) && ( c == '(' ) ) {
+			break;
+		case '(' :
 			/* Start filling up the passive parameter buffer */
 			recvbuf = ftp->passive_text;
 			recvsize = sizeof ( ftp->passive_text ) - 1;
-		} else if ( ( ftp->state == FTP_PASV ) && ( c == ')' ) ) {
+			break;
+		case ')' :
 			/* Stop filling the passive parameter buffer */
 			recvsize = 0;
-		} else if ( ( ftp->state == FTP_SIZE ) && ( c == ' ' ) ) {
-			/* Start filling up the file size buffer */
-			recvbuf = ftp->filesize;
-			recvsize = sizeof ( ftp->filesize ) - 1;
-		} else {
+			break;
+		default :
 			/* Fill up buffer if applicable */
 			if ( recvsize > 0 ) {
 				*(recvbuf++) = c;
 				recvsize--;
 			}
+			break;
 		}
 	}
 
@@ -428,15 +378,37 @@ static void ftp_data_closed ( struct ftp_request *ftp, int rc ) {
 	}
 }
 
+/**
+ * Handle data delivery via FTP data channel
+ *
+ * @v ftp		FTP request
+ * @v iobuf		I/O buffer
+ * @v meta		Data transfer metadata
+ * @ret rc		Return status code
+ */
+static int ftp_data_deliver ( struct ftp_request *ftp,
+			      struct io_buffer *iobuf,
+			      struct xfer_metadata *meta __unused ) {
+	int rc;
+
+	if ( ( rc = xfer_deliver_iob ( &ftp->xfer, iobuf ) ) != 0 ) {
+		DBGC ( ftp, "FTP %p failed to deliver data: %s\n",
+		       ftp, strerror ( rc ) );
+		return rc;
+	}
+
+	return 0;
+}
+
 /** FTP data channel interface operations */
 static struct interface_operation ftp_data_operations[] = {
+	INTF_OP ( xfer_deliver, struct ftp_request *, ftp_data_deliver ),
 	INTF_OP ( intf_close, struct ftp_request *, ftp_data_closed ),
 };
 
 /** FTP data channel interface descriptor */
 static struct interface_descriptor ftp_data_desc =
-	INTF_DESC_PASSTHRU ( struct ftp_request, data, ftp_data_operations,
-			     xfer );
+	INTF_DESC ( struct ftp_request, data, ftp_data_operations );
 
 /*****************************************************************************
  *
@@ -451,33 +423,13 @@ static struct interface_operation ftp_xfer_operations[] = {
 
 /** FTP data transfer interface descriptor */
 static struct interface_descriptor ftp_xfer_desc =
-	INTF_DESC_PASSTHRU ( struct ftp_request, xfer, ftp_xfer_operations,
-			     data );
+	INTF_DESC ( struct ftp_request, xfer, ftp_xfer_operations );
 
 /*****************************************************************************
  *
  * URI opener
  *
  */
-
-/**
- * Check validity of FTP control channel string
- *
- * @v string		String
- * @ret rc		Return status code
- */
-static int ftp_check_string ( const char *string ) {
-	char c;
-
-	/* The FTP control channel is line-based.  Check for invalid
-	 * non-printable characters (e.g. newlines).
-	 */
-	while ( ( c = *(string++) ) ) {
-		if ( ! isprint ( c ) )
-			return -EINVAL;
-	}
-	return 0;
-}
 
 /**
  * Initiate an FTP connection
@@ -492,17 +444,10 @@ static int ftp_open ( struct interface *xfer, struct uri *uri ) {
 	int rc;
 
 	/* Sanity checks */
-	if ( ! uri->host )
-		return -EINVAL;
 	if ( ! uri->path )
 		return -EINVAL;
-	if ( ( rc = ftp_check_string ( uri->path ) ) != 0 )
-		return rc;
-	if ( uri->user && ( ( rc = ftp_check_string ( uri->user ) ) != 0 ) )
-		return rc;
-	if ( uri->password &&
-	     ( ( rc = ftp_check_string ( uri->password ) ) != 0 ) )
-		return rc;
+	if ( ! uri->host )
+		return -EINVAL;
 
 	/* Allocate and populate structure */
 	ftp = zalloc ( sizeof ( *ftp ) );

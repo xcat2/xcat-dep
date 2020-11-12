@@ -13,13 +13,11 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 FILE_LICENCE ( GPL2_OR_LATER );
 
-#include <string.h>
 #include <ipxe/net80211.h>
 #include <ipxe/crypto.h>
 #include <ipxe/hmac.h>
@@ -480,7 +478,7 @@ static void ccmp_kie_mic ( const void *kck, const void *msg, size_t len,
 {
 	u8 sha1_ctx[SHA1_CTX_SIZE];
 	u8 kckb[16];
-	u8 hash[SHA1_DIGEST_SIZE];
+	u8 hash[SHA1_SIZE];
 	size_t kck_len = 16;
 
 	memcpy ( kckb, kck, kck_len );

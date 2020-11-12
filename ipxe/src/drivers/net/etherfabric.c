@@ -20,11 +20,11 @@ FILE_LICENCE ( GPL_ANY );
 
 #include <stdint.h>
 #include <stdlib.h>
-#include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
 #include <assert.h>
 #include <byteswap.h>
+#include <console.h>
 #include <ipxe/io.h>
 #include <ipxe/pci.h>
 #include <ipxe/malloc.h>
@@ -93,6 +93,7 @@ static int falcon_mdio_read ( struct efab_nic *efab, int device, int location );
 #define LPA_EF_10000FULL		0x00040000
 #define LPA_EF_10000HALF		0x00080000
 
+#define LPA_100			(LPA_100FULL | LPA_100HALF | LPA_100BASE4)
 #define LPA_EF_1000		( LPA_EF_1000FULL | LPA_EF_1000HALF )
 #define LPA_EF_10000               ( LPA_EF_10000FULL | LPA_EF_10000HALF )
 #define LPA_EF_DUPLEX		( LPA_10FULL | LPA_100FULL | LPA_EF_1000FULL | \
@@ -1491,6 +1492,12 @@ fail1:
 	return rc;
 }
 
+/** Portion of EEPROM available for non-volatile options */
+static struct nvo_fragment falcon_nvo_fragments[] = {
+	{ 0x100, 0xf0 },
+	{ 0, 0 }
+};
+
 /*******************************************************************************
  *
  *
@@ -1566,7 +1573,7 @@ falcon_gmii_wait ( struct efab_nic *efab )
 	efab_dword_t md_stat;
 	int count;
 
-	/* wait up to 10ms */
+	/* wait upto 10ms */
 	for (count = 0; count < 1000; count++) {
 		falcon_readl ( efab, &md_stat, FCN_MD_STAT_REG_KER );
 		if ( EFAB_DWORD_FIELD ( md_stat, FCN_MD_BSY ) == 0 ) {
@@ -2195,7 +2202,7 @@ falcon_reset_xaui ( struct efab_nic *efab )
 	falcon_xmac_writel ( efab, &reg, FCN_XX_PWR_RST_REG_MAC );
 
 	/* Give some time for the link to establish */
-	for (count = 0; count < 1000; count++) { /* wait up to 10ms */
+	for (count = 0; count < 1000; count++) { /* wait upto 10ms */
 		falcon_xmac_readl ( efab, &reg, FCN_XX_PWR_RST_REG_MAC );
 		if ( EFAB_DWORD_FIELD ( reg, FCN_XX_RST_XX_EN ) == 0 ) {
 			falcon_setup_xaui ( efab );
@@ -3072,9 +3079,11 @@ static void
 clear_b0_fpga_memories ( struct efab_nic *efab)
 {
 	efab_oword_t blanko, temp;
+	efab_dword_t blankd;
 	int offset; 
 
 	EFAB_ZERO_OWORD ( blanko );
+	EFAB_ZERO_DWORD ( blankd );
 
 	/* Clear the address region register */
 	EFAB_POPULATE_OWORD_4 ( temp,
@@ -3172,11 +3181,11 @@ static void
 falcon_probe_nic_variant ( struct efab_nic *efab, struct pci_device *pci )
 {
 	efab_oword_t altera_build, nic_stat;
-	int fpga_version;
+	int is_pcie, fpga_version;
 	uint8_t revision;
 
 	/* PCI revision */
-	pci_read_config_byte ( pci, PCI_REVISION, &revision );
+	pci_read_config_byte ( pci, PCI_CLASS_REVISION, &revision );
 	efab->pci_revision = revision;
 
 	/* Asic vs FPGA */
@@ -3187,13 +3196,16 @@ falcon_probe_nic_variant ( struct efab_nic *efab, struct pci_device *pci )
 	/* MAC and PCI type */
 	falcon_read ( efab, &nic_stat, FCN_NIC_STAT_REG );
 	if ( efab->pci_revision == FALCON_REV_B0 ) {
+		is_pcie = 1;
 		efab->phy_10g = EFAB_OWORD_FIELD ( nic_stat, FCN_STRAP_10G );
 	}
 	else if ( efab->is_asic ) {
+		is_pcie = EFAB_OWORD_FIELD ( nic_stat, FCN_STRAP_PCIE );
 		efab->phy_10g = EFAB_OWORD_FIELD ( nic_stat, FCN_STRAP_10G );
 	}
 	else {
 		int minor = EFAB_OWORD_FIELD ( altera_build,  FCN_VER_MINOR );
+		is_pcie = 0;
 		efab->phy_10g = ( minor == 0x14 );
 	}
 }
@@ -3265,10 +3277,9 @@ falcon_probe_spi ( struct efab_nic *efab )
 	}
 
 	/* If the device has EEPROM attached, then advertise NVO space */
-	if ( has_eeprom ) {
-		nvo_init ( &efab->nvo, &efab->spi_eeprom.nvs, 0x100, 0xf0,
-			   NULL, &efab->netdev->refcnt );
-	}
+	if ( has_eeprom )
+		nvo_init ( &efab->nvo, &efab->spi_eeprom.nvs, falcon_nvo_fragments,
+			   &efab->netdev->refcnt );
 
 	return 0;
 }
@@ -3395,7 +3406,7 @@ falcon_init_sram ( struct efab_nic *efab )
 		falcon_read ( efab, &reg, FCN_SRM_CFG_REG_KER );
 		if ( !EFAB_OWORD_FIELD ( reg, FCN_SRAM_OOB_BT_INIT_EN ) )
 			return 0;
-	} while (++count < 20);	/* wait up to 0.4 sec */
+	} while (++count < 20);	/* wait upto 0.4 sec */
 
 	EFAB_ERR ( "timed out waiting for SRAM reset\n");
 	return -ETIMEDOUT;
@@ -3426,7 +3437,7 @@ falcon_setup_nic ( struct efab_nic *efab )
 	falcon_write ( efab, &reg, FCN_RX_DC_CFG_REG_KER );
 	
 	/* Set number of RSS CPUs
-	 * bug7244: Increase filter depth to reduce RX_RESET likelihood
+	 * bug7244: Increase filter depth to reduce RX_RESET likelyhood
 	 */
 	EFAB_POPULATE_OWORD_5 ( reg,
 				FCN_NUM_KER, 0,
@@ -3798,8 +3809,7 @@ falcon_clear_interrupts ( struct efab_nic *efab )
 	}
 	else {
 		/* write to the INT_ACK register */
-		EFAB_ZERO_DWORD ( reg );
-		falcon_writel ( efab, &reg, FCN_INT_ACK_KER_REG_A1 );
+		falcon_writel ( efab, 0, FCN_INT_ACK_KER_REG_A1 );
 		mb();
 		falcon_readl ( efab, &reg,
 			       WORK_AROUND_BROKEN_PCI_READS_REG_KER_A1 );
@@ -4006,7 +4016,7 @@ efab_init_mac ( struct efab_nic *efab )
 		 * because we want to use it, or because we're about
 		 * to reset the mac anyway
 		 */
-		mdelay ( 2000 );
+		sleep ( 2 );
 
 		if ( ! efab->link_up ) {
 			EFAB_ERR ( "!\n" );
@@ -4124,7 +4134,8 @@ efab_remove ( struct pci_device *pci )
 }
 
 static int
-efab_probe ( struct pci_device *pci )
+efab_probe ( struct pci_device *pci,
+	     const struct pci_device_id *id )
 {
 	struct net_device *netdev;
 	struct efab_nic *efab;
@@ -4150,7 +4161,7 @@ efab_probe ( struct pci_device *pci )
 	/* Get iobase/membase */
 	mmio_start = pci_bar_start ( pci, PCI_BASE_ADDRESS_2 );
 	mmio_len = pci_bar_size ( pci, PCI_BASE_ADDRESS_2 );
-	efab->membase = pci_ioremap ( pci, mmio_start, mmio_len );
+	efab->membase = ioremap ( mmio_start, mmio_len );
 	EFAB_TRACE ( "BAR of %lx bytes at phys %lx mapped at %p\n",
 		     mmio_len, mmio_start, efab->membase );
 
@@ -4184,7 +4195,7 @@ efab_probe ( struct pci_device *pci )
 			goto fail5;
 	}
 
-	EFAB_LOG ( "Found %s EtherFabric %s %s revision %d\n", pci->id->name,
+	EFAB_LOG ( "Found %s EtherFabric %s %s revision %d\n", id->name,
 		   efab->is_asic ? "ASIC" : "FPGA",
 		   efab->phy_10g ? "10G" : "1G",
 		   efab->pci_revision );

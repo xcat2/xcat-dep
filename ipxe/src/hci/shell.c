@@ -13,26 +13,17 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include <string.h>
-#include <getopt.h>
 #include <readline/readline.h>
 #include <ipxe/command.h>
-#include <ipxe/parseopt.h>
 #include <ipxe/shell.h>
-#include <config/branding.h>
 
 /** @file
  *
@@ -41,15 +32,31 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
  */
 
 /** The shell prompt string */
-static const char shell_prompt[] = PRODUCT_SHORT_NAME "> ";
+static const char shell_prompt[] = "iPXE> ";
 
-/**
- * "help" command
- *
- * @v argc		Argument count
- * @v argv		Argument list
- * @ret rc		Return status code
- */
+/** Flag set in order to exit shell */
+static int exit_flag = 0;
+
+/** "exit" command body */
+static int exit_exec ( int argc, char **argv __unused ) {
+
+	if ( argc == 1 ) {
+		exit_flag = 1;
+	} else {
+		printf ( "Usage: exit\n"
+			 "Exits the command shell\n" );
+	}
+
+	return 0;
+}
+
+/** "exit" command definition */
+struct command exit_command __command = {
+	.name = "exit",
+	.exec = exit_exec,
+};
+
+/** "help" command body */
 static int help_exec ( int argc __unused, char **argv __unused ) {
 	struct command *command;
 	unsigned int hpos = 0;
@@ -71,7 +78,7 @@ static int help_exec ( int argc __unused, char **argv __unused ) {
 	return 0;
 }
 
-/** "help" command */
+/** "help" command definition */
 struct command help_command __command = {
 	.name = "help",
 	.exec = help_exec,
@@ -81,63 +88,15 @@ struct command help_command __command = {
  * Start command shell
  *
  */
-int shell ( void ) {
-	struct readline_history history;
+void shell ( void ) {
 	char *line;
-	int rc = 0;
 
-	/* Initialise shell history */
-	memset ( &history, 0, sizeof ( history ) );
-
-	/* Read and execute commands */
-	do {
-		readline_history ( shell_prompt, NULL, &history, &line );
+	exit_flag = 0;
+	while ( ! exit_flag ) {
+		line = readline ( shell_prompt );
 		if ( line ) {
-			rc = system ( line );
+			system ( line );
 			free ( line );
 		}
-	} while ( ! shell_stopped ( SHELL_STOP_COMMAND_SEQUENCE ) );
-
-	/* Discard shell history */
-	history_free ( &history );
-
-	return rc;
+	}
 }
-
-/** "shell" options */
-struct shell_options {};
-
-/** "shell" option list */
-static struct option_descriptor shell_opts[] = {};
-
-/** "shell" command descriptor */
-static struct command_descriptor shell_cmd =
-	COMMAND_DESC ( struct shell_options, shell_opts, 0, 0, NULL );
-
-/**
- * "shell" command
- *
- * @v argc		Argument count
- * @v argv		Argument list
- * @ret rc		Return status code
- */
-static int shell_exec ( int argc, char **argv ) {
-	struct shell_options opts;
-	int rc;
-
-	/* Parse options */
-	if ( ( rc = parse_options ( argc, argv, &shell_cmd, &opts ) ) != 0 )
-		return rc;
-
-	/* Start shell */
-	if ( ( rc = shell() ) != 0 )
-		return rc;
-
-	return 0;
-}
-
-/** "shell" command */
-struct command shell_command __command = {
-	.name = "shell",
-	.exec = shell_exec,
-};

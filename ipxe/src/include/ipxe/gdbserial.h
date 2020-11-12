@@ -7,14 +7,15 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
-
-#include <stdint.h>
+FILE_LICENCE ( GPL2_OR_LATER );
 
 struct gdb_transport;
 
-extern struct gdb_transport * gdbserial_configure ( unsigned int port,
-						    unsigned int baud,
-						    uint8_t lcr );
+/**
+ * Set up the serial transport
+ *
+ * @ret transport suitable for starting the GDB stub or NULL on error
+ */
+struct gdb_transport *gdbserial_configure ( void );
 
 #endif /* _IPXE_GDBSERIAL_H */

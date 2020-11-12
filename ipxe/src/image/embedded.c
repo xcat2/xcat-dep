@@ -6,7 +6,7 @@
  * fetching over the network.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <string.h>
 #include <ipxe/image.h>
@@ -18,7 +18,7 @@ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
 #define EMBED( _index, _path, _name )					\
 	extern char embedded_image_ ## _index ## _data[];		\
 	extern char embedded_image_ ## _index ## _len[];		\
-	__asm__ ( ".section \".rodata\", \"a\", " PROGBITS "\n\t"	\
+	__asm__ ( ".section \".rodata\", \"a\", @progbits\n\t"		\
 		  "\nembedded_image_" #_index "_data:\n\t"		\
 		  ".incbin \"" _path "\"\n\t"				\
 		  "\nembedded_image_" #_index "_end:\n\t"		\
@@ -76,16 +76,16 @@ static void embedded_init ( void ) {
 		}
 	}
 
-	/* Select the first image */
+	/* Load the first image */
 	image = &embedded_images[0];
-	if ( ( rc = image_select ( image ) ) != 0 ) {
-		DBG ( "Could not select embedded image \"%s\": %s\n",
+	if ( ( rc = image_autoload ( image ) ) != 0 ) {
+		DBG ( "Could not load embedded image \"%s\": %s\n",
 		      image->name, strerror ( rc ) );
 		return;
 	}
 }
 
 /** Embedded image initialisation function */
-struct init_fn embedded_init_fn __init_fn ( INIT_LATE ) = {
+struct init_fn embedded_init_fn __init_fn ( INIT_NORMAL ) = {
 	.initialise = embedded_init,
 };

@@ -1,7 +1,7 @@
 #ifndef _IPXE_COMMAND_H
 #define _IPXE_COMMAND_H
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <ipxe/tables.h>
 
@@ -22,7 +22,5 @@ struct command {
 #define COMMANDS __table ( struct command, "commands" )
 
 #define __command __table_entry ( COMMANDS, 01 )
-
-extern char * concat_args ( char **args );
 
 #endif /* _IPXE_COMMAND_H */

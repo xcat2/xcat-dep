@@ -49,9 +49,6 @@ FILE_LICENCE ( BSD2 );
 /** iSCSI Boot Firmware Table signature */
 #define IBFT_SIG ACPI_SIGNATURE ( 'i', 'B', 'F', 'T' )
 
-/** Alignment of structures within iBFT */
-#define IBFT_ALIGN 16
-
 /** An offset from the start of the iBFT */
 typedef uint16_t ibft_off_t;
 
@@ -101,20 +98,6 @@ struct ibft_header {
 } __attribute__ (( packed ));
 
 /**
- * iBFT NIC and Target offset pair
- *
- * There is no implicit relation between the NIC and the Target, but
- * using this structure simplifies the table construction code while
- * matching the expected table layout.
- */
-struct ibft_offset_pair {
-	/** Offset to NIC structure */
-	ibft_off_t nic;
-	/** Offset to Target structure */
-	ibft_off_t target;
-} __attribute__ (( packed ));
-
-/**
  * iBFT Control structure
  *
  */
@@ -125,8 +108,14 @@ struct ibft_control {
 	uint16_t extensions;
 	/** Offset to Initiator structure */
 	ibft_off_t initiator;
-	/** Offsets to NIC and Target structures */
-	struct ibft_offset_pair pair[2];
+	/** Offset to NIC structure for NIC 0 */
+	ibft_off_t nic_0;
+	/** Offset to Target structure for target 0 */
+	ibft_off_t target_0;
+	/** Offset to NIC structure for NIC 1 */
+	ibft_off_t nic_1;
+	/** Offset to Target structure for target 1 */
+	ibft_off_t target_1;
 } __attribute__ (( packed ));
 
 /** Structure ID for Control section */
@@ -208,14 +197,6 @@ struct ibft_nic {
 /** NIC global / link local */
 #define IBFT_FL_NIC_GLOBAL 0x04
 
-/** NIC IP address origin */
-#define IBFT_NIC_ORIGIN_OTHER 0x00
-#define IBFT_NIC_ORIGIN_MANUAL 0x01
-#define IBFT_NIC_ORIGIN_WELLKNOWN 0x02
-#define IBFT_NIC_ORIGIN_DHCP 0x03
-#define IBFT_NIC_ORIGIN_RA 0x04
-#define IBFT_NIC_ORIGIN_UNCHANGED 0x0f
-
 /**
  * iBFT Target structure
  *
@@ -273,13 +254,18 @@ struct ibft_target {
  */
 struct ibft_table {
 	/** ACPI header */
-	struct acpi_header acpi;
+	struct acpi_description_header acpi;
 	/** Reserved */
 	uint8_t reserved[12];
 	/** Control structure */
 	struct ibft_control control;
 } __attribute__ (( packed ));
 
-extern struct acpi_model ibft_model __acpi_model;
+struct iscsi_session;
+struct net_device;
+
+extern int ibft_describe ( struct iscsi_session *iscsi,
+			   struct acpi_description_header *acpi,
+			   size_t len );
 
 #endif /* _IPXE_IBFT_H */

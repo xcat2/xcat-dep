@@ -13,40 +13,33 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
- *
- * You can also choose to distribute this program under the terms of
- * the Unmodified Binary Distribution Licence (as given in the file
- * COPYING.UBDL), provided that you have satisfied its requirements.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
+#include <stdio.h>
 #include <ipxe/netdevice.h>
+#include <ipxe/ip.h>
 #include <usr/route.h>
 
 /** @file
  *
- * Routing management
+ * Routing table management
  *
  */
 
-/**
- * Print routing table
- *
- */
 void route ( void ) {
-	struct net_device *netdev;
-	struct routing_family *family;
+	struct ipv4_miniroute *miniroute;
 
-	for_each_netdev ( netdev ) {
-		for_each_table_entry ( family, ROUTING_FAMILIES ) {
-			family->print ( netdev );
-		}
+	list_for_each_entry ( miniroute, &ipv4_miniroutes, list ) {
+		printf ( "%s: %s/", miniroute->netdev->name,
+			 inet_ntoa ( miniroute->address ) );
+		printf ( "%s", inet_ntoa ( miniroute->netmask ) );
+		if ( miniroute->gateway.s_addr )
+			printf ( " gw %s", inet_ntoa ( miniroute->gateway ) );
+		if ( ! netdev_is_open ( miniroute->netdev ) )
+			printf ( " (inaccessible)" );
+		printf ( "\n" );
 	}
 }
-
-/* Drag in routing management configuration */
-REQUIRING_SYMBOL ( route );
-REQUIRE_OBJECT ( config_route );

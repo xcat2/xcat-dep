@@ -13,8 +13,7 @@
  *
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
- * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA
- * 02110-1301, USA.
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  */
 
@@ -22,6 +21,8 @@ FILE_LICENCE ( GPL2_OR_LATER );
 
 #ifndef _PCNET32_H_
 #define _PCNET32_H_
+
+#define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
 
 /*
  * Set the number of Tx and Rx buffers, using Log_2(# buffers).

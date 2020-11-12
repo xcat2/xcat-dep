@@ -111,7 +111,7 @@ static struct mii_chip_info {
 //  {"NS 83851 PHY",0x2000, 0x5C20, MIX },
     {"RTL 8201 10/100Mbps Phyceiver"   , 0x0000, 0x8200,rtl8201_read_mode},
     {"VIA 6103 10/100Mbps Phyceiver", 0x0101, 0x8f20,vt6103_read_mode},
-    {NULL,0,0,NULL}
+    {0,0,0,0}
 };
 
 static struct mii_phy {
@@ -249,7 +249,7 @@ static int sis96x_get_mac_addr(struct pci_device * pci_dev __unused, struct nic 
  *	MAC address is read into @net_dev->dev_addr.
  */
 
-static int sis630e_get_mac_addr(struct pci_device * pci_dev __unused, struct nic *nic __unused)
+static int sis630e_get_mac_addr(struct pci_device * pci_dev __unused, struct nic *nic)
 {
 #if 0
 	u8 reg;
@@ -279,6 +279,7 @@ static int sis630e_get_mac_addr(struct pci_device * pci_dev __unused, struct nic
 #endif
 
 	/* Does not work with current bus/device model */
+	memset ( nic->node_addr, 0, sizeof ( nic->node_addr ) );
 	return 0;
 }
 
@@ -327,7 +328,7 @@ static int sis635_get_mac_addr(struct pci_device * pci_dev __unused, struct nic 
  *
  * Side effects:
  *            leaves the ioaddress of the sis900 chip in the variable ioaddr.
- *            leaves the sis900 initialized, and ready to receive packets.
+ *            leaves the sis900 initialized, and ready to recieve packets.
  *
  * Returns:   struct nic *:          pointer to NIC data structure
  */
@@ -393,7 +394,7 @@ static int sis900_probe ( struct nic *nic, struct pci_device *pci ) {
 
         mii_status = sis900_mdio_read(phy_addr, MII_STATUS);
         if (mii_status == 0xffff || mii_status == 0x0000)
-            /* the mii is not accessible, try next one */
+            /* the mii is not accessable, try next one */
             continue;
                 
         phy_id0 = sis900_mdio_read(phy_addr, MII_PHY_ID0);
@@ -507,7 +508,7 @@ static u16 sis900_read_eeprom(int location)
 /* 
    Read and write the MII management registers using software-generated
    serial MDIO protocol. Note that the command bits and data bits are
-   sent out separately
+   send out seperately 
 */
 
 static void sis900_mdio_idle(long mdio_addr)
@@ -1170,8 +1171,8 @@ sis900_transmit(struct nic  *nic,
  *
  * Arguments: struct nic *nic:          NIC data structure
  *
- * Returns:   1 if a packet was received.
- *            0 if no packet was received.
+ * Returns:   1 if a packet was recieved.
+ *            0 if no pacet was recieved.
  *
  * Side effects:
  *            Returns (copies) the packet to the array nic->packet.
@@ -1182,10 +1183,11 @@ static int
 sis900_poll(struct nic *nic, int retrieve)
 {
     u32 rx_status = rxd[cur_rx].cmdsts;
+    u32 intr_status;
     int retstat = 0;
 
      /* acknowledge interrupts by reading interrupt status register */
-    inl(ioaddr + isr);
+    intr_status = inl(ioaddr + isr);
 
     if (sis900_debug > 2)
         printf("sis900_poll: cur_rx:%d, status:%X\n", cur_rx, 

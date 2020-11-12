@@ -7,7 +7,7 @@
  *
  */
 
-FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL );
+FILE_LICENCE ( GPL2_OR_LATER );
 
 #include <stdint.h>
 #include <ipxe/api.h>
@@ -116,23 +116,6 @@ struct smbios_system_information {
 /** SMBIOS system information structure type */
 #define SMBIOS_TYPE_SYSTEM_INFORMATION 1
 
-/** SMBIOS base board information structure */
-struct smbios_base_board_information {
-	/** SMBIOS structure header */
-	struct smbios_header header;
-	/** Manufacturer string */
-	uint8_t manufacturer;
-	/** Product string */
-	uint8_t product;
-	/** Version string */
-	uint8_t version;
-	/** Serial number string */
-	uint8_t serial;
-} __attribute__ (( packed ));
-
-/** SMBIOS base board information structure type */
-#define SMBIOS_TYPE_BASE_BOARD_INFORMATION 2
-
 /** SMBIOS enclosure information structure */
 struct smbios_enclosure_information {
 	/** SMBIOS structure header */
@@ -152,9 +135,6 @@ struct smbios_enclosure_information {
 /** SMBIOS enclosure information structure type */
 #define SMBIOS_TYPE_ENCLOSURE_INFORMATION 3
 
-/** SMBIOS OEM strings structure type */
-#define SMBIOS_TYPE_OEM_STRINGS 11
-
 /**
  * SMBIOS entry point descriptor
  *
@@ -168,29 +148,15 @@ struct smbios {
 	size_t len;
 	/** Number of SMBIOS structures */
 	unsigned int count;
-	/** SMBIOS version */
-	uint16_t version;
 };
 
-/**
- * Calculate SMBIOS version
- *
- * @v major		Major version
- * @v minor		Minor version
- * @ret version		SMBIOS version
- */
-#define SMBIOS_VERSION( major, minor ) ( ( (major) << 8 ) | (minor) )
-
 extern int find_smbios ( struct smbios *smbios );
-extern int find_smbios_entry ( userptr_t start, size_t len,
-			       struct smbios_entry *entry );
-extern int find_smbios_structure ( unsigned int type, unsigned int instance,
+extern int find_smbios_structure ( unsigned int type,
 				   struct smbios_structure *structure );
 extern int read_smbios_structure ( struct smbios_structure *structure,
 				   void *data, size_t len );
 extern int read_smbios_string ( struct smbios_structure *structure,
 				unsigned int index,
 				void *data, size_t len );
-extern int smbios_version ( void );
 
 #endif /* _IPXE_SMBIOS_H */
