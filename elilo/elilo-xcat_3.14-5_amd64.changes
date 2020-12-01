@@ -15,14 +15,14 @@ Changes:
  .
    * bump up the kernel_size from 8M to 15M
 Checksums-Sha1:
- 81e298b2ab128a6452a8387006b278a4b0b7fad5 537 elilo-xcat_3.14-5.dsc
- b74da4188b7cd2c1d8d3689705971e56cf657688 226553 elilo-xcat_3.14-5.tar.gz
- fe6be1663d76b1434d7e0d07ad71d9a0f3720b72 1158 elilo-xcat_3.14-5_all.deb
+ 2e28086805920530ac79f332246db2056f3c3aea 537 elilo-xcat_3.14-5.dsc
+ e0ab1112b6a4cf9abdc79e432ca88aa6cd44a92d 222307 elilo-xcat_3.14-5.tar.gz
+ 4e81cb134c1eb8824b7c0bcf7ca74a8d4e71375e 63576 elilo-xcat_3.14-5_all.deb
 Checksums-Sha256:
- 9ecf4056c99ef403833c1977b4fa368b85b728593addfcec4e7d98c515fe4d61 537 elilo-xcat_3.14-5.dsc
- 24fb095b9c773db53a8f61b36a1f577f8484b0c3e3b7fe9914e0d500bb2eb19d 226553 elilo-xcat_3.14-5.tar.gz
- 048d2a7dfb90d5303efd5562c246d5cfe135eb290f0e620135135900b71f7e9d 1158 elilo-xcat_3.14-5_all.deb
+ 802b33bb32b11a149d80eaaacf5d717b63837ce29b3b79364808de2acd9ea0f1 537 elilo-xcat_3.14-5.dsc
+ 77dbe3528f583a9a8fbd335c928bc2e6cb9e1cbe47bf5ae6818c8f025fb77347 222307 elilo-xcat_3.14-5.tar.gz
+ d7e7f5a3acaaccb71a74286cb991ee91bf2c2f0c9e459bae0b7769261b1c232d 63576 elilo-xcat_3.14-5_all.deb
 Files:
- 64667f1a648853dd20b5fea4093627c3 537 net extra elilo-xcat_3.14-5.dsc
- da86509b3835752f94930454e80bc137 226553 net extra elilo-xcat_3.14-5.tar.gz
- ce1f1720dd3bde53b85cbe0191570b50 1158 utils extra elilo-xcat_3.14-5_all.deb
+ aae171623c8c007884bbfb723cf06c5d 537 net extra elilo-xcat_3.14-5.dsc
+ a8cb091d462c6ff82a720ff209884d75 222307 net extra elilo-xcat_3.14-5.tar.gz
+ 4a2162353aa343b4b1851dded4c483a9 63576 utils extra elilo-xcat_3.14-5_all.deb

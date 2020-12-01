@@ -23,8 +23,8 @@ install: build
 	dh_testroot
 	dh_clean -k
 	dh_installdirs
-	mkdir -p `pwd`/debian/tmp/tftpboot/xcat
-	cp elilo.efi `pwd`/debian/tmp/tftpboot/xcat/elilo-x64.efi
+	mkdir -p `pwd`/debian/`dh_listpackages`/tftpboot/xcat
+	cp elilo.efi `pwd`/debian/`dh_listpackages`/tftpboot/xcat/elilo-x64.efi
 
 # Build architecture-independent files here.
 binary-indep: install 

@@ -9,8 +9,8 @@ Build-Depends: debhelper (>= 7.0.50~), gnu-efi
 Package-List:
  elilo-xcat deb utils extra arch=all
 Checksums-Sha1:
- b74da4188b7cd2c1d8d3689705971e56cf657688 226553 elilo-xcat_3.14-5.tar.gz
+ e0ab1112b6a4cf9abdc79e432ca88aa6cd44a92d 222307 elilo-xcat_3.14-5.tar.gz
 Checksums-Sha256:
- 24fb095b9c773db53a8f61b36a1f577f8484b0c3e3b7fe9914e0d500bb2eb19d 226553 elilo-xcat_3.14-5.tar.gz
+ 77dbe3528f583a9a8fbd335c928bc2e6cb9e1cbe47bf5ae6818c8f025fb77347 222307 elilo-xcat_3.14-5.tar.gz
 Files:
- da86509b3835752f94930454e80bc137 226553 elilo-xcat_3.14-5.tar.gz
+ a8cb091d462c6ff82a720ff209884d75 222307 elilo-xcat_3.14-5.tar.gz
