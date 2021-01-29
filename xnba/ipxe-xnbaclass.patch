@@ -1,10 +1,11 @@
-diff -urN ipxe-droppackets/src/net/udp/dhcp.c ipxe-xnbaclass/src/net/udp/dhcp.c
---- ipxe-droppackets/src/net/udp/dhcp.c	2010-11-11 14:09:48.142334824 -0500
-+++ ipxe-xnbaclass/src/net/udp/dhcp.c	2010-11-12 10:35:08.482334675 -0500
-@@ -79,7 +79,7 @@
- 	DHCP_CLIENT_ARCHITECTURE, DHCP_ARCH_CLIENT_ARCHITECTURE,
- 	DHCP_CLIENT_NDI, DHCP_ARCH_CLIENT_NDI,
- 	DHCP_VENDOR_CLASS_ID, DHCP_ARCH_VENDOR_CLASS_ID,
+diff --git a/src/net/udp/dhcp.c b/src/net/udp/dhcp.c
+index 3a3666c..0e46a82 100644
+--- a/src/net/udp/dhcp.c
++++ b/src/net/udp/dhcp.c
+@@ -87,7 +87,7 @@ static uint8_t dhcp_request_options_data[] = {
+ 	DHCP_VENDOR_CLASS_ID,
+ 	DHCP_STRING ( DHCP_VENDOR_PXECLIENT ( DHCP_ARCH_CLIENT_ARCHITECTURE,
+ 					      DHCP_ARCH_CLIENT_NDI ) ),
 -	DHCP_USER_CLASS_ID, DHCP_STRING ( 'i', 'P', 'X', 'E' ),
 +	DHCP_USER_CLASS_ID, DHCP_STRING ( 'x', 'N', 'B', 'A' ),
  	DHCP_PARAMETER_REQUEST_LIST,

@@ -10,9 +10,10 @@
 build: build-stamp
 build-stamp:
 	dh_testdir
+	dh_quilt_patch
 	# Add here commands to compile the package.
 	$(MAKE) -C src bin/undionly.kkpxe
-	$(MAKE) -C src bin-x86_64-efi/snponly.efi
+	$(MAKE) -C src bin-x86_64-efi/ipxe.efi
 
 	touch build-stamp
 
@@ -33,7 +34,7 @@ install: build
 
 	# Add here commands to install the package into debian/<packagename>
 	cp src/bin/undionly.kkpxe `pwd`/debian/`dh_listpackages`/tftpboot/xcat/xnba.kpxe
-	cp src/bin-x86_64-efi/snponly.efi `pwd`/debian/`dh_listpackages`/tftpboot/xcat/xnba.efi
+	cp src/bin-x86_64-efi/ipxe.efi `pwd`/debian/`dh_listpackages`/tftpboot/xcat/xnba.efi
 
 	#dh_movefiles
 

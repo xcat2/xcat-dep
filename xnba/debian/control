@@ -3,7 +3,7 @@ Section: admin
 Priority: extra
 Maintainer: xCAT <xcat-user@lists.sourceforge.net>
 Build-Depends: debhelper (>= 7.0.50~)
-Standards-Version: 1.0.3
+Standards-Version: 1.20.1 
 #Homepage: <insert the upstream URL, if relevant>
 #Vcs-Git: git://git.debian.org/collab-maint/gpxe.git
 #Vcs-Browser: http://git.debian.org/?p=collab-maint/gpxe.git;a=summary
