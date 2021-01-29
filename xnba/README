@@ -1,7 +1,11 @@
 xNBA
 -----
 
-xnba-1.20.1.tar.bz2 contains the source code of ipxe version 1.20.1
+xnba-1.20.1.tar.bz2 contains the source code of ipxe version 1.20.1 (10/29/2020 ?)
+
+#git clone git://git.ipxe.org/ipxe.git
+#tar Jcvf xnba-1.20.1.tar.bz2 --exclude-vcs ipxe
+
 The following patches contain modification for xCAT Network Boot Agent
 
 	ipxe-xnbaclass.patch
