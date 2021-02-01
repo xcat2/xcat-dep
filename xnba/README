@@ -31,10 +31,10 @@ For linux
 
 For Debian
 ----------
-1. On x86 Ubuntu machine, install required packages:  dpkg-dev, debhelper, and quilt
+1. On x86 Ubuntu machine, install required packages:  liblzma-dev, dpkg-dev, debhelper, and quilt
 2. cd xcat-dep/xnba; ./make_deb.sh: build the package from the binaries under "binary" directory
 3. ./rebuild.sh : build the package from source code, this should only run on amd64/x86_64 platform, it will update the files under "binary" directory after compilation
-4. Copy generated deb xnba-undi_<version>_all.deb into /gsa/pokgsa/projects/x/xcat/build/ubuntu/xcat-dep/xcat-dep/pool/main/x/xnba-undi/
+4. Copy generated deb file xcat-dep/xnba-undi_<version>_all.deb into /gsa/pokgsa/projects/x/xcat/build/ubuntu/xcat-dep/xcat-dep/pool/main/x/xnba-undi/
 
 
 
