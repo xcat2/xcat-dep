@@ -25,8 +25,8 @@ For linux
 ---------
 1. On x86 RHEL machine, install required package:  xz-devel and gcc
 2. Copy 4 patch files listed above and xnba-<version>.tar.bz2 from cloned git directory into /root/rpmbuild/SOURCES/
-2. RPM build:  cd xcat-dep/xnba; rpmbuild -ba xnba-undi.spec
-3. Copy generated rpm /root/rpmbuild/RPMS/noarch/xnba-undi-<version>.noarch.rpm into /gsa/pokgsa/projects/x/xcat/build/linux/xcat-dep/
+3. RPM build:  cd xcat-dep/xnba; rpmbuild -ba xnba-undi.spec
+4. Copy generated rpm /root/rpmbuild/RPMS/noarch/xnba-undi-<version>.noarch.rpm into /gsa/pokgsa/projects/x/xcat/build/linux/xcat-dep/
 
 
 For Debian
