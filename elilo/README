@@ -1,0 +1,24 @@
+To build elilo-xcat RPM:
+------------------------
+
+ 1. Login to RHEL7.6 x86 node
+ 2. yum install git
+ 3. git clone https://github.com/xcat2/xcat-dep
+ 4. cd xcat-dep/elilo
+ 5. yum install gcc
+ 6. yum install ./gnu-efi-3.0g-2.el6.x86_64.rpm
+ 7. cp elilo-xcat.spec /root/rpmbuild/SPECS
+ 8. cp elilo-3.14-source.tar.gz /root/rpmbuild/SOURCES
+ 9. cp *.patch /root/rpmbuild/SOURCES
+10. rpmbuild -ba /root/rpmbuild/SPECS/elilo-xcat.spec
+11. Verify contents with rpm -qlp /root/rpmbuild/RPMS/noarch/elilo-xcat-3.14-6.noarch.rpm
+
+To build elilo-xcat DEB:
+------------------------
+1. Login to Ubuntu x86 node
+2. git clone https://github.com/xcat2/xcat-dep
+3. cd xcat-dep/elilo
+4. apt install quilt
+5. apt install ./gnu-efi_3.0v-5_amd64.deb
+6. ./make_deb.sh
+7. Verify contents with dpkg -c <deb file>
