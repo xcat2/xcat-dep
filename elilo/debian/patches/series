@@ -1,2 +1,3 @@
 elilo-xcat.patch
 elilo-xcat-ubuntu.patch
+elilo-big-bzimage-limit.patch
