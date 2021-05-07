@@ -1,0 +1,31 @@
+Format: 1.8
+Date: Fri, 7 May 2021 23:16:56 -0800
+Source: elilo-xcat
+Binary: elilo-xcat
+Architecture: source all
+Version: 3.14-6
+Distribution: UNRELEASED
+Urgency: low
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
+Changed-By: xCAT <https://github.com/xcat2/>
+Description:
+ elilo-xcat - Open source implementation of Service Location Protocol V2
+Changes:
+ elilo-xcat (3.14-6) UNRELEASED; urgency=low
+ .
+   * MG
+Checksums-Sha1:
+ 5b5f02e6cc9e5b7824713d327a20b5a4f6dc01e1 537 elilo-xcat_3.14-6.dsc
+ bb1243f765f530295b28a7a4f2802ac293fa792e 219236 elilo-xcat_3.14-6.tar.gz
+ f899fa58739bd79a6189174c1984f35ada84bd8e 63644 elilo-xcat_3.14-6_all.deb
+ 933f01089283340e4025ee96855888b715752bf5 5463 elilo-xcat_3.14-6_amd64.buildinfo
+Checksums-Sha256:
+ d3a49ce7630161a975baa27f36731448720dadccf9a2b339afe2f579cbc7bf77 537 elilo-xcat_3.14-6.dsc
+ 60e37634a43372fc30f5e228d72fd74f375ad95cfc7a76fb40d64d599b644661 219236 elilo-xcat_3.14-6.tar.gz
+ f011cb95065ed24953b6f39473d75f745cc75520869661e34b7e3de980c68b48 63644 elilo-xcat_3.14-6_all.deb
+ e051434ae4287f78dea9cc8803016e97ef36381dc7a852a196a22ca496362011 5463 elilo-xcat_3.14-6_amd64.buildinfo
+Files:
+ 273e83b0ed2a354d56ff7073b4ba5f8c 537 net extra elilo-xcat_3.14-6.dsc
+ 1a9ef39412072a551f48e570a969de17 219236 net extra elilo-xcat_3.14-6.tar.gz
+ bbc2059234e6ef8443285f33bcebebc2 63644 utils extra elilo-xcat_3.14-6_all.deb
+ 1e82248989f89dea1689061b936024c6 5463 net extra elilo-xcat_3.14-6_amd64.buildinfo
