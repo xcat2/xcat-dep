@@ -19,7 +19,7 @@ Patch1:  ipxe-branding.patch
 Patch2:  ipxe-machyp.patch
 Patch3:  ipxe-xnbaclass.patch
 Patch4:  ipxe-dhcp.patch
-Patch4:  ipxe-verbump.patch
+Patch5:  ipxe-verbump.patch
 
 %description
 The xCAT Network Boot Agent is a slightly modified version of iPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and iPXE script based booting.
