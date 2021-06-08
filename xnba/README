@@ -11,20 +11,21 @@ Build xNBA rpm for xcat-dep
 
 1. Clone xcat-dep/xnba and create a new branch: git clone git@github.com:xcat2/xcat-dep.git; cd xcat-dep; git checkout -b <new branch>
 2. Checkin the generated xnba-<version>.tar.bz2 file from above into git
-3. Modify patch files if needed and checkin into git. The patch files will automatically be applied during build step below.
+3. If needed, modify existing or create additional patch files and checkin into git. The patch files will automatically be applied during build step below.
   The following patches contain modification for xCAT Network Boot Agent
 
 	ipxe-xnbaclass.patch
 	ipxe-machyp.patch
 	ipxe-dhcp.patch	
 	ipxe-branding.patch
+	ipxe-verbump.patch
 
 4. On x86 build machine, checkout the branch created above: git clone https://github.com/xcat2/xcat-dep.git; cd xcat-dep;
 
 For linux
 ---------
 1. On x86 RHEL machine, install required package:  xz-devel and gcc
-2. Copy 4 patch files listed above and xnba-<version>.tar.bz2 from cloned git directory into /root/rpmbuild/SOURCES/
+2. Copy 5 patch files listed above and xnba-<version>.tar.bz2 from cloned git directory into /root/rpmbuild/SOURCES/
 3. RPM build:  cd xcat-dep/xnba; rpmbuild -ba xnba-undi.spec
 4. Copy generated rpm /root/rpmbuild/RPMS/noarch/xnba-undi-<version>.noarch.rpm into /gsa/pokgsa/projects/x/xcat/build/linux/xcat-dep/
 

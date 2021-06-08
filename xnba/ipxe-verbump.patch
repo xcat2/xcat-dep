@@ -1,14 +1,15 @@
-diff -urN ipxe/src/Makefile ipxe-verbump/src/Makefile
---- ipxe/src/Makefile	2010-11-12 11:04:06.000000000 -0500
-+++ ipxe-verbump/src/Makefile	2010-11-12 11:13:11.000000000 -0500
-@@ -153,8 +153,8 @@
- #
+diff --git a/src/Makefile b/src/Makefile
+index 69139dc1..99c1b0ed 100644
+--- a/src/Makefile
++++ b/src/Makefile
+@@ -222,8 +222,8 @@ endif
+ GITVERSION	= $(word 5,$(VERSION_TUPLE))
+ else
  VERSION_MAJOR	= 1
- VERSION_MINOR	= 0
+-VERSION_MINOR	= 0
 -VERSION_PATCH	= 0
--EXTRAVERSION	= +
-+VERSION_PATCH	= 2
-+EXTRAVERSION	= X
++VERSION_MINOR	= 20
++VERSION_PATCH	= 1
+ EXTRAVERSION	= +
+ endif
  MM_VERSION	= $(VERSION_MAJOR).$(VERSION_MINOR)
- VERSION		= $(MM_VERSION).$(VERSION_PATCH)$(EXTRAVERSION)
- CFLAGS		+= -DVERSION_MAJOR=$(VERSION_MAJOR) \
