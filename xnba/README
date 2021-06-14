@@ -1,14 +1,14 @@
 Get latest ipxe source from git.ipxe.org
 ----------------------------------------
-
 Current version is 1.20.1, the tar command below will use 1.20.1 to generate xnba-1.20.1.tar.bz2 the source code of ipxe version 1.20.1 (10/29/2020 ?)
 
 1. git clone git://git.ipxe.org/ipxe.git
 2. tar Jcvf xnba-<version>.tar.bz2 --exclude-vcs ipxe
+3. Optionally, if building is needed - cd src; make
 
-Build xNBA rpm for xcat-dep
----------------------------
 
+Patch ipxe source
+-----------------
 1. Clone xcat-dep/xnba and create a new branch: git clone git@github.com:xcat2/xcat-dep.git; cd xcat-dep; git checkout -b <new branch>
 2. Checkin the generated xnba-<version>.tar.bz2 file from above into git
 3. If needed, modify existing or create additional patch files and checkin into git. The patch files will automatically be applied during build step below.
@@ -24,28 +24,28 @@ Build xNBA rpm for xcat-dep
     i. git clone git://git.ipxe.org/ipxe.git
    ii. Make changes to the files under ipxei/src directory
  
-  iii. git diff <changed file>
-   iv. If creating a new patch, place output of the command above into the .patch file.
-    v. If modifying existong patch, replace the contnts of the .patch file with the output of the command above.
+  iii. git diff <changed file> > my.patch
+   iv. If creating a new patch, rename my.patch to something like ipxe-<xxx>.patch
+    v. If modifying existing patch, replace the contents of that .patch file with the my.patch
    vi. Be carefull of spaces vs. tabs. If original source file contained tabs, the .patch file should also have tabs for the patched lines.
-
-4. On x86 build machine, checkout the branch created above: git clone https://github.com/xcat2/xcat-dep.git; cd xcat-dep;
-
-For linux
----------
-1. On x86 RHEL machine, install required package:  xz-devel and gcc
-2. Copy 5 patch files listed above and xnba-<version>.tar.bz2 from cloned git directory into /root/rpmbuild/SOURCES/
-3. RPM build:  cd xcat-dep/xnba; rpmbuild -ba xnba-undi.spec
-4. Copy generated rpm /root/rpmbuild/RPMS/noarch/xnba-undi-<version>.noarch.rpm into /gsa/pokgsa/projects/x/xcat/build/linux/xcat-dep/
+  vii. Checkin the new or modified patch files into the same git branch.
 
 
-For Debian
-----------
-1. On x86 Ubuntu machine, install required packages:  liblzma-dev, dpkg-dev, debhelper, and quilt
-2. cd xcat-dep/xnba; ./make_deb.sh: build the package from the binaries under "binary" directory
-3. ./rebuild.sh : build the package from source code, this should only run on amd64/x86_64 platform, it will update the files under "binary" directory after compilation
-4. Copy generated deb file xcat-dep/xnba-undi_<version>_all.deb into /gsa/pokgsa/projects/x/xcat/build/ubuntu/xcat-dep/xcat-dep/pool/main/x/xnba-undi/
+Build xNBA rpm for xcat-dep
+---------------------------
+1. On x86 RHEL machine, install required package: git, xz-devel and gcc
+2. Checkout the branch created above: git clone https://github.com/xcat2/xcat-dep.git; cd xcat-dep; git checkout <new branch>
+3. Copy 5 patch files listed above and xnba-<version>.tar.bz2 from cloned git directory into /root/rpmbuild/SOURCES/. Create that directory if one does not already exist.
+4. RPM build: cd xcat-dep/xnba; rpmbuild -ba xnba-undi.spec
+5. Copy generated rpm /root/rpmbuild/RPMS/noarch/xnba-undi-<version>.noarch.rpm into /gsa/pokgsa/projects/x/xcat/build/linux/xcat-dep/
 
 
+Build xNBA deb for xcat-dep
+---------------------------
+1. On x86 Ubuntu machine, install required packages:  git, liblzma-dev, dpkg-dev, debhelper, and quilt
+2. Checkout the branch created above: git clone https://github.com/xcat2/xcat-dep.git; cd xcat-dep; git checkout <new branch>
+3. DEB build: cd xcat-dep/xnba; ./make_deb.sh: build the package from the binaries under "binary" directory
+4. ./rebuild.sh : build the package from source code, this should only run on amd64/x86_64 platform, it will update the files under "binary" directory after compilation
+5. Copy generated deb file xcat-dep/xnba-undi_<version>_all.deb into /gsa/pokgsa/projects/x/xcat/build/ubuntu/xcat-dep/xcat-dep/pool/main/x/xnba-undi/
 
 

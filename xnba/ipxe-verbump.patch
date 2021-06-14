@@ -1,5 +1,5 @@
 diff --git a/src/Makefile b/src/Makefile
-index 69139dc1..50277ae9 100644
+index 69139dc1..d0e3f43f 100644
 --- a/src/Makefile
 +++ b/src/Makefile
 @@ -222,9 +222,9 @@ endif
@@ -14,4 +14,4 @@ index 69139dc1..50277ae9 100644
 +EXTRAVERSION	= -1
  endif
  MM_VERSION	= $(VERSION_MAJOR).$(VERSION_MINOR)
- VERSION	= $(MM_VERSION).$(VERSION_PATCH)$(EXTRAVERSION)
+ VERSION		= $(MM_VERSION).$(VERSION_PATCH)$(EXTRAVERSION)
