@@ -1,8 +1,3 @@
-iPXE README File
+This iPXE source is no longer used.
 
-Quick start guide:
-
-   cd src
-   make
-
-For any more detailed instructions, see http://ipxe.org
+See README file under xcat-dep/xnba on how to extract ipxe source from git.ipxe.org
