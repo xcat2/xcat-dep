@@ -1,15 +1,17 @@
 diff --git a/src/Makefile b/src/Makefile
-index 69139dc1..99c1b0ed 100644
+index 69139dc1..50277ae9 100644
 --- a/src/Makefile
 +++ b/src/Makefile
-@@ -222,8 +222,8 @@ endif
+@@ -222,9 +222,9 @@ endif
  GITVERSION	= $(word 5,$(VERSION_TUPLE))
  else
  VERSION_MAJOR	= 1
 -VERSION_MINOR	= 0
 -VERSION_PATCH	= 0
+-EXTRAVERSION	= +
 +VERSION_MINOR	= 20
 +VERSION_PATCH	= 1
- EXTRAVERSION	= +
++EXTRAVERSION	= -1
  endif
  MM_VERSION	= $(VERSION_MAJOR).$(VERSION_MINOR)
+ VERSION	= $(MM_VERSION).$(VERSION_PATCH)$(EXTRAVERSION)
