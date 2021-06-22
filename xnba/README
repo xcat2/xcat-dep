@@ -22,8 +22,7 @@ Patch ipxe source
 
 3.a To modify existing or create additional patch file:
     i. git clone git://git.ipxe.org/ipxe.git
-   ii. Make changes to the files under ipxei/src directory
- 
+   ii. Make changes to the files under ipxe/src directory
   iii. git diff <changed file> > my.patch
    iv. If creating a new patch, rename my.patch to something like ipxe-<xxx>.patch
     v. If modifying existing patch, replace the contents of that .patch file with the my.patch
