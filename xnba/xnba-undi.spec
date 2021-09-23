@@ -1,5 +1,5 @@
 Name:           xnba-undi
-Version:        1.20.1 
+Version:        1.21.1 
 Release:        1
 Summary:        xCAT Network Boot Agent for x86 PXE hosts
 
@@ -14,7 +14,7 @@ BuildArch:	noarch
 %define os_release %(rpm -q --qf '%%{release}' %{Distribution}-release | cut -d"." -f 1)
 
 
-Source:  xnba-1.20.1.tar.bz2 
+Source:  xnba-1.21.1.tar.bz2 
 Patch1:  ipxe-branding.patch
 Patch2:  ipxe-machyp.patch
 Patch3:  ipxe-xnbaclass.patch
@@ -26,7 +26,7 @@ The xCAT Network Boot Agent is a slightly modified version of iPXE.  It provides
 
 %prep
 
-%setup  -n xnba-1.20.1 
+%setup  -n xnba-1.21.1 
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
