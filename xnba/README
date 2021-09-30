@@ -1,10 +1,12 @@
 Get latest ipxe source from git.ipxe.org
 ----------------------------------------
-Current version is 1.20.1, the tar command below will use 1.20.1 to generate xnba-1.20.1.tar.bz2 the source code of ipxe version 1.20.1 (10/29/2020 ?)
+Current ipxe version is 1.21.1 (released Dec 31,2020), the tar command below will generate xnba-1.21.1.tar.bz2
 
-1. git clone git://git.ipxe.org/ipxe.git
-2. tar Jcvf xnba-<version>.tar.bz2 --exclude-vcs ipxe
-3. Optionally, if building is needed - cd src; make
+1. Clone ipxe from github - git clone git://git.ipxe.org/ipxe.git
+2. Verify version number - git describe --tags --always --long --abbrev=1 --match "v*"
+3. Rename ipxe directory to xnba-<version> - mv ipxe xnba-1.21.1
+4. Tar xnba-<version> directory - tar Jcvf xnba-1.21.1.tar.bz2 --exclude-vcs xnba-1.21.1
+5. Optionally, if building is needed - cd src; make
 
 
 Patch ipxe source
