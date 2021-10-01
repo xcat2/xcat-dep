@@ -39,6 +39,7 @@ Build xNBA rpm for xcat-dep
 3. Copy 5 patch files listed above and xnba-<version>.tar.bz2 from cloned git directory into /root/rpmbuild/SOURCES/. Create that directory if one does not already exist.
 4. RPM build: cd xcat-dep/xnba; rpmbuild -ba xnba-undi.spec
 5. Copy generated rpm /root/rpmbuild/RPMS/noarch/xnba-undi-<version>.noarch.rpm into /gsa/pokgsa/projects/x/xcat/build/linux/xcat-dep/
+6. Create links from <os/arch> subdirs to the /root/rpmbuild/RPMS/noarch/xnba-undi-<version>.noarch.rpm
 
 
 Build xNBA deb for xcat-dep
@@ -47,6 +48,7 @@ Build xNBA deb for xcat-dep
 2. Checkout the branch created above: git clone https://github.com/xcat2/xcat-dep.git; cd xcat-dep; git checkout <new branch>
 3. DEB build: cd xcat-dep/xnba; ./make_deb.sh: build the package from the binaries under "binary" directory
 4. ./rebuild.sh : build the package from source code, this should only run on amd64/x86_64 platform, it will update the files under "binary" directory after compilation
-5. Copy generated deb file xcat-dep/xnba-undi_<version>_all.deb into /gsa/pokgsa/projects/x/xcat/build/ubuntu/xcat-dep/xcat-dep/pool/main/x/xnba-undi/
+5. Copy generated deb file xcat-dep/xnba-undi_<version>_all.deb into /gsa/pokgsa/projects/x/xcat/build/ubuntu/xcat-dep/xcat-dep/pool/main/x/xnba-undi/ 
+and /gsa/pokgsa/projects/x/xcat/build/ubuntu/xcat-dep/debs
 
 
