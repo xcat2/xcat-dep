@@ -1,8 +1,8 @@
 Build Notes
 
-Option #1 Run the script bldipmi.pl
+RPM Option #1 Run the script bldipmi.pl
 
-Option #2 Use the manual steps listed below:
+RPM Option #2 Use the manual steps listed below:
 
 1)   Download ipmitool-1.8.11.tar.gz from https://xcat.svn.sourceforge.net/svnroot/xcat/xcat-dep/trunk/ipmitool/ipmitool-1.8.11.tar.gz to /tmp/ipmitool directory.
 2)   cd /tmp/ipmitool
@@ -16,6 +16,15 @@ Option #2 Use the manual steps listed below:
 10)  cd /usr/src/packages/SPECS
 11)  Run "rpm -bb ipmitool.spec", which creates:
              /opt/freeware/src/packages/RPMS/ppc/ipmitool-1.8.11-1.aix5.3.ppc.rpm 
+
+DEB Option #1
+
+1) git clone https://github.com/xcat2/xcat-dep.git
+2) apt install dpkg-dev debhelper libssl-dev quilt
+3) cd xcat-dep/ipmitool
+4) ./make_deb.sh
+5) Will generate file ipmitool-xcat_<version>_<arch>.deb file in current directory
+6) Use debian/changelog file to update release version
 
 NOTE #1 
 HOW TO CREATE THESE PATCHES 
