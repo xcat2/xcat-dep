@@ -1,3 +1,8 @@
+ipmitool-xcat (1.8.18-4) unstable; urgency=low
+  * Build with dependencies for either libssl1.0.0 or libssl1.1
+
+ -- gurevich <gurevich@us.ibm.com>  Thu, 22 Sep 2022 11:10:00 +0100
+
 ipmitool-xcat (1.8.18-3) unstable; urgency=low
   * Add security patch CVE-2020-5208
 
