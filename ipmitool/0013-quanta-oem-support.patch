@@ -1,0 +1,420 @@
+From 87a898756a7bd54898c1f6d2a5441efb1f810b67 Mon Sep 17 00:00:00 2001
+From: qctbmc <qct.bmc@gmail.com>
+Date: Tue, 10 Jul 2018 11:21:55 +0800
+Subject: [PATCH] oem: Add basic support for Quanta
+
+---
+ include/ipmitool/Makefile.am      |   2 +-
+ include/ipmitool/ipmi_quantaoem.h |  55 +++++++++
+ lib/Makefile.am                   |   2 +-
+ lib/ipmi_main.c                   |   1 +
+ lib/ipmi_oem.c                    |  14 +++
+ lib/ipmi_quantaoem.c              | 184 ++++++++++++++++++++++++++++++
+ lib/ipmi_sel.c                    |  21 +++-
+ src/ipmitool.c                    |   1 +
+ 8 files changed, 274 insertions(+), 6 deletions(-)
+ create mode 100644 include/ipmitool/ipmi_quantaoem.h
+ create mode 100644 lib/ipmi_quantaoem.c
+
+diff --git a/include/ipmitool/Makefile.am b/include/ipmitool/Makefile.am
+index 9093a56..8bc584a 100644
+--- a/include/ipmitool/Makefile.am
++++ b/include/ipmitool/Makefile.am
+@@ -39,4 +39,4 @@ noinst_HEADERS = log.h bswap.h hpm2.h helper.h ipmi.h ipmi_cc.h ipmi_intf.h \
+ 	ipmi_fwum.h ipmi_main.h ipmi_tsol.h ipmi_firewall.h \
+ 	ipmi_kontronoem.h ipmi_ekanalyzer.h ipmi_gendev.h ipmi_ime.h \
+ 	ipmi_delloem.h ipmi_dcmi.h ipmi_vita.h ipmi_sel_supermicro.h \
+-	ipmi_cfgp.h ipmi_lanp6.h
++	ipmi_cfgp.h ipmi_lanp6.h ipmi_quantaoem.h
+diff --git a/include/ipmitool/ipmi_quantaoem.h b/include/ipmitool/ipmi_quantaoem.h
+new file mode 100644
+index 0000000..544f510
+--- /dev/null
++++ b/include/ipmitool/ipmi_quantaoem.h
+@@ -0,0 +1,55 @@
++/*
++ * Copyright (c) 2018 Quanta Computer Inc. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ *
++ * Redistribution of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer.
++ *
++ * Redistribution in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution.
++ *
++ * Neither the name of Quanta Computer Inc. or the names of
++ * contributors may be used to endorse or promote products derived
++ * from this software without specific prior written permission.
++ *
++ * This software is provided "AS IS," without a warranty of any kind.
++ * ALL EXPRESS OR IMPLIED CONDITIONS, REPRESENTATIONS AND WARRANTIES,
++ * INCLUDING ANY IMPLIED WARRANTY OF MERCHANTABILITY, FITNESS FOR A
++ * PARTICULAR PURPOSE OR NON-INFRINGEMENT, ARE HEREBY EXCLUDED.
++ * Quanta Computer Inc. AND ITS LICENSORS SHALL NOT BE LIABLE
++ * FOR ANY DAMAGES SUFFERED BY LICENSEE AS A RESULT OF USING, MODIFYING
++ * OR DISTRIBUTING THIS SOFTWARE OR ITS DERIVATIVES.  IN NO EVENT WILL
++ * Quanta Computer Inc. OR ITS LICENSORS BE LIABLE FOR ANY LOST REVENUE, PROFIT OR DATA,
++ * OR FOR DIRECT, INDIRECT, SPECIAL, CONSEQUENTIAL, INCIDENTAL OR
++ * PUNITIVE DAMAGES, HOWEVER CAUSED AND REGARDLESS OF THE THEORY OF
++ * LIABILITY, ARISING OUT OF THE USE OF OR INABILITY TO USE THIS SOFTWARE,
++ * EVEN IF SUN HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
++ */
++
++#ifndef IPMI_QUANTAOEM_H
++#define IPMI_QUANTAOEM_H
++
++#if HAVE_CONFIG_H
++# include <config.h>
++#endif
++#include <ipmitool/ipmi.h>
++#include <ipmitool/ipmi_sdr.h>
++
++#define OEM_QCT_NETFN 0x36
++#define OEM_QCT_GET_INFO 0x65
++
++typedef enum
++{
++	OEM_QCT_PLATFORM_UNKNOWN = 0,
++	OEM_QCT_PLATFORM_GRANTLEY,
++	OEM_QCT_PLATFORM_PURLEY
++} qct_platform_t;
++
++qct_platform_t oem_qct_get_platform_id(struct ipmi_intf *intf);
++char *oem_qct_get_evt_desc(struct ipmi_intf *intf, struct sel_event_record *rec);
++
++#endif /*IPMI_QUANTAOEM_H*/
+diff --git a/lib/Makefile.am b/lib/Makefile.am
+index cc69a8f..e7568f3 100644
+--- a/lib/Makefile.am
++++ b/lib/Makefile.am
+@@ -41,7 +41,7 @@ libipmitool_la_SOURCES	= helper.c ipmi_sdr.c ipmi_sel.c ipmi_sol.c ipmi_pef.c \
+ 				  ipmi_main.c ipmi_tsol.c ipmi_firewall.c ipmi_kontronoem.c        \
+ 				  ipmi_hpmfwupg.c ipmi_sdradd.c ipmi_ekanalyzer.c ipmi_gendev.c    \
+ 				  ipmi_ime.c ipmi_delloem.c ipmi_dcmi.c hpm2.c ipmi_vita.c \
+-				  ipmi_lanp6.c ipmi_cfgp.c \
++				  ipmi_lanp6.c ipmi_cfgp.c ipmi_quantaoem.c \
+ 				  ../src/plugins/lan/md5.c ../src/plugins/lan/md5.h
+ 
+ libipmitool_la_LDFLAGS		= -export-dynamic
+diff --git a/lib/ipmi_main.c b/lib/ipmi_main.c
+index 6aee102..9d4a148 100644
+--- a/lib/ipmi_main.c
++++ b/lib/ipmi_main.c
+@@ -75,6 +75,7 @@
+ #include <ipmitool/ipmi_picmg.h>
+ #include <ipmitool/ipmi_kontronoem.h>
+ #include <ipmitool/ipmi_vita.h>
++#include <ipmitool/ipmi_quantaoem.h>
+ 
+ #ifdef HAVE_CONFIG_H
+ # include <config.h>
+diff --git a/lib/ipmi_oem.c b/lib/ipmi_oem.c
+index 96db2ea..86fd803 100644
+--- a/lib/ipmi_oem.c
++++ b/lib/ipmi_oem.c
+@@ -39,6 +39,7 @@
+ 
+ static int ipmi_oem_supermicro(struct ipmi_intf * intf);
+ static int ipmi_oem_ibm(struct ipmi_intf * intf);
++static int ipmi_oem_quanta(struct ipmi_intf * intf);
+ 
+ static struct ipmi_oem_handle ipmi_oem_list[] = {
+ 	{
+@@ -71,6 +72,11 @@ static struct ipmi_oem_handle ipmi_oem_list[] = {
+ 		.name = "kontron",
+ 		.desc = "Kontron OEM big buffer support"
+ 	},
++	{
++		.name = "quanta",
++		.desc = "Quanta IPMIv1.5 BMC with OEM LAN authentication support",
++		.setup = ipmi_oem_quanta,
++	},
+ 	{ 0 }
+ };
+ 
+@@ -93,6 +99,14 @@ ipmi_oem_ibm(struct ipmi_intf * intf)
+ 	return ipmi_sel_oem_init((const char *)filename);
+ }
+ 
++/* Quanta IPMIv2 BMCs use OEM authtype */
++static int
++ipmi_oem_quanta(struct ipmi_intf * intf)
++{
++	ipmi_intf_session_set_authtype(intf, IPMI_SESSION_AUTHTYPE_OEM);
++	return 0;
++}
++
+ /* ipmi_oem_print  -  print list of OEM handles
+  */
+ void
+diff --git a/lib/ipmi_quantaoem.c b/lib/ipmi_quantaoem.c
+new file mode 100644
+index 0000000..7b4c5c6
+--- /dev/null
++++ b/lib/ipmi_quantaoem.c
+@@ -0,0 +1,184 @@
++/*
++ * Copyright (c) 2018 Quanta Computer Inc. All rights reserved.
++ *
++ * Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions
++ * are met:
++ *
++ * Redistribution of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer.
++ *
++ * Redistribution in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in the
++ * documentation and/or other materials provided with the distribution.
++ *
++ * Neither the name of Quanta Computer Inc. or the names of
++ * contributors may be used to endorse or promote products derived
++ * from this software without specific prior written permission.
++ *
++ * This software is provided "AS IS," without a warranty of any kind.
++ * ALL EXPRESS OR IMPLIED CONDITIONS, REPRESENTATIONS AND WARRANTIES,
++ * INCLUDING ANY IMPLIED WARRANTY OF MERCHANTABILITY, FITNESS FOR A
++ * PARTICULAR PURPOSE OR NON-INFRINGEMENT, ARE HEREBY EXCLUDED.
++ * Quanta Computer Inc. AND ITS LICENSORS SHALL NOT BE LIABLE
++ * FOR ANY DAMAGES SUFFERED BY LICENSEE AS A RESULT OF USING, MODIFYING
++ * OR DISTRIBUTING THIS SOFTWARE OR ITS DERIVATIVES.  IN NO EVENT WILL
++ * Quanta Computer Inc. OR ITS LICENSORS BE LIABLE FOR ANY LOST REVENUE, PROFIT OR DATA,
++ * OR FOR DIRECT, INDIRECT, SPECIAL, CONSEQUENTIAL, INCIDENTAL OR
++ * PUNITIVE DAMAGES, HOWEVER CAUSED AND REGARDLESS OF THE THEORY OF
++ * LIABILITY, ARISING OUT OF THE USE OF OR INABILITY TO USE THIS SOFTWARE,
++ * EVEN IF SUN HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
++ */
++#define _XOPEN_SOURCE
++
++#include <stdlib.h>
++#include <stdio.h>
++#include <string.h>
++#include <strings.h>
++#include <sys/socket.h>
++#include <netinet/in.h>
++#include <arpa/inet.h>
++#include <errno.h>
++#include <time.h>
++#include <unistd.h>
++#include <signal.h>
++#include <ctype.h>
++#include <sys/time.h>
++#include <limits.h>
++#include <fcntl.h>
++#include <sys/select.h>
++#include <termios.h>
++#include <ipmitool/ipmi.h>
++#include <ipmitool/ipmi_mc.h>
++#include <ipmitool/ipmi_intf.h>
++#include <ipmitool/helper.h>
++#include <ipmitool/log.h>
++#include <ipmitool/ipmi_sel.h>
++#include <ipmitool/ipmi_sdr.h>
++#include <ipmitool/ipmi_strings.h>
++#include <ipmitool/ipmi_channel.h>
++#include <ipmitool/ipmi_quantaoem.h>
++#include <ipmitool/ipmi_raw.h>
++
++/* Max Size of the description String to be displyed for the Each sel entry */
++#define	SIZE_OF_DESC 128
++
++#define CPU_SHIFT 6
++#define CPU_MASK 0X03
++#define CPU_NUM(x) (((x) >> CPU_SHIFT) & CPU_MASK)
++
++#define CHANNEL_BASE 0x41
++#define CHANNEL_SHIFT 3
++#define CHANNEL_MASK 0x07
++#define CHANNEL_OFFSET(x) (((x) >> CHANNEL_SHIFT) & CHANNEL_MASK)
++#define CHANNEL_NUM(x) (CHANNEL_BASE + CHANNEL_OFFSET(x))
++
++#define DIMM_MASK 0x07
++#define DIMM_NUM(x) ((x) & DIMM_MASK)
++
++#define	GET_PLATFORM_ID_DATA_SIZE 4
++
++// Magic code to check if it's valid command
++#define QCT_MAGIC_1 0x4C
++#define QCT_MAGIC_2 0x1C
++#define QCT_MAGIC_3 0x00
++#define QCT_MAGIC_4 0x02
++
++qct_platform_t
++oem_qct_get_platform_id(struct ipmi_intf *intf)
++{
++	/* Execute a Get platform ID command to determine the board */
++	struct ipmi_rs *rsp;
++	struct ipmi_rq req;
++	qct_platform_t platform_id;
++	uint8_t msg_data[GET_PLATFORM_ID_DATA_SIZE];
++
++	/* Ask for IPMI v2 data as well */
++	msg_data[0] = QCT_MAGIC_1;
++	msg_data[1] = QCT_MAGIC_2;
++	msg_data[2] = QCT_MAGIC_3;
++	msg_data[3] = QCT_MAGIC_4;
++
++	memset(&req, 0, sizeof(req));
++	req.msg.netfn = OEM_QCT_NETFN;
++	req.msg.cmd = OEM_QCT_GET_INFO;
++	req.msg.data = msg_data;
++	req.msg.data_len = sizeof(msg_data);
++
++	rsp = intf->sendrecv(intf, &req);
++	if (rsp == NULL) {
++		lprintf(LOG_ERR, "Get Platform ID command failed");
++		return 0;
++	}
++	if (rsp->ccode) {
++		lprintf(LOG_ERR, "Get Platform ID command failed: %#x %s",
++		        rsp->ccode, val2str(rsp->ccode, completion_code_vals));
++		return 0;
++	}
++	platform_id = rsp->data[0];
++	lprintf(LOG_DEBUG,"Platform ID: %hhx", rsp->data[0]);
++	return platform_id;
++}
++
++char *
++oem_qct_get_evt_desc(struct ipmi_intf *intf, struct sel_event_record *rec)
++{
++	struct ipmi_rs *rsp;
++	struct ipmi_rq req;
++	char *desc = NULL;
++	int data;
++	int sensor_type;
++	qct_platform_t platform_id;
++
++	/* Get the OEM event Bytes of the SEL Records byte 15 to data */
++	data = rec->sel_type.standard_type.event_data[2];
++	/* Check for the Standard Event type == 0x6F */
++	if (rec->sel_type.standard_type.event_type != 0x6F) {
++		goto out;
++	}
++	/* Allocate mem for te Description string */
++	desc = malloc(SIZE_OF_DESC);
++	if (desc == NULL) {
++		lprintf(LOG_ERR, "ipmitool: malloc failure");
++		goto out;
++	}
++	memset(desc, 0, SIZE_OF_DESC);
++	sensor_type = rec->sel_type.standard_type.sensor_type;
++	switch (sensor_type) {
++	case SENSOR_TYPE_MEMORY:
++		memset(&req, 0, sizeof (req));
++		req.msg.netfn = IPMI_NETFN_APP;
++		req.msg.lun = 0;
++		req.msg.cmd = BMC_GET_DEVICE_ID;
++		req.msg.data = NULL;
++		req.msg.data_len = 0;
++
++		rsp = intf->sendrecv(intf, &req);
++		if (rsp == NULL) {
++			lprintf(LOG_ERR, " Error getting system info");
++			goto out;
++		} else if (rsp->ccode) {
++			lprintf(LOG_ERR, " Error getting system info: %s",
++			        val2str(rsp->ccode, completion_code_vals));
++			goto out;
++		}
++		/* check the platform type */
++		platform_id = oem_qct_get_platform_id(intf);
++		if (OEM_QCT_PLATFORM_PURLEY == platform_id) {
++			snprintf(desc, SIZE_OF_DESC, "CPU%d_%c%d",
++			         CPU_NUM(data),
++			         CHANNEL_NUM(data),
++			         DIMM_NUM(data));
++		}
++		break;
++	default:
++		goto out;
++	}
++	return desc;
++out:
++	if (desc) {
++		free(desc);
++		desc = NULL;
++	}
++	return desc;
++}
+diff --git a/lib/ipmi_sel.c b/lib/ipmi_sel.c
+index 8b0395e..a54fefd 100644
+--- a/lib/ipmi_sel.c
++++ b/lib/ipmi_sel.c
+@@ -50,6 +50,7 @@
+ #include <ipmitool/ipmi_fru.h>
+ #include <ipmitool/ipmi_sensor.h>
+ #include <ipmitool/ipmi_strings.h>
++#include <ipmitool/ipmi_quantaoem.h>
+ 
+ extern int verbose;
+ static int sel_extended = 0;
+@@ -1244,6 +1245,9 @@ ipmi_get_oem_desc(struct ipmi_intf * intf, struct sel_event_record * rec)
+ 	case IPMI_OEM_SUPERMICRO_47488:
+ 		desc = get_supermicro_evt_desc(intf, rec);
+ 		break;
++	case IPMI_OEM_QUANTA:
++		desc = oem_qct_get_evt_desc(intf, rec);
++		break;
+ 	case IPMI_OEM_UNKNOWN:
+ 	default:
+ 		break;
+@@ -1349,6 +1353,9 @@ ipmi_get_event_desc(struct ipmi_intf * intf, struct sel_event_record * rec, char
+ 					sfx = ipmi_get_oem_desc(intf, rec);
+ 					break;
+ 				 /* add your oem sensor assignation here */
++				case IPMI_OEM_QUANTA:
++					sfx = ipmi_get_oem_desc(intf, rec);
++					break;
+ 				default:
+ 					lprintf(LOG_DEBUG, "oem sensor type %x  using standard type supplied description",
+ 						rec->sel_type.standard_type.sensor_type );
+@@ -1359,9 +1366,12 @@ ipmi_get_event_desc(struct ipmi_intf * intf, struct sel_event_record * rec, char
+ 				case IPMI_OEM_SUPERMICRO:
+ 				case IPMI_OEM_SUPERMICRO_47488:
+ 					sfx = ipmi_get_oem_desc(intf, rec);
+-				 break;
++					break;
++				case IPMI_OEM_QUANTA:
++					sfx = ipmi_get_oem_desc(intf, rec);
++					break;
+ 				default:
+-				 break;
++					break;
+ 			}
+ 		}
+ 		/*
+@@ -1986,9 +1996,12 @@ ipmi_sel_print_std_entry(struct ipmi_intf * intf, struct sel_event_record * evt)
+ 			case IPMI_OEM_SUPERMICRO:
+ 			case IPMI_OEM_SUPERMICRO_47488:
+ 				print_sensor = 0;
+-			 break;
++				break;
++			case IPMI_OEM_QUANTA:
++				print_sensor = 0;
++				break;
+ 			default:
+-			 break;
++				break;
+ 		}
+ 		/*
+ 		 * Sensor-Specific Discrete
+diff --git a/src/ipmitool.c b/src/ipmitool.c
+index 5e19c6e..ec0b741 100644
+--- a/src/ipmitool.c
++++ b/src/ipmitool.c
+@@ -66,6 +66,7 @@
+ #include <ipmitool/ipmi_ime.h>
+ #include <ipmitool/ipmi_dcmi.h>
+ #include <ipmitool/ipmi_vita.h>
++#include <ipmitool/ipmi_quantaoem.h>
+ 
+ #ifdef HAVE_CONFIG_H
+ # include <config.h>
+-- 
+2.20.1
+

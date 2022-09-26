@@ -1,0 +1,65 @@
+From 646160e2175f9e0ba33e4f2bda12d84555e9c30e Mon Sep 17 00:00:00 2001
+From: Alexander Amelkin <alexander@amelkin.msk.ru>
+Date: Thu, 29 Nov 2018 13:10:53 +0300
+Subject: [PATCH] lanplus: Cleanup. Refix 6dec83ff, fix be2c0c4b
+
+This is a cleanup commit.
+
+Commit 6dec83ff removed assignment of `rsp` pointer
+in SOL-processing block of ipmi_lan_poll_single(),
+but left the check for the pointer validity in place.
+Although that has effectively fixed the bug of potentially
+accessing the null `rsp` pointer in the `else` block introduced
+with be2c0c4b, the resulting if/else looked suspicious and left
+and impression that a NULL pointer could still be accessed.
+
+This commit removes the check for `rsp` from the `if`
+as it is checked at the start of the function where `rsp`
+is initialized (and that is the only place where it is ever changed).
+
+Signed-off-by: Alexander Amelkin <alexander@amelkin.msk.ru>
+(cherry picked from commit 64727f59c4a1412fdb73e092fb838ae66e2aad1a)
+
+lanplus: Fix segfault for truncated dcmi response
+
+On occasion a dcmi power reading will return error C6, and a
+truncated response payload. As the decrypted payload is shorter
+than the expected length, lanplus_decrypt_aes_cbc_128() adjusts
+the payload_size downward by one byte. In ipmi_lan_poll_single()
+the calculation to determine if the payload size has increased
+erroniously sets extra_data_length to -1, with a subsequent
+segv when calling a memmove to shift response data.
+The fix is to check for a positive value in the extra_data_length.
+
+Resolves ipmitool/ipmitool#72
+
+(cherry picked from commit 9ec2232321a7bca7e1fb8f939d071f12c8dfa7fd)
+---
+ src/plugins/lanplus/lanplus.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/plugins/lanplus/lanplus.c b/src/plugins/lanplus/lanplus.c
+index c442c0e..ef132f6 100644
+--- a/src/plugins/lanplus/lanplus.c
++++ b/src/plugins/lanplus/lanplus.c
+@@ -814,7 +814,7 @@ ipmi_lan_poll_single(struct ipmi_intf * intf)
+ 			 * rsp->data_len becomes the length of that data
+ 			 */
+ 			extra_data_length = payload_size - (offset - payload_start) - 1;
+-			if (extra_data_length) {
++			if (extra_data_length > 0) {
+ 				rsp->data_len = extra_data_length;
+ 				memmove(rsp->data, rsp->data + offset, extra_data_length);
+ 			} else {
+@@ -868,7 +868,7 @@ ipmi_lan_poll_single(struct ipmi_intf * intf)
+ 		}
+ 		read_sol_packet(rsp, &offset);
+ 		extra_data_length = payload_size - (offset - payload_start);
+-		if (rsp && extra_data_length) {
++		if (extra_data_length > 0) {
+ 			rsp->data_len = extra_data_length;
+ 			memmove(rsp->data, rsp->data + offset, extra_data_length);
+ 		} else {
+-- 
+2.26.3
+
