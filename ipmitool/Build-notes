@@ -20,7 +20,7 @@ RPM Option #2 Use the manual steps listed below:
 DEB Option #1
 
 1) git clone https://github.com/xcat2/xcat-dep.git
-2) apt install dpkg-dev debhelper libssl-dev quilt
+2) apt install dpkg-dev debhelper libssl-dev quilt libreadline-dev
 3) cd xcat-dep/ipmitool
 4) ./make_deb.sh
 5) Will generate file ipmitool-xcat_<version>_<arch>.deb file in current directory
