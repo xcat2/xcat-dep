@@ -35,8 +35,6 @@ BuildRequires: openssl-devel readline-devel ncurses-devel
 BuildRequires: systemd
 # bootstrap
 BuildRequires: automake autoconf libtool
-Obsoletes: OpenIPMI-tools < 2.0.14-3
-Provides: OpenIPMI-tools = 2.0.14-3
 
 
 %description
