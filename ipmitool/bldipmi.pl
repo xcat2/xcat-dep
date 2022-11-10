@@ -15,10 +15,20 @@ if (grep /Red Hat Enterprise Linux Server release 5\.\d/, @output) {
   $os = "rh7";
 } elsif (grep /Red Hat Enterprise Linux release 8\.\d/, @output) {
   $os = "rh8";
+} elsif (grep /Red Hat Enterprise Linux release 9\.\d/, @output) {
+  $os = "rh9";
 } elsif (grep /CentOS Linux release 7\.\d/, @output) {
   $os = "rh7";
 } elsif (grep /CentOS release 6\.\d/, @output) {
   $os = "rh6";
+} elsif (grep /AlmaLinux 8\.\d/, @output) {
+  $os = "rh8";
+} elsif (grep /AlmaLinux 9\.\d/, @output) {
+  $os = "rh9";
+} elsif (grep /Rocky Linux 8\.\d/, @output) {
+  $os = "rh8";
+} elsif (grep /Rocky Linux 9\.\d/, @output) {
+  $os = "rh9";
 } elsif (grep /SUSE Linux Enterprise Server 10/, @output) {
   $os = "sles10";
 } elsif (grep /SUSE Linux Enterprise Server 11/, @output) {

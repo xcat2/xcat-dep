@@ -1,7 +1,7 @@
 Name:         ipmitool-xcat
 Summary:      ipmitool - Utility for IPMI control
 Version:      1.8.18
-Release:      3
+Release:      4
 License:      BSD
 Group:        Utilities
 Packager:     IBM Corp.
@@ -15,18 +15,27 @@ Patch4:       0004-slowswid.patch
 Patch5:       0005-sensor-id-length.patch
 Patch6:       0006-enable-usb.patch
 Patch7:       0007-check-input.patch
+Patch8:       0008-add-extern.patch
+Patch9:       0009-best-cipher.patch
+Patch10:      0010-pef-missing-newline.patch
+Patch11:      0011-expand-sensor-name-column.patch
+Patch12:      0012-CVE-2020-5208.patch
+Patch13:      0013-quanta-oem-support.patch
+Patch14:      0014-lanplus-cipher-retry.patch
+Patch15:      0015-lanplus-Cleanup.-Refix-6dec83ff-fix-be2c0c4b.patch
 
 Patch80:      ipmitool-%{version}-saneretry.patch
 Patch82:      ipmitool-%{version}-rflash.patch
 Patch83:      ipmitool-%{version}-signal.patch
 
-Patch12:      0012-CVE-2020-5208.patch
-
 Buildroot:    /var/tmp/ipmitool-root
 
 BuildRequires: openssl-devel readline-devel ncurses-devel
+%{?systemd_requires}
+BuildRequires: systemd
 # bootstrap
 BuildRequires: automake autoconf libtool
+
 
 %description
 This package contains a utility for interfacing with devices that support
@@ -56,10 +65,17 @@ fi
 %patch5  -p1
 %patch6  -p1
 %patch7  -p1
+%patch8  -p1
+%patch9  -p1
+%patch10  -p1
+%patch11  -p1
+%patch12  -p1
+%patch13  -p1
+%patch14  -p1
+%patch15  -p1
 %patch80 -p1
 %patch82 -p1
 %patch83 -p1
-%patch12 -p1
 
 for f in AUTHORS ChangeLog; do
     iconv -f iso-8859-1 -t utf8 < ${f} > ${f}.utf8
@@ -72,6 +88,8 @@ done
 # --disable-intf-free disables FreeIPMI support - we don't want to depend on
 #   FreeIPMI libraries, FreeIPMI has its own ipmitoool-like utility.
 
+# begin: release auto-tools
+# Used to be needed by aarch64 support, now only cxoem patch makefiles are left.
 aclocal
 libtoolize --automake --copy
 autoheader
@@ -79,20 +97,10 @@ automake --foreign --add-missing --copy
 aclocal
 autoconf
 automake --foreign
-%configure --disable-dependency-tracking \
-	--enable-file-security \
-	--disable-intf-free \
-	--with-kerneldir \
-	--with-rpm-distro= \
-	--prefix=%{_prefix} \
-	--bindir=%{_bindir} \
-	--sbindir=%{_sbindir} \
-	--datadir=%{_datadir} \
-	--includedir=%{_includedir} \
-	--libdir=%{_libdir} \
-	--mandir=%{_mandir} \
-	--sysconfdir=%{_sysconfdir}
-make
+# end: release auto-tools
+
+%configure --disable-dependency-tracking --enable-file-security --disable-intf-free
+make %{?_smp_mflags}
 
 %install
 mkdir -p $RPM_BUILD_ROOT/opt/xcat/bin
@@ -109,6 +117,8 @@ fi
 
 
 %changelog
+* Mon Sep 26 2022 <markus.hilger@megware.com> 1.8.18-4
+  Rebuild on RHEL 9. Merge patches from RHEL 9
 * Thu Apr 30 2020 <cxhong@us.ibm.com> 1.8.18-3
   Add security patch CVE-2020-5208 
 * Thu Nov 15 2018 <gongjie@linux.vnet.ibm.com> 1.8.18-2

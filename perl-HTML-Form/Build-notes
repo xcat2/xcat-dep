@@ -4,3 +4,4 @@
 3. Run "rpmbuild -ba /usr/src/packages/SPECS/perl-HTML-Form.spec" which creates /usr/src/packages/RPMS/noarch/perl-HTML-Form-6.03-5.1.noarch.rpm
 
 For RHEL 8, run "rpmbuild --rebuild perl-HTML-Form-6.03-19.fc29.src.rpm".
+For RHEL 9, run "rpmbuild --rebuild perl-HTML-Form-6.07-4.fc34.src.rpm".

@@ -1,1 +1,2 @@
 For RHEL 8, run "rpmbuild --rebuild perl-Net-Telnet-3.04-9.fc29.src.rpm".
+For RHEL 9, run "rpmbuild --rebuild perl-Net-Telnet-3.04-16.fc34.src.rpm".
