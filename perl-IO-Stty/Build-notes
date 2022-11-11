@@ -9,4 +9,6 @@ Build Notes
 7. rpmbuild -ta  /usr/src/packages/SOURCES/IO-Stty-.02.tar.gz
 
 For RHEL 8, run "rpmbuild --rebuild perl-IO-Stty-0.03-21.fc29.src.rpm".
-For RHEL 9, run "rpmbuild --rebuild perl-IO-Stty-0.04-5.fc34.src.rpm".
+For RHEL 9, run "dnf config-manager --set-enabled crb"
+                "dnf install perl-Pod-Coverage OpenIPMI-devel nasm golang gnu-efi gnu-efi-devel"
+                "rpmbuild --rebuild perl-IO-Stty-0.04-5.fc34.src.rpm".
