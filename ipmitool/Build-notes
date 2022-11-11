@@ -1,6 +1,11 @@
 Build Notes
+ipmitool-xcat is architecture specific and needs to be built separately on x86_64 and ppc64le
 
 RPM Option #1 Run the script bldipmi.pl
+1) yum install openssl-devel rpm-build autoconf automake libtool ncurses-devel readline-devel
+2) Update "release" variable in "bldipmi.pl" if generating a new version of the RPM
+3) Run "./bldipmi.pl" which creates:
+     /tmp/build/<os>/<arch>/ipmitool-xcat-<version>.<arch>.rpm
 
 RPM Option #2 Use the manual steps listed below:
 

@@ -1,7 +1,7 @@
 #! /usr/bin/perl
 
 my $version = "1.8.18";
-my $release = "3";
+my $release = "4";
 
 #check the distro
 $cmd = "cat /etc/*release";
