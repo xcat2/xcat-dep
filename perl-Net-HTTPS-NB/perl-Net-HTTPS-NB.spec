@@ -5,20 +5,22 @@
 
 Name:       perl-%{upstream_name}
 Version:    %{upstream_version}
-Release:    2
+Release:    3%{?dist}
 
 Summary:    Non-blocking HTTPS client
 License:    GPL+ or Artistic
 Group:      Development/Perl
 Url:        http://search.cpan.org/dist/%{upstream_name}
 Source0:    http://www.cpan.org/modules/by-module/Net/%{upstream_name}-%{upstream_version}.tar.gz
-Patch:      Net-HTTPS-NB-0.14.patch
+Patch0:     Net-HTTPS-NB-0.14.patch
 
 BuildRequires: perl(Exporter)
 BuildRequires: perl(ExtUtils::MakeMaker)
 BuildRequires: perl(IO::Socket::SSL) >= 0.980.0
 BuildRequires: perl(Net::HTTP)
 BuildRequires: perl(Net::HTTPS)
+BuildRequires: make
+BuildRequires: perl-generators
 BuildArch:  noarch
 
 %description
@@ -35,7 +37,7 @@ addition allows non-blocking connect.
 %prep
 %setup -q -n %{upstream_name}-%{upstream_version}
 
-%patch -p1
+%patch 0 -p1
 
 %build
 %__perl Makefile.PL

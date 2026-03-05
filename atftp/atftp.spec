@@ -5,6 +5,7 @@ Version: 0.7
 Release: 10 
 License: GPL
 Vendor: Linux Networx Inc.
+%undefine _hardened_build
 Source: atftp_0.7.dfsg.orig.tar.gz
 Source1: tftpd
 Patch: atftp_0.7.dfsg-3.diff
@@ -12,6 +13,11 @@ Patch1: dfsg-3-to-multicast.diff
 Patch2: dfsg-3-bigfiles.diff
 Patch3: dfsg-3-to-winpaths.diff
 Patch4: dfsg-3-mclistfix.diff
+Patch5: dfsg-3-pthread-self-include.diff
+
+BuildRequires: gcc
+BuildRequires: make
+BuildRequires: glibc-devel
 Buildroot: /var/tmp/atftp-buildroot
 Packager: Allen Reese <areese@lnxi.com>
 Conflicts: tftp-server
@@ -38,11 +44,25 @@ files using the TFTP protocol.
 
 %prep
 %setup -n atftp-0.7.dfsg
-%patch -p1
+%patch0 -p1
 %patch1 -p1
 %patch2 -p1
 %patch3 -p1
 %patch4 -p1
+%patch5 -p1
+# Avoid argz_next redefinition with modern glibc extern inline semantics.
+sed -i '/^#include <stdlib.h>$/a\
+#ifdef __USE_EXTERN_INLINES\
+#undef __USE_EXTERN_INLINES\
+#endif' argz.c
+# Disable glibc extern-inline argz bodies to prevent multiple definitions.
+sed -i 's/^#ifdef __USE_EXTERN_INLINES/#if 0/' argz.h
+# Force Strncpy to have a linkable external definition with modern GCC.
+sed -i 's/^inline char \*Strncpy(/char *Strncpy(/' tftp_def.h
+sed -i 's/^inline char \*Strncpy(/char *Strncpy(/' tftp_def.c
+# Force tftpd_clientlist_ready to have a linkable external definition.
+sed -i 's/^inline void tftpd_clientlist_ready(/void tftpd_clientlist_ready(/' tftpd.h
+sed -i 's/^inline void tftpd_clientlist_ready(/void tftpd_clientlist_ready(/' tftpd_list.c
 
 
 %build

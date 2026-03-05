@@ -1,0 +1,32 @@
+--- elilo/strops.h.orig	2003-08-19 13:47:46.000000000 -0300
++++ elilo/strops.h	2026-03-02 13:08:16.755263536 -0300
+@@ -27,7 +27,6 @@
+ #define __STROPS_H__
+ 
+ extern CHAR16 *StrChr(IN const CHAR16 *s, const CHAR16 c);
+-extern CHAR16 *StrnCpy(OUT CHAR16 *dst, IN const CHAR16 *src, UINTN count);
+ extern CHAR8 *StrnXCpy(OUT CHAR8 *dst, IN const CHAR16 *src, UINTN count);
+ 
+ extern CHAR8 *strtok_simple(CHAR8 *in, CHAR8 c);
+--- elilo/strops.c.orig	2010-11-09 21:11:07.000000000 -0200
++++ elilo/strops.c	2026-03-02 13:08:16.755263536 -0300
+@@ -36,19 +36,6 @@
+         return (CHAR16 *)s;
+ }
+ 
+-CHAR16 *
+-StrnCpy(OUT CHAR16 *dst, IN const CHAR16 *src, IN UINTN size)
+-{
+-	CHAR16 *res = dst;
+-
+-	while (size && size-- && (*dst++ = *src++) != CHAR_NULL);
+-	/*
+-	 * does the null padding
+-	 */
+-	while (size && size-- > 0) *dst++ = CHAR_NULL;
+-
+-	return res;
+-}
+ 
+ CHAR8 *
+ StrnXCpy(OUT CHAR8 *dst, IN const CHAR16 *src, IN UINTN size)
