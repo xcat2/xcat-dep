@@ -36,10 +36,18 @@ elilo with patches from the xCAT team.  Most significantly, adds iPXE usage to t
 %patch1  -p1
 %patch2  -p1
 %patch3  -p1
-# EL10 gnu-efi installs linker scripts and crt0 objects under /usr/lib.
+# EL10 keeps the relevant gnu-efi linker inputs under /usr/lib.
+# On EL9, crt objects and linker scripts are still under /usr/lib, but the
+# linkable static archives must be searched from /usr/lib64.
+%if 0%{?rhel} >= 10
 sed -i 's|^GNUEFILIB[[:space:]]*=.*|GNUEFILIB  = /usr/lib|' Make.defaults
 sed -i 's|^EFILIB[[:space:]]*=.*|EFILIB   = /usr/lib|' Make.defaults
 sed -i 's|^EFICRT0[[:space:]]*=.*|EFICRT0   = /usr/lib|' Make.defaults
+%else
+sed -i 's|^GNUEFILIB[[:space:]]*=.*|GNUEFILIB  = /usr/lib64|' Make.defaults
+sed -i 's|^EFILIB[[:space:]]*=.*|EFILIB   = /usr/lib64|' Make.defaults
+sed -i 's|^EFICRT0[[:space:]]*=.*|EFICRT0   = /usr/lib|' Make.defaults
+%endif
 %if "%{_host_cpu}" == "ppc64le"
 # On ppc64le, reuse the prebuilt EFI payload from the tracked noarch package.
 mkdir -p prebuilt
