@@ -210,9 +210,6 @@ for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
 if (!$skip_install) {
     print_step("Install RPM(s) and run smoke tests");
     run("dnf -y install " . sh_quote($xcat_rpm));
-    if ($main_rpm) {
-        run("dnf -y install " . sh_quote($main_rpm));
-    }
 
     my $pxe_file = '/opt/xcat/share/xcat/netboot/syslinux/pxelinux.0';
     die "Missing installed PXE file: $pxe_file\n" if !-f $pxe_file;
@@ -229,6 +226,10 @@ if (!$skip_install) {
     die "Installed file is not owned by syslinux-xcat:\n$qf_out\n"
         if $qf_out !~ /^syslinux-xcat-/m;
 
+    # EL10 hosts may already carry syslinux-nonlinux, which conflicts with
+    # directly installing the rebuilt syslinux payload. The xcat subpackage
+    # is the artifact we need to smoke-test on the host; repository-level
+    # dependency validation happens later in the full install phase.
     my $syslinux_help_log = "$log_dir/smoke-syslinux-help.log";
     if (-x '/usr/bin/syslinux') {
         my $rc_help = run_capture_rc("/usr/bin/syslinux --help", $syslinux_help_log);
@@ -244,7 +245,7 @@ if (!$skip_install) {
     print {$sfh} "pxe_file=$pxe_file\n";
     print {$sfh} "rc_file=$rc_file\n";
     print {$sfh} "rc_qf=$rc_qf\n";
-    print {$sfh} "main_rpm_installed=" . ($main_rpm ? 1 : 0) . "\n";
+    print {$sfh} "main_rpm_available=" . ($main_rpm ? 1 : 0) . "\n";
     close $sfh;
 }
 

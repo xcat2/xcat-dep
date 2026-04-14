@@ -40,11 +40,12 @@ GetOptions(
 
 die "Run as root (current uid=$>)\n" if $> != 0;
 die "Missing spec file: $spec_file\n" if !-f $spec_file;
-die "Missing recompile dir: $recompile_dir\n" if !-d $recompile_dir;
 die "Invalid --resource-mode '$resource_mode'\n"
     if $resource_mode ne 'reuse-grub2-res' && $resource_mode ne 'regenerate-from-el10-srcrpm';
 die "Mode regenerate-from-el10-srcrpm is not supported in this script yet; use reuse-grub2-res on x86_64 first.\n"
     if $resource_mode eq 'regenerate-from-el10-srcrpm';
+
+make_path($recompile_dir) if !-d $recompile_dir;
 
 for my $bin (qw(wget mock rpmbuild rpm dnf file bash tar sha256sum grep cmp cut)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");

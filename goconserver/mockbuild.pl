@@ -49,6 +49,7 @@ if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
     $mock_cfg = "${os_id}+epel-10-${arch}";
 }
+my $release_tag = derive_release_tag($mock_cfg);
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
     : '';
@@ -98,6 +99,7 @@ print "result_dir:  $result_dir\n";
 print "log_dir:     $log_dir\n";
 print "arch:        $arch\n";
 print "mock_cfg:    $mock_cfg\n";
+print "release_tag: " . ($release_tag ne '' ? $release_tag : '(unchanged)') . "\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
 print "src_rpm:     $src_rpm\n";
 print "skip_install:$skip_install\n";
@@ -127,6 +129,7 @@ my @specs = sort glob("$stage_dir/*.spec");
 die "Expected exactly one spec in $stage_dir, found " . scalar(@specs) . "\n"
     if @specs != 1;
 my $spec_file = $specs[0];
+normalize_spec_release($spec_file, $release_tag, $log_dir);
 
 my ($version, @assets) = parse_spec($spec_file);
 die "Could not parse Version from $spec_file\n" if !$version;
@@ -249,7 +252,7 @@ for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
 
 if (!$skip_install) {
     print_step("Install RPM and run smoke tests");
-    run("dnf -y install " . sh_quote($main_rpm));
+    install_for_smoke($main_rpm);
 
     my $bin_main = '/usr/bin/goconserver';
     my $bin_cli  = '/usr/bin/congo';
@@ -338,6 +341,70 @@ sub parse_spec {
     } @assets;
 
     return ($version, @assets);
+}
+
+sub normalize_spec_release {
+    my ($path, $release_tag, $log_dir) = @_;
+    return if !$release_tag;
+
+    open my $fh, '<', $path or die "Cannot open spec $path: $!\n";
+    my @lines = <$fh>;
+    close $fh;
+
+    my $changed = 0;
+    my $before = '';
+    my $after  = '';
+    for my $line (@lines) {
+        next if $line !~ /^Release:\s*(\S+)/;
+        $before = $1;
+        my $updated = $before;
+        if ($updated =~ s/\.el\d+(?=$|[^[:alnum:]])/.$release_tag/) {
+            # already normalized
+        } elsif ($updated !~ /\Q.$release_tag\E(?:$|[^[:alnum:]])/) {
+            $updated .= ".$release_tag";
+        }
+        if ($updated ne $before) {
+            $line =~ s/^Release:\s*\S+/Release: $updated/;
+            $after = $updated;
+            $changed = 1;
+        }
+        last;
+    }
+
+    if ($changed) {
+        open my $out, '>', $path or die "Cannot write spec $path: $!\n";
+        print {$out} @lines;
+        close $out;
+    }
+
+    open my $lfh, '>', "$log_dir/spec-release-normalization.txt"
+        or die "Cannot write $log_dir/spec-release-normalization.txt: $!\n";
+    print {$lfh} "release_tag=$release_tag\n";
+    print {$lfh} "changed=" . ($changed ? 'yes' : 'no') . "\n";
+    print {$lfh} "before=$before\n" if $before ne '';
+    print {$lfh} "after=$after\n" if $after ne '';
+    close $lfh;
+}
+
+sub derive_release_tag {
+    my ($cfg) = @_;
+    return '' if !$cfg;
+    return "el$1" if $cfg =~ /(?:^|[+_-])(\d+)-(?:x86_64|ppc64le|aarch64|s390x|ppc64)\b/;
+    return '';
+}
+
+sub install_for_smoke {
+    my ($rpm_path) = @_;
+    my $name = capture("rpm -qp --qf '%{NAME}' " . sh_quote($rpm_path));
+    my $installed = run_capture_rc("rpm -q " . sh_quote($name), "/tmp/goconserver-installed-query.log");
+    if ($installed == 0) {
+        my $install_rc = system("dnf -y install " . sh_quote($rpm_path) . " >/tmp/goconserver-dnf-install.log 2>&1");
+        my $install_exit = $install_rc == -1 ? 255 : ($install_rc >> 8);
+        return if $install_exit == 0;
+        run("dnf -y downgrade " . sh_quote($rpm_path));
+        return;
+    }
+    run("dnf -y install " . sh_quote($rpm_path));
 }
 
 sub command_exists {

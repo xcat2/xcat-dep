@@ -114,8 +114,11 @@ my @dep_builders = (
     { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl" },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
     { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
-    { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
 );
+
+if ($arch eq 'x86_64') {
+    push @dep_builders, { name => 'xnba-undi', script => "$repo_root/xnba/mockbuild.pl" };
+}
 
 my $perl_builder = "$repo_root/mockbuild-perl-packages.pl";
 
@@ -309,6 +312,7 @@ if ($skip_build) {
         "$repo_root/build-output/list3/grub2-xcat",
         "$repo_root/build-output/list3/ipmitool-xcat",
         "$repo_root/build-output/list3/syslinux-xcat",
+        "$repo_root/build-output/list3/xnba-undi",
         "$repo_root/build-output/list5/goconserver/$arch",
         "$repo_root/goconserver-build-$arch/results/rpm",
         "$repo_root/build-output/list6/perl/$arch",
