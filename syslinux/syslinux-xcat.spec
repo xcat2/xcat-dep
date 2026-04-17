@@ -1,30 +1,34 @@
 # -*- rpm -*-
-%define RPMVERSION 3.86
-%define VERSION    3.86
+%define RPMVERSION 6.03
+%define VERSION    6.03
 Summary: Kernel loader which uses a FAT, ext2/3 or iso9660 filesystem or a PXE network
 Name: syslinux
 Version: %{RPMVERSION}
-Release: 2
+Release: 1
 License: GPL
 Group: System/Boot
-Source0: ftp://ftp.kernel.org/pub/linux/utils/boot/syslinux/%{name}-%{VERSION}.tar.bz2
-Patch0: syslinux-3.86-multibootif.patch
-ExclusiveArch: i386 i486 i586 i686 athlon pentium4 x86_64
+Source0: https://www.kernel.org/pub/linux/utils/boot/syslinux/%{name}-%{VERSION}.tar.xz
+Patch0: syslinux-6.03-multibootif.patch
+ExclusiveArch: i386 i486 i586 i686 athlon pentium4 x86_64 ppc64le
 Packager: H. Peter Anvin <hpa@zytor.com>
 Buildroot: %{_tmppath}/%{name}-%{VERSION}-root
-BuildPrereq: nasm >= 0.98.39, perl
 Autoreq: 0
-BuildRequires: mtools, libc.so.6()(64bit)
+BuildRequires: nasm >= 2.03, perl
+BuildRequires: mtools, libc.so.6()(64bit), python3
+BuildRequires: git
+BuildRequires: libuuid-devel
 %define my_cc gcc
 
 # NOTE: extlinux belongs in /sbin, not in /usr/sbin, since it is typically
 # a system bootloader, and may be necessary for system recovery.
 %define _sbindir /sbin
 
+%ifnarch ppc64le
 %package devel
 Summary: Development environment for SYSLINUX add-on modules
 Group: Development/Libraries
 Requires: syslinux
+%endif
 
 %description
 SYSLINUX is a suite of bootloaders, currently supporting DOS FAT
@@ -32,10 +36,12 @@ filesystems, Linux ext2/ext3 filesystems (EXTLINUX), PXE network boots
 (PXELINUX), or ISO 9660 CD-ROMs (ISOLINUX).  It also includes a tool,
 MEMDISK, which loads legacy operating systems from these media.
 
+%ifnarch ppc64le
 %description devel
 The SYSLINUX boot loader contains an API, called COM32, for writing
 sophisticated add-on modules.  This package contains the libraries
 necessary to compile such modules.
+%endif
 
 %package extlinux
 Summary: The EXTLINUX bootloader, for booting the local system.
@@ -58,24 +64,43 @@ booting in the /opt/xcat/share/xcat/netboot/syslinux directory.
 %prep
 %setup -q -n syslinux-%{VERSION}
 %patch0 -p1
+# Source tarballs do not include .git metadata; skip submodule refresh in that case.
+sed -i 's/^[[:space:]]*git submodule update --init$/[ -d .git ] \&\& git submodule update --init || :/' efi/clean-gnu-efi.sh
+# GCC/glibc compatibility for major()/minor() declarations.
+sed -i '/#include <sys\/types.h>/a #include <sys/sysmacros.h>' extlinux/main.c
+# GCC14 strict prototype fix in COM32 syslinux debug helper.
+sed -i '/#include <stdbool.h>/a #include <stdio.h>' com32/lib/syslinux/debug.c
+# GCC >= 10 defaults to -fno-common; legacy syslinux code expects common symbols.
+for f in mk/lib.mk mk/com32.mk mk/elf.mk mk/embedded.mk; do \
+    sed -i '/fno-strict-aliasing/a GCCOPT += $(call gcc_ok,-fcommon,)' "$f"; \
+done
 
 %build
-make CC='%{my_cc}' clean
-make CC='%{my_cc}' -C com32
-make CC='%{my_cc}' installer
-make CC='%{my_cc}' -C sample tidy
+make CC='%{my_cc}' PYTHON=python3 clean
+make CC='%{my_cc}' PYTHON=python3 installer
 
 %install
 rm -rf %{buildroot}
-make CC='%{my_cc}' install-all \
+%ifarch ppc64le
+make CC='%{my_cc}' PYTHON=python3 install \
 	INSTALLROOT=%{buildroot} BINDIR=%{_bindir} SBINDIR=%{_sbindir} \
 	LIBDIR=%{_libdir} DATADIR=%{_datadir} \
 	MANDIR=%{_mandir} INCDIR=%{_includedir} \
-	TFTPBOOT=/opt/xcat/share/xcat/netboot/syslinux EXTLINUXDIR=/boot/extlinux
-rm %{buildroot}/usr/share/syslinux/dosutil/copybs.com
-rm %{buildroot}/usr/share/syslinux/dosutil/eltorito.sys
-rm %{buildroot}/usr/share/syslinux/dosutil/mdiskchk.com
-make CC='%{my_cc}' -C sample tidy
+	INSTALLSUBDIRS=
+%else
+make CC='%{my_cc}' PYTHON=python3 install \
+	INSTALLROOT=%{buildroot} BINDIR=%{_bindir} SBINDIR=%{_sbindir} \
+	LIBDIR=%{_libdir} DATADIR=%{_datadir} \
+	MANDIR=%{_mandir} INCDIR=%{_includedir}
+%endif
+make CC='%{my_cc}' PYTHON=python3 netinstall \
+	INSTALLROOT=%{buildroot} TFTPBOOT=/opt/xcat/share/xcat/netboot/syslinux
+if make -n extbootinstall >/dev/null 2>&1; then \
+	make CC='%{my_cc}' PYTHON=python3 extbootinstall \
+		INSTALLROOT=%{buildroot} EXTLINUXDIR=/boot/extlinux; \
+else \
+	mkdir -p %{buildroot}/boot/extlinux; \
+fi
 mkdir -p %{buildroot}/etc
 ( cd %{buildroot}/etc && ln -s ../boot/extlinux/extlinux.conf . )
 
@@ -94,9 +119,17 @@ rm -rf %{buildroot}
 %{_datadir}/syslinux/*.bin
 %{_datadir}/syslinux/*.0
 %{_datadir}/syslinux/memdisk
+%ifnarch ppc64le
+%{_datadir}/syslinux/dosutil/*
+%endif
+%{_datadir}/syslinux/diag/*
+%{_datadir}/syslinux/efi32
+%{_datadir}/syslinux/efi64
 
+%ifnarch ppc64le
 %files devel
 %{_datadir}/syslinux/com32
+%endif
 
 %files extlinux
 %{_sbindir}/extlinux
@@ -255,7 +288,7 @@ fi
 * Wed Jul 12 2000 Prospector <bugzilla@redhat.com>
 - automatic rebuild
 
-* Thu Jul 06 2000 Trond Eivind Glomsrød <teg@redhat.com>
+* Thu Jul 06 2000 Trond Eivind Glomsrod <teg@redhat.com>
 - use %%{_tmppath}
 - change application group (Applications/Internet doesn't seem
   right to me)

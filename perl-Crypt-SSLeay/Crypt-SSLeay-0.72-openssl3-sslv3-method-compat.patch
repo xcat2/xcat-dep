@@ -1,0 +1,21 @@
+--- a/SSLeay.xs
++++ b/SSLeay.xs
+@@ -149,14 +149,14 @@
+         if(ssl_version == 23) {
+             ctx = SSL_CTX_new(SSLv23_client_method());
+         }
+         else if(ssl_version == 3) {
+-            ctx = SSL_CTX_new(SSLv3_client_method());
++            ctx = SSL_CTX_new(TLS_client_method());
+         }
+         else {
+ #ifndef OPENSSL_NO_SSL2
+             /* v2 is the default */
+             ctx = SSL_CTX_new(SSLv2_client_method());
+ #else
+             /* v3 is the default */
+-            ctx = SSL_CTX_new(SSLv3_client_method());
++            ctx = SSL_CTX_new(TLS_client_method());
+ #endif
+         }
+ EOF

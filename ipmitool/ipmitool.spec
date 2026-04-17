@@ -23,6 +23,7 @@ Patch12:      0012-CVE-2020-5208.patch
 Patch13:      0013-quanta-oem-support.patch
 Patch14:      0014-lanplus-cipher-retry.patch
 Patch15:      0015-lanplus-Cleanup.-Refix-6dec83ff-fix-be2c0c4b.patch
+Patch16:      0016-el10-gcc14-missing-intf-getters.patch
 
 Patch80:      ipmitool-%{version}-saneretry.patch
 Patch82:      ipmitool-%{version}-rflash.patch
@@ -73,6 +74,7 @@ fi
 %patch13  -p1
 %patch14  -p1
 %patch15  -p1
+%patch16  -p1
 %patch80 -p1
 %patch82 -p1
 %patch83 -p1
@@ -475,4 +477,3 @@ fi
 
 * Sun Mar 30 2003 <duncan@iceblink.org>  1.0-1
  - Initial release.
-
