@@ -1,0 +1,11 @@
+diff -Naur atftp-0.7.dfsg/argz.c atftp-0.7.dfsg-fixed/argz.c
+--- atftp-0.7.dfsg/argz.c
++++ atftp-0.7.dfsg-fixed/argz.c
+@@ -41,6 +41,9 @@
+ #include <stdlib.h>
++#ifdef __USE_EXTERN_INLINES
++#undef __USE_EXTERN_INLINES
++#endif
+ #include "argz.h"
+ 
+ char * argz_next (const char *argz, size_t argz_len, const char *entry)

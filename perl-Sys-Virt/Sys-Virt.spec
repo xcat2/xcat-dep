@@ -14,17 +14,24 @@
 name:      perl-Sys-Virt
 summary:   Sys-Virt - Represent and manage a libvirt hypervisor connection
 version:   0.2.0
-release:   2
+release:   3%{?dist}
 vendor:    Daniel P. Berrange <berrange@redhat.com>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
 group:     Applications/CPAN
 url:       http://www.cpan.org
 buildroot: %{_tmppath}/%{name}-%{version}-%(id -u -n)
-buildarch: x86_64
 prefix:    %(echo %{_prefix})
 source:    Sys-Virt-0.2.0.tar.gz
-patch:     Sys-Virt-fixes.patch
+patch0:    Sys-Virt-fixes.patch
+
+BuildRequires: gcc
+BuildRequires: make
+BuildRequires: perl-interpreter
+BuildRequires: perl-devel
+BuildRequires: perl(ExtUtils::MakeMaker)
+BuildRequires: perl-generators
+BuildRequires: libvirt-devel
 
 %description
 The Sys::Virt module provides a Perl XS binding to the libvirt
@@ -40,10 +47,11 @@ a consistent API.
 
 %prep
 %setup -q -n %{pkgname}-%{version} 
-%patch
+%patch 0 -p0
 chmod -R u+w %{_builddir}/%{pkgname}-%{version}
 
 %build
+export PERL_USE_UNSAFE_INC=1
 grep -rsl '^#!.*perl' . |
 grep -v '.bak$' |xargs --no-run-if-empty \
 %__perl -MExtUtils::MakeMaker -e 'MY->fixin(@ARGV)'
@@ -57,7 +65,7 @@ CFLAGS="$RPM_OPT_FLAGS"
 %install
 [ "%{buildroot}" != "/" ] && rm -rf %{buildroot}
 
-%{makeinstall} `%{__perl} -MExtUtils::MakeMaker -e ' print \$ExtUtils::MakeMaker::VERSION <= 6.05 ? qq|PREFIX=%{buildroot}%{_prefix}| : qq|DESTDIR=%{buildroot}| '`
+%{__make} pure_install DESTDIR=%{buildroot}
 
 cmd=/usr/share/spec-helper/compress_files
 [ -x $cmd ] || cmd=/usr/lib/rpm/brp-compress

@@ -14,7 +14,7 @@
 name:      perl-IO-Tty
 summary:   IO-Tty - Pseudo ttys and constants
 version:   1.07
-release:   1
+release:   2%{?dist}
 vendor:    Roland Giersig <RGiersig@cpan.org>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
@@ -23,6 +23,13 @@ url:       http://www.cpan.org
 buildroot: %{_tmppath}/%{name}-%{version}-%(id -u -n)
 prefix:    %(echo %{_prefix})
 source:    IO-Tty-1.07.tar.gz
+
+BuildRequires: gcc
+BuildRequires: make
+BuildRequires: perl-interpreter
+BuildRequires: perl-devel
+BuildRequires: perl(ExtUtils::MakeMaker)
+BuildRequires: perl-generators
 
 %description
 "IO::Tty" is used internally by "IO::Pty" to create a pseudo-tty.
@@ -80,7 +87,7 @@ CFLAGS="$RPM_OPT_FLAGS"
 %install
 [ "%{buildroot}" != "/" ] && rm -rf %{buildroot}
 
-%{makeinstall} `%{__perl} -MExtUtils::MakeMaker -e ' print \$ExtUtils::MakeMaker::VERSION <= 6.05 ? qq|PREFIX=%{buildroot}%{_prefix}| : qq|DESTDIR=%{buildroot}| '`
+%{__make} pure_install DESTDIR=%{buildroot}
 
 cmd=/usr/share/spec-helper/compress_files
 [ -x $cmd ] || cmd=/usr/lib/rpm/brp-compress

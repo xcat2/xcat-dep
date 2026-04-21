@@ -1,0 +1,274 @@
+diff -urN xnba-1.21.1/src/arch/x86/core/patch_cf.S xnba-1.21.1.mod/src/arch/x86/core/patch_cf.S
+--- xnba-1.21.1/src/arch/x86/core/patch_cf.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/core/patch_cf.S	2026-03-02 16:08:49.051016121 -0300
+@@ -23,8 +23,8 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.text
+-	.arch i386
+ 	.code16
++	.arch i386
+ 
+ /****************************************************************************
+  * Set/clear CF on the stack as appropriate, assumes stack is as it should
+diff -urN xnba-1.21.1/src/arch/x86/core/stack.S xnba-1.21.1.mod/src/arch/x86/core/stack.S
+--- xnba-1.21.1/src/arch/x86/core/stack.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/core/stack.S	2026-03-02 16:08:49.051016121 -0300
+@@ -1,6 +1,5 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+-	.arch i386
+ 
+ #ifdef __x86_64__
+ #define STACK_SIZE 8192
+diff -urN xnba-1.21.1/src/arch/x86/core/stack16.S xnba-1.21.1.mod/src/arch/x86/core/stack16.S
+--- xnba-1.21.1/src/arch/x86/core/stack16.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/core/stack16.S	2026-03-02 16:08:49.051016121 -0300
+@@ -1,6 +1,5 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+-	.arch i386
+ 
+ /****************************************************************************
+  * Internal stack
+diff -urN xnba-1.21.1/src/arch/x86/drivers/net/undiisr.S xnba-1.21.1.mod/src/arch/x86/drivers/net/undiisr.S
+--- xnba-1.21.1/src/arch/x86/drivers/net/undiisr.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/drivers/net/undiisr.S	2026-03-02 16:08:49.051016121 -0300
+@@ -11,8 +11,8 @@
+ #define PIC2_ICR 0xa0
+ 	
+ 	.text
+-	.arch i386
+ 	.code16
++	.arch i386
+ 
+ 	.section ".text16", "ax", @progbits
+ 	.globl undiisr
+diff -urN xnba-1.21.1/src/arch/x86/interface/pcbios/e820mangler.S xnba-1.21.1.mod/src/arch/x86/interface/pcbios/e820mangler.S
+--- xnba-1.21.1/src/arch/x86/interface/pcbios/e820mangler.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/interface/pcbios/e820mangler.S	2026-03-02 16:08:49.051016121 -0300
+@@ -24,8 +24,8 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.text
+-	.arch i386
+ 	.code16
++	.arch i386
+ 
+ #define SMAP 0x534d4150
+ 
+diff -urN xnba-1.21.1/src/arch/x86/interface/pxe/pxe_entry.S xnba-1.21.1.mod/src/arch/x86/interface/pxe/pxe_entry.S
+--- xnba-1.21.1/src/arch/x86/interface/pxe/pxe_entry.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/interface/pxe/pxe_entry.S	2026-03-02 16:08:49.051016121 -0300
+@@ -26,7 +26,6 @@
+ 
+ #include <librm.h>
+ 
+-	.arch i386
+ 
+ /****************************************************************************
+  * !PXE structure
+diff -urN xnba-1.21.1/src/arch/x86/prefix/bootpart.S xnba-1.21.1.mod/src/arch/x86/prefix/bootpart.S
+--- xnba-1.21.1/src/arch/x86/prefix/bootpart.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/bootpart.S	2026-03-02 16:08:49.054349513 -0300
+@@ -6,7 +6,6 @@
+ #define STACK_SIZE	0x2000
+ 	
+ 	.text
+-	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+ 
+diff -urN xnba-1.21.1/src/arch/x86/prefix/dskprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/dskprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/dskprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/dskprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -25,7 +25,6 @@
+ .equ	SYSSEG, 0x1000			/* system loaded at SYSSEG<<4 */
+ 
+ 	.org	0
+-	.arch i386
+ 	.text
+ 	.section ".prefix", "ax", @progbits
+ 	.code16
+diff -urN xnba-1.21.1/src/arch/x86/prefix/exeprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/exeprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/exeprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/exeprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -37,7 +37,6 @@
+ #define PSP_CMDLINE_START 0x81
+ 
+ 	.text
+-	.arch i386
+ 	.org 0
+ 	.code16
+ 	.section ".prefix", "awx", @progbits
+diff -urN xnba-1.21.1/src/arch/x86/prefix/hdprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/hdprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/hdprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/hdprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -3,7 +3,6 @@
+ #include <librm.h>
+ 
+ 	.text
+-	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+ 	.org 0
+diff -urN xnba-1.21.1/src/arch/x86/prefix/libprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/libprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/libprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/libprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -26,7 +26,6 @@
+ 
+ #include <librm.h>
+ 
+-	.arch i386
+ 
+ /* Image compression enabled */
+ #define COMPRESS 1
+diff -urN xnba-1.21.1/src/arch/x86/prefix/lkrnprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/lkrnprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/lkrnprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/lkrnprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -5,8 +5,8 @@
+ #define BZI_LOAD_HIGH_ADDR 0x100000
+ 
+ 	.text
+-	.arch i386
+ 	.code16
++	.arch i386
+ 	.section ".prefix", "ax", @progbits
+ 	.globl	_lkrn_start
+ _lkrn_start:
+diff -urN xnba-1.21.1/src/arch/x86/prefix/mbr.S xnba-1.21.1.mod/src/arch/x86/prefix/mbr.S
+--- xnba-1.21.1/src/arch/x86/prefix/mbr.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/mbr.S	2026-03-02 16:08:49.054349513 -0300
+@@ -1,7 +1,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.text
+-	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+ 	.org 0
+diff -urN xnba-1.21.1/src/arch/x86/prefix/mromprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/mromprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/mromprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/mromprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -42,8 +42,8 @@
+ #include "pciromprefix.S"
+ 
+ 	.text
+-	.arch i386
+ 	.code16
++	.arch i386
+ 
+ /* Obtain access to payload by exposing the expansion ROM BAR at the
+  * address currently used by a suitably large memory BAR on the same
+diff -urN xnba-1.21.1/src/arch/x86/prefix/nbiprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/nbiprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/nbiprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/nbiprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -3,8 +3,8 @@
+ #include <librm.h>
+ 
+ 	.text
+-	.arch i386
+ 	.code16
++	.arch i386
+ 	.section ".prefix", "ax", @progbits
+ 	.org 0
+ 
+diff -urN xnba-1.21.1/src/arch/x86/prefix/nullprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/nullprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/nullprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/nullprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -2,7 +2,6 @@
+ 
+ 	.org	0
+ 	.text
+-	.arch i386
+ 
+ 	.section ".prefix", "ax", @progbits
+ 	.code16
+diff -urN xnba-1.21.1/src/arch/x86/prefix/pxeprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/pxeprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/pxeprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/pxeprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -12,7 +12,6 @@
+ #define PXE_HACK_EB54			0x0001
+ 
+ 	.text
+-	.arch i386
+ 	.org 0
+ 	.code16
+ 
+diff -urN xnba-1.21.1/src/arch/x86/prefix/rawprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/rawprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/rawprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/rawprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -9,7 +9,6 @@
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+ 	.text
+-	.arch i386
+ 	.org 0
+ 	.code16
+ 
+diff -urN xnba-1.21.1/src/arch/x86/prefix/romprefix.S xnba-1.21.1.mod/src/arch/x86/prefix/romprefix.S
+--- xnba-1.21.1/src/arch/x86/prefix/romprefix.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/romprefix.S	2026-03-02 16:08:49.054349513 -0300
+@@ -56,7 +56,6 @@
+ 
+ 	.text
+ 	.code16
+-	.arch i386
+ 	.section ".prefix", "ax", @progbits
+ 	.globl	_rom_start
+ _rom_start:
+diff -urN xnba-1.21.1/src/arch/x86/prefix/undiloader.S xnba-1.21.1.mod/src/arch/x86/prefix/undiloader.S
+--- xnba-1.21.1/src/arch/x86/prefix/undiloader.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/undiloader.S	2026-03-02 16:08:49.054349513 -0300
+@@ -4,7 +4,6 @@
+ 
+ 	.text
+ 	.code16
+-	.arch i386
+ 	.section ".prefix", "ax", @progbits
+ 
+ /* UNDI loader
+diff -urN xnba-1.21.1/src/arch/x86/prefix/unlzma.S xnba-1.21.1.mod/src/arch/x86/prefix/unlzma.S
+--- xnba-1.21.1/src/arch/x86/prefix/unlzma.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/unlzma.S	2026-03-02 16:08:49.054349513 -0300
+@@ -44,7 +44,6 @@
+  */
+ 
+ 	.text
+-	.arch i486
+ 	.section ".prefix.lib", "ax", @progbits
+ 
+ #ifdef CODE16
+diff -urN xnba-1.21.1/src/arch/x86/prefix/usbdisk.S xnba-1.21.1.mod/src/arch/x86/prefix/usbdisk.S
+--- xnba-1.21.1/src/arch/x86/prefix/usbdisk.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/prefix/usbdisk.S	2026-03-02 16:08:49.054349513 -0300
+@@ -3,7 +3,6 @@
+ #include <config/console.h>
+ 
+ 	.text
+-	.arch i386
+ 	.section ".prefix", "awx", @progbits
+ 	.code16
+ 	.org 0
+diff -urN xnba-1.21.1/src/arch/x86/transitions/liba20.S xnba-1.21.1.mod/src/arch/x86/transitions/liba20.S
+--- xnba-1.21.1/src/arch/x86/transitions/liba20.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/transitions/liba20.S	2026-03-02 16:08:49.054349513 -0300
+@@ -24,7 +24,6 @@
+ 
+ FILE_LICENCE ( GPL2_OR_LATER_OR_UBDL )
+ 
+-	.arch i386
+ 
+ /****************************************************************************
+  * test_a20_short, test_a20_long
+diff -urN xnba-1.21.1/src/arch/x86/transitions/libkir.S xnba-1.21.1.mod/src/arch/x86/transitions/libkir.S
+--- xnba-1.21.1/src/arch/x86/transitions/libkir.S	2021-09-23 14:29:02.000000000 -0300
++++ xnba-1.21.1.mod/src/arch/x86/transitions/libkir.S	2026-03-02 16:08:49.054349513 -0300
+@@ -32,7 +32,6 @@
+ #define BOCHSBP xchgw %bx, %bx
+ 
+ 	.text
+-	.arch i386
+ 	.section ".text16", "awx", @progbits
+ 	.code16
+ 	

@@ -20,6 +20,13 @@ Patch2:  ipxe-machyp.patch
 Patch3:  ipxe-xnbaclass.patch
 Patch4:  ipxe-dhcp.patch
 Patch5:  ipxe-verbump.patch
+Patch6:  ipxe-binutils-2.41-compat.patch
+
+BuildRequires: make
+BuildRequires: gcc
+BuildRequires: binutils
+BuildRequires: perl
+BuildRequires: xz-devel
 
 %description
 The xCAT Network Boot Agent is a slightly modified version of iPXE.  It provides enhanced boot features for any UNDI compliant x86 host.  This includes iSCSI, http/ftp downloads, and iPXE script based booting.
@@ -32,14 +39,15 @@ The xCAT Network Boot Agent is a slightly modified version of iPXE.  It provides
 %patch3 -p1
 %patch4 -p1
 %patch5 -p1
+%patch6 -p1
 
 %build
 
 rm -rf %{buildroot}
 
 cd src
-make bin/undionly.kkpxe
-make bin-x86_64-efi/snponly.efi
+make NO_WERROR=1 bin/undionly.kkpxe
+make NO_WERROR=1 bin-x86_64-efi/snponly.efi
 
 
 %install

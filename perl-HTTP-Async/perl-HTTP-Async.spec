@@ -5,15 +5,19 @@
 
 Name:       perl-%{upstream_name}
 Version:    %{upstream_version}
-Release:    2
+Release:    3%{?dist}
 
 Summary:    Politely process multiple HTTP requests
 License:    GPL+ or Artistic
 Group:      Development/Perl
 Url:        http://search.cpan.org/dist/%{upstream_name}
 Source0:    http://www.cpan.org/modules/by-module/HTTP/%{upstream_name}-%{upstream_version}.tar.gz
-Patch:      HTTP-Async-0.30.patch
+Patch0:     HTTP-Async-0.30.patch
 BuildArch:  noarch
+
+BuildRequires: perl(ExtUtils::MakeMaker)
+BuildRequires: make
+BuildRequires: perl-generators
 
 %description
 Although using the conventional 'LWP::UserAgent' is fast and easy it does
@@ -35,7 +39,7 @@ using 'select' lists.
 %prep
 %setup -q -n %{upstream_name}-%{upstream_version}
 
-%patch -p1
+%patch 0 -p1
 
 %build
 CFLAGS="$RPM_OPT_FLAGS $CFLAGS" %__perl Makefile.PL

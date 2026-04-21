@@ -1,0 +1,53 @@
+--- a/com32/mboot/mboot.c	2014-10-06 09:29:01.000000000 -0700
++++ b/com32/mboot/mboot.c	2026-03-02 00:00:00.000000000 +0000
+@@ -93,9 +93,18 @@ static int get_modules(char **argv, struct module_data **mdp)
+     char **argp, **argx;
+     struct module_data *mp;
+     int rv;
++    int firstmod = 1;
+     int module_count = 1;
+     int arglen;
+     const char module_separator[] = "---";
++    com32sys_t reg;
++    const char *bootifstr = "";
++
++    reg.eax.w[0] = 0x000f;	/* Get IPAPPEND strings */
++    __intcall(0x22, &reg, &reg);
++    if (!(reg.eflags.l & EFLAGS_CF))
++	bootifstr = MK_PTR(reg.es,
++			   *(uint16_t *)MK_PTR(reg.es, reg.ebx.w[0] + 2));
+ 
+     for (argp = argv; *argp; argp++) {
+ 	if (!strcmp(*argp, module_separator))
+@@ -130,15 +139,29 @@ static int get_modules(char **argv, struct module_data **mdp)
+ 	    arglen += strlen(*argx) + 1;
+ 
+ 	if (arglen == 0) {
+-	    mp->cmdline = strdup("");
++	    if (firstmod) {
++		firstmod = 0;
++		mp->cmdline = strdup(bootifstr);
++	    } else {
++		mp->cmdline = strdup("");
++	    }
+ 	} else {
+ 	    char *p;
++	    if (firstmod)
++		arglen += strlen(bootifstr) + 1;
++
+ 	    mp->cmdline = p = malloc(arglen);
+ 	    for (; *argp && strcmp(*argp, module_separator); argp++) {
+ 		p = stpcpy(p, *argp);
+ 		*p++ = ' ';
+ 	    }
+-	    *--p = '\0';
++	    if (firstmod) {
++		firstmod = 0;
++		p = stpcpy(p, bootifstr);
++		*p = '\0';
++	    } else {
++		*--p = '\0';
++	    }
+ 	}
+ 	mp++;
+ 	if (*argp)
