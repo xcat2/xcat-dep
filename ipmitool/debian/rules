@@ -21,7 +21,7 @@ endif
 configure: configure-stamp
 configure-stamp:
 	dh_testdir
-	dh --with quilt build
+	dh build --with quilt
 
 ifneq ($(TARGET_ARCH),ppc64el)
 	./configure --prefix=/usr \
@@ -65,7 +65,7 @@ install: install-arch #install-indep
 install-indep:
 	dh_testdir
 	dh_testroot
-	dh_clean -k -i
+	dh_prep -i
 	dh_installdirs -i
 
 # Add here commands to install the indep part of the package into
@@ -77,7 +77,7 @@ install-indep:
 install-arch:
 	dh_testdir
 	dh_testroot
-	dh_clean -k -a
+	dh_prep -a
 	dh_installdirs -a
 
 # Add here commands to install the arch part of the package into 
