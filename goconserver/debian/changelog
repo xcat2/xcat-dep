@@ -1,0 +1,7 @@
+goconserver (0.3.3-1) unstable; urgency=medium
+
+  * Build v0.3.3 from source for xCAT
+  * Remove RC4 and 3DES ciphers from TLS configuration
+  * Remove etcd storage backend (incompatible with modern Go modules)
+
+ -- Vinicius Ferrao <ferrao@versatushpc.com.br>  Sat, 10 May 2025 13:43:11 -0300
