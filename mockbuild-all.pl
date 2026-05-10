@@ -69,7 +69,7 @@ die "Could not resolve major release from VERSION_ID='$version_id' in /etc/os-re
     if !defined($rel) || $rel eq '';
 
 if (!$target) {
-    $target = "${os_id}+epel-${rel}-${arch}";
+    $target = resolve_mock_cfg($os_id, $rel, $arch);
 }
 for my $bin (qw(perl uname createrepo tar find rpm)) {
     require_command($bin);
@@ -620,6 +620,30 @@ sub collect_srpms {
     }
 
     return ($copied, $skipped_non_src, $missing_roots);
+}
+
+sub resolve_mock_cfg {
+    my ($os_id, $rel, $arch) = @_;
+    my %short_forms = (
+        almalinux      => 'alma',
+        'centos-stream' => 'centos-stream',
+        rocky          => 'rocky',
+    );
+    my $candidate = "${os_id}+epel-${rel}-${arch}";
+    my $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+    if ($rc == 0) {
+        return $candidate;
+    }
+    if (exists $short_forms{$os_id}) {
+        my $short = $short_forms{$os_id};
+        $candidate = "${short}+epel-${rel}-${arch}";
+        $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+        if ($rc == 0) {
+            print "Mock config resolved (short form): $candidate\n";
+            return $candidate;
+        }
+    }
+    die "Could not find mock config for ${os_id}+epel-${rel}-${arch}\n";
 }
 
 sub build_mock_uniqueext {
