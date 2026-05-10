@@ -41,7 +41,7 @@ for my $bin (qw(mock rpmbuild rpm dnf perl bash grep)) {
 my $arch = capture('uname -m');
 if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
-    $mock_cfg = "${os_id}+epel-10-${arch}";
+    $mock_cfg = resolve_mock_cfg($os_id, $arch);
 }
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
@@ -307,8 +307,18 @@ sub build_package {
 
             my ($version, @assets) = parse_spec($spec);
             die "Could not parse Version from $spec\n" if !$version;
+            my %source_urls = resolve_source_urls($spec);
             for my $asset (@assets) {
                 my $asset_path = "$source_dir/$asset";
+                if (!-f $asset_path && exists $source_urls{$asset}) {
+                    my $url = $source_urls{$asset};
+                    print "Downloading $asset from $url\n";
+                    my $rc = system("wget -q -O " . sh_quote($asset_path) . " " . sh_quote($url));
+                    if ($rc != 0) {
+                        unlink $asset_path if -f $asset_path;
+                        die "Failed to download Source asset for $pkg: wget $url (rc=" . ($rc >> 8) . ")\n";
+                    }
+                }
                 die "Missing Source/Patch asset for $pkg: $asset_path\n" if !-f $asset_path;
             }
 
@@ -554,4 +564,73 @@ sub slurp {
     my $content = <$fh>;
     close $fh;
     return $content;
+}
+
+sub resolve_mock_cfg {
+    my ($os_id, $arch) = @_;
+    my %short_forms = (
+        almalinux => 'alma',
+        centos    => 'centos-stream',
+        rocky     => 'rocky',
+        fedora    => 'fedora',
+    );
+    my $candidate = "${os_id}+epel-10-${arch}";
+    my $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+    if ($rc == 0) {
+        print "Mock config resolved: $candidate\n";
+        return $candidate;
+    }
+    if (exists $short_forms{$os_id}) {
+        my $short = $short_forms{$os_id};
+        $candidate = "${short}+epel-10-${arch}";
+        $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+        if ($rc == 0) {
+            print "Mock config resolved (short form): $candidate\n";
+            return $candidate;
+        }
+    }
+    $candidate = "${os_id}+epel-10-${arch}";
+    print "WARN: Could not verify mock config, using default: $candidate\n";
+    return $candidate;
+}
+
+sub resolve_source_urls {
+    my ($spec_path) = @_;
+    open my $fh, '<', $spec_path or return ();
+
+    my $version = '';
+    my %macros;
+    my %urls;
+    while (my $line = <$fh>) {
+        if ($line =~ /^\s*%(?:global|define)\s+([A-Za-z0-9_]+)\s+(.+?)\s*$/) {
+            my ($k, $v) = ($1, $2);
+            $v =~ s/\s+#.*$//;
+            $macros{$k} = $v;
+        }
+        if ($line =~ /^Version:\s*(\S+)/i) {
+            $version = $1;
+        }
+        if ($line =~ /^Source\d*:\s*(\S+)/i) {
+            my $raw = $1;
+            if ($raw =~ m{^[a-zA-Z][a-zA-Z0-9+.-]*://}) {
+                my $url = $raw;
+                $macros{version} = $version if $version ne '';
+                $macros{ver} = $version if $version ne '';
+                for my $i (1 .. 6) {
+                    my $changed = 0;
+                    for my $k (keys %macros) {
+                        my $before = $url;
+                        $url =~ s/%\{$k\}/$macros{$k}/g;
+                        $changed = 1 if $url ne $before;
+                    }
+                    last if !$changed;
+                }
+                my $filename = basename($url);
+                $filename =~ s/\?.*$//;
+                $urls{$filename} = $url;
+            }
+        }
+    }
+    close $fh;
+    return %urls;
 }
