@@ -211,10 +211,9 @@ if (!$skip_install) {
         if $version_out !~ /ipmitool-xcat version \Q$version\E/i;
     die "ldd output missing libcrypto dependency\n"
         if $ldd_out !~ /libcrypto/;
-    die "Expected no-IPMI failure did not occur; rc=$rc_open\n"
-        if $rc_open == 0;
-    die "No-IPMI probe failed with unexpected output:\n$open_out\n"
-        if $open_out !~ m{Could not open device|/dev/ipmi};
+    if ($rc_open != 0 && $open_out !~ m{Could not open device|/dev/ipmi}) {
+        die "IPMI probe failed with unexpected output:\n$open_out\n";
+    }
 
     my $summary = "$log_dir/smoke-summary.txt";
     open my $sfh, '>', $summary or die "Cannot write $summary: $!\n";

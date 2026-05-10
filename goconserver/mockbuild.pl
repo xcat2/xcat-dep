@@ -250,9 +250,9 @@ Options:
   --result-dir PATH     Output directory for RPMs
   --log-dir PATH        Output directory for logs
   --skip-install        Skip dnf install + smoke tests
-  --version VER         Version string (default: 0.3.2)
+  --version VER         Version string (default: 0.3.3)
   --go-repo URL         Git repo URL (default: github.com/xcat2/goconserver)
-  --go-ref REF          Git ref to build (default: v0.3.2)
+  --go-ref REF          Git ref to build (default: master)
 USAGE
 }
 
