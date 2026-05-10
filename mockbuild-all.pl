@@ -27,12 +27,8 @@ my $skip_perl = 0;
 my $skip_xcat = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
-my $skip_dhcp = 0;
 my $scrub_all_chroots = 0;
 my $dry_run = 0;
-my $dhcp_repo_url = 'https://github.com/VersatusHPC/rpms-dhcp.git';
-my $dhcp_repo_ref = 'master';
-my $dhcp_source_dir = '';
 my @extra_collect_dirs;
 
 GetOptions(
@@ -50,11 +46,7 @@ GetOptions(
     'skip-xcat!'        => \$skip_xcat,
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
-    'skip-dhcp!'        => \$skip_dhcp,
     'scrub-all-chroots!' => \$scrub_all_chroots,
-    'dhcp-repo-url=s'   => \$dhcp_repo_url,
-    'dhcp-repo-ref=s'   => \$dhcp_repo_ref,
-    'dhcp-source-dir=s' => \$dhcp_source_dir,
     'collect-dir=s@'    => \@extra_collect_dirs,
     'dry-run!'          => \$dry_run,
 ) or die usage();
@@ -79,26 +71,10 @@ die "Could not resolve major release from VERSION_ID='$version_id' in /etc/os-re
 if (!$target) {
     $target = "${os_id}+epel-${rel}-${arch}";
 }
-my $target_rel = parse_target_rel($target);
-my $dhcp_auto_enabled = defined($target_rel) && $target_rel eq '10' ? 1 : 0;
-my $dhcp_enabled = (!$skip_dhcp && $dhcp_auto_enabled) ? 1 : 0;
-my $dhcp_effective_source = '';
-my $dhcp_commit = '';
-my @dhcp_srpm_collect_roots;
-
-if (!$dhcp_auto_enabled && !$skip_dhcp) {
-    print "INFO: DHCP build step disabled for non-EL10 target '$target'.\n";
-}
-
 for my $bin (qw(perl uname createrepo tar find rpm)) {
     require_command($bin);
 }
 require_command('mock') if $scrub_all_chroots;
-if ($dhcp_enabled && !$skip_build) {
-    require_command('git');
-    require_command('mock');
-    require_command('rpmdev-spectool');
-}
 
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
@@ -114,6 +90,7 @@ my @dep_builders = (
     { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl" },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
     { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
+    { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
 );
 
 if ($arch eq 'x86_64') {
@@ -150,18 +127,12 @@ print "os_id:            $os_id\n";
 print "version_id:       $version_id\n";
 print "rel:              $rel\n";
 print "target:           $target\n";
-print "target_rel:       " . (defined($target_rel) ? $target_rel : 'unknown') . "\n";
 print "nproc:            $nproc\n";
 print "parallel_builds:  " . (defined($parallel_builds) ? $parallel_builds : 'auto') . "\n";
 print "skip_build:       $skip_build\n";
 print "skip_xcat_dep:    $skip_xcat_dep\n";
 print "skip_perl:        $skip_perl\n";
 print "skip_xcat:        $skip_xcat\n";
-print "skip_dhcp:        $skip_dhcp\n";
-print "dhcp_enabled:     $dhcp_enabled\n";
-print "dhcp_repo_url:    $dhcp_repo_url\n";
-print "dhcp_repo_ref:    $dhcp_repo_ref\n";
-print "dhcp_source_dir:  " . ($dhcp_source_dir ne '' ? $dhcp_source_dir : '(auto)') . "\n";
 print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
 print "skip_tarball:     $skip_tarball\n";
@@ -173,24 +144,6 @@ print "srpm_repo_dir:    $srpm_repo_dir\n";
 print "srpm_tarball:     $srpm_tarball\n";
 
 my @collect_roots;
-
-if ($dhcp_enabled && !$skip_build) {
-    ($dhcp_effective_source, $dhcp_commit) = prepare_dhcp_source(
-        run_root   => $run_root,
-        log_root   => "$log_root/dhcpd",
-        repo_url   => $dhcp_repo_url,
-        repo_ref   => $dhcp_repo_ref,
-        source_dir => $dhcp_source_dir,
-    );
-} elsif ($dhcp_enabled && $skip_build && $dhcp_source_dir ne '') {
-    $dhcp_effective_source = eval { abs_path($dhcp_source_dir) } || $dhcp_source_dir;
-    $dhcp_commit = '(skip-build)';
-}
-
-if ($dhcp_enabled) {
-    print "dhcp_source:      " . ($dhcp_effective_source ne '' ? $dhcp_effective_source : '(pending)') . "\n";
-    print "dhcp_commit:      " . ($dhcp_commit ne '' ? $dhcp_commit : '(pending)') . "\n";
-}
 
 if ($scrub_all_chroots) {
     run_step(
@@ -227,29 +180,6 @@ if (!$skip_build) {
             };
             push @collect_roots, $step_result;
         }
-    }
-
-    if ($dhcp_enabled) {
-        my $dhcp_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, 'dhcpd');
-        my $dhcp_build_cmd = join(' && ',
-            'mkdir -p build/SRPMS build/RPMS',
-            'rpmdev-spectool --get-files --sources ./dhcp.spec',
-            'mock -r ' . sh_quote($target) .
-                ' --uniqueext ' . sh_quote($dhcp_uniqueext) .
-                ' --buildsrpm --spec ./dhcp.spec --sources . --resultdir ./build/SRPMS',
-            'mock -r ' . sh_quote($target) .
-                ' --uniqueext ' . sh_quote($dhcp_uniqueext) .
-                ' --rebuild ./build/SRPMS/*.src.rpm --resultdir ./build/RPMS',
-        );
-        push @build_steps, {
-            id   => 'xcat-dep:dhcpd',
-            step => 'Build xcat-dep: dhcpd',
-            cmd  => $dhcp_build_cmd,
-            cwd  => $dhcp_effective_source,
-            log  => "$log_root/dhcpd/build.log",
-        };
-        push @collect_roots, "$dhcp_effective_source/build/RPMS";
-        push @dhcp_srpm_collect_roots, "$dhcp_effective_source/build/SRPMS";
     }
 
     if (!$skip_perl) {
@@ -319,14 +249,9 @@ if ($skip_build) {
         "$repo_root/perl-list6/$arch";
 }
 
-if ($dhcp_effective_source ne '') {
-    push @collect_roots, "$dhcp_effective_source/build/RPMS";
-    push @dhcp_srpm_collect_roots, "$dhcp_effective_source/build/SRPMS";
-}
-
 push @collect_roots, @extra_collect_dirs;
 @collect_roots = uniq(@collect_roots);
-my @srpm_collect_roots = uniq(@collect_roots, $xcat_srpms_dir, @dhcp_srpm_collect_roots);
+my @srpm_collect_roots = uniq(@collect_roots, $xcat_srpms_dir);
 
 print_step('Collect RPM artifacts');
 print "collection roots:\n";
@@ -397,16 +322,10 @@ if (!$dry_run) {
     print {$sfh} "run_root=$run_root\n";
     print {$sfh} "repo_dir=$repo_dir\n";
     print {$sfh} "target=$target\n";
-    print {$sfh} "target_rel=" . (defined($target_rel) ? $target_rel : '') . "\n";
     print {$sfh} "arch=$arch\n";
     print {$sfh} "os_id=$os_id\n";
     print {$sfh} "version_id=$version_id\n";
     print {$sfh} "rel=$rel\n";
-    print {$sfh} "dhcp_enabled=$dhcp_enabled\n";
-    print {$sfh} "dhcp_repo_url=$dhcp_repo_url\n";
-    print {$sfh} "dhcp_repo_ref=$dhcp_repo_ref\n";
-    print {$sfh} "dhcp_source=" . ($dhcp_effective_source ne '' ? $dhcp_effective_source : '') . "\n";
-    print {$sfh} "dhcp_commit=" . ($dhcp_commit ne '' ? $dhcp_commit : '') . "\n";
     print {$sfh} "copied_rpms=$copied\n";
     print {$sfh} "skipped_src_rpms=$skipped_src\n";
     print {$sfh} "missing_collection_roots=$missing_roots\n";
@@ -428,9 +347,6 @@ print "Collected source RPMs: $copied_srpms\n";
 print "Skipped non-src RPMs:  $skipped_non_src\n";
 print "Missing source roots:  $missing_srpm_roots\n";
 print "SRPM repo dir:         $srpm_repo_dir\n";
-print "DHCP source:           $dhcp_effective_source\n" if $dhcp_effective_source ne '';
-print "DHCP ref:              $dhcp_repo_ref\n" if $dhcp_enabled;
-print "DHCP commit:           $dhcp_commit\n" if $dhcp_commit ne '';
 print "Summary:               $summary_file\n" if !$dry_run;
 print "Tarball:               $tarball\n" if !$skip_tarball;
 print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
@@ -455,13 +371,9 @@ Options:
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
   --skip-perl             Skip perl package build step
   --skip-xcat             Skip xCAT buildrpms.pl step
-  --skip-dhcp             Skip rpms-dhcp build step
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
   --scrub-all-chroots     Run mock -r <target> --scrub=all before build/collect
-  --dhcp-repo-url URL     rpms-dhcp git URL (default: https://github.com/VersatusHPC/rpms-dhcp.git)
-  --dhcp-repo-ref REF     rpms-dhcp git ref/tag/branch to checkout (default: master)
-  --dhcp-source-dir PATH  Local rpms-dhcp source directory override (skip clone/fetch)
   --collect-dir PATH      Additional directory to scan recursively for RPMs (repeatable)
   --dry-run               Print planned commands without executing
 
@@ -474,73 +386,7 @@ Notes:
     to avoid lock collisions on the same mock config.
   - If --target is omitted, it is deduced from /etc/os-release:
       ID + epel + int(VERSION_ID) + ARCH
-  - DHCP step auto-enables only for EL10 targets, unless explicitly skipped.
 USAGE
-}
-
-sub parse_target_rel {
-    my ($target_name) = @_;
-    return undef if !defined($target_name) || $target_name eq '';
-    return $1 if $target_name =~ /\+epel-(\d+)-/;
-    return undef;
-}
-
-sub prepare_dhcp_source {
-    my (%args) = @_;
-    my $run_root   = $args{run_root}   // die "prepare_dhcp_source missing run_root\n";
-    my $log_root   = $args{log_root}   // die "prepare_dhcp_source missing log_root\n";
-    my $repo_url   = $args{repo_url}   // die "prepare_dhcp_source missing repo_url\n";
-    my $repo_ref   = $args{repo_ref} // 'master';
-    my $source_dir = $args{source_dir} // '';
-
-    my $clone_log = "$log_root/clone.log";
-    my $source_path;
-
-    if ($source_dir ne '') {
-        $source_path = eval { abs_path($source_dir) } || $source_dir;
-        die "DHCP source directory does not exist: $source_path\n"
-            if !$dry_run && !-d $source_path;
-        run_step(
-            step => 'Prepare DHCP source',
-            cmd  => 'echo Using local DHCP source directory: ' . sh_quote($source_path),
-            log  => $clone_log,
-        );
-    } else {
-        $source_path = "$run_root/sources/rpms-dhcp";
-        my $prepare_cmd = join(' && ',
-            'mkdir -p ' . sh_quote("$run_root/sources"),
-            'if [ -d ' . sh_quote("$source_path/.git") . ' ]; then ' .
-                'cd ' . sh_quote($source_path) . ' && ' .
-                'git remote set-url origin ' . sh_quote($repo_url) . ' && ' .
-                'git fetch --tags origin' .
-            '; else ' .
-                'git clone ' . sh_quote($repo_url) . ' ' . sh_quote($source_path) .
-            '; fi',
-            'cd ' . sh_quote($source_path),
-            'git fetch --tags origin',
-            'git checkout --force ' . sh_quote($repo_ref),
-        );
-        run_step(
-            step => 'Prepare DHCP source',
-            cmd  => $prepare_cmd,
-            log  => $clone_log,
-        );
-    }
-
-    if (!$dry_run && !-f "$source_path/dhcp.spec") {
-        die "Missing dhcp.spec in DHCP source: $source_path/dhcp.spec\n";
-    }
-
-    my $commit = '';
-    if ($dry_run) {
-        $commit = '(dry-run)';
-    } elsif (-d "$source_path/.git") {
-        $commit = capture("cd " . sh_quote($source_path) . " && git rev-parse HEAD");
-    } else {
-        $commit = '(local-source-no-git)';
-    }
-
-    return ($source_path, $commit);
 }
 
 sub print_step {
@@ -802,8 +648,7 @@ sub resolve_xcat_source {
     my @candidates = (
         $requested,
         "$root/xcat-source-code",
-        "$root/../xCAT3",
-        '/home/build/xCAT3',
+        "$root/../xcat-core",
     );
     for my $c (@candidates) {
         next if !defined($c) || $c eq '';
