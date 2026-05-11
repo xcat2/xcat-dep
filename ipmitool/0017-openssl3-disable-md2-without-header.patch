@@ -1,0 +1,16 @@
+--- ipmitool-1.8.18.orig/configure.ac	2026-05-11 11:35:37
++++ ipmitool-1.8.18/configure.ac	2026-05-11 11:36:20
+@@ -184,9 +184,12 @@
+ 	[if test "x$xenable_internal_md5" != "xyes"; then
+ 	    if test "x$have_crypto" != "xyes" && test "x$have_md5" != "xyes"; then
+ 	        LIBS="$LIBS -lcrypto"
+-	        have_md2=yes
+ 	    fi
+-	    AC_DEFINE(HAVE_CRYPTO_MD2, [1], [Define to 1 if libcrypto supports MD2.])
++	    AC_CHECK_HEADER([openssl/md2.h],
++	        [have_md2=yes
++	         AC_DEFINE(HAVE_CRYPTO_MD2, [1],
++	            [Define to 1 if libcrypto supports MD2.])],
++	        [have_md2=no])
+ 	fi],
+ 	[], [-lcrypto])
