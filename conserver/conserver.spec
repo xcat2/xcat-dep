@@ -22,6 +22,7 @@ Group: System Environment/Daemons
 URL: http://www.conserver.com/
 Source: http://www.conserver.com/%{pkg}-%{ver}.tar.gz
 Patch: initscript_8.2.1.patch
+Patch1: openssl3-dh-opaque.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
 BuildRequires: openssl-devel
 Prefix: %{_prefix}
@@ -40,6 +41,7 @@ bells and whistles to accentuate that basic functionality.
 %{__rm} -rf %{buildroot}
 %setup -n %{pkg}-%{ver}
 %patch -p1
+%patch1 -p1
 
 
 %build
