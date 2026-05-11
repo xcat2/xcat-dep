@@ -1,0 +1,14 @@
+Source: goconserver
+Section: admin
+Priority: optional
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
+Build-Depends: debhelper (>= 13), golang
+Standards-Version: 4.6.0
+Homepage: https://github.com/xcat2/goconserver
+
+Package: goconserver
+Architecture: any
+Depends: ${misc:Depends}
+Description: Console server written in Go for xCAT
+ goconserver is a scalable console server written in Go. It provides
+ console logging and management for xCAT cluster nodes.
