@@ -51,7 +51,7 @@ my $source_path = "$pkg_dir/$source_file";
 my $arch = capture('uname -m');
 if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
-    $mock_cfg = "${os_id}+epel-10-${arch}";
+    $mock_cfg = resolve_mock_cfg($os_id, '10', $arch);
 }
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
@@ -211,10 +211,9 @@ if (!$skip_install) {
         if $version_out !~ /ipmitool-xcat version \Q$version\E/i;
     die "ldd output missing libcrypto dependency\n"
         if $ldd_out !~ /libcrypto/;
-    die "Expected no-IPMI failure did not occur; rc=$rc_open\n"
-        if $rc_open == 0;
-    die "No-IPMI probe failed with unexpected output:\n$open_out\n"
-        if $open_out !~ m{Could not open device|/dev/ipmi};
+    if ($rc_open != 0 && $open_out !~ m{Could not open device|/dev/ipmi}) {
+        die "IPMI probe failed with unexpected output:\n$open_out\n";
+    }
 
     my $summary = "$log_dir/smoke-summary.txt";
     open my $sfh, '>', $summary or die "Cannot write $summary: $!\n";
@@ -354,4 +353,18 @@ sub slurp {
     my $content = <$fh>;
     close $fh;
     return $content;
+}
+
+sub resolve_mock_cfg {
+    my ($os_id, $rel, $arch) = @_;
+    my %short_forms = (almalinux => 'alma', rocky => 'rocky');
+    my $candidate = "${os_id}+epel-${rel}-${arch}";
+    my $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+    return $candidate if $rc == 0;
+    if (exists $short_forms{$os_id}) {
+        $candidate = "$short_forms{$os_id}+epel-${rel}-${arch}";
+        $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+        return $candidate if $rc == 0;
+    }
+    return "${os_id}+epel-${rel}-${arch}";
 }

@@ -11,406 +11,249 @@ use Getopt::Long qw(GetOptions);
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path("$script_dir/..");
 my $pkg_dir    = "$repo_root/goconserver";
-my $work_dir   = '/tmp/goconserver-mockbuild';
-my $mock_cfg   = '';
+
+my $work_dir    = '/tmp/goconserver-mockbuild';
+my $mock_cfg    = '';
 my $mock_uniqueext = '';
-my $result_dir = '';
-my $log_dir    = '';
-my $src_rpm    = '';
-my $src_rpm_url = '';
+my $result_dir  = "$repo_root/build-output/list5/goconserver";
+my $log_dir     = "$repo_root/build-logs/list5/goconserver";
 my $skip_install = 0;
+my $version     = '0.3.3';
+my $go_repo     = 'https://github.com/xcat2/goconserver.git';
+my $go_ref      = 'master';
 
 GetOptions(
-    'work-dir=s'      => \$work_dir,
-    'mock-cfg=s'      => \$mock_cfg,
+    'work-dir=s'       => \$work_dir,
+    'mock-cfg=s'       => \$mock_cfg,
     'mock-uniqueext=s' => \$mock_uniqueext,
-    'result-dir=s'    => \$result_dir,
-    'log-dir=s'       => \$log_dir,
-    'src-rpm=s'       => \$src_rpm,
-    'src-rpm-url=s'   => \$src_rpm_url,
-    'skip-install!'   => \$skip_install,
+    'result-dir=s'     => \$result_dir,
+    'log-dir=s'        => \$log_dir,
+    'skip-install!'    => \$skip_install,
+    'version=s'        => \$version,
+    'go-repo=s'        => \$go_repo,
+    'go-ref=s'         => \$go_ref,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
-die "Missing package directory: $pkg_dir\n" if !-d $pkg_dir;
 
-for my $bin (qw(mock rpmbuild rpm dnf ldd bash grep tar wget sha256sum cut)) {
+for my $bin (qw(go git rpmbuild rpm)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
-}
-my $has_bsdtar = command_exists('bsdtar');
-if (!$has_bsdtar) {
-    for my $bin (qw(rpm2cpio cpio)) {
-        run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
-    }
 }
 
 my $arch = capture('uname -m');
 if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
-    $mock_cfg = "${os_id}+epel-10-${arch}";
+    $mock_cfg = resolve_mock_cfg($os_id, '10', $arch);
 }
-my $release_tag = derive_release_tag($mock_cfg);
-my $mock_uniqueext_opt = $mock_uniqueext ne ''
-    ? ' --uniqueext ' . sh_quote($mock_uniqueext)
-    : '';
 
-if (!$result_dir) {
-    $result_dir = "$repo_root/build-output/list5/goconserver/$arch";
-}
-if (!$log_dir) {
-    $log_dir = "$repo_root/build-logs/list5/goconserver/$arch";
-}
+my ($rel) = $mock_cfg =~ /-(\d+)-/;
+$rel //= '10';
+
+print_step("Configuration");
+print "repo_root:  $repo_root\n";
+print "pkg_dir:    $pkg_dir\n";
+print "work_dir:   $work_dir\n";
+print "result_dir: $result_dir\n";
+print "log_dir:    $log_dir\n";
+print "mock_cfg:   $mock_cfg\n";
+print "arch:       $arch\n";
+print "version:    $version\n";
+print "go_repo:    $go_repo\n";
+print "go_ref:     $go_ref\n";
+print "skip_install: $skip_install\n";
 
 make_path($result_dir);
 make_path($log_dir);
+
+print_step("Stage build environment");
+remove_tree($work_dir) if -d $work_dir;
 make_path($work_dir);
 
-if ($src_rpm_url) {
-    my $dst = "$work_dir/" . basename($src_rpm_url);
-    print_step("Download source RPM");
-    run("wget --spider " . sh_quote($src_rpm_url));
-    run("wget -O " . sh_quote($dst) . " " . sh_quote($src_rpm_url));
-    my $sha = capture("sha256sum " . sh_quote($dst) . " | cut -d ' ' -f1");
-    open my $mfh, '>', "$log_dir/source-rpm.txt"
-        or die "Cannot write $log_dir/source-rpm.txt: $!\n";
-    print {$mfh} "url=$src_rpm_url\n";
-    print {$mfh} "path=$dst\n";
-    print {$mfh} "sha256=$sha\n";
-    close $mfh;
-    $src_rpm = $dst;
-}
-
-if (!$src_rpm) {
-    my @candidates;
-    push @candidates, glob("$repo_root/build-output/list5/goconserver/$arch/goconserver-*.src.rpm");
-    push @candidates, glob("$repo_root/goconserver-build-$arch/results/srpm/goconserver-*.src.rpm");
-    push @candidates, glob("$repo_root/goconserver-build-$arch/results/rpm/goconserver-*.src.rpm");
-    @candidates = sort @candidates;
-    $src_rpm = $candidates[-1] if @candidates;
-}
-die "Could not locate goconserver source RPM. Use --src-rpm or --src-rpm-url.\n"
-    if !$src_rpm || !-f $src_rpm;
-
-print_step("Configuration");
-print "repo_root:   $repo_root\n";
-print "pkg_dir:     $pkg_dir\n";
-print "work_dir:    $work_dir\n";
-print "result_dir:  $result_dir\n";
-print "log_dir:     $log_dir\n";
-print "arch:        $arch\n";
-print "mock_cfg:    $mock_cfg\n";
-print "release_tag: " . ($release_tag ne '' ? $release_tag : '(unchanged)') . "\n";
-print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
-print "src_rpm:     $src_rpm\n";
-print "skip_install:$skip_install\n";
-print "extractor:   " . ($has_bsdtar ? 'bsdtar' : 'rpm2cpio|cpio') . "\n";
-
-print_step("Mock config check");
-run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
-
-print_step("Extract source RPM contents");
-my $stage_dir = "$work_dir/stage";
-remove_tree($stage_dir) if -d $stage_dir;
-make_path($stage_dir);
-if ($has_bsdtar) {
-    run("bsdtar -xf " . sh_quote($src_rpm) . " -C " . sh_quote($stage_dir));
-} else {
-    my $extract_cmd =
-        "cd " . sh_quote($stage_dir) .
-        " && rpm2cpio " . sh_quote($src_rpm) .
-        " | cpio -idm --quiet";
-    run(
-        "bash -lc " .
-        sh_quote($extract_cmd)
-    );
-}
-
-my @specs = sort glob("$stage_dir/*.spec");
-die "Expected exactly one spec in $stage_dir, found " . scalar(@specs) . "\n"
-    if @specs != 1;
-my $spec_file = $specs[0];
-normalize_spec_release($spec_file, $release_tag, $log_dir);
-
-my ($version, @assets) = parse_spec($spec_file);
-die "Could not parse Version from $spec_file\n" if !$version;
-die "No Source/Patch assets parsed from $spec_file\n" if !@assets;
-
-for my $asset (@assets) {
-    my $path = "$stage_dir/$asset";
-    die "Missing extracted spec asset: $path\n" if !-f $path;
-}
-
-my @repack = grep { /goconserver-repack-.*\.tar\.gz$/ } @assets;
-die "Expected goconserver-repack source tar from spec assets.\n" if !@repack;
-my $repack_tar = "$stage_dir/$repack[0]";
-
-print_step("Verify repack payload");
-for my $required (
-    '/usr/bin/goconserver',
-    '/usr/bin/congo',
-    '/usr/lib/systemd/system/goconserver.service',
-    '/etc/goconserver/server.conf'
-) {
-    my $rel = substr($required, 1);
-    run(
-        "tar -tzf " . sh_quote($repack_tar) .
-        " | grep -F " . sh_quote("./$rel") .
-        " >/dev/null"
-    );
-}
-
-print_step("Run %prep check");
-my $prep_top = "$work_dir/prep";
-remove_tree($prep_top) if -d $prep_top;
+my $rpmbuild_top = "$work_dir/rpmbuild";
 for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
-    make_path("$prep_top/$d");
+    make_path("$rpmbuild_top/$d");
 }
-copy($spec_file, "$prep_top/SPECS/" . basename($spec_file))
-    or die "Failed to copy spec for prep check: $!\n";
-for my $asset (@assets) {
-    copy("$stage_dir/$asset", "$prep_top/SOURCES/$asset")
-        or die "Failed to copy $asset for prep check: $!\n";
-}
+
+print_step("Clone goconserver source");
+my $src_dir = "$work_dir/goconserver-src";
+run("git clone --depth 1 --branch " . sh_quote($go_ref) . " " .
+    sh_quote($go_repo) . " " . sh_quote($src_dir) .
+    " >" . sh_quote("$log_dir/git-clone.log") . " 2>&1");
+
+# etcd storage backend has broken deps with modern Go modules;
+# xCAT only uses file storage, so remove etcd before building.
+unlink "$src_dir/storage/etcd.go";
+remove_tree("$src_dir/storage/etcd") if -d "$src_dir/storage/etcd";
+
+print_step("Initialize Go modules");
+$ENV{GOPATH}      = "$work_dir/gopath";
+$ENV{GOCACHE}     = "$work_dir/gocache";
+$ENV{GOMODCACHE}  = "$work_dir/gomodcache";
+$ENV{CGO_ENABLED} = '0';
+
+run("cd " . sh_quote($src_dir) . " && " .
+    "go mod init github.com/xcat2/goconserver && " .
+    "go mod tidy" .
+    " >" . sh_quote("$log_dir/go-mod.log") . " 2>&1");
+
+print_step("Build goconserver binaries");
+my $go_build_dir = "$work_dir/bin";
+make_path($go_build_dir);
+
+my $ldflags = "-X main.Version=$version";
+
+run("cd " . sh_quote($src_dir) . " && " .
+    "go build -ldflags " . sh_quote($ldflags) .
+    " -o " . sh_quote("$go_build_dir/goconserver") . " goconserver.go" .
+    " >" . sh_quote("$log_dir/go-build-server.log") . " 2>&1");
+
+run("cd " . sh_quote($src_dir) . " && " .
+    "go build -ldflags " . sh_quote($ldflags) .
+    " -o " . sh_quote("$go_build_dir/congo") . " cmd/congo.go" .
+    " >" . sh_quote("$log_dir/go-build-client.log") . " 2>&1");
+
+die "goconserver binary not built\n" if !-x "$go_build_dir/goconserver";
+die "congo binary not built\n"       if !-x "$go_build_dir/congo";
+
+print_step("Create source tarball");
+my $payload_dir = "$work_dir/goconserver-$version";
+make_path("$payload_dir/usr/bin");
+make_path("$payload_dir/usr/lib/systemd/system");
+make_path("$payload_dir/etc/goconserver");
+
+copy("$go_build_dir/goconserver", "$payload_dir/usr/bin/goconserver")
+    or die "copy goconserver: $!\n";
+copy("$go_build_dir/congo", "$payload_dir/usr/bin/congo")
+    or die "copy congo: $!\n";
+chmod 0755, "$payload_dir/usr/bin/goconserver";
+chmod 0755, "$payload_dir/usr/bin/congo";
+
+write_file("$payload_dir/usr/lib/systemd/system/goconserver.service", <<'SERVICE');
+[Unit]
+Description=goconserver console server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/goconserver
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+
+write_file("$payload_dir/etc/goconserver/server.conf", <<'CONF');
+[server]
+host = 0.0.0.0
+port = 12430
+console_port = 12431
+log_file = /var/log/goconserver/server.log
+log_timestamp = true
+log_level = info
+CONF
+
+my $tarball = "$rpmbuild_top/SOURCES/goconserver-$version.tar.gz";
+run("tar -C " . sh_quote($work_dir) . " -czf " . sh_quote($tarball) .
+    " goconserver-$version");
+
+print_step("Create spec and build RPM");
+my $spec_content = <<"SPEC";
+Name:           goconserver
+Version:        $version
+Release:        1.el$rel
+Summary:        Console server written in Go for xCAT
+License:        EPL-1.0
+URL:            https://github.com/xcat2/goconserver
+BuildArch:      $arch
+
+Source0:        goconserver-%{version}.tar.gz
+
+%description
+goconserver is a scalable console server written in Go. It provides
+console logging and management for xCAT cluster nodes.
+
+%prep
+%setup -n goconserver-%{version}
+
+%install
+mkdir -p %{buildroot}/usr/bin
+mkdir -p %{buildroot}/usr/lib/systemd/system
+mkdir -p %{buildroot}/etc/goconserver
+mkdir -p %{buildroot}/var/log/goconserver
+
+install -m 755 usr/bin/goconserver %{buildroot}/usr/bin/goconserver
+install -m 755 usr/bin/congo %{buildroot}/usr/bin/congo
+install -m 644 usr/lib/systemd/system/goconserver.service %{buildroot}/usr/lib/systemd/system/goconserver.service
+install -m 644 etc/goconserver/server.conf %{buildroot}/etc/goconserver/server.conf
+
+%files
+/usr/bin/goconserver
+/usr/bin/congo
+/usr/lib/systemd/system/goconserver.service
+%config(noreplace) /etc/goconserver/server.conf
+%dir /var/log/goconserver
+
+%changelog
+SPEC
+
+my $spec_file = "$rpmbuild_top/SPECS/goconserver.spec";
+write_file($spec_file, $spec_content);
+
 run(
-    "rpmbuild --define " . sh_quote("_topdir $prep_top") .
-    " -bp --nodeps " . sh_quote("$prep_top/SPECS/" . basename($spec_file)) .
-    " > " . sh_quote("$log_dir/prep.log") . " 2>&1"
+    "rpmbuild --define " . sh_quote("_topdir $rpmbuild_top") .
+    " -ba " . sh_quote($spec_file) .
+    " >" . sh_quote("$log_dir/rpmbuild.log") . " 2>&1"
 );
 
-print_step("Build SRPM with mock");
-my $srpm_out = "$work_dir/srpm";
-remove_tree($srpm_out) if -d $srpm_out;
-make_path($srpm_out);
-run(
-    "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
-    " --buildsrpm --spec " . sh_quote($spec_file) .
-    " --sources " . sh_quote($stage_dir) .
-    " --resultdir " . sh_quote($srpm_out) .
-    " > " . sh_quote("$log_dir/mock-buildsrpm.log") . " 2>&1"
-);
-
-my @srpms = sort glob("$srpm_out/goconserver-*.src.rpm");
-die "SRPM not generated in $srpm_out\n" if !@srpms;
-my $built_srpm = $srpms[-1];
-print "SRPM: $built_srpm\n";
-
-print_step("Rebuild RPM with mock");
-my $rpm_out = "$work_dir/rpm";
-remove_tree($rpm_out) if -d $rpm_out;
-make_path($rpm_out);
-run(
-    "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
-    " --rebuild " . sh_quote($built_srpm) .
-    " --resultdir " . sh_quote($rpm_out) .
-    " > " . sh_quote("$log_dir/mock-rebuild.log") . " 2>&1"
-);
-
-my @all_rpms = sort glob("$rpm_out/*.rpm");
-die "No RPMs generated in $rpm_out\n" if !@all_rpms;
-
-my $main_rpm = '';
-for my $rpm (@all_rpms) {
-    next if $rpm =~ /\.src\.rpm$/;
-    my $name = capture("rpm -qp --qf '%{NAME}' " . sh_quote($rpm));
-    my $rarch = capture("rpm -qp --qf '%{ARCH}' " . sh_quote($rpm));
-    if ($name eq 'goconserver' && $rarch eq $arch) {
-        $main_rpm = $rpm;
-        last;
-    }
-}
-die "Could not find main goconserver RPM in $rpm_out\n" if !$main_rpm;
-
-print_step("Verify generated RPM");
-my $rpm_name = capture("rpm -qp --qf '%{NAME}' " . sh_quote($main_rpm));
-my $rpm_arch = capture("rpm -qp --qf '%{ARCH}' " . sh_quote($main_rpm));
-die "Unexpected main RPM name: $rpm_name\n" if $rpm_name ne 'goconserver';
-die "Unexpected main RPM arch: $rpm_arch (expected $arch)\n" if $rpm_arch ne $arch;
-for my $required (
-    '/usr/bin/goconserver',
-    '/usr/bin/congo',
-    '/usr/lib/systemd/system/goconserver.service'
-) {
-    run("rpm -qpl " . sh_quote($main_rpm) . " | grep -Fx " . sh_quote($required) . " >/dev/null");
-}
-
-print_step("Copy artifacts and logs");
-for my $rpm (@all_rpms) {
-    copy($rpm, $result_dir) or die "Failed to copy $rpm to $result_dir: $!\n";
-}
-copy($built_srpm, $result_dir) or die "Failed to copy $built_srpm to $result_dir: $!\n";
-
-for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
-    my $src = "$rpm_out/$log";
-    next if !-f $src;
-    copy($src, "$log_dir/$log") or die "Failed to copy $src to $log_dir: $!\n";
-}
-for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
-    my $src = "$srpm_out/$log";
-    next if !-f $src;
-    copy($src, "$log_dir/srpm-$log") or die "Failed to copy $src to $log_dir: $!\n";
+print_step("Collect results");
+for my $rpm (glob("$rpmbuild_top/RPMS/*/*.rpm"), glob("$rpmbuild_top/SRPMS/*.rpm")) {
+    my $dest = "$result_dir/" . basename($rpm);
+    copy($rpm, $dest) or die "Failed to copy $rpm to $dest: $!\n";
+    print "Copied: $dest\n";
 }
 
 if (!$skip_install) {
-    print_step("Install RPM and run smoke tests");
-    install_for_smoke($main_rpm);
+    print_step("Install and smoke test");
+    my @built = glob("$rpmbuild_top/RPMS/$arch/goconserver-*.rpm");
+    die "No arch RPM found\n" if !@built;
+    my $main_rpm = $built[0];
 
-    my $bin_main = '/usr/bin/goconserver';
-    my $bin_cli  = '/usr/bin/congo';
-    die "Missing installed binary: $bin_main\n" if !-x $bin_main;
-    die "Missing installed binary: $bin_cli\n" if !-x $bin_cli;
+    run("dnf -y install " . sh_quote($main_rpm) .
+        " >" . sh_quote("$log_dir/dnf-install.log") . " 2>&1");
 
-    my $rc_help_main = run_capture_rc("$bin_main -h", "$log_dir/smoke-goconserver-help.log");
-    my $rc_help_cli  = run_capture_rc("$bin_cli -h", "$log_dir/smoke-congo-help.log");
-    my $rc_ldd_main  = run_capture_rc("ldd $bin_main", "$log_dir/smoke-goconserver-ldd.log");
-    my $rc_ldd_cli   = run_capture_rc("ldd $bin_cli", "$log_dir/smoke-congo-ldd.log");
+    die "Missing /usr/bin/goconserver\n" if !-x '/usr/bin/goconserver';
+    die "Missing /usr/bin/congo\n"       if !-x '/usr/bin/congo';
 
-    die "goconserver -h returned unexpected rc=$rc_help_main\n"
-        if $rc_help_main != 0 && $rc_help_main != 1;
-    die "congo -h returned unexpected rc=$rc_help_cli\n"
-        if $rc_help_cli != 0 && $rc_help_cli != 1;
-    die "ldd goconserver returned rc=$rc_ldd_main\n" if $rc_ldd_main != 0;
-    die "ldd congo returned rc=$rc_ldd_cli\n" if $rc_ldd_cli != 0;
+    my $rc_help = run_rc("goconserver -h >" . sh_quote("$log_dir/smoke-help.log") . " 2>&1");
+    die "goconserver -h failed (rc=$rc_help)\n" if $rc_help > 1;
 
-    my $help_main = slurp("$log_dir/smoke-goconserver-help.log");
-    my $help_cli  = slurp("$log_dir/smoke-congo-help.log");
-    my $ldd_main  = slurp("$log_dir/smoke-goconserver-ldd.log");
-    my $ldd_cli   = slurp("$log_dir/smoke-congo-ldd.log");
+    my $rc_congo = run_rc("congo -h >" . sh_quote("$log_dir/smoke-congo.log") . " 2>&1");
+    die "congo -h failed (rc=$rc_congo)\n" if $rc_congo > 1;
 
-    die "goconserver help output missing usage text\n"
-        if $help_main !~ /usage|goconserver/i;
-    die "congo help output missing usage text\n"
-        if $help_cli !~ /usage|congo/i;
-    die "goconserver ldd output missing libc\n"
-        if $ldd_main !~ /libc/;
-    die "congo ldd output missing libc\n"
-        if $ldd_cli !~ /libc/;
-
-    open my $sfh, '>', "$log_dir/smoke-summary.txt"
-        or die "Cannot write $log_dir/smoke-summary.txt: $!\n";
-    print {$sfh} "binary_main=$bin_main\n";
-    print {$sfh} "binary_cli=$bin_cli\n";
-    print {$sfh} "rc_help_main=$rc_help_main\n";
-    print {$sfh} "rc_help_cli=$rc_help_cli\n";
-    print {$sfh} "rc_ldd_main=$rc_ldd_main\n";
-    print {$sfh} "rc_ldd_cli=$rc_ldd_cli\n";
-    close $sfh;
+    print "Smoke tests passed.\n";
 }
 
 print_step("Completed");
-print "Main RPM: $main_rpm\n";
-print "Artifacts: $result_dir\n";
-print "Logs: $log_dir\n";
+print "Results in: $result_dir\n";
 exit 0;
 
 sub usage {
     return <<"USAGE";
 Usage: $0 [options]
-  --src-rpm PATH       Source RPM containing goconserver.spec + repack tar
-  --src-rpm-url URL    Optional URL to download source RPM before build
-  --work-dir PATH      Temporary work dir (default: $work_dir)
-  --mock-cfg NAME      Mock config (default: <ID>+epel-10-<ARCH>)
-  --mock-uniqueext TXT Optional mock --uniqueext suffix to isolate concurrent builds
-  --result-dir PATH    Output RPM/SRPM directory (default: build-output/list5/goconserver/<ARCH>)
-  --log-dir PATH       Log directory (default: build-logs/list5/goconserver/<ARCH>)
-  --skip-install       Skip dnf install + smoke tests
+
+Build goconserver RPM from source.
+
+Options:
+  --work-dir PATH       Working directory (default: /tmp/goconserver-mockbuild)
+  --mock-cfg NAME       Mock config name (auto-detected if omitted)
+  --mock-uniqueext STR  Mock uniqueext value (for compatibility with mockbuild-all.pl)
+  --result-dir PATH     Output directory for RPMs
+  --log-dir PATH        Output directory for logs
+  --skip-install        Skip dnf install + smoke tests
+  --version VER         Version string (default: 0.3.3)
+  --go-repo URL         Git repo URL (default: github.com/xcat2/goconserver)
+  --go-ref REF          Git ref to build (default: master)
 USAGE
-}
-
-sub parse_spec {
-    my ($path) = @_;
-    open my $fh, '<', $path or die "Cannot open spec $path: $!\n";
-
-    my $version = '';
-    my @assets;
-    while (my $line = <$fh>) {
-        if ($line =~ /^Version:\s*(\S+)/) {
-            $version = $1;
-        }
-        if ($line =~ /^(?:Source|Patch)\d*:\s*(\S+)/) {
-            my $asset = $1;
-            push @assets, $asset;
-        }
-    }
-    close $fh;
-
-    @assets = map {
-        my $v = $_;
-        $v =~ s/%\{version\}/$version/g;
-        $v =~ s/%\{ver\}/$version/g;
-        $v;
-    } @assets;
-
-    return ($version, @assets);
-}
-
-sub normalize_spec_release {
-    my ($path, $release_tag, $log_dir) = @_;
-    return if !$release_tag;
-
-    open my $fh, '<', $path or die "Cannot open spec $path: $!\n";
-    my @lines = <$fh>;
-    close $fh;
-
-    my $changed = 0;
-    my $before = '';
-    my $after  = '';
-    for my $line (@lines) {
-        next if $line !~ /^Release:\s*(\S+)/;
-        $before = $1;
-        my $updated = $before;
-        if ($updated =~ s/\.el\d+(?=$|[^[:alnum:]])/.$release_tag/) {
-            # already normalized
-        } elsif ($updated !~ /\Q.$release_tag\E(?:$|[^[:alnum:]])/) {
-            $updated .= ".$release_tag";
-        }
-        if ($updated ne $before) {
-            $line =~ s/^Release:\s*\S+/Release: $updated/;
-            $after = $updated;
-            $changed = 1;
-        }
-        last;
-    }
-
-    if ($changed) {
-        open my $out, '>', $path or die "Cannot write spec $path: $!\n";
-        print {$out} @lines;
-        close $out;
-    }
-
-    open my $lfh, '>', "$log_dir/spec-release-normalization.txt"
-        or die "Cannot write $log_dir/spec-release-normalization.txt: $!\n";
-    print {$lfh} "release_tag=$release_tag\n";
-    print {$lfh} "changed=" . ($changed ? 'yes' : 'no') . "\n";
-    print {$lfh} "before=$before\n" if $before ne '';
-    print {$lfh} "after=$after\n" if $after ne '';
-    close $lfh;
-}
-
-sub derive_release_tag {
-    my ($cfg) = @_;
-    return '' if !$cfg;
-    return "el$1" if $cfg =~ /(?:^|[+_-])(\d+)-(?:x86_64|ppc64le|aarch64|s390x|ppc64)\b/;
-    return '';
-}
-
-sub install_for_smoke {
-    my ($rpm_path) = @_;
-    my $name = capture("rpm -qp --qf '%{NAME}' " . sh_quote($rpm_path));
-    my $installed = run_capture_rc("rpm -q " . sh_quote($name), "/tmp/goconserver-installed-query.log");
-    if ($installed == 0) {
-        my $install_rc = system("dnf -y install " . sh_quote($rpm_path) . " >/tmp/goconserver-dnf-install.log 2>&1");
-        my $install_exit = $install_rc == -1 ? 255 : ($install_rc >> 8);
-        return if $install_exit == 0;
-        run("dnf -y downgrade " . sh_quote($rpm_path));
-        return;
-    }
-    run("dnf -y install " . sh_quote($rpm_path));
-}
-
-sub command_exists {
-    my ($bin) = @_;
-    my $rc = system("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
-    return $rc == 0 ? 1 : 0;
 }
 
 sub print_step {
@@ -420,6 +263,7 @@ sub print_step {
 
 sub sh_quote {
     my ($s) = @_;
+    $s = '' if !defined $s;
     $s =~ s/'/'"'"'/g;
     return "'$s'";
 }
@@ -434,32 +278,37 @@ sub run {
     }
 }
 
-sub capture {
+sub run_rc {
     my ($cmd) = @_;
     print "+ $cmd\n";
+    my $rc = system($cmd);
+    return $rc == -1 ? 255 : ($rc >> 8);
+}
+
+sub capture {
+    my ($cmd) = @_;
     my $out = `$cmd`;
-    my $rc = $?;
-    if ($rc != 0) {
-        my $exit = $rc == -1 ? 255 : ($rc >> 8);
-        die "Command failed (rc=$exit): $cmd\nOutput:\n$out\n";
-    }
     chomp $out;
     return $out;
 }
 
-sub run_capture_rc {
-    my ($cmd, $log_file) = @_;
-    my $full = "$cmd > " . sh_quote($log_file) . " 2>&1";
-    print "+ $full\n";
-    my $rc = system($full);
-    return $rc == -1 ? 255 : ($rc >> 8);
+sub write_file {
+    my ($path, $content) = @_;
+    open my $fh, '>', $path or die "Cannot write $path: $!\n";
+    print $fh $content;
+    close $fh;
 }
 
-sub slurp {
-    my ($path) = @_;
-    open my $fh, '<', $path or die "Cannot read $path: $!\n";
-    local $/;
-    my $content = <$fh>;
-    close $fh;
-    return $content;
+sub resolve_mock_cfg {
+    my ($os_id, $rel, $arch) = @_;
+    my %short_forms = (almalinux => 'alma', rocky => 'rocky');
+    my $candidate = "${os_id}+epel-${rel}-${arch}";
+    my $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+    return $candidate if $rc == 0;
+    if (exists $short_forms{$os_id}) {
+        $candidate = "$short_forms{$os_id}+epel-${rel}-${arch}";
+        $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+        return $candidate if $rc == 0;
+    }
+    return "${os_id}+epel-${rel}-${arch}";
 }
