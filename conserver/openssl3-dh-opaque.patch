@@ -1,0 +1,106 @@
+--- a/conserver/main.c	2026-05-11 12:58:13
++++ b/conserver/main.c	2026-05-11 13:01:10
+@@ -112,12 +112,25 @@
+ 
+     if ((dh = DH_new()) == NULL)
+ 	return (NULL);
++#if OPENSSL_VERSION_NUMBER >= 0x10100000L  /* OpenSSL >= 1.1.0 */
++    {
++	BIGNUM *p = BN_bin2bn(dh512_p, sizeof(dh512_p), NULL);
++	BIGNUM *g = BN_bin2bn(dh512_g, sizeof(dh512_g), NULL);
++	if (p == NULL || g == NULL || !DH_set0_pqg(dh, p, NULL, g)) {
++	    BN_free(p);
++	    BN_free(g);
++	    DH_free(dh);
++	    return (NULL);
++	}
++    }
++#else
+     dh->p = BN_bin2bn(dh512_p, sizeof(dh512_p), NULL);
+     dh->g = BN_bin2bn(dh512_g, sizeof(dh512_g), NULL);
+     if ((dh->p == NULL) || (dh->g == NULL)) {
+ 	DH_free(dh);
+ 	return (NULL);
+     }
++#endif
+     return (dh);
+ }
+ 
+@@ -146,12 +159,25 @@
+ 
+     if ((dh = DH_new()) == NULL)
+ 	return (NULL);
++#if OPENSSL_VERSION_NUMBER >= 0x10100000L  /* OpenSSL >= 1.1.0 */
++    {
++	BIGNUM *p = BN_bin2bn(dh1024_p, sizeof(dh1024_p), NULL);
++	BIGNUM *g = BN_bin2bn(dh1024_g, sizeof(dh1024_g), NULL);
++	if (p == NULL || g == NULL || !DH_set0_pqg(dh, p, NULL, g)) {
++	    BN_free(p);
++	    BN_free(g);
++	    DH_free(dh);
++	    return (NULL);
++	}
++    }
++#else
+     dh->p = BN_bin2bn(dh1024_p, sizeof(dh1024_p), NULL);
+     dh->g = BN_bin2bn(dh1024_g, sizeof(dh1024_g), NULL);
+     if ((dh->p == NULL) || (dh->g == NULL)) {
+ 	DH_free(dh);
+ 	return (NULL);
+     }
++#endif
+     return (dh);
+ }
+ 
+@@ -193,12 +219,25 @@
+ 
+     if ((dh = DH_new()) == NULL)
+ 	return (NULL);
++#if OPENSSL_VERSION_NUMBER >= 0x10100000L  /* OpenSSL >= 1.1.0 */
++    {
++	BIGNUM *p = BN_bin2bn(dh2048_p, sizeof(dh2048_p), NULL);
++	BIGNUM *g = BN_bin2bn(dh2048_g, sizeof(dh2048_g), NULL);
++	if (p == NULL || g == NULL || !DH_set0_pqg(dh, p, NULL, g)) {
++	    BN_free(p);
++	    BN_free(g);
++	    DH_free(dh);
++	    return (NULL);
++	}
++    }
++#else
+     dh->p = BN_bin2bn(dh2048_p, sizeof(dh2048_p), NULL);
+     dh->g = BN_bin2bn(dh2048_g, sizeof(dh2048_g), NULL);
+     if ((dh->p == NULL) || (dh->g == NULL)) {
+ 	DH_free(dh);
+ 	return (NULL);
+     }
++#endif
+     return (dh);
+ }
+ 
+@@ -266,12 +305,25 @@
+ 
+     if ((dh = DH_new()) == NULL)
+ 	return (NULL);
++#if OPENSSL_VERSION_NUMBER >= 0x10100000L  /* OpenSSL >= 1.1.0 */
++    {
++	BIGNUM *p = BN_bin2bn(dh4096_p, sizeof(dh4096_p), NULL);
++	BIGNUM *g = BN_bin2bn(dh4096_g, sizeof(dh4096_g), NULL);
++	if (p == NULL || g == NULL || !DH_set0_pqg(dh, p, NULL, g)) {
++	    BN_free(p);
++	    BN_free(g);
++	    DH_free(dh);
++	    return (NULL);
++	}
++    }
++#else
+     dh->p = BN_bin2bn(dh4096_p, sizeof(dh4096_p), NULL);
+     dh->g = BN_bin2bn(dh4096_g, sizeof(dh4096_g), NULL);
+     if ((dh->p == NULL) || (dh->g == NULL)) {
+ 	DH_free(dh);
+ 	return (NULL);
+     }
++#endif
+     return (dh);
+ }
+ 
