@@ -4,8 +4,8 @@ export CGO_ENABLED=0
 	dh $@
 override_dh_auto_configure:
 override_dh_auto_build:
-	go build -ldflags "-X main.Version=0.3.3" -o goconserver goconserver.go
-	go build -ldflags "-X main.Version=0.3.3" -o congo cmd/congo.go
+	go build -trimpath -buildvcs=false -ldflags "-X main.Version=0.3.3" -o goconserver goconserver.go
+	go build -trimpath -buildvcs=false -ldflags "-X main.Version=0.3.3" -o congo cmd/congo.go
 override_dh_auto_install:
 	install -D -m 755 goconserver $(CURDIR)/debian/goconserver/usr/bin/goconserver
 	install -D -m 755 congo $(CURDIR)/debian/goconserver/usr/bin/congo

@@ -20,6 +20,7 @@ my $mock_uniqueext = '';
 my $result_dir  = "$repo_root/build-output/list3/xnba-undi";
 my $log_dir     = "$repo_root/build-logs/list3/xnba-undi";
 my $skip_install = 0;
+my $build_timestamp;
 
 GetOptions(
     'work-dir=s'     => \$work_dir,
@@ -28,6 +29,7 @@ GetOptions(
     'result-dir=s'   => \$result_dir,
     'log-dir=s'      => \$log_dir,
     'skip-install!'  => \$skip_install,
+    'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -46,6 +48,24 @@ if (!$mock_cfg) {
     $mock_cfg = resolve_mock_cfg($os_id, '10', $arch);
 }
 
+my $SOURCE_DATE_EPOCH;
+$SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
+if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
+    my $epoch_content = '';
+    if (open my $efh, '<', "$repo_root/Gitepoch") {
+        $epoch_content = <$efh>;
+        close $efh;
+        chomp $epoch_content;
+    }
+    $SOURCE_DATE_EPOCH = $epoch_content;
+}
+unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
+    $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
+    chomp $SOURCE_DATE_EPOCH;
+}
+$SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
+$ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
+
 print_step("Configuration");
 print "repo_root:  $repo_root\n";
 print "pkg_dir:    $pkg_dir\n";
@@ -60,7 +80,8 @@ make_path($log_dir);
 
 print_step("Stage build environment");
 remove_tree($work_dir) if -d $work_dir;
-my $rpmbuild_top = "$work_dir/rpmbuild";
+my $rpmbuild_top = "/var/tmp/xcat-rpmbuild-xnba";
+remove_tree($rpmbuild_top) if -d $rpmbuild_top;
 for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
     make_path("$rpmbuild_top/$d");
 }
@@ -75,7 +96,8 @@ copy("$binary_dir/xnba.efi", "$src_dir/binary/xnba.efi")
     or die "Failed to copy xnba.efi: $!\n";
 
 my $tarball = "$rpmbuild_top/SOURCES/xnba-$version.tar.gz";
-run("tar -C " . sh_quote($work_dir) . " -czf " . sh_quote($tarball) . " xnba-$version");
+run("tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
+    " -C " . sh_quote($work_dir) . " -czf " . sh_quote($tarball) . " xnba-$version");
 
 # Create simplified spec that uses pre-built binaries
 my $simple_spec = <<'SPEC';
@@ -120,6 +142,9 @@ print_step("Build RPM");
 my $rpmbuild_cmd = join(' ',
     'rpmbuild',
     '--define', sh_quote("_topdir $rpmbuild_top"),
+    '--define', sh_quote("use_source_date_epoch_as_buildtime 1"),
+    '--define', sh_quote("clamp_mtime_to_source_date_epoch 1"),
+    '--define', sh_quote("_buildhost xcat-build"),
     '-ba',
     sh_quote("$rpmbuild_top/SPECS/xnba-undi.spec"),
 );
@@ -149,6 +174,7 @@ Options:
   --result-dir PATH     Output directory for RPMs
   --log-dir PATH        Output directory for logs
   --skip-install        Skip install verification
+  --build-timestamp EPOCH  Unix timestamp for reproducible builds
 USAGE
 }
 

@@ -22,6 +22,7 @@ my $result_dir   = "$repo_root/build-output/list3/syslinux-xcat";
 my $log_dir      = "$repo_root/build-logs/list3/syslinux-xcat";
 my $skip_install = 0;
 my $skip_upstream_download = 0;
+my $build_timestamp;
 
 GetOptions(
     'source-url=s'            => \$source_url,
@@ -33,6 +34,7 @@ GetOptions(
     'log-dir=s'               => \$log_dir,
     'skip-install!'           => \$skip_install,
     'skip-upstream-download!' => \$skip_upstream_download,
+    'build-timestamp=i'       => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -63,6 +65,19 @@ if (!$mock_cfg) {
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
     : '';
+
+my $SOURCE_DATE_EPOCH;
+$SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
+if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
+    $SOURCE_DATE_EPOCH = slurp("$repo_root/Gitepoch");
+    chomp $SOURCE_DATE_EPOCH;
+}
+unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
+    $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
+    chomp $SOURCE_DATE_EPOCH;
+}
+$SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
+$ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 print_step("Configuration");
 print "repo_root:  $repo_root\n";
@@ -115,6 +130,7 @@ my $prep_top = "$work_dir/prep";
 for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
     make_path("$prep_top/$d");
 }
+my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $work_dir);
 copy($spec_file, "$prep_top/SPECS/syslinux-xcat.spec")
     or die "Failed to copy spec to prep topdir: $!\n";
 for my $asset (@all_assets) {
@@ -136,10 +152,13 @@ print_step("Build SRPM with mock");
 my $srpm_out = "$work_dir/srpm";
 make_path($srpm_out);
 run(
-    "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
+    "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --buildsrpm --spec " . sh_quote($spec_file) .
     " --sources " . sh_quote($pkg_dir) .
-    " --resultdir " . sh_quote($srpm_out)
+    " --resultdir " . sh_quote($srpm_out) .
+    " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+    " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+    " --define " . sh_quote("_buildhost xcat-build")
 );
 
 my @srpms = sort glob("$srpm_out/*.src.rpm");
@@ -151,9 +170,12 @@ print_step("Rebuild RPM with mock");
 my $rpm_out = "$work_dir/rpm";
 make_path($rpm_out);
 run(
-    "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
+    "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --rebuild " . sh_quote($srpm) .
-    " --resultdir " . sh_quote($rpm_out)
+    " --resultdir " . sh_quote($rpm_out) .
+    " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+    " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+    " --define " . sh_quote("_buildhost xcat-build")
 );
 
 my @all_rpms = sort glob("$rpm_out/*.rpm");
@@ -265,9 +287,21 @@ Usage: $0 [options]
   --mock-uniqueext TXT  Optional mock --uniqueext suffix to isolate concurrent builds
   --result-dir PATH     Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH        Log directory (default: $log_dir)
+  --build-timestamp EPOCH   SOURCE_DATE_EPOCH for deterministic builds
   --skip-upstream-download  Skip wget download step
   --skip-install        Skip dnf install + smoke tests
 USAGE
+}
+
+sub create_deterministic_mock_cfg {
+    my ($base_cfg, $epoch, $dir) = @_;
+    my $cfg_path = "$dir/mock-deterministic.cfg";
+    open my $fh, '>', $cfg_path or die "Cannot write $cfg_path: $!\n";
+    print $fh "include('/etc/mock/${base_cfg}.cfg')\n";
+    print $fh "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$epoch'\n";
+    print $fh "config_opts['environment']['ZERO_AR_DATE'] = '1'\n";
+    close $fh;
+    return $cfg_path;
 }
 
 sub parse_spec {

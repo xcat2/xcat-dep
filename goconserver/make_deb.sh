@@ -6,6 +6,20 @@ VERSION=0.3.3
 REPO=https://github.com/xcat2/goconserver.git
 REF=master
 
+if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
+    REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+    if [ -f "$REPO_ROOT/Gitepoch" ]; then
+        export SOURCE_DATE_EPOCH=$(cat "$REPO_ROOT/Gitepoch")
+    fi
+fi
+
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    SNAP_TS=$(date -d "@$SOURCE_DATE_EPOCH" --utc '+%Y%m%d%H%M')
+else
+    SNAP_TS=$(date '+%Y%m%d%H%M')
+fi
+FULL_VERSION="${VERSION}-snap${SNAP_TS}"
+
 WORKDIR=$(mktemp -d)
 trap "rm -rf $WORKDIR" EXIT
 
@@ -26,6 +40,18 @@ go mod init github.com/xcat2/goconserver
 go mod tidy
 
 cp -rL "$SCRIPT_DIR/debian" .
+
+sed -i "s/Version=${VERSION}/Version=${FULL_VERSION}/g" debian/rules
+
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    export DEBEMAIL="${DEBEMAIL:-xcat-build@xcat.org}"
+    export DEBFULLNAME="${DEBFULLNAME:-xCAT Build}"
+    deterministic_date=$(date -R -d "@$SOURCE_DATE_EPOCH" --utc)
+    sed -i "1s/(.*)/(${FULL_VERSION})/" debian/changelog
+    sed -i "s/^ -- .*/ -- $DEBFULLNAME <$DEBEMAIL>  $deterministic_date/" debian/changelog
+else
+    dch -v "$FULL_VERSION" -b -D unstable "Snap build for xCAT"
+fi
 
 dpkg-buildpackage -uc -us
 
