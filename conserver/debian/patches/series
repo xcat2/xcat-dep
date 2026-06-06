@@ -1,1 +1,3 @@
 initscript_8.2.1.patch
+openssl3-dh-opaque.patch
+fix-true-keyword-gcc15.patch
