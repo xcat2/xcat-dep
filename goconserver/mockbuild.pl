@@ -91,8 +91,12 @@ $ENV{GOCACHE}     = "$work_dir/gocache";
 $ENV{GOMODCACHE}  = "$work_dir/gomodcache";
 $ENV{CGO_ENABLED} = '0';
 
+# The archived github.com/kr/pty sets SysProcAttr.Ctty to the parent-side fd,
+# which modern Go's os/exec rejects with "Setctty set but Ctty not valid in
+# child". Replace it with the API-identical maintained fork creack/pty.
 run("cd " . sh_quote($src_dir) . " && " .
     "go mod init github.com/xcat2/goconserver && " .
+    "go mod edit -replace github.com/kr/pty=github.com/creack/pty\@v1.1.21 && " .
     "go mod tidy" .
     " >" . sh_quote("$log_dir/go-mod.log") . " 2>&1");
 
@@ -160,7 +164,7 @@ print_step("Create spec and build RPM");
 my $spec_content = <<"SPEC";
 Name:           goconserver
 Version:        $version
-Release:        1.el$rel
+Release:        2.el$rel
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
@@ -194,6 +198,9 @@ install -m 644 etc/goconserver/server.conf %{buildroot}/etc/goconserver/server.c
 %dir /var/log/goconserver
 
 %changelog
+* Mon Jun 08 2026 xCAT EL10 build - 0.3.3-2.el10
+- Replace archived github.com/kr/pty with github.com/creack/pty to fix
+  "Setctty set but Ctty not valid in child" console fork failure on modern Go.
 SPEC
 
 my $spec_file = "$rpmbuild_top/SPECS/goconserver.spec";
