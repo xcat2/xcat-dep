@@ -11,6 +11,7 @@ override_dh_auto_install:
 	install -D -m 755 congo $(CURDIR)/debian/goconserver/usr/bin/congo
 	install -D -m 644 etc/goconserver/server.conf $(CURDIR)/debian/goconserver/etc/goconserver/server.conf
 	mkdir -p $(CURDIR)/debian/goconserver/var/log/goconserver
+	mkdir -p $(CURDIR)/debian/goconserver/var/lib/goconserver
 override_dh_auto_test:
 override_dh_auto_clean:
 	rm -f goconserver congo

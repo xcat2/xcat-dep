@@ -162,6 +162,7 @@ After=network.target
 Type=simple
 ExecStart=/usr/bin/goconserver
 Restart=on-failure
+StateDirectory=goconserver
 
 [Install]
 WantedBy=multi-user.target
@@ -206,6 +207,7 @@ mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system
 mkdir -p %{buildroot}/etc/goconserver
 mkdir -p %{buildroot}/var/log/goconserver
+mkdir -p %{buildroot}/var/lib/goconserver
 
 install -m 755 usr/bin/goconserver %{buildroot}/usr/bin/goconserver
 install -m 755 usr/bin/congo %{buildroot}/usr/bin/congo
@@ -218,6 +220,7 @@ install -m 644 etc/goconserver/server.conf %{buildroot}/etc/goconserver/server.c
 /usr/lib/systemd/system/goconserver.service
 %config(noreplace) /etc/goconserver/server.conf
 %dir /var/log/goconserver
+%dir /var/lib/goconserver
 
 %changelog
 * Mon Jun 08 2026 xCAT EL10 build - 0.3.3-2.el10
