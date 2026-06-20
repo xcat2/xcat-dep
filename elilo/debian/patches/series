@@ -1,3 +1,6 @@
 elilo-xcat.patch
 elilo-xcat-ubuntu.patch
 elilo-big-bzimage-limit.patch
+elilo-fix-strncpy-conflict.patch
+elilo-fix-bool-keyword.patch
+elilo-fix-objcopy-format.patch

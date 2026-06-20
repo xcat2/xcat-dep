@@ -1,0 +1,25 @@
+diff -ruN elilo.orig/Make.rules elilo/Make.rules
+--- elilo.orig/Make.rules	2007-07-20 19:47:25.000000000 +0000
++++ elilo/Make.rules	2026-05-19 14:52:32.458614655 +0000
+@@ -25,7 +25,7 @@
+ 
+ %.efi: %.so 
+ 	$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel \
+-		   -j .rela -j .reloc --target=$(FORMAT) $*.so $@
++		   -j .rela -j .reloc -I elf64-$(OBJCOPY_ARCH) -O $(FORMAT) --subsystem=efi-app $*.so $@
+ 
+ %.so: %.o 
+ 	$(LD) $(LDFLAGS) $^ -o $@ $(LOADLIBES)
+diff -ruN elilo.orig/Makefile elilo/Makefile
+--- elilo.orig/Makefile	2010-11-09 23:16:50.000000000 +0000
++++ elilo/Makefile	2026-05-19 14:52:19.617943296 +0000
+@@ -34,7 +34,8 @@
+ 
+ LDFLAGS	     += -T $(LDSCRIPT) -shared -Bsymbolic -L$(EFILIB) -L$(GNUEFILIB) $(CRTOBJS)
+ LOADLIBES     = -lefi -lgnuefi $(shell $(CC) -print-libgcc-file-name)
+-FORMAT        = efi-app-$(ARCH)
++OBJCOPY_ARCH  = $(shell echo $(ARCH) | sed s,_,-,g)
++FORMAT        = pei-$(OBJCOPY_ARCH)
+ 
+ FILESYSTEM    =
+ 

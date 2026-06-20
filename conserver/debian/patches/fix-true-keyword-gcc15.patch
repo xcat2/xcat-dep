@@ -1,0 +1,72 @@
+Description: Rename 'true' variable to 'reuse' to fix GCC 15 / C23 build error
+ In C23 (and GCC 15 defaults), 'true' is a keyword and cannot be used as a
+ variable name. Rename the setsockopt flag variable from 'true' to 'reuse'
+ in both group.c and master.c.
+Author: Daniel Hilst <danielhilst@gmail.com>
+---
+diff -ruN a/conserver/group.c b/conserver/group.c
+--- a/conserver/group.c
++++ b/conserver/group.c
+@@ -5036,7 +5036,7 @@
+     struct sockaddr_in lstn_port;
+ # endif
+ # if HAVE_SETSOCKOPT
+-    int true = 1;
++    int reuse = 1;
+ # endif
+     unsigned short portInc = 0;
+ #else
+@@ -5063,8 +5063,8 @@
+ 	}
+ # if HAVE_SETSOCKOPT
+ 	if (setsockopt
+-	    (sfd, SOL_SOCKET, SO_REUSEADDR, (char *)&true,
+-	     sizeof(true)) < 0) {
++	    (sfd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse,
++	     sizeof(reuse)) < 0) {
+ 	    Error("Spawn(): setsockopt(%u,SO_REUSEADDR): %s", sfd,
+ 		  strerror(errno));
+ 	    return;
+@@ -5195,7 +5195,7 @@
+     }
+ # if HAVE_SETSOCKOPT
+     if (setsockopt
+-	(sfd, SOL_SOCKET, SO_REUSEADDR, (char *)&true, sizeof(true)) < 0) {
++	(sfd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse, sizeof(reuse)) < 0) {
+ 	Error("Spawn(): setsockopt(%u,SO_REUSEADDR): %s", sfd,
+ 	      strerror(errno));
+ 	Bye(EX_OSERR);
+diff -ruN a/conserver/master.c b/conserver/master.c
+--- a/conserver/master.c
++++ b/conserver/master.c
+@@ -687,7 +687,7 @@
+     struct sockaddr_in master_port;
+ # endif
+ # if HAVE_SETSOCKOPT
+-    int true = 1;
++    int reuse = 1;
+ # endif
+ #else
+     struct sockaddr_un master_port;
+@@ -747,8 +747,8 @@
+ 
+ # if HAVE_SETSOCKOPT
+ 	if (setsockopt
+-	    (msfd, SOL_SOCKET, SO_REUSEADDR, (char *)&true,
+-	     sizeof(true)) < 0)
++	    (msfd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse,
++	     sizeof(reuse)) < 0)
+ 	    goto fail;
+ # endif
+ 	if (!SetFlags(msfd, O_NONBLOCK, 0))
+@@ -818,8 +818,8 @@
+     }
+ # if HAVE_SETSOCKOPT
+     if (setsockopt
+-	(msfd, SOL_SOCKET, SO_REUSEADDR, (char *)&true,
+-	 sizeof(true)) < 0) {
++	(msfd, SOL_SOCKET, SO_REUSEADDR, (char *)&reuse,
++	 sizeof(reuse)) < 0) {
+ 	Error("Master(): setsockopt(%u,SO_REUSEADDR): %s", msfd,
+ 	      strerror(errno));
+ 	return;

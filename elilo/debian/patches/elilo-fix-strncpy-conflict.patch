@@ -1,0 +1,183 @@
+diff -ruN elilo.orig/fileops.c elilo/fileops.c
+--- elilo.orig/fileops.c	2010-11-09 23:16:50.000000000 +0000
++++ elilo/fileops.c	2026-05-19 14:48:27.942072518 +0000
+@@ -390,7 +390,7 @@
+ 
+ 		Print(L"Using builtin defaults for kernel and config file\n");
+ 
+-		StrnCpy(kname, FILEOPS_DEFAULT_KERNEL, maxlen-1);
++		EliloStrnCpy(kname, FILEOPS_DEFAULT_KERNEL, maxlen-1);
+ 	}
+         else {
+                 boot_dev->fops->setdefaults(boot_dev->fops->intf, defconf, kname, maxlen, devpath);
+@@ -402,8 +402,8 @@
+             return EFI_INVALID_PARAMETER;
+         }
+ #endif
+-        StrnCpy(defconf[i].fname, FILEOPS_ARCH_DEFAULT_CONFIG, maxlen-1);
+-        StrnCpy(defconf[i+1].fname, FILEOPS_DEFAULT_CONFIG, maxlen-1);
++        EliloStrnCpy(defconf[i].fname, FILEOPS_ARCH_DEFAULT_CONFIG, maxlen-1);
++        EliloStrnCpy(defconf[i+1].fname, FILEOPS_DEFAULT_CONFIG, maxlen-1);
+ 
+ #ifdef ELILO_DEBUG
+         VERB_PRT(3,Print(L"Default config filename list:\n"));
+diff -ruN elilo.orig/fs/ext2fs.c elilo/fs/ext2fs.c
+--- elilo.orig/fs/ext2fs.c	2009-04-02 20:17:13.000000000 +0000
++++ elilo/fs/ext2fs.c	2026-05-19 14:48:27.942649987 +0000
+@@ -769,7 +769,7 @@
+ {
+ 	if (name == NULL || maxlen < 1) return EFI_INVALID_PARAMETER;
+ 
+-	StrnCpy(name, FS_NAME, maxlen-1);
++	EliloStrnCpy(name, FS_NAME, maxlen-1);
+ 
+ 	name[maxlen-1] = CHAR_NULL;
+ 
+diff -ruN elilo.orig/fs/localfs.c elilo/fs/localfs.c
+--- elilo.orig/fs/localfs.c	2010-11-09 23:14:21.000000000 +0000
++++ elilo/fs/localfs.c	2026-05-19 14:48:27.943106300 +0000
+@@ -77,7 +77,7 @@
+ {
+ 	if (name == NULL || maxlen < 1) return EFI_INVALID_PARAMETER;
+ 
+-	StrnCpy(name, FS_NAME, maxlen-1);
++	EliloStrnCpy(name, FS_NAME, maxlen-1);
+ 
+ 	name[maxlen-1] = CHAR_NULL;
+ 
+diff -ruN elilo.orig/fs/netfs.c elilo/fs/netfs.c
+--- elilo.orig/fs/netfs.c	2026-05-19 14:48:14.413690716 +0000
++++ elilo/fs/netfs.c	2026-05-19 14:48:27.942879702 +0000
+@@ -209,7 +209,7 @@
+ {
+ 	if (name == NULL || maxlen < 1) return EFI_INVALID_PARAMETER;
+ 
+-	StrnCpy(name, FS_NAME, maxlen-1);
++	EliloStrnCpy(name, FS_NAME, maxlen-1);
+ 
+ 	name[maxlen-1] = CHAR_NULL;
+ 
+diff -ruN elilo.orig/glue_localfs.c elilo/glue_localfs.c
+--- elilo.orig/glue_localfs.c	2004-02-19 22:39:04.000000000 +0000
++++ elilo/glue_localfs.c	2026-05-19 14:48:27.942374366 +0000
+@@ -101,10 +101,10 @@
+ static EFI_STATUS
+ localfs_setdefaults(VOID *this, config_file_t *config, CHAR16 *kname, UINTN maxlen, CHAR16 *devpath)
+ {
+-	StrnCpy(kname, LOCALFS_DEFAULT_KERNEL, maxlen-1);
++	EliloStrnCpy(kname, LOCALFS_DEFAULT_KERNEL, maxlen-1);
+ 	kname[maxlen-1] = CHAR_NULL;
+ 
+-	StrnCpy(config[0].fname, LOCALFS_DEFAULT_CONFIG, maxlen-1);
++	EliloStrnCpy(config[0].fname, LOCALFS_DEFAULT_CONFIG, maxlen-1);
+ 	config[0].fname[maxlen-1] = CHAR_NULL;
+ 
+ 	set_default_path(devpath);
+diff -ruN elilo.orig/glue_netfs.c elilo/glue_netfs.c
+--- elilo.orig/glue_netfs.c	2026-05-19 14:48:14.414011673 +0000
++++ elilo/glue_netfs.c	2026-05-19 14:48:27.942495255 +0000
+@@ -132,7 +132,7 @@
+ {
+  	INTN len;
+ 
+- 	StrnCpy(netfs_default_path, info->bootfile, FILENAME_MAXLEN);
++ 	EliloStrnCpy(netfs_default_path, info->bootfile, FILENAME_MAXLEN);
+ 
+ 	len = StrLen(netfs_default_path) - 1;
+ 
+@@ -191,13 +191,13 @@
+ 
+ 		status = netfs->netfs_query_layer(netfs, 0, NETFS_CONFIG_LAYER, maxlen, config[0].fname);
+ 		if (EFI_ERROR(status)) {
+-			StrnCpy(config[0].fname, NETFS_DEFAULT_CONFIG, maxlen-1);
++			EliloStrnCpy(config[0].fname, NETFS_DEFAULT_CONFIG, maxlen-1);
+ 			config[0].fname[maxlen-1] = CHAR_NULL;
+ 		}
+ 
+ 		status = netfs->netfs_query_layer(netfs, 0, NETFS_KERNEL_LAYER, maxlen, kname);
+ 		if (EFI_ERROR(status)) {
+-			StrnCpy(kname, NETFS_DEFAULT_KERNEL, maxlen-1);
++			EliloStrnCpy(kname, NETFS_DEFAULT_KERNEL, maxlen-1);
+ 			kname[maxlen-1] = CHAR_NULL;
+ 		}
+ 	} else {
+@@ -224,37 +224,37 @@
+ 		 * the filenames are constructed based on the IP(v4) address
+ 		 */
+ 		convert_ip2hex(ipaddr, m, str);
+-		StrnCpy(config[0].fname, str, maxlen-1);
+-		StrnCpy(config[0].fname+8, CONFIG_EXTENSION, 6);
++		EliloStrnCpy(config[0].fname, str, maxlen-1);
++		EliloStrnCpy(config[0].fname+8, CONFIG_EXTENSION, 6);
+ 
+-		StrnCpy(config[1].fname, str, maxlen-1);
+-		StrnCpy(config[1].fname+6, CONFIG_ARCH_EXTENSION, EXTENSION_LENGTH);
++		EliloStrnCpy(config[1].fname, str, maxlen-1);
++		EliloStrnCpy(config[1].fname+6, CONFIG_ARCH_EXTENSION, EXTENSION_LENGTH);
+ 
+-		StrnCpy(config[2].fname, str, maxlen-1);
+-		StrnCpy(config[2].fname+6, CONFIG_EXTENSION, 6);
++		EliloStrnCpy(config[2].fname, str, maxlen-1);
++		EliloStrnCpy(config[2].fname+6, CONFIG_EXTENSION, 6);
+ 
+-		StrnCpy(config[3].fname, str, maxlen-1);
+-		StrnCpy(config[3].fname+4, CONFIG_ARCH_EXTENSION, EXTENSION_LENGTH);
++		EliloStrnCpy(config[3].fname, str, maxlen-1);
++		EliloStrnCpy(config[3].fname+4, CONFIG_ARCH_EXTENSION, EXTENSION_LENGTH);
+ 
+-		StrnCpy(config[4].fname, str, maxlen-1);
+-		StrnCpy(config[4].fname+4, CONFIG_EXTENSION, 6);
++		EliloStrnCpy(config[4].fname, str, maxlen-1);
++		EliloStrnCpy(config[4].fname+4, CONFIG_EXTENSION, 6);
+                 
+-		StrnCpy(config[5].fname, str, maxlen-1);
+-		StrnCpy(config[5].fname+2, CONFIG_ARCH_EXTENSION, EXTENSION_LENGTH);
++		EliloStrnCpy(config[5].fname, str, maxlen-1);
++		EliloStrnCpy(config[5].fname+2, CONFIG_ARCH_EXTENSION, EXTENSION_LENGTH);
+ 
+-		StrnCpy(config[6].fname, str, maxlen-1);
+-		StrnCpy(config[6].fname+2, CONFIG_EXTENSION, 6);
++		EliloStrnCpy(config[6].fname, str, maxlen-1);
++		EliloStrnCpy(config[6].fname+2, CONFIG_EXTENSION, 6);
+ 
+ 		/* use the MAC address as a possible file name as well */
+ 		convert_mac2hex(info.hw_addr,6,str);
+-		StrnCpy(config[7].fname, str, maxlen-1);
+-		StrnCpy(config[7].fname+17, CONFIG_EXTENSION, 6);
++		EliloStrnCpy(config[7].fname, str, maxlen-1);
++		EliloStrnCpy(config[7].fname+17, CONFIG_EXTENSION, 6);
+ 
+ #else
+-		StrnCpy(config[0].fname, NETFS_DEFAULT_CONFIG, maxlen-1);
++		EliloStrnCpy(config[0].fname, NETFS_DEFAULT_CONFIG, maxlen-1);
+ 		config[0].fname[maxlen-1] = CHAR_NULL;
+ #endif
+-		StrnCpy(kname, NETFS_DEFAULT_KERNEL, maxlen-1);
++		EliloStrnCpy(kname, NETFS_DEFAULT_KERNEL, maxlen-1);
+ 		kname[maxlen-1] = CHAR_NULL;
+ 
+ 		/*
+diff -ruN elilo.orig/strops.c elilo/strops.c
+--- elilo.orig/strops.c	2010-11-09 23:11:07.000000000 +0000
++++ elilo/strops.c	2026-05-19 14:48:27.942069100 +0000
+@@ -37,7 +37,7 @@
+ }
+ 
+ CHAR16 *
+-StrnCpy(OUT CHAR16 *dst, IN const CHAR16 *src, IN UINTN size)
++EliloStrnCpy(OUT CHAR16 *dst, IN const CHAR16 *src, IN UINTN size)
+ {
+ 	CHAR16 *res = dst;
+ 
+diff -ruN elilo.orig/strops.h elilo/strops.h
+--- elilo.orig/strops.h	2003-08-19 16:47:46.000000000 +0000
++++ elilo/strops.h	2026-05-19 14:48:27.941905430 +0000
+@@ -27,7 +27,7 @@
+ #define __STROPS_H__
+ 
+ extern CHAR16 *StrChr(IN const CHAR16 *s, const CHAR16 c);
+-extern CHAR16 *StrnCpy(OUT CHAR16 *dst, IN const CHAR16 *src, UINTN count);
++extern CHAR16 *EliloStrnCpy(OUT CHAR16 *dst, IN const CHAR16 *src, UINTN count);
+ extern CHAR8 *StrnXCpy(OUT CHAR8 *dst, IN const CHAR16 *src, UINTN count);
+ 
+ extern CHAR8 *strtok_simple(CHAR8 *in, CHAR8 c);

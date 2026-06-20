@@ -19,6 +19,7 @@ my $packages_csv = '';
 my $jobs = 0;
 my $skip_install = 0;
 my $allow_erasing = 0;
+my $build_timestamp;
 
 GetOptions(
     'work-dir=s'      => \$work_dir,
@@ -30,6 +31,7 @@ GetOptions(
     'jobs=i'          => \$jobs,
     'skip-install!'   => \$skip_install,
     'allow-erasing!'  => \$allow_erasing,
+    'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -46,6 +48,20 @@ if (!$mock_cfg) {
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
     : '';
+
+my $SOURCE_DATE_EPOCH;
+$SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
+if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
+    $SOURCE_DATE_EPOCH = slurp("$repo_root/Gitepoch");
+    chomp $SOURCE_DATE_EPOCH;
+}
+unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
+    $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
+    chomp $SOURCE_DATE_EPOCH;
+}
+$SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
+$ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
+
 if (!$result_dir) {
     $result_dir = "$repo_root/build-output/list6/perl/$arch";
 }
@@ -277,6 +293,8 @@ sub build_package {
     make_path($pkg_result);
     make_path($pkg_log);
 
+    my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $pkg_run_dir);
+
     my $run_log = "$pkg_log/run.log";
     open my $runfh, '>', $run_log or die "Cannot write $run_log: $!\n";
     open STDOUT, '>&', $runfh or die "Cannot redirect stdout to $run_log: $!\n";
@@ -341,9 +359,12 @@ sub build_package {
             my $srpm_result = "$pkg_run_dir/srpm";
             make_path($srpm_result);
             run(
-                "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
+                "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
                 " --buildsrpm --spec " . sh_quote($spec) .
                 " --sources " . sh_quote($source_dir) .
+                " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+                " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+                " --define " . sh_quote("_buildhost xcat-build") .
                 " --resultdir " . sh_quote($srpm_result) .
                 " > " . sh_quote("$pkg_log/mock-buildsrpm.log") . " 2>&1"
             );
@@ -353,8 +374,11 @@ sub build_package {
         }
 
         run(
-            "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
+            "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
             " --rebuild " . sh_quote($srpm_path) .
+            " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+            " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+            " --define " . sh_quote("_buildhost xcat-build") .
             " --resultdir " . sh_quote($rebuild_result) .
             " > " . sh_quote("$pkg_log/mock-rebuild.log") . " 2>&1"
         );
@@ -453,6 +477,7 @@ Usage: $0 [options]
   --result-dir PATH    Output directory (default: build-output/list6/perl/<ARCH>)
   --log-dir PATH       Log directory (default: build-logs/list6/perl/<ARCH>)
   --packages LIST      Comma-separated subset of packages to build
+  --build-timestamp EPOCH  Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
   --skip-install       Skip dnf install + perl module import checks
   --allow-erasing      Allow dnf to erase conflicting packages during install smoke tests
 USAGE
@@ -592,6 +617,16 @@ sub resolve_mock_cfg {
     $candidate = "${os_id}+epel-10-${arch}";
     print "WARN: Could not verify mock config, using default: $candidate\n";
     return $candidate;
+}
+
+sub create_deterministic_mock_cfg {
+    my ($base_cfg, $epoch, $dir) = @_;
+    my $cfg_path = "$dir/mock-deterministic.cfg";
+    open my $fh, '>', $cfg_path or die "Cannot write $cfg_path: $!\n";
+    print $fh "include('/etc/mock/${base_cfg}.cfg')\n";
+    print $fh "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$epoch'\n";
+    close $fh;
+    return $cfg_path;
 }
 
 sub resolve_source_urls {
