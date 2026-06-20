@@ -19,7 +19,8 @@ my $output_root = "$repo_root/build-output/mockbuild-all";
 my $target     = '';
 my $nproc      = 1;
 my $parallel_builds;
-my $run_id     = strftime('%Y%m%d-%H%M%S', localtime);
+my $run_id     = '';
+my $build_timestamp;
 my $skip_install = 0;
 my $skip_build = 0;
 my $skip_xcat_dep = 0;
@@ -39,6 +40,7 @@ GetOptions(
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
     'run-id=s'          => \$run_id,
+    'build-timestamp=i' => \$build_timestamp,
     'skip-install!'     => \$skip_install,
     'skip-build!'       => \$skip_build,
     'skip-xcat-dep!'    => \$skip_xcat_dep,
@@ -56,6 +58,23 @@ die "--parallel-builds must be >= 1\n"
     if defined($parallel_builds) && $parallel_builds < 1;
 
 $repo_root = abs_path($repo_root);
+
+my $SOURCE_DATE_EPOCH;
+$SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
+if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
+    $SOURCE_DATE_EPOCH = slurp_chomp("$repo_root/Gitepoch");
+}
+unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
+    $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
+    chomp $SOURCE_DATE_EPOCH;
+}
+$SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
+$ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
+
+if ($run_id eq '') {
+    $run_id = strftime('%Y%m%d-%H%M%S', gmtime($SOURCE_DATE_EPOCH));
+}
+
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
 my $arch = capture('uname -m');
@@ -170,6 +189,7 @@ if (!$skip_build) {
                 '--mock-uniqueext', sh_quote($step_uniqueext),
                 '--result-dir', sh_quote($step_result),
                 '--log-dir', sh_quote($step_log),
+                '--build-timestamp', $SOURCE_DATE_EPOCH,
                 ($skip_install ? '--skip-install' : ()),
             );
             push @build_steps, {
@@ -192,6 +212,7 @@ if (!$skip_build) {
             '--mock-uniqueext', sh_quote($perl_uniqueext),
             '--result-dir', sh_quote($perl_result),
             '--log-dir', sh_quote($perl_log),
+            '--build-timestamp', $SOURCE_DATE_EPOCH,
             ($skip_install ? '--skip-install' : ()),
         );
         push @build_steps, {
@@ -284,19 +305,21 @@ if (!$dry_run && $copied_srpms == 0) {
 if (!$skip_createrepo) {
     run_step(
         step => 'Run createrepo',
-        cmd  => 'createrepo --update ' . sh_quote($repo_dir),
+        cmd  => 'createrepo --update --revision ' . sh_quote($SOURCE_DATE_EPOCH) . ' ' . sh_quote($repo_dir),
         log  => "$log_root/createrepo.log",
     );
     run_step(
         step => 'Run createrepo for SRPM repo',
-        cmd  => 'createrepo --update ' . sh_quote($srpm_repo_dir),
+        cmd  => 'createrepo --update --revision ' . sh_quote($SOURCE_DATE_EPOCH) . ' ' . sh_quote($srpm_repo_dir),
         log  => "$log_root/createrepo-srpm.log",
     );
 }
 
 if (!$skip_tarball) {
     my $cmd = join(' ',
-        'tar', '-C', sh_quote($run_root),
+        'tar', '--sort=name', '--owner=0', '--group=0',
+        "--mtime=\@$SOURCE_DATE_EPOCH",
+        '-C', sh_quote($run_root),
         '-czf', sh_quote($tarball),
         'repo'
     );
@@ -306,7 +329,9 @@ if (!$skip_tarball) {
         log  => "$log_root/tarball.log",
     );
     my $srpm_cmd = join(' ',
-        'tar', '-C', sh_quote($run_root),
+        'tar', '--sort=name', '--owner=0', '--group=0',
+        "--mtime=\@$SOURCE_DATE_EPOCH",
+        '-C', sh_quote($run_root),
         '-czf', sh_quote($srpm_tarball),
         'repo-src'
     );
@@ -365,7 +390,8 @@ Options:
   --target NAME           Optional unified target in <ID>+epel-<REL>-<ARCH> format
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
   --parallel-builds N     Max concurrent top-level build steps (default: auto=queued steps)
-  --run-id ID             Run identifier suffix (default: timestamp)
+  --run-id ID             Run identifier suffix (default: derived from build timestamp)
+  --build-timestamp EPOCH Unix epoch for deterministic builds (default: Gitepoch or git log)
   --skip-install          Skip install/smoke tests in child builder scripts
   --skip-build            Skip all build steps and only collect/create repo/tarballs
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
@@ -703,6 +729,15 @@ sub read_os_release {
 sub uniq {
     my %seen;
     return grep { defined($_) && !$seen{$_}++ } @_;
+}
+
+sub slurp_chomp {
+    my ($path) = @_;
+    open my $fh, '<', $path or die "Cannot read $path: $!\n";
+    my $line = <$fh>;
+    close $fh;
+    chomp $line if defined $line;
+    return $line // '';
 }
 
 sub sh_quote {

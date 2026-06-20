@@ -1,3 +1,9 @@
+grub2-xcat (2.12-1) unstable; urgency=low
+
+  * Bump version to satisfy xcat-server dependency (>= 2.02)
+
+ -- XCAT <xcat-user@lists.sourceforge.net>  Wed, 21 May 2025 12:00:00 +0000
+
 grub2-xcat (1.0-2) unstable; urgency=low
 
   * update core.elf to support ppc64le

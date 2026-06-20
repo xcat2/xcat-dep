@@ -8,4 +8,4 @@ if [ -z "${SOURCE_DATE_EPOCH:-}" ]; then
     fi
 fi
 
-dpkg-buildpackage -uc -us -R./build/rules.fromBIN
+dpkg-buildpackage -uc -us

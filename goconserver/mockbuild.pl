@@ -21,6 +21,7 @@ my $skip_install = 0;
 my $version     = '0.3.3';
 my $go_repo     = 'https://github.com/xcat2/goconserver.git';
 my $go_ref      = 'master';
+my $build_timestamp;
 
 GetOptions(
     'work-dir=s'       => \$work_dir,
@@ -32,6 +33,7 @@ GetOptions(
     'version=s'        => \$version,
     'go-repo=s'        => \$go_repo,
     'go-ref=s'         => \$go_ref,
+    'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -48,6 +50,24 @@ if (!$mock_cfg) {
 
 my ($rel) = $mock_cfg =~ /-(\d+)-/;
 $rel //= '10';
+
+my $SOURCE_DATE_EPOCH;
+$SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
+if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
+    my $epoch_content = '';
+    if (open my $efh, '<', "$repo_root/Gitepoch") {
+        $epoch_content = <$efh>;
+        close $efh;
+        chomp $epoch_content;
+    }
+    $SOURCE_DATE_EPOCH = $epoch_content;
+}
+unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
+    $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
+    chomp $SOURCE_DATE_EPOCH;
+}
+$SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
+$ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 print_step("Configuration");
 print "repo_root:  $repo_root\n";
@@ -69,7 +89,8 @@ print_step("Stage build environment");
 remove_tree($work_dir) if -d $work_dir;
 make_path($work_dir);
 
-my $rpmbuild_top = "$work_dir/rpmbuild";
+my $rpmbuild_top = "/var/tmp/xcat-rpmbuild-goconserver";
+remove_tree($rpmbuild_top) if -d $rpmbuild_top;
 for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
     make_path("$rpmbuild_top/$d");
 }
@@ -91,8 +112,12 @@ $ENV{GOCACHE}     = "$work_dir/gocache";
 $ENV{GOMODCACHE}  = "$work_dir/gomodcache";
 $ENV{CGO_ENABLED} = '0';
 
+# The archived github.com/kr/pty sets SysProcAttr.Ctty to the parent-side fd,
+# which modern Go's os/exec rejects with "Setctty set but Ctty not valid in
+# child". Replace it with the API-identical maintained fork creack/pty.
 run("cd " . sh_quote($src_dir) . " && " .
     "go mod init github.com/xcat2/goconserver && " .
+    "go mod edit -replace github.com/kr/pty=github.com/creack/pty\@v1.1.21 && " .
     "go mod tidy" .
     " >" . sh_quote("$log_dir/go-mod.log") . " 2>&1");
 
@@ -103,12 +128,12 @@ make_path($go_build_dir);
 my $ldflags = "-X main.Version=$version";
 
 run("cd " . sh_quote($src_dir) . " && " .
-    "go build -ldflags " . sh_quote($ldflags) .
+    "go build -trimpath -buildvcs=false -ldflags " . sh_quote($ldflags) .
     " -o " . sh_quote("$go_build_dir/goconserver") . " goconserver.go" .
     " >" . sh_quote("$log_dir/go-build-server.log") . " 2>&1");
 
 run("cd " . sh_quote($src_dir) . " && " .
-    "go build -ldflags " . sh_quote($ldflags) .
+    "go build -trimpath -buildvcs=false -ldflags " . sh_quote($ldflags) .
     " -o " . sh_quote("$go_build_dir/congo") . " cmd/congo.go" .
     " >" . sh_quote("$log_dir/go-build-client.log") . " 2>&1");
 
@@ -137,6 +162,7 @@ After=network.target
 Type=simple
 ExecStart=/usr/bin/goconserver
 Restart=on-failure
+StateDirectory=goconserver
 
 [Install]
 WantedBy=multi-user.target
@@ -153,14 +179,15 @@ log_level = info
 CONF
 
 my $tarball = "$rpmbuild_top/SOURCES/goconserver-$version.tar.gz";
-run("tar -C " . sh_quote($work_dir) . " -czf " . sh_quote($tarball) .
+run("tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
+    " -C " . sh_quote($work_dir) . " -czf " . sh_quote($tarball) .
     " goconserver-$version");
 
 print_step("Create spec and build RPM");
 my $spec_content = <<"SPEC";
 Name:           goconserver
 Version:        $version
-Release:        1.el$rel
+Release:        2.el$rel
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
@@ -180,6 +207,7 @@ mkdir -p %{buildroot}/usr/bin
 mkdir -p %{buildroot}/usr/lib/systemd/system
 mkdir -p %{buildroot}/etc/goconserver
 mkdir -p %{buildroot}/var/log/goconserver
+mkdir -p %{buildroot}/var/lib/goconserver
 
 install -m 755 usr/bin/goconserver %{buildroot}/usr/bin/goconserver
 install -m 755 usr/bin/congo %{buildroot}/usr/bin/congo
@@ -192,8 +220,12 @@ install -m 644 etc/goconserver/server.conf %{buildroot}/etc/goconserver/server.c
 /usr/lib/systemd/system/goconserver.service
 %config(noreplace) /etc/goconserver/server.conf
 %dir /var/log/goconserver
+%dir /var/lib/goconserver
 
 %changelog
+* Mon Jun 08 2026 xCAT EL10 build - 0.3.3-2.el10
+- Replace archived github.com/kr/pty with github.com/creack/pty to fix
+  "Setctty set but Ctty not valid in child" console fork failure on modern Go.
 SPEC
 
 my $spec_file = "$rpmbuild_top/SPECS/goconserver.spec";
@@ -201,6 +233,9 @@ write_file($spec_file, $spec_content);
 
 run(
     "rpmbuild --define " . sh_quote("_topdir $rpmbuild_top") .
+    " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+    " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+    " --define " . sh_quote("_buildhost xcat-build") .
     " -ba " . sh_quote($spec_file) .
     " >" . sh_quote("$log_dir/rpmbuild.log") . " 2>&1"
 );
@@ -253,6 +288,7 @@ Options:
   --version VER         Version string (default: 0.3.3)
   --go-repo URL         Git repo URL (default: github.com/xcat2/goconserver)
   --go-ref REF          Git ref to build (default: master)
+  --build-timestamp EPOCH  SOURCE_DATE_EPOCH for deterministic builds
 USAGE
 }
 

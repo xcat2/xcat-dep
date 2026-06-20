@@ -21,6 +21,7 @@ my $mock_uniqueext = '';
 my $result_dir = "$repo_root/build-output/list3/ipmitool-xcat";
 my $log_dir = "$repo_root/build-logs/list3/ipmitool-xcat";
 my $skip_install = 0;
+my $build_timestamp;
 
 GetOptions(
     'source-url=s'   => \$source_url,
@@ -31,6 +32,7 @@ GetOptions(
     'result-dir=s'   => \$result_dir,
     'log-dir=s'      => \$log_dir,
     'skip-install!'  => \$skip_install,
+    'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -57,6 +59,19 @@ my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
     : '';
 
+my $SOURCE_DATE_EPOCH;
+$SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
+if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
+    $SOURCE_DATE_EPOCH = slurp("$repo_root/Gitepoch");
+    chomp $SOURCE_DATE_EPOCH;
+}
+unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
+    $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
+    chomp $SOURCE_DATE_EPOCH;
+}
+$SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
+$ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
+
 print_step("Configuration");
 print "repo_root:  $repo_root\n";
 print "pkg_dir:    $pkg_dir\n";
@@ -68,6 +83,7 @@ print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') 
 print "source_url: $source_url\n";
 print "source_file:$source_file\n";
 print "skip_install: $skip_install\n";
+print "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH\n";
 
 make_path($result_dir);
 make_path($log_dir);
@@ -90,6 +106,7 @@ print "Verified " . scalar(@spec_assets) . " Source/Patch assets from spec.\n";
 print_step("Stage files for patch-application check");
 remove_tree($work_dir) if -d $work_dir;
 my $prep_top = "$work_dir/prep";
+my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $work_dir);
 for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
     make_path("$prep_top/$d");
 }
@@ -116,9 +133,12 @@ print_step("Build SRPM with mock");
 my $srpm_out = "$work_dir/srpm";
 make_path($srpm_out);
 run(
-    "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
+    "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --buildsrpm --spec " . sh_quote($spec_file) .
     " --sources " . sh_quote($pkg_dir) .
+    " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+    " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+    " --define " . sh_quote("_buildhost xcat-build") .
     " --resultdir " . sh_quote($srpm_out)
 );
 
@@ -131,8 +151,11 @@ print_step("Rebuild RPM with mock");
 my $rpm_out = "$work_dir/rpm";
 make_path($rpm_out);
 run(
-    "mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt .
+    "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --rebuild " . sh_quote($srpm) .
+    " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+    " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+    " --define " . sh_quote("_buildhost xcat-build") .
     " --resultdir " . sh_quote($rpm_out)
 );
 
@@ -243,7 +266,19 @@ Usage: $0 [options]
   --result-dir PATH     Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH        Log directory (default: $log_dir)
   --skip-install        Skip dnf install + smoke tests
+  --build-timestamp N   Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
 USAGE
+}
+
+sub create_deterministic_mock_cfg {
+    my ($base_cfg, $epoch, $dir) = @_;
+    make_path($dir) unless -d $dir;
+    my $cfg_path = "$dir/mock-deterministic.cfg";
+    open my $fh, '>', $cfg_path or die "Cannot write $cfg_path: $!\n";
+    print $fh "include('/etc/mock/${base_cfg}.cfg')\n";
+    print $fh "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$epoch'\n";
+    close $fh;
+    return $cfg_path;
 }
 
 sub parse_spec {
@@ -298,7 +333,8 @@ sub normalize_source_archive {
 
     # Repack using the expected top-level directory required by the spec.
     run(
-        "tar -C " . sh_quote($normalize_dir) .
+        "tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
+        " -C " . sh_quote($normalize_dir) .
         " -czf " . sh_quote($archive) .
         " " . sh_quote($expected_top)
     );
