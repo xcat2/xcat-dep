@@ -20,11 +20,24 @@ declare -A CODENAME_MAP=(
 )
 ARCHITECTURES=(amd64 ppc64el)
 
+# Versions to build. Populated from positional DIST args; defaults to all of
+# CODENAME_MAP when none are given. SUBSET=1 means the user requested a subset
+# (so cleanup is scoped to the selected dists instead of wiping the whole repo).
+SELECTED_VERS=()
+SUBSET=0
+
 usage() {
     cat <<'EOF'
-Usage: build-apt-repo.sh [options]
+Usage: build-apt-repo.sh [options] [DIST ...]
 
 Generate APT repository metadata from pre-built .deb packages.
+
+Arguments:
+  DIST ...               One or more Ubuntu versions to build, e.g. ubuntu24.04.
+                         Valid values: ubuntu22.04 ubuntu24.04 ubuntu26.04.
+                         When omitted, all three are built (default behavior).
+                         Building a subset only touches those dists; other
+                         existing dists in the repo are left untouched.
 
 Options:
   --repo-root PATH       xcat-dep repository root (default: script directory)
@@ -33,6 +46,10 @@ Options:
   --skip-sign            Skip GPG signing (for testing)
   --dry-run              Print planned actions without executing
   -h, --help             Show this help
+
+Examples:
+  build-apt-repo.sh                 # build all dists (default)
+  build-apt-repo.sh ubuntu24.04     # build only noble
 EOF
 }
 
@@ -55,12 +72,25 @@ while [[ $# -gt 0 ]]; do
         --skip-sign)   SKIP_SIGN=1; shift ;;
         --dry-run)     DRY_RUN=1; shift ;;
         -h|--help)     usage; exit 0 ;;
-        *)             die "Unknown option: $1" ;;
+        -*)            die "Unknown option: $1" ;;
+        *)             SELECTED_VERS+=("$1"); SUBSET=1; shift ;;
     esac
 done
 
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 APT_DIR="${APT_DIR:-$REPO_ROOT/repos/apt}"
+
+# Default to all known versions when no DIST arg was given; otherwise validate
+# each requested version against CODENAME_MAP.
+if [[ ${#SELECTED_VERS[@]} -eq 0 ]]; then
+    SELECTED_VERS=("${!CODENAME_MAP[@]}")
+else
+    for ver in "${SELECTED_VERS[@]}"; do
+        [[ -n "${CODENAME_MAP[$ver]:-}" ]] \
+            || die "Unknown DIST '$ver'. Valid: ${!CODENAME_MAP[*]}"
+    done
+fi
+echo "Building dists: ${SELECTED_VERS[*]}"
 
 step "Validating prerequisites"
 
@@ -78,7 +108,7 @@ else
     echo "GPG signing: skipped"
 fi
 
-for ver in "${!CODENAME_MAP[@]}"; do
+for ver in "${SELECTED_VERS[@]}"; do
     src="$APT_DIR/$ver"
     [[ -d "$src" ]] || die "Source directory missing: $src"
     count=$(find "$src" -maxdepth 1 -name '*.deb' | wc -l)
@@ -89,13 +119,22 @@ done
 step "Cleaning previous repo metadata"
 
 if [[ $DRY_RUN -eq 0 ]]; then
-    rm -rf "$APT_DIR/dists" "$APT_DIR/pool"
+    if [[ $SUBSET -eq 1 ]]; then
+        # Subset build: only remove the selected dists, leave others intact.
+        for ver in "${SELECTED_VERS[@]}"; do
+            codename="${CODENAME_MAP[$ver]}"
+            rm -rf "$APT_DIR/dists/$codename" "$APT_DIR/pool/main/$codename"
+        done
+        echo "Removed dists/ and pool/ for: ${SELECTED_VERS[*]}"
+    else
+        rm -rf "$APT_DIR/dists" "$APT_DIR/pool"
+        echo "Removed dists/ and pool/"
+    fi
 fi
-echo "Removed dists/ and pool/"
 
 step "Creating directory structure"
 
-for ver in "${!CODENAME_MAP[@]}"; do
+for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
     run mkdir -p "$APT_DIR/pool/main/$codename"
     for arch in "${ARCHITECTURES[@]}"; do
@@ -105,7 +144,7 @@ done
 
 step "Populating pool"
 
-for ver in "${!CODENAME_MAP[@]}"; do
+for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
     src="$APT_DIR/$ver"
     dst="$APT_DIR/pool/main/$codename"
@@ -119,7 +158,7 @@ done
 
 step "Generating Packages indexes"
 
-for ver in "${!CODENAME_MAP[@]}"; do
+for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
     echo "Indexing $codename..."
 
@@ -160,7 +199,7 @@ done
 
 step "Generating Release files"
 
-for ver in "${!CODENAME_MAP[@]}"; do
+for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
     echo "Release for $codename..."
 
@@ -189,7 +228,7 @@ done
 if [[ $SKIP_SIGN -eq 0 ]]; then
     step "Signing Release files"
 
-    for ver in "${!CODENAME_MAP[@]}"; do
+    for ver in "${SELECTED_VERS[@]}"; do
         codename="${CODENAME_MAP[$ver]}"
         release="$APT_DIR/dists/$codename/Release"
 
@@ -214,9 +253,18 @@ key_src="$REPO_ROOT/repomd.xml.key"
 key_dst="$APT_DIR/xcat-dep.asc"
 if [[ -f "$key_src" ]]; then
     run cp "$key_src" "$key_dst"
-    echo "Public key -> xcat-dep.asc"
+    echo "Public key -> xcat-dep.asc (from $key_src)"
+elif [[ $DRY_RUN -eq 1 ]]; then
+    echo "(dry-run: would export $GPG_KEY_ID public key to xcat-dep.asc)"
 else
-    echo "WARNING: $key_src not found, skipping key export"
+    # No pre-exported key file: export the signing public key straight from the
+    # keyring (honors GNUPGHOME), so clients get the matching pubkey.
+    if gpg --armor --export "$GPG_KEY_ID" > "$key_dst" 2>/dev/null && [[ -s "$key_dst" ]]; then
+        echo "Public key -> xcat-dep.asc (exported $GPG_KEY_ID from keyring)"
+    else
+        rm -f "$key_dst"
+        echo "WARNING: could not export '$GPG_KEY_ID' and $key_src not found; no xcat-dep.asc written"
+    fi
 fi
 
 step "Summary"
