@@ -59,6 +59,7 @@ echo "prepare building gensis_base_amd64 as a special case"
 #copy the debian_dir and rpm for xcat-genesia-base to the tem directory
 mkdir -p $curdir/genesis_tmp/genesis-base-amd64
 cp -rL ${1}/debian $curdir/genesis_tmp/genesis-base-amd64
+cp -L ${1}/LICENSE.html $curdir/genesis_tmp/genesis-base-amd64
 cp ${2} $curdir/genesis_tmp/genesis-base-amd64
 cd $curdir
 cat << __EOF__ > genesis_tmp/make_deb.sh
@@ -70,7 +71,7 @@ cat << __EOF__ > genesis_tmp/make_deb.sh
 __EOF__
 
 #update to the loatest code
-svn --quiet update
+# svn --quiet update
 packages=""
 if [ $BUILDPKGS ];then
     packages=$BUILDPKGS
