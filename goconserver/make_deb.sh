@@ -37,6 +37,11 @@ export GOMODCACHE="$WORKDIR/gomodcache"
 export CGO_ENABLED=0
 
 go mod init github.com/xcat2/goconserver
+# kr/pty is abandoned and its pty.Start sets Ctty in a way Go >=1.15 rejects
+# ("Setctty set but Ctty not valid in child"), breaking rcons/goconserver on
+# modern Go (noble ships go1.22). creack/pty is the maintained, API-compatible
+# fork that fixes it.
+go mod edit -replace github.com/kr/pty=github.com/creack/pty@v1.1.21
 go mod tidy
 
 cp -rL "$SCRIPT_DIR/debian" .
