@@ -1,6 +1,13 @@
 # -*- rpm -*-
 %define RPMVERSION 6.03
 %define VERSION    6.03
+# The syslinux-xcat subpackage is BuildArch: noarch but deliberately ships the
+# arch-dependent PXELINUX/SYSLINUX bootloader blobs (pxelinux.0, *.c32) under
+# /opt/xcat/share/xcat/netboot/syslinux. Newer rpm (EL10) does not flag these
+# real-mode/COM32 binaries, but EL8/EL9 rpm aborts the build with
+# "Arch dependent binaries in noarch package". Disable that QA gate so the
+# self-contained xcat netboot payload builds across EL8/EL9/EL10.
+%global _binaries_in_noarch_packages_terminate_build 0
 Summary: Kernel loader which uses a FAT, ext2/3 or iso9660 filesystem or a PXE network
 Name: syslinux
 Version: %{RPMVERSION}
