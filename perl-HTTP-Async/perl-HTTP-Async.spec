@@ -39,7 +39,11 @@ using 'select' lists.
 %prep
 %setup -q -n %{upstream_name}-%{upstream_version}
 
-%patch 0 -p1
+# Use the explicit -P form so the patch applies on EL8 (rpm 4.14) and EL9
+# (rpm 4.16) as well as EL10 (rpm 4.19). The bare-number "%patch 0" form is
+# only understood by rpm >= 4.18 and fails older rpm with
+# "%patch without corresponding Patch: tag".
+%patch -P 0 -p1
 
 %build
 CFLAGS="$RPM_OPT_FLAGS $CFLAGS" %__perl Makefile.PL
