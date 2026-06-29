@@ -26,6 +26,7 @@ my $skip_build = 0;
 my $skip_xcat_dep = 0;
 my $skip_perl = 0;
 my $skip_xcat = 0;
+my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
 my $scrub_all_chroots = 0;
@@ -46,6 +47,7 @@ GetOptions(
     'skip-xcat-dep!'    => \$skip_xcat_dep,
     'skip-perl!'        => \$skip_perl,
     'skip-xcat!'        => \$skip_xcat,
+    'skip-genesis!'     => \$skip_genesis,
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
     'scrub-all-chroots!' => \$scrub_all_chroots,
@@ -90,6 +92,11 @@ die "Could not resolve major release from VERSION_ID='$version_id' in /etc/os-re
 if (!$target) {
     $target = resolve_mock_cfg($os_id, $rel, $arch);
 }
+# The build output identity must be per-target (os version + arch). SOURCE_DATE_EPOCH
+# is the same across targets for a given commit, so a timestamp-only run_id makes
+# different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
+# cross-contaminate. Fold the target into run_id so each target gets its own tree.
+$run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
 for my $bin (qw(perl uname createrepo tar find rpm)) {
     require_command($bin);
 }
@@ -152,6 +159,7 @@ print "skip_build:       $skip_build\n";
 print "skip_xcat_dep:    $skip_xcat_dep\n";
 print "skip_perl:        $skip_perl\n";
 print "skip_xcat:        $skip_xcat\n";
+print "skip_genesis:     $skip_genesis\n";
 print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
 print "skip_tarball:     $skip_tarball\n";
@@ -242,6 +250,31 @@ if (!$skip_build) {
         };
     }
 
+    # xCAT-genesis-base is OS-dependent (its initramfs bundles the build chroot's
+    # kernel + glibc/busybox/perl), so it is built here, per target, and shipped
+    # in this per-EL xcat-dep repo rather than in the flat xcat-core. buildrpms.pl
+    # (run in the xcat-core dir) derives the same snapYYYYMMDDHHMM Release from
+    # xcat-core's Gitepoch, so it matches xCAT-genesis-scripts (built in core) and
+    # the exact-version dependency genesis-scripts -> genesis-base resolves.
+    if (!$skip_genesis) {
+        my $cmd = join(' ',
+            'perl', sh_quote("$xcat_src/buildrpms.pl"),
+            '--package', 'xCAT-genesis-base',
+            '--target', sh_quote($target),
+            '--nproc', int($nproc),
+            '--force',
+            '--verbose',
+            '--xcat_dep_path', sh_quote($repo_root),
+        );
+        push @build_steps, {
+            id   => 'genesis',
+            step => 'Build xCAT-genesis-base (per-target, OS-dependent)',
+            cmd  => $cmd,
+            cwd  => $xcat_src,
+            log  => "$log_root/genesis-build.log",
+        };
+    }
+
     if (@build_steps) {
         my $effective_parallel_builds = defined($parallel_builds)
             ? $parallel_builds
@@ -255,7 +288,16 @@ if (!$skip_build) {
 
 my $xcat_rpms_dir = "$xcat_src/dist/$target/rpms";
 my $xcat_srpms_dir = "$xcat_src/dist/$target/srpms";
-push @collect_roots, $xcat_rpms_dir;
+
+# In monolithic mode (no --skip-xcat) the whole xCAT core built here (incl.
+# genesis-base) is collected into this repo. In the split pipeline (--skip-xcat,
+# core built separately) the orchestrator (cluster-test.pl) routes
+# xCAT-genesis-base from the xCAT dist tree into the per-EL dep repo itself --
+# robust to this script exiting non-zero on tolerated dep-builder failures -- so
+# we deliberately do NOT collect the xCAT dist tree here.
+if (!$skip_xcat) {
+    push @collect_roots, $xcat_rpms_dir;
+}
 
 if ($skip_build) {
     push @collect_roots,
@@ -272,7 +314,9 @@ if ($skip_build) {
 
 push @collect_roots, @extra_collect_dirs;
 @collect_roots = uniq(@collect_roots);
-my @srpm_collect_roots = uniq(@collect_roots, $xcat_srpms_dir);
+my @srpm_collect_roots = (!$skip_xcat)
+    ? uniq(@collect_roots, $xcat_srpms_dir)
+    : uniq(@collect_roots);
 
 print_step('Collect RPM artifacts');
 print "collection roots:\n";
