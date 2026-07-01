@@ -187,7 +187,7 @@ print_step("Create spec and build RPM");
 my $spec_content = <<"SPEC";
 Name:           goconserver
 Version:        $version
-Release:        2.el$rel
+Release:        3.el$rel
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
