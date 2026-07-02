@@ -32,11 +32,19 @@ my $skip_tarball = 0;
 my $scrub_all_chroots = 0;
 my $dry_run = 0;
 my @extra_collect_dirs;
+my $repo_dep = '';
+my $gpg_sign = 0;
+my $gpg_key_name = 'xCAT Automatic Signing Key';
+my $gpg_home = '';
 
 GetOptions(
     'repo-root=s'       => \$repo_root,
     'xcat-source=s'     => \$xcat_src,
     'output-root=s'     => \$output_root,
+    'repo-dep=s'        => \$repo_dep,
+    'gpg-sign!'         => \$gpg_sign,
+    'gpg-key-name=s'    => \$gpg_key_name,
+    'gpg-home=s'        => \$gpg_home,
     'target=s'          => \$target,
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
@@ -77,6 +85,9 @@ if ($run_id eq '') {
     $run_id = strftime('%Y%m%d-%H%M%S', gmtime($SOURCE_DATE_EPOCH));
 }
 
+# Deployable per-EL xcat-dep repo root (rh8/rh9/rh10/<arch> assembled here).
+$repo_dep = "$repo_root/build-output/xcat-dep" if $repo_dep eq '';
+
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
 my $arch = capture('uname -m');
@@ -89,18 +100,48 @@ die "Could not resolve ID from /etc/os-release\n" if $os_id eq '';
 die "Could not resolve major release from VERSION_ID='$version_id' in /etc/os-release\n"
     if !defined($rel) || $rel eq '';
 
-if (!$target) {
-    $target = resolve_mock_cfg($os_id, $rel, $arch);
-}
-# The build output identity must be per-target (os version + arch). SOURCE_DATE_EPOCH
-# is the same across targets for a given commit, so a timestamp-only run_id makes
-# different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
-# cross-contaminate. Fold the target into run_id so each target gets its own tree.
-$run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
 for my $bin (qw(perl uname createrepo tar find rpm)) {
     require_command($bin);
 }
 require_command('mock') if $scrub_all_chroots;
+require_command('rpmsign') if $gpg_sign;
+require_command('gpg')     if $gpg_sign;
+
+# An explicit --target builds just that target; otherwise build the current host
+# arch across rh8/rh9/rh10 into a deployable per-EL xcat-dep repo. This script builds
+# ONLY the host arch (uname -m) -- the other arch is produced on its own build host.
+my @build_targets = $target
+    ? ($target)
+    : map { resolve_mock_cfg($os_id, $_, $arch) } (8, 9, 10);
+
+# NOTE: no dhcp- packages are built here. DHCP backend selection is an install-time
+# rich dep in xCAT.spec (kea if system-release>=10 else /usr/sbin/dhcpd), so there is
+# nothing arch/EL-specific to build or to exclude for el10.
+
+print_step('Targets to build');
+print "  $_\n" for @build_targets;
+print "deploy repo-dep:  $repo_dep\n";
+print "gpg_sign:         $gpg_sign\n";
+
+for my $tgt (@build_targets) {
+    my $info = build_one_target($tgt, $run_id);
+    deploy_target($tgt, $info);
+}
+
+print_step('All targets completed');
+exit 0;
+
+# Build a single target into its own build-output/<target-runid> tree and return
+# { repo_dir, rel }. Everything below through the summary is per-target work.
+sub build_one_target {
+    my ($target, $run_id) = @_;
+    # The build output identity must be per-target (os version + arch). SOURCE_DATE_EPOCH
+    # is the same across targets for a given commit, so a timestamp-only run_id makes
+    # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
+    # cross-contaminate. Fold the target into run_id so each target gets its own tree.
+    $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
+    my ($rel) = $target =~ /epel-(\d+)-/;
+    die "Could not parse EL release from target '$target'\n" unless defined $rel;
 
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
@@ -332,6 +373,17 @@ if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
 
+# Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
+# lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
+if (!$skip_genesis && !$dry_run) {
+    for my $g (glob("$xcat_rpms_dir/xCAT-genesis-base-*.rpm")) {
+        next if $g =~ /\.src\.rpm$/;
+        copy($g, "$repo_dir/" . basename($g))
+            or die "Failed to copy genesis-base $g -> $repo_dir: $!\n";
+        $copied++;
+    }
+}
+
 print_step('Collect source RPM artifacts');
 print "source collection roots:\n";
 print "  $_\n" for @srpm_collect_roots;
@@ -419,7 +471,104 @@ print "SRPM repo dir:         $srpm_repo_dir\n";
 print "Summary:               $summary_file\n" if !$dry_run;
 print "Tarball:               $tarball\n" if !$skip_tarball;
 print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
-exit 0;
+
+    return { repo_dir => $repo_dir, rel => $rel };
+}
+
+# Assemble the built per-target repo into the deployable, signed per-EL layout
+# <repo-dep>/rh<rel>/<arch>: copy the binary rpms, sign, createrepo, and drop the
+# xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to xcat.org).
+sub deploy_target {
+    my ($tgt, $info) = @_;
+    my $rel  = $info->{rel};
+    my $src  = $info->{repo_dir};
+    my $dest = "$repo_dep/rh$rel/$arch";
+    print_step("Deploy $tgt -> $dest");
+    return if $dry_run;
+    make_path($dest);
+    for my $rpm (glob("$src/*.rpm")) {
+        next if $rpm =~ /\.src\.rpm$/;
+        copy($rpm, "$dest/" . basename($rpm))
+            or die "Failed to copy $rpm -> $dest: $!\n";
+    }
+    assert_required_deps($dest);
+    sign_and_index_repo($dest);
+    write_dep_repo_metadata($dest, $rel);
+    my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
+    print "Deployed rh$rel/$arch: $n rpms\n";
+}
+
+sub sign_and_index_repo {
+    my ($dir) = @_;
+    my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+    if ($gpg_sign && @rpms) {
+        local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
+        run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
+            . join(' ', map { sh_quote($_) } @rpms));
+    }
+    run_simple('createrepo --update ' . sh_quote($dir));
+    if ($gpg_sign) {
+        local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
+        my $repomd = "$dir/repodata/repomd.xml";
+        unlink "$repomd.asc" if -f "$repomd.asc";
+        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . sh_quote($repomd));
+        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . sh_quote("$repomd.key"));
+    }
+}
+
+sub write_dep_repo_metadata {
+    my ($dir, $rel) = @_;
+    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$arch";
+    my $gpgcheck = $gpg_sign ? 1 : 0;
+    my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
+    open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
+    print {$r} <<"EOF";
+[xcat-dep]
+name=xCAT 2 dependencies (rh$rel $arch)
+baseurl=$baseurl
+enabled=1
+gpgcheck=$gpgcheck
+$gpgkey_line
+EOF
+    close $r;
+
+    open my $m, '>', "$dir/mklocalrepo.sh" or die "Cannot write $dir/mklocalrepo.sh: $!\n";
+    print {$m} <<'EOS';
+#!/bin/sh
+cd `dirname $0`
+REPOFILE=`basename xcat-*.repo`
+if [[ $REPOFILE == "xcat-*.repo" ]]; then
+    echo "ERROR: For xcat-dep, please execute $0 in the correct <os>/<arch> subdirectory"
+    exit 1
+fi
+DIRECTORY="/etc/yum.repos.d"
+if [ ! -d "$DIRECTORY" ]; then
+    DIRECTORY="/etc/zypp/repos.d"
+fi
+sed -e 's|baseurl=.*|baseurl=file://'"`pwd`"'|' $REPOFILE | sed -e 's|gpgkey=.*|gpgkey=file://'"`pwd`"'/repodata/repomd.xml.key|' > "$DIRECTORY/$REPOFILE"
+cd -
+EOS
+    close $m;
+    chmod 0775, "$dir/mklocalrepo.sh";
+
+    my $build_time = strftime("%a %b %e %H:%M:%S %Z %Y", gmtime($SOURCE_DATE_EPOCH));
+    my $build_machine = `hostname`; chomp $build_machine;
+    my $commit = `git -C "$repo_root" rev-parse HEAD 2>/dev/null`; chomp $commit;
+    $commit ||= 'unknown';
+    my $commit_short = substr($commit, 0, 7);
+    my $release = strftime('snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH));
+    open my $b, '>', "$dir/buildinfo.txt" or die "Cannot write $dir/buildinfo.txt: $!\n";
+    print {$b} <<"EOF";
+TARGET=rh$rel/$arch
+RELEASE=$release
+BUILD_TIME=$build_time
+BUILD_MACHINE=$build_machine
+COMMIT_ID=$commit_short
+COMMIT_ID_LONG=$commit
+SOURCE_DATE_EPOCH=$SOURCE_DATE_EPOCH
+EOF
+    close $b;
+}
 
 sub usage {
     return <<"USAGE";
@@ -431,7 +580,13 @@ Options:
   --repo-root PATH        xcat-dep repository root (default: script directory)
   --xcat-source PATH      xCAT source root with buildrpms.pl (default: <repo-root>/xcat-source-code)
   --output-root PATH      Root output directory (default: <repo-root>/build-output/mockbuild-all)
-  --target NAME           Optional unified target in <ID>+epel-<REL>-<ARCH> format
+  --repo-dep PATH         Deployable per-EL output root; rh8/rh9/rh10/<arch> are
+                          assembled + signed here (default: <repo-root>/build-output/xcat-dep)
+  --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
+  --gpg-key-name NAME     GPG key name (default: "xCAT Automatic Signing Key")
+  --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
+  --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>); default is
+                          the host arch across rh8, rh9 and rh10
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
   --parallel-builds N     Max concurrent top-level build steps (default: auto=queued steps)
   --run-id ID             Run identifier suffix (default: derived from build timestamp)
@@ -531,9 +686,14 @@ sub run_build_steps_parallel {
     my $max_processes = $args{max_processes} // 1;
     return if !@{$steps};
 
+    # Individual dep-builder failures are TOLERATED (some packages are el-/arch-pinned or
+    # have dead upstream source URLs, e.g. elilo on el10, perl-Sys-Virt on el8, a moved grub2
+    # src.rpm). We collect whatever built and assert the REQUIRED set later (assert_required_deps),
+    # matching the historical build behaviour.
     if ($dry_run || $max_processes <= 1 || @{$steps} == 1) {
         for my $step (@{$steps}) {
-            run_step(%{$step});
+            my $ok = eval { run_step(%{$step}); 1 };
+            warn "WARN: build step failed (tolerated): $step->{step}\n" . ($@ // '') unless $ok;
         }
         return;
     }
@@ -590,8 +750,33 @@ sub run_build_steps_parallel {
             push @lines,
                 "$id (exit=$f->{exit}, signal=$f->{signal}, core_dump=$f->{core_dump})";
         }
-        die "Parallel build steps failed:\n  " . join("\n  ", @lines) . "\n";
+        # Tolerated: warn, don't die. The REQUIRED set is asserted after collection/deploy.
+        warn "WARN: some build steps failed (tolerated; required deps asserted after deploy):\n  "
+            . join("\n  ", @lines) . "\n";
     }
+}
+
+# have_rpm: is there a non-src rpm named <name>-... under $dir?
+sub have_rpm {
+    my ($dir, $name) = @_;
+    my @m = grep { !/\.src\.rpm$/ } glob("$dir/${name}-*.rpm");
+    return scalar(@m) > 0;
+}
+
+# assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is
+# fatal even though individual builder failures are tolerated above. genesis-base is required
+# unless --skip-genesis. (grub2-xcat/elilo/xnba are arch/EL-specific and NOT in the hard set.)
+sub assert_required_deps {
+    my ($dir) = @_;
+    # cross-arch required set; syslinux-xcat is the x86 PXE bootloader (x86-only, cannot build
+    # on ppc64le). grub2-xcat (ppc netboot) and xnba-undi (x86) are NOT in the hard set --
+    # grub2's upstream src.rpm currently 404s, so it is sourced from the published repo.
+    my @req = qw(ipmitool-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB);
+    push @req, 'syslinux-xcat' if $arch eq 'x86_64';
+    push @req, 'xCAT-genesis-base' unless $skip_genesis;
+    my @missing = grep { !have_rpm($dir, $_) } @req;
+    die "FATAL: required deps missing from $dir: @missing\n" if @missing;
+    print "[deps] required set present in $dir: @req\n";
 }
 
 sub collect_rpms {
