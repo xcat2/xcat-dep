@@ -15,7 +15,10 @@ my $spec_file  = "$pkg_dir/grub2-xcat.spec";
 my $recompile_dir = "$repo_root/grub2-xcat.recompile";
 
 my $resource_mode = 'reuse-grub2-res';
-my $upstream_url  = 'https://mirror.stream.centos.org/10-stream/BaseOS/source/tree/Packages/grub2-2.12-37.el10.src.rpm';
+# Empty by default -> resolved dynamically from the distro's source repo (a pinned URL rots:
+# the distro bumps grub2 and prunes the old src.rpm from the mirror -> 404). Override with
+# --upstream-url to force a specific source rpm.
+my $upstream_url  = '';
 my $upstream_file = '';
 my $work_dir      = '/tmp/grub2-xcat-mockbuild';
 my $mock_cfg      = '';
@@ -55,6 +58,16 @@ for my $bin (qw(wget mock rpmbuild rpm dnf file bash tar sha256sum grep cmp cut)
 
 my ($version, @spec_assets) = parse_spec($spec_file);
 die "Could not parse Version from $spec_file\n" if !$version;
+
+# Resolve the grub2 source RPM URL dynamically unless one was passed. This replaces the old
+# hard-pinned mirror.stream.centos.org URL that 404s once the distro rolls grub2 forward.
+if (!$upstream_url) {
+    $upstream_url = resolve_grub2_src_url();
+    die "Could not resolve a current grub2 source RPM URL from the source repos.\n"
+      . "Enable a *-source repo (e.g. baseos-source / BaseOS Source) or pass --upstream-url.\n"
+        if !$upstream_url;
+    print "Resolved grub2 source RPM URL: $upstream_url\n";
+}
 
 if (!$upstream_file) {
     $upstream_file = basename($upstream_url);
@@ -364,6 +377,21 @@ sub run {
         my $exit = $rc == -1 ? 255 : ($rc >> 8);
         die "Command failed (rc=$exit): $cmd\n";
     }
+}
+
+# resolve_grub2_src_url: ask dnf for the current grub2 source rpm URL from the host's source
+# repos, so we track the distro's grub2 instead of a pinned (and eventually 404ing) version.
+sub resolve_grub2_src_url {
+    for my $cmd (
+        'dnf download --source grub2 --url 2>/dev/null',
+        'dnf repoquery --quiet --qf "%{location}" --source grub2 2>/dev/null',
+    ) {
+        print "+ $cmd\n";
+        my $out = `$cmd`;
+        my ($url) = $out =~ m{(https?://\S+/grub2-\S+\.src\.rpm)};
+        return $url if $url;
+    }
+    return '';
 }
 
 sub capture {
