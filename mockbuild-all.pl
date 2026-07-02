@@ -36,6 +36,7 @@ my $repo_dep = '';
 my $gpg_sign = 0;
 my $gpg_key_name = 'xCAT Automatic Signing Key';
 my $gpg_home = '';
+my $import_noarch_repo = '';
 
 GetOptions(
     'repo-root=s'       => \$repo_root,
@@ -45,6 +46,7 @@ GetOptions(
     'gpg-sign!'         => \$gpg_sign,
     'gpg-key-name=s'    => \$gpg_key_name,
     'gpg-home=s'        => \$gpg_home,
+    'import-noarch-repo=s' => \$import_noarch_repo,
     'target=s'          => \$target,
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
@@ -491,6 +493,7 @@ sub deploy_target {
         copy($rpm, "$dest/" . basename($rpm))
             or die "Failed to copy $rpm -> $dest: $!\n";
     }
+    import_shared_noarch($dest);
     assert_required_deps($dest);
     sign_and_index_repo($dest);
     write_dep_repo_metadata($dest, $rel);
@@ -585,6 +588,9 @@ Options:
   --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
   --gpg-key-name NAME     GPG key name (default: "xCAT Automatic Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
+  --import-noarch-repo DIR  On a non-x86_64 build, import the noarch xnba-undi/grub2-xcat
+                          rpms (x86_64-only-built, but required by xCAT on ppc) from this
+                          already-built x86_64 dep repo dir
   --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>); default is
                           the host arch across rh8, rh9 and rh10
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
@@ -763,19 +769,46 @@ sub have_rpm {
     return scalar(@m) > 0;
 }
 
+# Noarch deps that xCAT Requires on EVERY arch but that only build on x86_64: xnba-undi is an
+# x86 UNDI network-boot ROM, and grub2-xcat wraps the distro grub2 (its src.rpm/tooling is
+# x86-centric). Because they are noarch (arch-independent), a ppc build imports them from a
+# built x86_64 dep repo (--import-noarch-repo) rather than rebuilding them.
+my @SHARED_NOARCH = qw(xnba-undi grub2-xcat);
+sub import_shared_noarch {
+    my ($dest) = @_;
+    return if $arch eq 'x86_64';          # x86 builds these natively
+    return if $import_noarch_repo eq '';  # nothing to import from
+    for my $name (@SHARED_NOARCH) {
+        next if have_rpm($dest, $name);
+        my ($src) = grep { /\.noarch\.rpm$/ } glob("$import_noarch_repo/${name}-*.rpm");
+        if ($src) {
+            copy($src, "$dest/" . basename($src))
+                or die "Failed to import $src -> $dest: $!\n";
+            print "[deps] imported shared noarch $name from $import_noarch_repo\n";
+        }
+        else {
+            warn "WARN: shared noarch $name not found under --import-noarch-repo $import_noarch_repo\n";
+        }
+    }
+}
+
 # assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is
 # fatal even though individual builder failures are tolerated above. genesis-base is required
 # unless --skip-genesis. (grub2-xcat/elilo/xnba are arch/EL-specific and NOT in the hard set.)
 sub assert_required_deps {
     my ($dir) = @_;
-    # cross-arch required set; syslinux-xcat is the x86 PXE bootloader (x86-only, cannot build
-    # on ppc64le). grub2-xcat (ppc netboot) and xnba-undi (x86) are NOT in the hard set --
-    # grub2's upstream src.rpm currently 404s, so it is sourced from the published repo.
-    my @req = qw(ipmitool-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB);
-    push @req, 'syslinux-xcat' if $arch eq 'x86_64';
+    # xCAT Requires all of these on every arch. ipmitool-xcat/syslinux-xcat/perl-* and
+    # genesis-base build on both arches; grub2-xcat/xnba-undi build on x86_64 and are imported
+    # into a ppc repo by import_shared_noarch (run just before this check).
+    my @req = qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB);
     push @req, 'xCAT-genesis-base' unless $skip_genesis;
     my @missing = grep { !have_rpm($dir, $_) } @req;
-    die "FATAL: required deps missing from $dir: @missing\n" if @missing;
+    die "FATAL: required deps missing from $dir: @missing\n"
+      . ($arch ne 'x86_64' && !$import_noarch_repo
+         ? "       (pass --import-noarch-repo <x86_64 dep dir> to import xnba-undi/grub2-xcat)\n"
+         : '')
+        if @missing;
     print "[deps] required set present in $dir: @req\n";
 }
 
