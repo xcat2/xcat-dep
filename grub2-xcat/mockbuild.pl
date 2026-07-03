@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use Cwd qw(abs_path);
-use File::Basename qw(dirname basename);
+use File::Basename qw(dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
 use Getopt::Long qw(GetOptions);
@@ -15,31 +15,22 @@ my $spec_file  = "$pkg_dir/grub2-xcat.spec";
 my $recompile_dir = "$repo_root/grub2-xcat.recompile";
 
 my $resource_mode = 'reuse-grub2-res';
-# Empty by default -> resolved dynamically from the distro's source repo (a pinned URL rots:
-# the distro bumps grub2 and prunes the old src.rpm from the mirror -> 404). Override with
-# --upstream-url to force a specific source rpm.
-my $upstream_url  = '';
-my $upstream_file = '';
 my $work_dir      = '/tmp/grub2-xcat-mockbuild';
 my $mock_cfg      = '';
 my $mock_uniqueext = '';
 my $result_dir    = "$repo_root/build-output/list3/grub2-xcat";
 my $log_dir       = "$repo_root/build-logs/list3/grub2-xcat";
 my $skip_install  = 0;
-my $skip_upstream_download = 0;
 my $build_timestamp;
 
 GetOptions(
     'resource-mode=s'        => \$resource_mode,
-    'upstream-url=s'         => \$upstream_url,
-    'upstream-file=s'        => \$upstream_file,
     'work-dir=s'             => \$work_dir,
     'mock-cfg=s'             => \$mock_cfg,
     'mock-uniqueext=s'       => \$mock_uniqueext,
     'result-dir=s'           => \$result_dir,
     'log-dir=s'              => \$log_dir,
     'skip-install!'          => \$skip_install,
-    'skip-upstream-download!' => \$skip_upstream_download,
     'build-timestamp=i'      => \$build_timestamp,
 ) or die usage();
 
@@ -52,28 +43,17 @@ die "Mode regenerate-from-el10-srcrpm is not supported in this script yet; use r
 
 make_path($recompile_dir) if !-d $recompile_dir;
 
-for my $bin (qw(wget mock rpmbuild rpm dnf file bash tar sha256sum grep cmp cut)) {
+for my $bin (qw(mock rpmbuild rpm dnf file bash tar grep cmp)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
 my ($version, @spec_assets) = parse_spec($spec_file);
 die "Could not parse Version from $spec_file\n" if !$version;
 
-# Resolve the grub2 source RPM URL dynamically unless one was passed. This replaces the old
-# hard-pinned mirror.stream.centos.org URL that 404s once the distro rolls grub2 forward.
-if (!$upstream_url) {
-    $upstream_url = resolve_grub2_src_url();
-    die "Could not resolve a current grub2 source RPM URL from the source repos.\n"
-      . "Enable a *-source repo (e.g. baseos-source / BaseOS Source) or pass --upstream-url.\n"
-        if !$upstream_url;
-    print "Resolved grub2 source RPM URL: $upstream_url\n";
-}
-
-if (!$upstream_file) {
-    $upstream_file = basename($upstream_url);
-}
-die "Could not derive upstream file name from URL: $upstream_url\n" if !$upstream_file;
-my $upstream_path = "$recompile_dir/$upstream_file";
+# NOTE: grub2-xcat is a pure noarch repackaging of the committed grub2-res.tar.gz (Source1),
+# so the build needs no external source. Fetching the distro grub2 src.rpm would only ever be
+# needed by the (currently unimplemented) regenerate-from-el10-srcrpm mode, which would rebuild
+# the grub tree from source and commit a fresh grub2-res.tar.gz rather than download at build time.
 
 my $arch = capture('uname -m');
 if (!$mock_cfg) {
@@ -108,31 +88,13 @@ print "result_dir: $result_dir\n";
 print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
-print "upstream_url:  $upstream_url\n";
-print "upstream_file: $upstream_file\n";
 print "skip_install:  $skip_install\n";
-print "skip_upstream_download: $skip_upstream_download\n";
 
 make_path($result_dir);
 make_path($log_dir);
 
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
-
-if (!$skip_upstream_download) {
-    print_step("Download upstream source RPM");
-    run("wget --spider " . sh_quote($upstream_url));
-    run("wget -O " . sh_quote($upstream_path) . " " . sh_quote($upstream_url));
-    my $sha = capture("sha256sum " . sh_quote($upstream_path) . " | cut -d ' ' -f1");
-    my $meta_file = "$log_dir/upstream-source.txt";
-    open my $mfh, '>', $meta_file or die "Cannot write $meta_file: $!\n";
-    print {$mfh} "url=$upstream_url\n";
-    print {$mfh} "file=$upstream_path\n";
-    print {$mfh} "sha256=$sha\n";
-    close $mfh;
-    print "Downloaded upstream source rpm: $upstream_path\n";
-    print "SHA256: $sha\n";
-}
 
 print_step("Verify grub2 resource payload");
 my $resource_tar = "$pkg_dir/grub2-res.tar.gz";
@@ -308,14 +270,11 @@ sub usage {
     return <<"USAGE";
 Usage: $0 [options]
   --resource-mode MODE    Build mode: reuse-grub2-res|regenerate-from-el10-srcrpm (default: $resource_mode)
-  --upstream-url URL      Upstream grub2 source RPM URL (default: $upstream_url)
-  --upstream-file FILE    Source RPM filename stored in grub2-xcat.recompile/ (default: basename of URL)
   --work-dir PATH         Temporary work dir (default: $work_dir)
   --mock-cfg NAME         Mock config (default: <ID>+epel-10-<ARCH>)
   --mock-uniqueext TXT    Optional mock --uniqueext suffix to isolate concurrent builds
   --result-dir PATH       Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH          Log directory (default: $log_dir)
-  --skip-upstream-download  Skip wget of upstream source RPM
   --skip-install          Skip dnf install + smoke tests
   --build-timestamp EPOCH Unix timestamp for deterministic builds (SOURCE_DATE_EPOCH)
 USAGE
@@ -377,21 +336,6 @@ sub run {
         my $exit = $rc == -1 ? 255 : ($rc >> 8);
         die "Command failed (rc=$exit): $cmd\n";
     }
-}
-
-# resolve_grub2_src_url: ask dnf for the current grub2 source rpm URL from the host's source
-# repos, so we track the distro's grub2 instead of a pinned (and eventually 404ing) version.
-sub resolve_grub2_src_url {
-    for my $cmd (
-        'dnf download --source grub2 --url 2>/dev/null',
-        'dnf repoquery --quiet --qf "%{location}" --source grub2 2>/dev/null',
-    ) {
-        print "+ $cmd\n";
-        my $out = `$cmd`;
-        my ($url) = $out =~ m{(https?://\S+/grub2-\S+\.src\.rpm)};
-        return $url if $url;
-    }
-    return '';
 }
 
 sub capture {
