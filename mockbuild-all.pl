@@ -14,11 +14,18 @@ use POSIX qw(strftime);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
-my $xcat_src   = "$repo_root/xcat-source-code";
-my $output_root = "$repo_root/build-output/mockbuild-all";
+my $xcat_src   = "$repo_root/../xcat-core";
+# Single knob for all NFS-shared output; --output-root/--repo-dep derive from it below
+# unless explicitly overridden. Empty means "not set on the command line".
+my $output     = '';
+my $output_root = '';
 my $target     = '';
 my $nproc      = 1;
 my $parallel_builds;
+my $parallel_targets = 1;   # 1 = serial (default; safe). 0/auto = all EL targets at once; N = cap.
+                            # NOTE: parallel targets need every per-package mockbuild.pl to avoid
+                            # shared-path writes (repo tarballs, $HOME/rpmbuild); serial is safe today.
+my $max_parallel = 0;       # 0/auto = host nproc: global cap on concurrent mock builds (all targets)
 my $run_id     = '';
 my $build_timestamp;
 my $skip_install = 0;
@@ -34,22 +41,27 @@ my $dry_run = 0;
 my @extra_collect_dirs;
 my $repo_dep = '';
 my $gpg_sign = 0;
-my $gpg_key_name = 'xCAT Automatic Signing Key';
+my $gpg_key_name = 'xCAT Signing Key';
 my $gpg_home = '';
-my $import_noarch_repo = '';
+my $force_unlock = 0;
+my $HELD_LOCK;        # path of the output lock this process owns (for cleanup on exit)
+my $LOCK_OWNER_PID;   # pid that created the lock; forked children must NOT remove it
 
 GetOptions(
     'repo-root=s'       => \$repo_root,
     'xcat-source=s'     => \$xcat_src,
+    'output=s'          => \$output,
     'output-root=s'     => \$output_root,
     'repo-dep=s'        => \$repo_dep,
     'gpg-sign!'         => \$gpg_sign,
     'gpg-key-name=s'    => \$gpg_key_name,
     'gpg-home=s'        => \$gpg_home,
-    'import-noarch-repo=s' => \$import_noarch_repo,
+    'force-unlock!'     => \$force_unlock,
     'target=s'          => \$target,
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
+    'parallel-targets=i' => \$parallel_targets,
+    'max-parallel=i'    => \$max_parallel,
     'run-id=s'          => \$run_id,
     'build-timestamp=i' => \$build_timestamp,
     'skip-install!'     => \$skip_install,
@@ -87,8 +99,22 @@ if ($run_id eq '') {
     $run_id = strftime('%Y%m%d-%H%M%S', gmtime($SOURCE_DATE_EPOCH));
 }
 
+# Single output base for every NFS-shared write. Two hosts build in parallel on one NFS by
+# passing distinct --output paths. --output-root/--repo-dep, if given, override the derived
+# values. Default keeps the historical layout so existing callers are unaffected.
+# Create the dir first, THEN abs_path -- abs_path() on a not-yet-existing path returns undef,
+# and abs_path(undef) silently resolves to cwd, which would misdirect all output.
+my $output_base = $output ne '' ? $output : "$repo_root/build-output";
+make_path($output_base) if !-d $output_base;
+$output_base = abs_path($output_base)
+    or die "Cannot resolve --output base directory\n";
+$output_root = "$output_base/mockbuild-all" if $output_root eq '';
 # Deployable per-EL xcat-dep repo root (rh8/rh9/rh10/<arch> assembled here).
-$repo_dep = "$repo_root/build-output/xcat-dep" if $repo_dep eq '';
+$repo_dep = "$output_base/xcat-dep" if $repo_dep eq '';
+
+# Fail-fast lock on the output base so a second run against the same --output aborts instead of
+# racing on the shared NFS tree. Held for the whole invocation; released by the exit handlers.
+acquire_output_lock($output_base, $force_unlock);
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
@@ -122,13 +148,45 @@ my @build_targets = $target
 
 print_step('Targets to build');
 print "  $_\n" for @build_targets;
+print "output_base:      $output_base\n";
 print "deploy repo-dep:  $repo_dep\n";
+print "lock:             $output_base/.lock (held)\n";
 print "gpg_sign:         $gpg_sign\n";
+print "gpg_key_name:     $gpg_key_name\n" if $gpg_sign;
+print "gpg_home:         " . ($gpg_home ne '' ? $gpg_home : '(default keyring)') . "\n" if $gpg_sign;
 
+# Build (and deploy) EL targets concurrently. Each target is fully isolated -- distinct run_id
+# (target-folded), mock --uniqueext, /tmp work dir, xcat_src/dist/<target>, and deploy dir
+# rh<rel>/<arch> -- so there is no cross-target contention. 0/auto = all at once; 1 = serial.
+my $tgt_workers = $parallel_targets > 0 ? $parallel_targets : scalar(@build_targets);
+$tgt_workers = scalar(@build_targets) if $tgt_workers > scalar(@build_targets);
+# Global cap on concurrent mock builds so parallel targets don't oversubscribe the host. Each
+# mock build already gets a unique --uniqueext (separate chroot), so the only limit needed is
+# hardware: total concurrent builds across all targets stays <= $cap (default host nproc). The
+# per-target build-step concurrency is therefore the cap divided across the active targets.
+my $cap = $max_parallel > 0 ? $max_parallel : (capture('nproc') || 4);
+my $per_target_builds = defined($parallel_builds) ? $parallel_builds : int($cap / $tgt_workers);
+$per_target_builds = 1 if $per_target_builds < 1;
+print "parallel_targets: " . ($parallel_targets > 0 ? $parallel_targets : "auto($tgt_workers)") . "\n";
+print "max_parallel:     $cap (per-target build workers: $per_target_builds)\n";
+my $tgt_pm = Parallel::ForkManager->new($tgt_workers <= 1 ? 0 : $tgt_workers);
+my $tgt_fail = 0;
+$tgt_pm->run_on_finish(sub {
+    my ($pid, $exit) = @_;
+    $tgt_fail++ if $exit;
+});
 for my $tgt (@build_targets) {
-    my $info = build_one_target($tgt, $run_id);
-    deploy_target($tgt, $info);
+    $tgt_pm->start and next;
+    my $rc = 0;
+    eval {
+        my $info = build_one_target($tgt, $run_id, $per_target_builds);
+        deploy_target($tgt, $info);
+        1;
+    } or do { warn "ERROR: target $tgt failed: $@"; $rc = 1; };
+    $tgt_pm->finish($rc);
 }
+$tgt_pm->wait_all_children;
+die "FATAL: $tgt_fail target(s) failed\n" if $tgt_fail;
 
 print_step('All targets completed');
 exit 0;
@@ -136,7 +194,7 @@ exit 0;
 # Build a single target into its own build-output/<target-runid> tree and return
 # { repo_dir, rel }. Everything below through the summary is per-target work.
 sub build_one_target {
-    my ($target, $run_id) = @_;
+    my ($target, $run_id, $max_build_workers) = @_;
     # The build output identity must be per-target (os version + arch). SOURCE_DATE_EPOCH
     # is the same across targets for a given commit, so a timestamp-only run_id makes
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
@@ -154,17 +212,17 @@ my $tarball      = "$output_root/mockbuild-all-$target-$run_id.tar.gz";
 my $srpm_repo_dir = "$run_root/repo-src";
 my $srpm_tarball  = "$output_root/mockbuild-all-$target-$run_id-srpm.tar.gz";
 
+# All dep builders run natively on every arch. xnba-undi and grub2-xcat are noarch packagings of
+# committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
+# step, so ppc builds them the same as x86 -- no cross-arch import.
 my @dep_builders = (
     { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl" },
     { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl" },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
     { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
+    { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl" },
 );
-
-if ($arch eq 'x86_64') {
-    push @dep_builders, { name => 'xnba-undi', script => "$repo_root/xnba/mockbuild.pl" };
-}
 
 my $perl_builder = "$repo_root/mockbuild-perl-packages.pl";
 
@@ -240,6 +298,8 @@ if (!$skip_build) {
                 '--mock-uniqueext', sh_quote($step_uniqueext),
                 '--result-dir', sh_quote($step_result),
                 '--log-dir', sh_quote($step_log),
+                # host-local, run-scoped work dir so /tmp doesn't collide between runs
+                '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
                 ($skip_install ? '--skip-install' : ()),
             );
@@ -257,12 +317,17 @@ if (!$skip_build) {
         my $perl_result = "$build_root/perl/$arch";
         my $perl_log    = "$log_root/perl/$arch";
         my $perl_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, 'perl-list6');
+        # Bound the perl builder's OWN internal parallelism to this target's budget; otherwise it
+        # forks one mock build per perl package (~7), which -- multiplied by parallel EL targets --
+        # oversubscribes the host.
         my $cmd = join(' ',
             'perl', sh_quote($perl_builder),
             '--mock-cfg', sh_quote($target),
             '--mock-uniqueext', sh_quote($perl_uniqueext),
             '--result-dir', sh_quote($perl_result),
             '--log-dir', sh_quote($perl_log),
+            '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
+            (($max_build_workers && $max_build_workers >= 1) ? ('--jobs', $max_build_workers) : ()),
             '--build-timestamp', $SOURCE_DATE_EPOCH,
             ($skip_install ? '--skip-install' : ()),
         );
@@ -276,7 +341,10 @@ if (!$skip_build) {
     }
 
     if (!$skip_xcat) {
-        my $cmd = join(' ',
+        # Own HOME per target (buildrpms.pl uses $HOME/rpmbuild) so parallel targets don't race.
+        my $xcat_home = "/tmp/mockbuild-all-$run_id/xcat-home";
+        my $mktree = join(' ', map { sh_quote("$xcat_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
+        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($xcat_home) . ' ' . join(' ',
             'perl', sh_quote("$xcat_src/buildrpms.pl"),
             '--target', sh_quote($target),
             '--nproc', int($nproc),
@@ -300,7 +368,14 @@ if (!$skip_build) {
     # xcat-core's Gitepoch, so it matches xCAT-genesis-scripts (built in core) and
     # the exact-version dependency genesis-scripts -> genesis-base resolves.
     if (!$skip_genesis) {
-        my $cmd = join(' ',
+        # buildrpms.pl stages sources in $HOME/rpmbuild (via rpmdev-setuptree). Give each
+        # per-target genesis build its own HOME so parallel EL targets don't race on the shared
+        # /root/rpmbuild tree (that race is what made concurrent genesis builds fail).
+        my $genesis_home = "/tmp/mockbuild-all-$run_id/genesis-home";
+        # buildrpms.pl's rpmdev-setuptree only runs during env setup, not per build, so create the
+        # rpmbuild tree ourselves for this per-target HOME (else $HOME/rpmbuild/SOURCES is missing).
+        my $mktree = join(' ', map { sh_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
+        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
             'perl', sh_quote("$xcat_src/buildrpms.pl"),
             '--package', 'xCAT-genesis-base',
             '--target', sh_quote($target),
@@ -319,9 +394,12 @@ if (!$skip_build) {
     }
 
     if (@build_steps) {
-        my $effective_parallel_builds = defined($parallel_builds)
-            ? $parallel_builds
-            : scalar(@build_steps);
+        # Prefer the caller-supplied cap (global budget / active targets). Fall back to the old
+        # behaviour (all steps at once) only when unset.
+        my $effective_parallel_builds =
+              ($max_build_workers && $max_build_workers >= 1) ? $max_build_workers
+            : defined($parallel_builds)                       ? $parallel_builds
+            :                                                   scalar(@build_steps);
         run_build_steps_parallel(
             steps         => \@build_steps,
             max_processes => $effective_parallel_builds,
@@ -493,7 +571,6 @@ sub deploy_target {
         copy($rpm, "$dest/" . basename($rpm))
             or die "Failed to copy $rpm -> $dest: $!\n";
     }
-    import_shared_noarch($dest);
     assert_required_deps($dest);
     sign_and_index_repo($dest);
     write_dep_repo_metadata($dest, $rel);
@@ -581,20 +658,26 @@ Build xcat-dep and xCAT RPMs, consolidate binary/source artifacts, run createrep
 
 Options:
   --repo-root PATH        xcat-dep repository root (default: script directory)
-  --xcat-source PATH      xCAT source root with buildrpms.pl (default: <repo-root>/xcat-source-code)
-  --output-root PATH      Root output directory (default: <repo-root>/build-output/mockbuild-all)
-  --repo-dep PATH         Deployable per-EL output root; rh8/rh9/rh10/<arch> are
-                          assembled + signed here (default: <repo-root>/build-output/xcat-dep)
+  --xcat-source PATH      xCAT source root with buildrpms.pl (default: <repo-root>/../xcat-core)
+  --output PATH           Single base for ALL output; --output-root and --repo-dep derive from
+                          it. A fail-fast lock is held at <PATH>/.lock, so pass distinct paths
+                          to run on two hosts in parallel on one NFS (default: <repo-root>/build-output)
+  --output-root PATH      Override the derived build tree root (default: <output>/mockbuild-all)
+  --repo-dep PATH         Override the derived deployable per-EL output root; rh8/rh9/rh10/<arch>
+                          are assembled + signed here (default: <output>/xcat-dep)
+  --force-unlock          Remove a stale <output>/.lock before acquiring it
   --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
-  --gpg-key-name NAME     GPG key name (default: "xCAT Automatic Signing Key")
+  --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
-  --import-noarch-repo DIR  On a non-x86_64 build, import the noarch xnba-undi/grub2-xcat
-                          rpms (x86_64-only-built, but required by xCAT on ppc) from this
-                          already-built x86_64 dep repo dir
   --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>); default is
                           the host arch across rh8, rh9 and rh10
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
-  --parallel-builds N     Max concurrent top-level build steps (default: auto=queued steps)
+  --parallel-builds N     Max concurrent top-level build steps within one EL target (default: auto)
+  --parallel-targets N    Concurrent EL targets (rh8/rh9/rh10). 0/auto = all at once, 1 = serial,
+                          N = cap at N. Each target is fully output-isolated (default: auto)
+  --max-parallel N        Global cap on concurrent mock builds across ALL targets, to avoid
+                          oversubscribing the host. Split evenly across active targets.
+                          0/auto = host nproc (default: auto)
   --run-id ID             Run identifier suffix (default: derived from build timestamp)
   --build-timestamp EPOCH Unix epoch for deterministic builds (default: Gitepoch or git log)
   --skip-install          Skip install/smoke tests in child builder scripts
@@ -612,7 +695,7 @@ Notes:
   - Run this script as root on the build host.
   - ARCH is derived from: uname -m
   - Top-level parallel queue includes xcat-dep mockbuild.pl steps, perl builder,
-    and xcat-source-code/buildrpms.pl.
+    and ../xcat-core/buildrpms.pl.
   - Child mockbuild scripts are invoked with per-step mock --uniqueext values
     to avoid lock collisions on the same mock config.
   - If --target is omitted, it is deduced from /etc/os-release:
@@ -769,46 +852,19 @@ sub have_rpm {
     return scalar(@m) > 0;
 }
 
-# Noarch deps that xCAT Requires on EVERY arch but that only build on x86_64: xnba-undi is an
-# x86 UNDI network-boot ROM, and grub2-xcat wraps the distro grub2 (its src.rpm/tooling is
-# x86-centric). Because they are noarch (arch-independent), a ppc build imports them from a
-# built x86_64 dep repo (--import-noarch-repo) rather than rebuilding them.
-my @SHARED_NOARCH = qw(xnba-undi grub2-xcat);
-sub import_shared_noarch {
-    my ($dest) = @_;
-    return if $arch eq 'x86_64';          # x86 builds these natively
-    return if $import_noarch_repo eq '';  # nothing to import from
-    for my $name (@SHARED_NOARCH) {
-        next if have_rpm($dest, $name);
-        my ($src) = grep { /\.noarch\.rpm$/ } glob("$import_noarch_repo/${name}-*.rpm");
-        if ($src) {
-            copy($src, "$dest/" . basename($src))
-                or die "Failed to import $src -> $dest: $!\n";
-            print "[deps] imported shared noarch $name from $import_noarch_repo\n";
-        }
-        else {
-            warn "WARN: shared noarch $name not found under --import-noarch-repo $import_noarch_repo\n";
-        }
-    }
-}
-
 # assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is
 # fatal even though individual builder failures are tolerated above. genesis-base is required
-# unless --skip-genesis. (grub2-xcat/elilo/xnba are arch/EL-specific and NOT in the hard set.)
+# unless --skip-genesis.
 sub assert_required_deps {
     my ($dir) = @_;
-    # xCAT Requires all of these on every arch. ipmitool-xcat/syslinux-xcat/perl-* and
-    # genesis-base build on both arches; grub2-xcat/xnba-undi build on x86_64 and are imported
-    # into a ppc repo by import_shared_noarch (run just before this check).
+    # xCAT Requires all of these on every arch, and every one of them builds natively on every
+    # arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed artifacts), so
+    # a self-sufficient per-arch build produces the whole set with no cross-arch import.
     my @req = qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
                  perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB);
     push @req, 'xCAT-genesis-base' unless $skip_genesis;
     my @missing = grep { !have_rpm($dir, $_) } @req;
-    die "FATAL: required deps missing from $dir: @missing\n"
-      . ($arch ne 'x86_64' && !$import_noarch_repo
-         ? "       (pass --import-noarch-repo <x86_64 dep dir> to import xnba-undi/grub2-xcat)\n"
-         : '')
-        if @missing;
+    die "FATAL: required deps missing from $dir: @missing\n" if @missing;
     print "[deps] required set present in $dir: @req\n";
 }
 
@@ -957,10 +1013,12 @@ sub build_mock_uniqueext {
 
 sub resolve_xcat_source {
     my ($requested, $root) = @_;
+    # Prefer the sibling ../xcat-core (the real layout: source/xcat-core beside source/xcat-dep)
+    # before the legacy xcat-source-code location.
     my @candidates = (
         $requested,
-        "$root/xcat-source-code",
         "$root/../xcat-core",
+        "$root/xcat-source-code",
     );
     for my $c (@candidates) {
         next if !defined($c) || $c eq '';
@@ -969,6 +1027,55 @@ sub resolve_xcat_source {
         return $abs if -f "$abs/buildrpms.pl";
     }
     return eval { abs_path($requested) } || $requested;
+}
+
+# Fail-fast advisory lock on the output base. Uses an atomic mkdir (portable and reliable over
+# NFS, unlike flock) of "<base>/.lock". A second run against the same --output dies immediately
+# rather than racing on the shared tree. Only the process that created the lock removes it.
+sub acquire_output_lock {
+    my ($base, $force) = @_;
+    my $lock = "$base/.lock";
+    if ($force && -d $lock) {
+        print "force-unlock: removing stale lock $lock\n";
+        _rmdir_lock($lock);
+    }
+    if (mkdir $lock) {
+        $HELD_LOCK = $lock;
+        $LOCK_OWNER_PID = $$;
+        my $host = capture('uname -n') || 'unknown';
+        if (open my $fh, '>', "$lock/owner") {
+            print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
+            close $fh;
+        }
+        return;
+    }
+    # mkdir failed: either it already exists (locked) or a real error.
+    if (-d $lock) {
+        my $info = '';
+        if (open my $fh, '<', "$lock/owner") { local $/; $info = <$fh>; close $fh; }
+        $info =~ s/\s+/ /g;
+        die "output $base is locked ($lock): $info\n"
+          . "another mockbuild-all run owns it; use a different --output or --force-unlock if stale.\n";
+    }
+    die "Cannot create lock $lock: $!\n";
+}
+
+sub _rmdir_lock {
+    my ($lock) = @_;
+    unlink "$lock/owner";
+    rmdir $lock;
+}
+
+# Release the lock on any exit path (normal, die, or signal) -- but ONLY in the process that
+# created it. Forked children (per-builder and per-target ForkManager workers) inherit
+# $HELD_LOCK; without the pid guard their exit would delete the parent's lock mid-run.
+sub _release_lock_if_owner {
+    return unless $HELD_LOCK && defined $LOCK_OWNER_PID && $$ == $LOCK_OWNER_PID;
+    _rmdir_lock($HELD_LOCK) if -d $HELD_LOCK;
+}
+END { _release_lock_if_owner(); }
+for my $sig (qw(INT TERM HUP)) {
+    $SIG{$sig} = sub { _release_lock_if_owner(); exit 1; };
 }
 
 sub read_os_release {
