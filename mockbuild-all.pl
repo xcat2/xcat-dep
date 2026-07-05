@@ -221,6 +221,7 @@ my @dep_builders = (
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
     { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
+    { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl" },
 );
 

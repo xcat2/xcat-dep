@@ -29,20 +29,32 @@ my $mock_uniqueext = '';
 my $result_dir     = "$script_dir/../build-output/list-conserver/conserver";
 my $log_dir        = "$script_dir/../build-logs/list-conserver/conserver";
 my $skip_install   = 0;
+my $build_timestamp;
 
 GetOptions(
-    'work-dir=s'       => \$work_dir,
-    'mock-cfg=s'       => \$mock_cfg,
-    'mock-uniqueext=s' => \$mock_uniqueext,
-    'result-dir=s'     => \$result_dir,
-    'log-dir=s'        => \$log_dir,
-    'skip-install!'    => \$skip_install,
+    'work-dir=s'        => \$work_dir,
+    'mock-cfg=s'        => \$mock_cfg,
+    'mock-uniqueext=s'  => \$mock_uniqueext,
+    'result-dir=s'      => \$result_dir,
+    'log-dir=s'         => \$log_dir,
+    'skip-install!'     => \$skip_install,
+    'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
 for my $bin (qw(mock rpmbuild rpm)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
+
+# Deterministic builds: honor --build-timestamp (else Gitepoch, else git HEAD time),
+# matching the other xcat-dep builders so mockbuild-all.pl can drive this one.
+my $repo_root = abs_path("$script_dir/..");
+my $sde = $build_timestamp;
+if (!$sde && -f "$repo_root/Gitepoch") { $sde = capture("cat " . sh_quote("$repo_root/Gitepoch")); }
+if (!$sde || $sde !~ /^\d+$/) {
+    $sde = capture("git -C " . sh_quote($repo_root) . " log -1 --format=%ct HEAD 2>/dev/null");
+}
+$ENV{SOURCE_DATE_EPOCH} = $sde if defined $sde && $sde =~ /^\d+$/;
 
 my $arch = capture('uname -m');
 if (!$mock_cfg) {
