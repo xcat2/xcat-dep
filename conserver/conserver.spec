@@ -21,10 +21,10 @@ License: BSD
 Group: System Environment/Daemons
 URL: http://www.conserver.com/
 Source: http://www.conserver.com/%{pkg}-%{ver}.tar.gz
-Patch: initscript_8.2.1.patch
+Patch0: initscript_8.2.1.patch
 Patch1: openssl3-dh-opaque.patch
 BuildRoot: %{_tmppath}/%{pkg}-buildroot
-BuildRequires: openssl-devel
+BuildRequires: gcc make glibc-devel openssl-devel
 Prefix: %{_prefix}
 
 Obsoletes: conserver conserver-client
@@ -40,7 +40,7 @@ bells and whistles to accentuate that basic functionality.
 %prep
 %{__rm} -rf %{buildroot}
 %setup -n %{pkg}-%{ver}
-%patch -p1
+%patch0 -p1
 %patch1 -p1
 
 
