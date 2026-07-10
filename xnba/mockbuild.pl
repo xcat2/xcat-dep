@@ -80,7 +80,10 @@ make_path($log_dir);
 
 print_step("Stage build environment");
 remove_tree($work_dir) if -d $work_dir;
-my $rpmbuild_top = "/var/tmp/xcat-rpmbuild-xnba";
+# rpmbuild staging dir must be unique per run: --work-dir is run/target-scoped, so nesting it
+# here keeps concurrent builds (e.g. parallel EL targets on one host) from wiping each other's
+# tree. (Was a shared /var/tmp/xcat-rpmbuild-xnba, which collided under parallelism.)
+my $rpmbuild_top = "$work_dir/rpmbuild";
 remove_tree($rpmbuild_top) if -d $rpmbuild_top;
 for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
     make_path("$rpmbuild_top/$d");
