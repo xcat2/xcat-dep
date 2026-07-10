@@ -43,8 +43,8 @@ addition allows non-blocking connect.
 # "%patch without corresponding Patch: tag".
 %patch -P 0 -p1
 
-# openSUSE's brp-compress gzips the man pages after the %install file list is
-# generated, so %files then looks for *.3pm but finds *.3pm.gz. Disable the
+# openSUSE's brp-compress gzips man pages after the install file list is built,
+# so the packaged file list then looks for *.3pm but finds *.3pm.gz. Disable the
 # install-post hooks there (harmless for a noarch perl module) to keep names in
 # sync; EL's brp-compress handling already matches, so scope this to SUSE.
 %if 0%{?suse_version}

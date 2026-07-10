@@ -128,7 +128,7 @@ die "Could not resolve ID from /etc/os-release\n" if $os_id eq '';
 die "Could not resolve major release from VERSION_ID='$version_id' in /etc/os-release\n"
     if !defined($rel) || $rel eq '';
 
-for my $bin (qw(perl uname createrepo tar find rpm)) {
+for my $bin (qw(perl uname createrepo_c tar find rpm)) {
     require_command($bin);
 }
 require_command('mock') if $scrub_all_chroots;
@@ -482,12 +482,12 @@ if (!$dry_run && $copied_srpms == 0) {
 if (!$skip_createrepo) {
     run_step(
         step => 'Run createrepo',
-        cmd  => 'createrepo --update --revision ' . sh_quote($SOURCE_DATE_EPOCH) . ' ' . sh_quote($repo_dir),
+        cmd  => createrepo_c_cmd($repo_dir),
         log  => "$log_root/createrepo.log",
     );
     run_step(
         step => 'Run createrepo for SRPM repo',
-        cmd  => 'createrepo --update --revision ' . sh_quote($SOURCE_DATE_EPOCH) . ' ' . sh_quote($srpm_repo_dir),
+        cmd  => createrepo_c_cmd($srpm_repo_dir),
         log  => "$log_root/createrepo-srpm.log",
     );
 }
@@ -579,6 +579,16 @@ sub deploy_target {
     print "Deployed rh$rel/$arch: $n rpms\n";
 }
 
+# createrepo_c command with upstream-matching, deterministic metadata. The tool's
+# defaults emit primary/filelists/other as *.xml.zst plus *.sqlite.bz2 (--database),
+# exactly the upstream shape; --set-timestamp-to-revision pins repomd to SOURCE_DATE_EPOCH.
+sub createrepo_c_cmd {
+    my ($dir) = @_;
+    return 'createrepo_c --update --database '
+        . '--revision ' . sh_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
+        . sh_quote($dir);
+}
+
 sub sign_and_index_repo {
     my ($dir) = @_;
     my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
@@ -587,7 +597,7 @@ sub sign_and_index_repo {
         run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
             . join(' ', map { sh_quote($_) } @rpms));
     }
-    run_simple('createrepo --update ' . sh_quote($dir));
+    run_simple(createrepo_c_cmd($dir));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
