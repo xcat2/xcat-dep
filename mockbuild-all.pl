@@ -28,6 +28,11 @@ my $parallel_targets = 1;   # 1 = serial (default; safe). 0/auto = all EL target
 my $max_parallel = 0;       # 0/auto = host nproc: global cap on concurrent mock builds (all targets)
 my $run_id     = '';
 my $build_timestamp;
+# CD version bump: when set, every xcat-dep package spec's Release gets a
+# ".snap<YYYYMMDDHHMM>.<build_number>" suffix so each pipeline run publishes a
+# fresh, monotonic NVR (deploy's additive rsync is a no-op otherwise). NOT applied
+# to xCAT-genesis-base (built from xcat-core, kept in lockstep with genesis-scripts).
+my $build_number;
 my $skip_install = 0;
 my $skip_build = 0;
 my $skip_xcat_dep = 0;
@@ -64,6 +69,7 @@ GetOptions(
     'max-parallel=i'    => \$max_parallel,
     'run-id=s'          => \$run_id,
     'build-timestamp=i' => \$build_timestamp,
+    'build-number=i'    => \$build_number,
     'skip-install!'     => \$skip_install,
     'skip-build!'       => \$skip_build,
     'skip-xcat-dep!'    => \$skip_xcat_dep,
@@ -97,6 +103,18 @@ $ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 if ($run_id eq '') {
     $run_id = strftime('%Y%m%d-%H%M%S', gmtime($SOURCE_DATE_EPOCH));
+}
+
+# CD version bump. Rewrite every xcat-dep package spec's Release line in this
+# (freshly-checked-out, git-clean) tree so the built rpms carry a fresh, monotonic
+# NVR each run. Runs BEFORE any child builder is invoked. genesis-base lives under
+# xcat-core, not $repo_root, so it is untouched (stays in lockstep with the deployed
+# core's genesis-scripts).
+my $RELEASE_BUMP = '';
+if (defined $build_number) {
+    die "--build-number must be a non-negative integer\n" if $build_number < 0;
+    $RELEASE_BUMP = strftime('.snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH)) . ".$build_number";
+    bump_dep_release_suffix($repo_root, $RELEASE_BUMP);
 }
 
 # Single output base for every NFS-shared write. Two hosts build in parallel on one NFS by
@@ -190,6 +208,39 @@ die "FATAL: $tgt_fail target(s) failed\n" if $tgt_fail;
 
 print_step('All targets completed');
 exit 0;
+
+# Append $suffix (e.g. ".snap202607161200.57") to the Release: line of every xcat-dep
+# package spec under $root, so the CD build stamps a fresh, monotonic NVR. Idempotent:
+# a spec already carrying this exact suffix is left alone (so a re-run in the same tree
+# does not double-stamp). Preserves any %{?dist}/%{?distver} macro already on the line.
+sub bump_dep_release_suffix {
+    my ($root, $suffix) = @_;
+    my $qs = quotemeta($suffix);
+    my @specs;
+    find(sub { push @specs, $File::Find::name if /\.spec$/ && -f $_ }, $root);
+    my $n = 0;
+    for my $spec (sort @specs) {
+        open my $in, '<', $spec or die "open $spec: $!\n";
+        my @lines = <$in>;
+        close $in;
+        my $changed = 0;
+        for my $line (@lines) {
+            next unless $line =~ /^Release:\s*\S/;
+            next if $line =~ /$qs\s*$/;          # already stamped this run
+            $line =~ s/(^Release:\s*\S+)/$1$suffix/;
+            $changed = 1;
+            last;                                 # only the first Release: line
+        }
+        next unless $changed;
+        open my $out, '>', $spec or die "open> $spec: $!\n";
+        print {$out} @lines;
+        close $out;
+        $n++;
+    }
+    print "Release bump '$suffix' applied to $n spec(s) under $root\n";
+    die "FATAL: --build-number given but no spec Release lines were bumped under $root\n"
+        if $n == 0;
+}
 
 # Build a single target into its own build-output/<target-runid> tree and return
 # { repo_dir, rel }. Everything below through the summary is per-target work.
