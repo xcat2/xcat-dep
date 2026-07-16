@@ -39,7 +39,19 @@ using 'select' lists.
 %prep
 %setup -q -n %{upstream_name}-%{upstream_version}
 
-%patch 0 -p1
+# Use the explicit -P form so the patch applies on EL8 (rpm 4.14) and EL9
+# (rpm 4.16), EL10 (rpm 4.19), and openSUSE Leap 15 (rpm 4.14). The bare-number
+# "%patch 0" form is only understood by rpm >= 4.18 and fails older rpm with
+# "%patch without corresponding Patch: tag".
+%patch -P 0 -p1
+
+# openSUSE's brp-compress gzips man pages after the install file list is built,
+# so the packaged file list then looks for *.3pm but finds *.3pm.gz. Disable the
+# install-post hooks there (harmless for a noarch perl module) to keep names in
+# sync; EL's brp-compress handling already matches, so scope this to SUSE.
+%if 0%{?suse_version}
+%define __os_install_post %{nil}
+%endif
 
 %build
 CFLAGS="$RPM_OPT_FLAGS $CFLAGS" %__perl Makefile.PL

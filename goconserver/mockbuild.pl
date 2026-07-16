@@ -89,7 +89,10 @@ print_step("Stage build environment");
 remove_tree($work_dir) if -d $work_dir;
 make_path($work_dir);
 
-my $rpmbuild_top = "/var/tmp/xcat-rpmbuild-goconserver";
+# Unique per run (nested under the run/target-scoped --work-dir) so concurrent builds -- e.g.
+# parallel EL targets on one host -- don't wipe each other. (Was a shared
+# /var/tmp/xcat-rpmbuild-goconserver, which collided under parallelism.)
+my $rpmbuild_top = "$work_dir/rpmbuild";
 remove_tree($rpmbuild_top) if -d $rpmbuild_top;
 for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
     make_path("$rpmbuild_top/$d");
@@ -187,7 +190,7 @@ print_step("Create spec and build RPM");
 my $spec_content = <<"SPEC";
 Name:           goconserver
 Version:        $version
-Release:        2.el$rel
+Release:        3.el$rel
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver

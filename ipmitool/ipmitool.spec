@@ -88,6 +88,10 @@ for f in AUTHORS ChangeLog; do
 done
 
 %build
+# OpenSSL 3 ships a stub openssl/md2.h, so configure's header probe sets
+# HAVE_CRYPTO_MD2 even though MD2_CTX/MD2_* are gone -> auth.c fails to compile.
+# Force the probe negative so the no-MD2 code path is used (MD2 IPMI auth is obsolete).
+export ac_cv_header_openssl_md2_h=no
 # --disable-dependency-tracking speeds up the build
 # --enable-file-security adds some security checks
 # --disable-intf-free disables FreeIPMI support - we don't want to depend on
