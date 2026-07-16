@@ -1047,21 +1047,19 @@ sub resolve_mock_cfg {
         'centos-stream' => 'centos-stream',
         rocky          => 'rocky',
     );
-    my $candidate = "${os_id}+epel-${rel}-${arch}";
-    my $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
-    if ($rc == 0) {
-        return $candidate;
-    }
-    if (exists $short_forms{$os_id}) {
-        my $short = $short_forms{$os_id};
-        $candidate = "${short}+epel-${rel}-${arch}";
-        $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
-        if ($rc == 0) {
-            print "Mock config resolved (short form): $candidate\n";
+    # Resolve by CONFIG-FILE existence, not by running `mock --print-root-path`: the latter can fail
+    # transiently (bootstrap chroot setup, a concurrent mock holding a lock) and made el10 flakily
+    # "resolve" to the long form that has no .cfg. Checking /etc/mock/<cfg>.cfg is deterministic.
+    for my $id ($os_id, (exists $short_forms{$os_id} ? ($short_forms{$os_id}) : ())) {
+        my $candidate = "${id}+epel-${rel}-${arch}";
+        if (-f "/etc/mock/${candidate}.cfg") {
+            print "Mock config resolved: $candidate\n" if $id ne $os_id;
             return $candidate;
         }
     }
-    die "Could not find mock config for ${os_id}+epel-${rel}-${arch}\n";
+    my $short = $short_forms{$os_id} // $os_id;
+    die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
+      . "(tried /etc/mock/${os_id}+epel-${rel}-${arch}.cfg and /etc/mock/${short}+epel-${rel}-${arch}.cfg)\n";
 }
 
 sub build_mock_uniqueext {
