@@ -931,7 +931,10 @@ sub assert_required_deps {
     # xCAT Requires all of these on every arch, and every one of them builds natively on every
     # arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed artifacts), so
     # a self-sufficient per-arch build produces the whole set with no cross-arch import.
-    my @req = qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+    # elilo-xcat is noarch but xCAT hard-requires it (Requires: elilo-xcat >= 3.14-6) on EVERY arch,
+    # so a missing elilo makes the whole dep repo uninstallable -- it MUST be required here, not
+    # silently tolerated (it builds from a tracked prebuilt on ppc64le/EL8, compiled elsewhere).
+    my @req = qw(elilo-xcat ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
                  perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB);
     push @req, 'xCAT-genesis-base' unless $skip_genesis;
     my @missing = grep { !have_rpm($dir, $_) } @req;
