@@ -260,8 +260,7 @@ sub build_one_target {
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
     # cross-contaminate. Fold the target into run_id so each target gets its own tree.
     $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    my ($tfam, $rel, $osdir) = target_osdir($target);
 
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
@@ -613,7 +612,18 @@ print "Summary:               $summary_file\n" if !$dry_run;
 print "Tarball:               $tarball\n" if !$skip_tarball;
 print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 
-    return { repo_dir => $repo_dir, rel => $rel };
+    return { repo_dir => $repo_dir, rel => $rel, osdir => $osdir, tfam => $tfam };
+}
+
+# Map a mock target to (family, release, deploy-subdir):
+#   alma+epel-10-x86_64        -> ('el',   '10', 'rh10')
+#   opensuse-leap-15.6-x86_64  -> ('suse', '15', 'sles15')
+# The deploy layout is <repo-dep>/<osdir>/<arch> for BOTH families (rh<N> yum, sles<N> zypper).
+sub target_osdir {
+    my ($t) = @_;
+    if (my ($r) = $t =~ /epel-(\d+)-/)           { return ('el',   $r, "rh$r"); }
+    if (my ($r) = $t =~ /opensuse-leap-(\d+)\./)  { return ('suse', $r, "sles$r"); }
+    die "Cannot derive OS dir from target '$t' (expected *+epel-N-* or opensuse-leap-N.M-*)\n";
 }
 
 # Assemble the built per-target repo into the deployable, signed per-EL layout
@@ -621,9 +631,11 @@ print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 # xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to xcat.org).
 sub deploy_target {
     my ($tgt, $info) = @_;
-    my $rel  = $info->{rel};
+    my $rel   = $info->{rel};
+    my $osdir = $info->{osdir};
+    my $tfam  = $info->{tfam};
     my $src  = $info->{repo_dir};
-    my $dest = "$repo_dep/rh$rel/$arch";
+    my $dest = "$repo_dep/$osdir/$arch";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
     make_path($dest);
@@ -634,9 +646,9 @@ sub deploy_target {
     }
     assert_required_deps($dest);
     sign_and_index_repo($dest);
-    write_dep_repo_metadata($dest, $rel);
+    write_dep_repo_metadata($dest, $osdir, $tfam);
     my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
-    print "Deployed rh$rel/$arch: $n rpms\n";
+    print "Deployed $osdir/$arch: $n rpms\n";
 }
 
 # createrepo_c command with upstream-matching, deterministic metadata. The tool's
@@ -668,14 +680,17 @@ sub sign_and_index_repo {
 }
 
 sub write_dep_repo_metadata {
-    my ($dir, $rel) = @_;
-    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$arch";
+    my ($dir, $osdir, $tfam) = @_;
+    # yum channel for EL (rh<N>), zypper/sles channel for SUSE (sles<N>).
+    my $baseurl = ($tfam // 'el') eq 'suse'
+        ? "https://xcat.org/files/xcat/repos/sles/devel/xcat-dep/$osdir/$arch"
+        : "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/$osdir/$arch";
     my $gpgcheck = $gpg_sign ? 1 : 0;
     my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
-name=xCAT 2 dependencies (rh$rel $arch)
+name=xCAT 2 dependencies ($osdir $arch)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
@@ -710,7 +725,7 @@ EOS
     my $release = strftime('snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH));
     open my $b, '>', "$dir/buildinfo.txt" or die "Cannot write $dir/buildinfo.txt: $!\n";
     print {$b} <<"EOF";
-TARGET=rh$rel/$arch
+TARGET=$osdir/$arch
 RELEASE=$release
 BUILD_TIME=$build_time
 BUILD_MACHINE=$build_machine
