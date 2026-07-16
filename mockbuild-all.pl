@@ -218,28 +218,37 @@ sub bump_dep_release_suffix {
     my $qs = quotemeta($suffix);
     my @specs;
     find(sub { push @specs, $File::Find::name if /\.spec$/ && -f $_ }, $root);
-    my $n = 0;
+    my ($with_release, $bumped, $already) = (0, 0, 0);
     for my $spec (sort @specs) {
         open my $in, '<', $spec or die "open $spec: $!\n";
         my @lines = <$in>;
         close $in;
-        my $changed = 0;
+        my ($has_release, $changed) = (0, 0);
         for my $line (@lines) {
             next unless $line =~ /^Release:\s*\S/;
-            next if $line =~ /$qs\s*$/;          # already stamped this run
+            $has_release = 1;
+            if ($line =~ /$qs\s*$/) { last }     # already stamped (idempotent / concurrent arch)
             $line =~ s/(^Release:\s*\S+)/$1$suffix/;
             $changed = 1;
             last;                                 # only the first Release: line
         }
+        $with_release++ if $has_release;
+        $already++      if $has_release && !$changed;
         next unless $changed;
-        open my $out, '>', $spec or die "open> $spec: $!\n";
+        # atomic write (temp + rename) so a concurrent per-arch build on the shared NFS tree never
+        # sees a torn spec; identical suffix -> identical content, so last-writer-wins is safe.
+        my $tmp = "$spec.bump.$$";
+        open my $out, '>', $tmp or die "open> $tmp: $!\n";
         print {$out} @lines;
         close $out;
-        $n++;
+        rename $tmp, $spec or die "rename $tmp -> $spec: $!\n";
+        $bumped++;
     }
-    print "Release bump '$suffix' applied to $n spec(s) under $root\n";
-    die "FATAL: --build-number given but no spec Release lines were bumped under $root\n"
-        if $n == 0;
+    print "Release bump '$suffix': $bumped newly stamped, $already already stamped, of $with_release spec(s) with a Release line under $root\n";
+    # Only a genuine "no dep specs at all" is fatal. All-already-stamped is the expected idempotent
+    # case (re-run in the same tree, or the other arch bumped first) -- NOT an error.
+    die "FATAL: --build-number given but NO spec carried a Release: line under $root (wrong tree?)\n"
+        if $with_release == 0;
 }
 
 # Build a single target into its own build-output/<target-runid> tree and return
