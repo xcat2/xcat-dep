@@ -23,10 +23,16 @@ Source4: elilo-xcat-3.14-6.noarch.rpm
 # gnu-efi toolchain layout does not support elilo's build: ppc64le (no x86 EFI toolchain) and
 # EL8 (gnu-efi-devel places elf_x86_64_efi.lds under a path elilo's Makefile does not find).
 # elilo-x64.efi is a noarch artifact, so the prebuilt is byte-identical to the compiled one.
-# Separate %ifarch / %if (NOT a single `... || ...` expression): the older rpm inside the EL8/EL9
-# mock chroot does not evaluate an `||` between a string compare and an arithmetic test the way
-# EL10's rpm does, which silently left use_prebuilt unset and pulled in the gnu-efi BuildRequires.
-%ifarch ppc64le
+# Use the tracked prebuilt on ppc (no x86 EFI toolchain) and on EL8 (gnu-efi lds path gap).
+# Three SEPARATE %if blocks, each a single simple compare -- NOT one `A || B` expression (the
+# older rpm in the EL8/EL9 mock chroot mis-evaluates `||`), and NOT %ifarch (during `rpmbuild -bs`
+# the srpm's BuildRequires are frozen against %{_host_cpu}, not the target). Crucially, alma ppc
+# chroots report %{_host_cpu}=powerpc64le while rocky reports ppc64le, so BOTH must be matched --
+# that mismatch is exactly why elilo pulled in the (ppc-absent) gnu-efi BuildRequires on alma ppc.
+%if "%{_host_cpu}" == "ppc64le"
+%global use_prebuilt 1
+%endif
+%if "%{_host_cpu}" == "powerpc64le"
 %global use_prebuilt 1
 %endif
 %if 0%{?rhel} == 8
