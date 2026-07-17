@@ -625,8 +625,52 @@ sub create_deterministic_mock_cfg {
     open my $fh, '>', $cfg_path or die "Cannot write $cfg_path: $!\n";
     print $fh "include('/etc/mock/${base_cfg}.cfg')\n";
     print $fh "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$epoch'\n";
+    # SUSE: the Fedora perl srpms BuildRequire perl-generators / perl-interpreter, which do not exist
+    # on openSUSE (there `perl` provides the interpreter and rpm generates perl deps itself). Add a
+    # tiny compat repo whose one package Provides those names (and pulls perl), so `dnf builddep`
+    # resolves them; the actual build still uses SUSE's perl. No-op on EL/Fedora.
+    if ($base_cfg =~ /opensuse|sles|suse/i) {
+        my $repo = suse_buildreq_compat_repo();
+        print $fh "config_opts['dnf.conf'] += \"\"\"\n[xcat-buildreq-compat]\nname=xcat perl BuildRequires compat\nbaseurl=file://$repo\nenabled=1\ngpgcheck=0\npriority=1\n\"\"\"\n";
+    }
     close $fh;
     return $cfg_path;
+}
+
+# Build (once) a noarch rpm that Provides perl-generators + perl-interpreter and put it in a local
+# createrepo'd dir; return that dir. Cached across packages/targets in one run.
+my $SUSE_COMPAT_REPO;
+sub suse_buildreq_compat_repo {
+    return $SUSE_COMPAT_REPO if $SUSE_COMPAT_REPO && -f "$SUSE_COMPAT_REPO/repodata/repomd.xml";
+    my $base = "/tmp/xcat-suse-buildreq-compat";
+    my $rpmroot = "$base/rpmbuild";
+    File::Path::make_path("$rpmroot/SPECS", "$base/repo");
+    my $spec = "$rpmroot/SPECS/xcat-perl-buildreq-compat.spec";
+    open my $s, '>', $spec or die "Cannot write $spec: $!\n";
+    print {$s} <<'SPEC';
+Name:           xcat-perl-buildreq-compat
+Version:        1
+Release:        1
+Summary:        Build-only compat: provide Fedora perl BuildRequires names on SUSE
+License:        MIT
+BuildArch:      noarch
+Provides:       perl-generators
+Provides:       perl-interpreter
+Requires:       perl
+%description
+Satisfies the perl-generators / perl-interpreter BuildRequires of Fedora perl
+source rpms when building them under openSUSE mock. Never shipped.
+%files
+%changelog
+SPEC
+    close $s;
+    system("rpmbuild --define " . sh_quote("_topdir $rpmroot") . " -bb " . sh_quote($spec)
+           . " >/dev/null 2>&1") == 0 or die "FATAL: could not build SUSE buildreq compat rpm\n";
+    system("cp " . sh_quote("$rpmroot/RPMS/noarch/") . "xcat-perl-buildreq-compat-*.noarch.rpm "
+           . sh_quote("$base/repo/") . " && createrepo_c " . sh_quote("$base/repo") . " >/dev/null 2>&1") == 0
+        or die "FATAL: could not createrepo the SUSE buildreq compat repo\n";
+    $SUSE_COMPAT_REPO = "$base/repo";
+    return $SUSE_COMPAT_REPO;
 }
 
 sub resolve_source_urls {
