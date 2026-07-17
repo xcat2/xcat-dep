@@ -656,10 +656,12 @@ License:        MIT
 BuildArch:      noarch
 Provides:       perl-generators
 Provides:       perl-interpreter
+Provides:       perl-devel
 Requires:       perl
 %description
-Satisfies the perl-generators / perl-interpreter BuildRequires of Fedora perl
-source rpms when building them under openSUSE mock. Never shipped.
+Satisfies the perl-generators / perl-interpreter / perl-devel BuildRequires of
+Fedora perl source rpms when building them under openSUSE mock (SUSE ships the
+perl dev headers inside the perl package itself). Never shipped.
 %files
 %changelog
 SPEC
