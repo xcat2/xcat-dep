@@ -48,6 +48,11 @@ my $gpg_sign = 0;
 my $gpg_key_name = 'xCAT Signing Key';
 my $gpg_home = '';
 my $force_unlock = 0;
+# --finalize-xcat-dep: post-build cross-arch genesis provisioning (issue #7610). Takes the two
+# per-arch repo roots and cross-populates the noarch xCAT-genesis-base between them.
+my $finalize_xcat_dep = 0;
+my $x86_repo = '';
+my $ppc_repo = '';
 my $HELD_LOCK;        # path of the output lock this process owns (for cleanup on exit)
 my $LOCK_OWNER_PID;   # pid that created the lock; forked children must NOT remove it
 
@@ -61,6 +66,9 @@ GetOptions(
     'gpg-key-name=s'    => \$gpg_key_name,
     'gpg-home=s'        => \$gpg_home,
     'force-unlock!'     => \$force_unlock,
+    'finalize-xcat-dep!' => \$finalize_xcat_dep,
+    'x86-repo=s'        => \$x86_repo,
+    'ppc-repo=s'        => \$ppc_repo,
     'target=s'          => \$target,
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
@@ -81,7 +89,7 @@ GetOptions(
     'dry-run!'          => \$dry_run,
 ) or die usage();
 
-die "Run as root (uid=$>)\n" if $> != 0;
+die "Run as root (uid=$>)\n" if $> != 0 && !$finalize_xcat_dep;
 die "--parallel-builds must be >= 1\n"
     if defined($parallel_builds) && $parallel_builds < 1;
 
@@ -101,6 +109,28 @@ $ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 if ($run_id eq '') {
     $run_id = strftime('%Y%m%d-%H%M%S', gmtime($SOURCE_DATE_EPOCH));
+}
+
+# --finalize-xcat-dep: a distinct, build-free mode. After BOTH arch build hosts have
+# produced their per-EL repos (each carrying only its own xCAT-genesis-base), the x86_64
+# repo must ALSO ship the noarch xCAT-genesis-base-ppc64 (so an x86_64 MN can netboot ppc
+# nodes) and the ppc64le repo must ship xCAT-genesis-base-x86_64 -- the 2.17 behaviour
+# that issue #7610 regressed. This mode ONLY cross-copies the genesis-base rpm(s) between
+# the two repos (dropping any stale foreign-arch genesis) and re-indexes + re-signs the
+# affected repomd; it builds nothing and holds no output lock.
+if ($finalize_xcat_dep) {
+    die "--finalize-xcat-dep requires --x86-repo and --ppc-repo\n"
+        if $x86_repo eq '' || $ppc_repo eq '';
+    require_command('createrepo_c');
+    require_command('rpm');
+    require_command('rpmsign') if $gpg_sign;
+    require_command('gpg')     if $gpg_sign;
+    my $x86 = abs_path($x86_repo) or die "--x86-repo '$x86_repo' not found\n";
+    my $ppc = abs_path($ppc_repo) or die "--ppc-repo '$ppc_repo' not found\n";
+    die "--x86-repo '$x86' is not a directory\n" if !-d $x86;
+    die "--ppc-repo '$ppc' is not a directory\n" if !-d $ppc;
+    finalize_xcat_dep($x86, $ppc);
+    exit 0;
 }
 
 # CD version bump. Rewrite every xcat-dep package spec's Release line in this
@@ -716,6 +746,93 @@ EOF
     close $b;
 }
 
+# --finalize-xcat-dep: cross-populate the noarch xCAT-genesis-base between each matching
+# <os>/x86_64 and <os>/ppc64le repo pair, then re-index + re-sign the repos that changed.
+# <x86-repo>/<ppc-repo> are the two per-arch repo roots (each holding rh8/rh9/rh10/<arch>,
+# and possibly sles<N>/<arch>). They may be the same path (both arches built into one tree)
+# or two separate trees (one per build host); either way pairs are matched by <os> subdir.
+sub finalize_xcat_dep {
+    my ($x86_repo, $ppc_repo) = @_;
+    print_step('Finalize xcat-dep: cross-arch genesis-base provisioning (issue #7610)');
+    print "x86-repo: $x86_repo\n";
+    print "ppc-repo: $ppc_repo\n";
+    # Every OS-release dir under the x86 repo that actually has an x86_64 sub-repo.
+    my @osdirs = grep { -d "$_/x86_64" } glob("$x86_repo/*");
+    my $pairs = 0;
+    for my $p (sort @osdirs) {
+        my $osdir  = basename($p);
+        my $x86dir = "$x86_repo/$osdir/x86_64";
+        my $ppcdir = "$ppc_repo/$osdir/ppc64le";
+        if (!-d $ppcdir) {
+            print "[finalize] $osdir: no ppc64le peer at $ppcdir -- skipping\n";
+            next;
+        }
+        # xCAT collapses ppc/ppc64/ppc64le into tarch=ppc64, so the ppc genesis rpm is
+        # named xCAT-genesis-base-ppc64-*. Cross-copy both directions.
+        my $to_x86 = cross_copy_genesis($ppcdir, $x86dir, 'ppc64');
+        my $to_ppc = cross_copy_genesis($x86dir, $ppcdir, 'x86_64');
+        reindex_and_sign_repo($x86dir) if $to_x86;
+        reindex_and_sign_repo($ppcdir) if $to_ppc;
+        printf "[finalize] %s: %d ppc64 genesis -> x86_64, %d x86_64 genesis -> ppc64le\n",
+            $osdir, $to_x86, $to_ppc;
+        $pairs++;
+    }
+    die "FATAL: --finalize-xcat-dep found no <os>/x86_64 + <os>/ppc64le repo pair under\n"
+      . "  --x86-repo '$x86_repo'\n  --ppc-repo '$ppc_repo'\n" if $pairs == 0;
+    print_step('Finalize complete');
+}
+
+# Cross-copy the noarch xCAT-genesis-base-<tarch>-*.rpm from $from into $to. Drops any
+# stale foreign-arch genesis already in $to (e.g. issue #7610's 2.16.3 ppc leftover) so
+# the repo ends with exactly the fresh set. Returns the number of rpms newly copied
+# (0 = already up to date, so the caller can skip re-indexing). Idempotent.
+sub cross_copy_genesis {
+    my ($from, $to, $tarch) = @_;
+    my @src = grep { !/\.src\.rpm$/ } glob("$from/xCAT-genesis-base-$tarch-*.rpm");
+    return 0 if !@src;
+    my %want = map { basename($_) => $_ } @src;
+    my @existing = grep { !/\.src\.rpm$/ } glob("$to/xCAT-genesis-base-$tarch-*.rpm");
+    my %have = map { basename($_) => 1 } @existing;
+    # Already exactly the fresh set (same basenames)? idempotent no-op.
+    if (scalar(keys %want) == scalar(keys %have) && !grep { !$have{$_} } keys %want) {
+        return 0;
+    }
+    for my $old (@existing) {
+        unlink $old or die "Failed to remove stale genesis $old: $!\n";
+        print "[finalize]   - " . basename($old) . " (stale foreign-arch, removed from $to)\n";
+    }
+    my $copied = 0;
+    for my $base (sort keys %want) {
+        copy($want{$base}, "$to/$base")
+            or die "Failed to cross-copy genesis $want{$base} -> $to: $!\n";
+        print "[finalize]   + $base  ($from -> $to)\n";
+        # The source rpm is already signed by the build, but re-assert it under --gpg-sign
+        # so the deploy signing gate never sees an unsigned cross-copied rpm.
+        if ($gpg_sign) {
+            local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
+            run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
+                . sh_quote("$to/$base"));
+        }
+        $copied++;
+    }
+    return $copied;
+}
+
+# Re-run createrepo_c on a repo whose rpm set changed, and (under --gpg-sign) re-sign +
+# re-export repomd. Does NOT re-sign the rpms (cross_copy_genesis already did the copied
+# one; the rest keep their build-time signatures).
+sub reindex_and_sign_repo {
+    my ($dir) = @_;
+    run_simple(createrepo_c_cmd($dir));
+    if ($gpg_sign) {
+        local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
+        my $repomd = "$dir/repodata/repomd.xml";
+        unlink "$repomd.asc" if -f "$repomd.asc";
+        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . sh_quote($repomd));
+        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . sh_quote("$repomd.key"));
+    }
+}
+
 sub usage {
     return <<"USAGE";
 Usage: $0 [options]
@@ -734,6 +851,15 @@ Options:
   --repo-dep PATH         Override the derived deployable per-EL output root; rh8/rh9/rh10/<arch>
                           are assembled + signed here (default: <output>/xcat-dep)
   --force-unlock          Remove a stale <output>/.lock before acquiring it
+  --finalize-xcat-dep     Post-build cross-arch genesis mode (builds nothing). Requires
+                          --x86-repo and --ppc-repo. For each matching <os>/x86_64 and
+                          <os>/ppc64le repo pair, copies the noarch xCAT-genesis-base-ppc64
+                          into the x86_64 repo and xCAT-genesis-base-x86_64 into the ppc64le
+                          repo (dropping any stale foreign-arch genesis), then re-indexes +
+                          re-signs. Restores the 2.17 cross-arch genesis (issue #7610).
+                          Honors --gpg-sign/--gpg-key-name/--gpg-home. Use alone.
+  --x86-repo PATH         (finalize) x86_64 repo root holding <os>/x86_64 (e.g. rh9/x86_64)
+  --ppc-repo PATH         (finalize) ppc64le repo root holding <os>/ppc64le
   --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
