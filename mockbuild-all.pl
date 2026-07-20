@@ -37,7 +37,6 @@ my $skip_install = 0;
 my $skip_build = 0;
 my $skip_xcat_dep = 0;
 my $skip_perl = 0;
-my $skip_xcat = 0;
 my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
@@ -74,7 +73,6 @@ GetOptions(
     'skip-build!'       => \$skip_build,
     'skip-xcat-dep!'    => \$skip_xcat_dep,
     'skip-perl!'        => \$skip_perl,
-    'skip-xcat!'        => \$skip_xcat,
     'skip-genesis!'     => \$skip_genesis,
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
@@ -225,10 +223,11 @@ sub bump_dep_release_suffix {
         close $in;
         my ($has_release, $changed) = (0, 0);
         for my $line (@lines) {
-            next unless $line =~ /^Release:\s*\S/;
+            # case-insensitive: some specs (e.g. Sys-Virt.spec) use a lowercase `release:`
+            next unless $line =~ /^Release:\s*\S/i;
             $has_release = 1;
             if ($line =~ /$qs\s*$/) { last }     # already stamped (idempotent / concurrent arch)
-            $line =~ s/(^Release:\s*\S+)/$1$suffix/;
+            $line =~ s/(^Release:\s*\S+)/$1$suffix/i;
             $changed = 1;
             last;                                 # only the first Release: line
         }
@@ -286,8 +285,10 @@ my @dep_builders = (
 
 my $perl_builder = "$repo_root/mockbuild-perl-packages.pl";
 
+# buildrpms.pl (in xcat-core) is only needed for the OS-dependent xCAT-genesis-base
+# build below; the full xCAT core is built separately by the xcat-core pipeline.
 die "Missing xCAT build script: $xcat_src/buildrpms.pl\n"
-    if !$skip_xcat && !-f "$xcat_src/buildrpms.pl";
+    if !$skip_genesis && !-f "$xcat_src/buildrpms.pl";
 
 my @active_dep_builders;
 for my $b (@dep_builders) {
@@ -319,7 +320,6 @@ print "parallel_builds:  " . (defined($parallel_builds) ? $parallel_builds : 'au
 print "skip_build:       $skip_build\n";
 print "skip_xcat_dep:    $skip_xcat_dep\n";
 print "skip_perl:        $skip_perl\n";
-print "skip_xcat:        $skip_xcat\n";
 print "skip_genesis:     $skip_genesis\n";
 print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
@@ -389,6 +389,10 @@ if (!$skip_build) {
             '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
             (($max_build_workers && $max_build_workers >= 1) ? ('--jobs', $max_build_workers) : ()),
             '--build-timestamp', $SOURCE_DATE_EPOCH,
+            # CD bump: the in-tree spec Release bump above only reaches the spec-mode perl
+            # packages; the srpm-mode ones (HTML-Form, IO-Stty, Net-Telnet) build from a
+            # committed .src.rpm, so hand the suffix down for the builder to re-stamp them.
+            ($RELEASE_BUMP ne '' ? ('--release-suffix', sh_quote($RELEASE_BUMP)) : ()),
             ($skip_install ? '--skip-install' : ()),
         );
         push @build_steps, {
@@ -400,26 +404,11 @@ if (!$skip_build) {
         push @collect_roots, $perl_result;
     }
 
-    if (!$skip_xcat) {
-        # Own HOME per target (buildrpms.pl uses $HOME/rpmbuild) so parallel targets don't race.
-        my $xcat_home = "/tmp/mockbuild-all-$run_id/xcat-home";
-        my $mktree = join(' ', map { sh_quote("$xcat_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($xcat_home) . ' ' . join(' ',
-            'perl', sh_quote("$xcat_src/buildrpms.pl"),
-            '--target', sh_quote($target),
-            '--nproc', int($nproc),
-            '--force',
-            '--verbose',
-            '--xcat_dep_path', sh_quote($repo_root),
-        );
-        push @build_steps, {
-            id   => 'xcat',
-            step => 'Build xCAT packages',
-            cmd  => $cmd,
-            cwd  => $xcat_src,
-            log  => "$log_root/xcat-build.log",
-        };
-    }
+    # NOTE: this script builds ONLY xcat-dep (its dep packages, the perl packages, and
+    # the OS-dependent xCAT-genesis-base below). The full xCAT core is built separately
+    # by the xcat-core pipeline -- mockbuild-all no longer has a monolithic core-build
+    # path (it required perl-generators, which openSUSE Leap does not provide, and did
+    # not match the Ubuntu build's split design).
 
     # xCAT-genesis-base is OS-dependent (its initramfs bundles the build chroot's
     # kernel + glibc/busybox/perl), so it is built here, per target, and shipped
@@ -467,18 +456,10 @@ if (!$skip_build) {
     }
 }
 
+# The xCAT core is built by the xcat-core pipeline, NOT here -- so we deliberately do
+# NOT collect the xCAT dist tree. Only the OS-dependent xCAT-genesis-base rpm (built by
+# the genesis step above) is pulled out of it, individually, further below.
 my $xcat_rpms_dir = "$xcat_src/dist/$target/rpms";
-my $xcat_srpms_dir = "$xcat_src/dist/$target/srpms";
-
-# In monolithic mode (no --skip-xcat) the whole xCAT core built here (incl.
-# genesis-base) is collected into this repo. In the split pipeline (--skip-xcat,
-# core built separately) the orchestrator (cluster-test.pl) routes
-# xCAT-genesis-base from the xCAT dist tree into the per-EL dep repo itself --
-# robust to this script exiting non-zero on tolerated dep-builder failures -- so
-# we deliberately do NOT collect the xCAT dist tree here.
-if (!$skip_xcat) {
-    push @collect_roots, $xcat_rpms_dir;
-}
 
 if ($skip_build) {
     push @collect_roots,
@@ -495,9 +476,7 @@ if ($skip_build) {
 
 push @collect_roots, @extra_collect_dirs;
 @collect_roots = uniq(@collect_roots);
-my @srpm_collect_roots = (!$skip_xcat)
-    ? uniq(@collect_roots, $xcat_srpms_dir)
-    : uniq(@collect_roots);
+my @srpm_collect_roots = uniq(@collect_roots);
 
 print_step('Collect RPM artifacts');
 print "collection roots:\n";
@@ -514,7 +493,8 @@ if (!$dry_run && $copied == 0) {
 }
 
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
-# lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
+# lands in the dep repo -- pull it individually out of the xcat-core dist tree (the
+# rest of that tree, the full xCAT core, is built + published by the xcat-core pipeline).
 if (!$skip_genesis && !$dry_run) {
     for my $g (glob("$xcat_rpms_dir/xCAT-genesis-base-*.rpm")) {
         next if $g =~ /\.src\.rpm$/;
@@ -740,7 +720,9 @@ sub usage {
     return <<"USAGE";
 Usage: $0 [options]
 
-Build xcat-dep and xCAT RPMs, consolidate binary/source artifacts, run createrepo, and create tarballs.
+Build xcat-dep RPMs (dep packages, perl packages, and the OS-dependent xCAT-genesis-base),
+consolidate binary/source artifacts, run createrepo, and create tarballs. The full xCAT core
+is built separately by the xcat-core pipeline, not here.
 
 Options:
   --repo-root PATH        xcat-dep repository root (default: script directory)
@@ -770,7 +752,7 @@ Options:
   --skip-build            Skip all build steps and only collect/create repo/tarballs
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
   --skip-perl             Skip perl package build step
-  --skip-xcat             Skip xCAT buildrpms.pl step
+  --skip-genesis          Skip the xCAT-genesis-base build step
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
   --scrub-all-chroots     Run mock -r <target> --scrub=all before build/collect
@@ -780,8 +762,8 @@ Options:
 Notes:
   - Run this script as root on the build host.
   - ARCH is derived from: uname -m
-  - Top-level parallel queue includes xcat-dep mockbuild.pl steps, perl builder,
-    and ../xcat-core/buildrpms.pl.
+  - Top-level parallel queue includes xcat-dep mockbuild.pl steps, the perl builder,
+    and the xCAT-genesis-base build (../xcat-core/buildrpms.pl --package xCAT-genesis-base).
   - Child mockbuild scripts are invoked with per-step mock --uniqueext values
     to avoid lock collisions on the same mock config.
   - If --target is omitted, it is deduced from /etc/os-release:

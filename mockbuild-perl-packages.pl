@@ -20,6 +20,10 @@ my $jobs = 0;
 my $skip_install = 0;
 my $allow_erasing = 0;
 my $build_timestamp;
+# CD version bump: appended to the Release of the srpm-mode packages (HTML-Form, IO-Stty,
+# Net-Telnet), which build from a committed .src.rpm and so are NOT covered by mockbuild-all's
+# in-tree spec bump. Spec-mode packages get bumped in-tree upstream, so we leave those alone.
+my $release_suffix = '';
 
 GetOptions(
     'work-dir=s'      => \$work_dir,
@@ -32,6 +36,7 @@ GetOptions(
     'skip-install!'   => \$skip_install,
     'allow-erasing!'  => \$allow_erasing,
     'build-timestamp=i' => \$build_timestamp,
+    'release-suffix=s'  => \$release_suffix,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -184,6 +189,7 @@ print "packages:    " . join(', ', @packages) . "\n";
 print "jobs:        $jobs\n";
 print "skip_install:$skip_install\n";
 print "allow_erasing:$allow_erasing\n";
+print "release_suffix:" . ($release_suffix ne '' ? $release_suffix : '(none)') . "\n";
 
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
@@ -222,6 +228,7 @@ for my $idx (0 .. $#packages) {
         arch          => $arch,
         skip_install  => $skip_install,
         allow_erasing => $allow_erasing,
+        release_suffix => $release_suffix,
     );
     $pm->finish($ok ? 0 : 1);
 }
@@ -282,6 +289,7 @@ sub build_package {
     my $arch           = $args{arch};
     my $skip_install   = $args{skip_install};
     my $allow_erasing  = $args{allow_erasing};
+    my $release_suffix = $args{release_suffix};
 
     my $pkg_run_dir = "$work_dir/$pkg";
     my $pkg_result  = "$result_dir/$pkg";
@@ -317,6 +325,35 @@ sub build_package {
         if ($cfg->{mode} eq 'srpm') {
             $srpm_path = select_srpm($cfg->{srpm_globs});
             die "Could not locate source RPM for $pkg\n" if !$srpm_path;
+            # CD version bump: these packages build from a committed .src.rpm, so the in-tree
+            # spec Release bump (mockbuild-all) never reaches them. Re-stamp here: unpack the
+            # srpm, append the suffix to its spec's Release (KEEPING %{?dist}, exactly like the
+            # spec-mode packages -> e.g. 19%{?dist} -> 19%{?dist}.snap...N), and roll a fresh
+            # srpm. With no suffix (non-CD run), rebuild the committed srpm unchanged.
+            if ($release_suffix ne '') {
+                my $ext = "$pkg_run_dir/restamp";
+                for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) { make_path("$ext/$d"); }
+                run("rpm -i --define " . sh_quote("_topdir $ext") . ' ' . sh_quote($srpm_path)
+                    . " > " . sh_quote("$pkg_log/srpm-unpack.log") . " 2>&1");
+                my ($espec) = sort glob("$ext/SPECS/*.spec");
+                die "No spec found after unpacking srpm for $pkg\n" if !$espec;
+                append_release_suffix($espec, $release_suffix);
+                my $restamp_result = "$pkg_run_dir/restamp-srpm";
+                make_path($restamp_result);
+                run(
+                    "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
+                    " --buildsrpm --spec " . sh_quote($espec) .
+                    " --sources " . sh_quote("$ext/SOURCES") .
+                    " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+                    " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+                    " --define " . sh_quote("_buildhost xcat-build") .
+                    " --resultdir " . sh_quote($restamp_result) .
+                    " > " . sh_quote("$pkg_log/mock-restamp-buildsrpm.log") . " 2>&1"
+                );
+                my @restamped = sort glob("$restamp_result/*.src.rpm");
+                die "No re-stamped SRPM produced for $pkg in $restamp_result\n" if !@restamped;
+                $srpm_path = $restamped[-1];
+            }
         } else {
             my $spec = $cfg->{spec};
             die "Missing spec for $pkg: $spec\n" if !-f $spec;
@@ -478,9 +515,36 @@ Usage: $0 [options]
   --log-dir PATH       Log directory (default: build-logs/list6/perl/<ARCH>)
   --packages LIST      Comma-separated subset of packages to build
   --build-timestamp EPOCH  Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
+  --release-suffix STR CD bump appended to the Release of the srpm-mode packages that build
+                       from a committed .src.rpm (HTML-Form, IO-Stty, Net-Telnet)
   --skip-install       Skip dnf install + perl module import checks
   --allow-erasing      Allow dnf to erase conflicting packages during install smoke tests
 USAGE
+}
+
+# Append $suffix (e.g. ".snap202607161200.57") to the first Release: line of $spec, in place.
+# Mirrors mockbuild-all's bump_dep_release_suffix: case-insensitive (some specs use lowercase
+# `release:`), preserves any %{?dist} macro on the line, and is idempotent (a line already
+# carrying this exact suffix is left as-is).
+sub append_release_suffix {
+    my ($spec, $suffix) = @_;
+    my $qs = quotemeta($suffix);
+    open my $in, '<', $spec or die "open $spec: $!\n";
+    my @lines = <$in>;
+    close $in;
+    my $changed = 0;
+    for my $line (@lines) {
+        next unless $line =~ /^Release:\s*\S/i;
+        last if $line =~ /$qs\s*$/;          # already stamped
+        $line =~ s/(^Release:\s*\S+)/$1$suffix/i;
+        $changed = 1;
+        last;                                 # only the first Release: line
+    }
+    die "No Release: line to stamp in $spec\n" if !$changed && !grep { /^Release:\s*\S/i } @lines;
+    return if !$changed;
+    open my $out, '>', $spec or die "open> $spec: $!\n";
+    print {$out} @lines;
+    close $out;
 }
 
 sub select_srpm {
@@ -630,19 +694,23 @@ sub create_deterministic_mock_cfg {
     # tiny compat repo whose one package Provides those names (and pulls perl), so `dnf builddep`
     # resolves them; the actual build still uses SUSE's perl. No-op on EL/Fedora.
     if ($base_cfg =~ /opensuse|sles|suse/i) {
-        my $repo = suse_buildreq_compat_repo();
+        my $repo = suse_buildreq_compat_repo($dir);
         print $fh "config_opts['dnf.conf'] += \"\"\"\n[xcat-buildreq-compat]\nname=xcat perl BuildRequires compat\nbaseurl=file://$repo\nenabled=1\ngpgcheck=0\npriority=1\n\"\"\"\n";
     }
     close $fh;
     return $cfg_path;
 }
 
-# Build (once) a noarch rpm that Provides perl-generators + perl-interpreter and put it in a local
-# createrepo'd dir; return that dir. Cached across packages/targets in one run.
-my $SUSE_COMPAT_REPO;
+# Build a noarch rpm that Provides perl-generators + perl-interpreter and put it in a local
+# createrepo'd dir; return that dir. The repo is built UNDER the caller's per-package build dir
+# (not a shared /tmp path): each build_package fork runs this once for its own package, and
+# mockbuild-all gives every (run, target/arch) its own work-dir -- so concurrent perl builds,
+# whether parallel packages in one invocation or parallel arch/target invocations, never race on
+# a shared path. Idempotent within a dir (reuse if already built).
 sub suse_buildreq_compat_repo {
-    return $SUSE_COMPAT_REPO if $SUSE_COMPAT_REPO && -f "$SUSE_COMPAT_REPO/repodata/repomd.xml";
-    my $base = "/tmp/xcat-suse-buildreq-compat";
+    my ($base_dir) = @_;
+    my $base = "$base_dir/suse-buildreq-compat";
+    return "$base/repo" if -f "$base/repo/repodata/repomd.xml";
     my $rpmroot = "$base/rpmbuild";
     File::Path::make_path("$rpmroot/SPECS", "$base/repo");
     my $spec = "$rpmroot/SPECS/xcat-perl-buildreq-compat.spec";
@@ -671,8 +739,7 @@ SPEC
     system("cp " . sh_quote("$rpmroot/RPMS/noarch/") . "xcat-perl-buildreq-compat-*.noarch.rpm "
            . sh_quote("$base/repo/") . " && createrepo_c " . sh_quote("$base/repo") . " >/dev/null 2>&1") == 0
         or die "FATAL: could not createrepo the SUSE buildreq compat repo\n";
-    $SUSE_COMPAT_REPO = "$base/repo";
-    return $SUSE_COMPAT_REPO;
+    return "$base/repo";
 }
 
 sub resolve_source_urls {
