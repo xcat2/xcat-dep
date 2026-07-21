@@ -9,14 +9,11 @@ fi
 
 REPO_ROOT="$SCRIPT_DIR"
 APT_DIR=""
-# Default to the xCAT Signing Key (same key that signs xcat-core), NOT the legacy megware key,
-# so xcat-dep apt InRelease is signed by the same key as xcat-core apt. Override with --gpg-key-id.
-GPG_KEY_ID="64C82A868D818E69"
+GPG_KEY_ID="xcat@megware.com"
 SKIP_SIGN=0
 DRY_RUN=0
 
 declare -A CODENAME_MAP=(
-    [ubuntu20.04]=focal
     [ubuntu22.04]=jammy
     [ubuntu24.04]=noble
     [ubuntu26.04]=resolute

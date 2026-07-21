@@ -1,12 +1,16 @@
-# Build Guide (`mockbuild-all.pl`)
+# Build Guide (xcat-dep)
 
-This guide explains how to use `mockbuild-all.pl` to build, validate, and package xCAT dependencies and optional xCAT packages into a unified EL10 repository layout.
-It also documents the operational flags for controlling build, install-check, collection, and packaging behavior.
+This guide explains how to build, validate, and package the **xcat-dep** dependency packages
+with `mockbuild-all.pl` — the RPM build orchestrator for EL targets, driven by `mock`.
+
+The full xCAT **core** is NOT built here — it is built and published separately by the
+xcat-core pipeline. `mockbuild-all.pl` builds only the dependency packages plus the
+OS-dependent `xCAT-genesis-base` (pulled individually out of the xcat-core source tree).
 
 # Purpose
 
-`mockbuild-all.pl` is the top-level build orchestrator for generating a **unified xCAT repository**.
-It builds required dependency RPMs and, by default, xCAT RPMs, then assembles:
+`mockbuild-all.pl` is the top-level build orchestrator for the **xcat-dep** RPM repository.
+It builds the dependency RPMs and the OS-dependent `xCAT-genesis-base`, then assembles:
 
 - a binary RPM repo tree with repodata
 - an SRPM repo tree with repodata
@@ -14,12 +18,14 @@ It builds required dependency RPMs and, by default, xCAT RPMs, then assembles:
 
 # Historical Context
 
-Historically, the deployment flow used separate repositories:
+The deployment flow uses two separate repositories:
 
-- `xcat-core` for xCAT packages
-- `xcat-dep` for dependency packages
+- `xcat-core` for xCAT packages (built by the xcat-core pipeline)
+- `xcat-dep` for dependency packages (built here)
 
-The current flow produces a single **unified `xcat` repository** containing all required packages together.
+An earlier iteration of this script also built the full xCAT core into one unified tree
+(via a `--skip-xcat` toggle). That is gone: the core is always built by the xcat-core
+pipeline now, and `mockbuild-all.pl` builds only xcat-dep plus `xCAT-genesis-base`.
 
 # Placeholder Conventions
 
@@ -42,8 +48,10 @@ This guide uses the following placeholders consistently:
 - `<REPO_ROOT>/ipmitool/mockbuild.pl`
 - `<REPO_ROOT>/syslinux/mockbuild.pl`
 - `<REPO_ROOT>/goconserver/mockbuild.pl`
+- `<REPO_ROOT>/conserver/mockbuild.pl`
+- `<REPO_ROOT>/xnba/mockbuild.pl`
 - `<REPO_ROOT>/mockbuild-perl-packages.pl`
-- `<XCAT_SOURCE>/buildrpms.pl` (unless `--skip-xcat` is set)
+- `<XCAT_SOURCE>/buildrpms.pl` — only to build the OS-dependent `xCAT-genesis-base` package (unless `--skip-genesis` is set); the full xCAT core is built separately by the xcat-core pipeline, not here.
 
 Each build path uses `mock` for chroot isolation. Top-level steps are parallelized by `mockbuild-all.pl`, and perl dependency builds are also parallelized internally by `mockbuild-perl-packages.pl`.
 
@@ -64,10 +72,10 @@ Use these flags to skip specific operations:
 
 - `--skip-install`
   - Skips install/smoke checks performed by child builder scripts after RPM build.
-- `--skip-xcat`
-  - Skips `<XCAT_SOURCE>/buildrpms.pl` (xCAT package build step).
+- `--skip-genesis`
+  - Skips the `xCAT-genesis-base` build (`<XCAT_SOURCE>/buildrpms.pl --package xCAT-genesis-base`).
 - `--skip-xcat-dep`
-  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`).
+  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `xnba-undi`).
 - `--skip-perl`
   - Skips `<REPO_ROOT>/mockbuild-perl-packages.pl`.
 - `--skip-build`
@@ -95,7 +103,7 @@ Install baseline tooling:
 dnf -y install perl perl-Parallel-ForkManager mock createrepo tar rpm-build rpmdevtools dnf-plugins-core wget git
 ```
 
-If you will build xCAT packages (that is, you will **not** use `--skip-xcat`), install xCAT build dependencies:
+If you will build the `xCAT-genesis-base` package (that is, you will **not** use `--skip-genesis`), install xCAT build dependencies:
 
 ```bash
 cd <XCAT_SOURCE>
@@ -129,9 +137,14 @@ Equivalent derivation:
 mock -r <TARGET> ...
 ```
 
-# Build Full Unified Repository (xCAT + Dependencies)
+By default (no `--target`), `mockbuild-all.pl` builds all three EL releases for the host
+arch: `rh8`, `rh9`, and `rh10`. Pass `--target` (repeatable) to restrict the set.
 
-Use this mode to build dependency packages and xCAT packages together.
+# Build the Dependency Repository
+
+`mockbuild-all.pl` builds the xcat-dep packages (dep packages, perl packages, and the
+OS-dependent `xCAT-genesis-base`). The full xCAT core is **not** built here — it is built and
+published separately by the xcat-core pipeline.
 
 ```bash
 cd /root/xcat-dep
@@ -145,31 +158,13 @@ Notes:
 
 - Install/smoke checks run by default inside child builders.
 - Add `--skip-install` to skip those checks.
+- Add `--skip-genesis` to skip the `xCAT-genesis-base` build (the only step that invokes
+  `<XCAT_SOURCE>/buildrpms.pl`).
 - `<RUN_ID>` is optional; when omitted it is timestamp-based.
-
-# Build Unified Repository Without xCAT (`--skip-xcat`)
-
-Use this mode to build dependency packages only and skip invoking `/root/xcat-dep/xcat-source-code/buildrpms.pl`.
-
-```bash
-cd /root/xcat-dep
-perl ./mockbuild-all.pl \
-  --repo-root /root/xcat-dep \
-  --xcat-source /root/xcat-dep/xcat-source-code \
-  --scrub-all-chroots \
-  --skip-xcat \
-  --skip-install
-```
-
-Important behavior:
-
-- `--skip-xcat` skips the xCAT build step, but collection still scans:
-  - `<XCAT_SOURCE>/dist/<TARGET>/rpms`
-- If that path already has xCAT RPMs, they are included in the resulting unified repo.
 
 # Common Build Modes
 
-Full unified repo (xCAT + dependencies, with install/smoke checks):
+xcat-dep repo (with install/smoke checks):
 
 ```bash
 cd <REPO_ROOT>
@@ -179,7 +174,7 @@ perl ./mockbuild-all.pl \
   --scrub-all-chroots
 ```
 
-Full unified repo (xCAT + dependencies, skip install/smoke checks):
+xcat-dep repo (skip install/smoke checks):
 
 ```bash
 cd <REPO_ROOT>
@@ -190,7 +185,7 @@ perl ./mockbuild-all.pl \
   --skip-install
 ```
 
-Dependency-only repo (skip xCAT package build):
+Dependency repo without the `xCAT-genesis-base` build:
 
 ```bash
 cd <REPO_ROOT>
@@ -198,7 +193,7 @@ perl ./mockbuild-all.pl \
   --repo-root <REPO_ROOT> \
   --xcat-source <XCAT_SOURCE> \
   --scrub-all-chroots \
-  --skip-xcat \
+  --skip-genesis \
   --skip-install
 ```
 
@@ -211,6 +206,30 @@ perl ./mockbuild-all.pl \
   --xcat-source <XCAT_SOURCE> \
   --skip-build
 ```
+
+# Cross-arch genesis-base (`--finalize-xcat-dep`)
+
+`xCAT-genesis-base` is a noarch package whose *name* carries the target arch
+(`xCAT-genesis-base-x86_64`, `xCAT-genesis-base-ppc64` — xCAT collapses `ppc64le` to `ppc64`
+via `tarch`; there is no big-endian code in it). A management node must be able to netboot
+nodes of the *other* arch, so — as in 2.17 — the `x86_64` dep repo must also ship the
+`ppc64` genesis and the `ppc64le` dep repo must ship the `x86_64` genesis.
+
+Each arch is built on its own build host, so once both per-arch repos exist, run a final,
+build-free pass that cross-copies the noarch genesis between them and re-indexes + re-signs
+the affected repos:
+
+```bash
+perl ./mockbuild-all.pl --finalize-xcat-dep \
+  --x86_64-repo  <x86_64 repo root holding <os>/x86_64> \
+  --ppc64le-repo <ppc64le repo root holding <os>/ppc64le> \
+  --gpg-sign --gpg-key-name "xCAT Signing Key" --gpg-home <GNUPGHOME>
+```
+
+- If both arches were built into one shared tree, pass the same path to both options.
+- Idempotent: a repo pair already carrying the fresh foreign-arch genesis is left untouched;
+  any stale foreign-arch genesis is dropped before the fresh one is copied in.
+- It builds nothing and holds no output lock — use it alone.
 
 # Output Artifacts and Paths
 

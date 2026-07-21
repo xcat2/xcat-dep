@@ -51,8 +51,8 @@ my $force_unlock = 0;
 # --finalize-xcat-dep: post-build cross-arch genesis provisioning (issue #7610). Takes the two
 # per-arch repo roots and cross-populates the noarch xCAT-genesis-base between them.
 my $finalize_xcat_dep = 0;
-my $x86_repo = '';
-my $ppc_repo = '';
+my $x86_64_repo = '';
+my $ppc64le_repo = '';
 my $HELD_LOCK;        # path of the output lock this process owns (for cleanup on exit)
 my $LOCK_OWNER_PID;   # pid that created the lock; forked children must NOT remove it
 
@@ -67,8 +67,8 @@ GetOptions(
     'gpg-home=s'        => \$gpg_home,
     'force-unlock!'     => \$force_unlock,
     'finalize-xcat-dep!' => \$finalize_xcat_dep,
-    'x86-repo=s'        => \$x86_repo,
-    'ppc-repo=s'        => \$ppc_repo,
+    'x86_64-repo=s'     => \$x86_64_repo,
+    'ppc64le-repo=s'    => \$ppc64le_repo,
     'target=s'          => \$target,
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
@@ -119,16 +119,16 @@ if ($run_id eq '') {
 # the two repos (dropping any stale foreign-arch genesis) and re-indexes + re-signs the
 # affected repomd; it builds nothing and holds no output lock.
 if ($finalize_xcat_dep) {
-    die "--finalize-xcat-dep requires --x86-repo and --ppc-repo\n"
-        if $x86_repo eq '' || $ppc_repo eq '';
+    die "--finalize-xcat-dep requires --x86_64-repo and --ppc64le-repo\n"
+        if $x86_64_repo eq '' || $ppc64le_repo eq '';
     require_command('createrepo_c');
     require_command('rpm');
     require_command('rpmsign') if $gpg_sign;
     require_command('gpg')     if $gpg_sign;
-    my $x86 = abs_path($x86_repo) or die "--x86-repo '$x86_repo' not found\n";
-    my $ppc = abs_path($ppc_repo) or die "--ppc-repo '$ppc_repo' not found\n";
-    die "--x86-repo '$x86' is not a directory\n" if !-d $x86;
-    die "--ppc-repo '$ppc' is not a directory\n" if !-d $ppc;
+    my $x86 = abs_path($x86_64_repo) or die "--x86_64-repo '$x86_64_repo' not found\n";
+    my $ppc = abs_path($ppc64le_repo) or die "--ppc64le-repo '$ppc64le_repo' not found\n";
+    die "--x86_64-repo '$x86' is not a directory\n" if !-d $x86;
+    die "--ppc64le-repo '$ppc' is not a directory\n" if !-d $ppc;
     finalize_xcat_dep($x86, $ppc);
     exit 0;
 }
@@ -289,7 +289,8 @@ sub build_one_target {
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
     # cross-contaminate. Fold the target into run_id so each target gets its own tree.
     $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
-    my ($tfam, $rel, $osdir) = target_osdir($target);
+    my ($rel) = $target =~ /epel-(\d+)-/;
+    die "Could not parse EL release from target '$target'\n" unless defined $rel;
 
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
@@ -436,9 +437,7 @@ if (!$skip_build) {
 
     # NOTE: this script builds ONLY xcat-dep (its dep packages, the perl packages, and
     # the OS-dependent xCAT-genesis-base below). The full xCAT core is built separately
-    # by the xcat-core pipeline -- mockbuild-all no longer has a monolithic core-build
-    # path (it required perl-generators, which openSUSE Leap does not provide, and did
-    # not match the Ubuntu build's split design).
+    # by the xcat-core pipeline -- mockbuild-all no longer has a monolithic core-build path.
 
     # xCAT-genesis-base is OS-dependent (its initramfs bundles the build chroot's
     # kernel + glibc/busybox/perl), so it is built here, per target, and shipped
@@ -622,18 +621,7 @@ print "Summary:               $summary_file\n" if !$dry_run;
 print "Tarball:               $tarball\n" if !$skip_tarball;
 print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 
-    return { repo_dir => $repo_dir, rel => $rel, osdir => $osdir, tfam => $tfam };
-}
-
-# Map a mock target to (family, release, deploy-subdir):
-#   alma+epel-10-x86_64        -> ('el',   '10', 'rh10')
-#   opensuse-leap-15.6-x86_64  -> ('suse', '15', 'sles15')
-# The deploy layout is <repo-dep>/<osdir>/<arch> for BOTH families (rh<N> yum, sles<N> zypper).
-sub target_osdir {
-    my ($t) = @_;
-    if (my ($r) = $t =~ /epel-(\d+)-/)           { return ('el',   $r, "rh$r"); }
-    if (my ($r) = $t =~ /opensuse-leap-(\d+)\./)  { return ('suse', $r, "sles$r"); }
-    die "Cannot derive OS dir from target '$t' (expected *+epel-N-* or opensuse-leap-N.M-*)\n";
+    return { repo_dir => $repo_dir, rel => $rel };
 }
 
 # Assemble the built per-target repo into the deployable, signed per-EL layout
@@ -641,11 +629,9 @@ sub target_osdir {
 # xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to xcat.org).
 sub deploy_target {
     my ($tgt, $info) = @_;
-    my $rel   = $info->{rel};
-    my $osdir = $info->{osdir};
-    my $tfam  = $info->{tfam};
+    my $rel  = $info->{rel};
     my $src  = $info->{repo_dir};
-    my $dest = "$repo_dep/$osdir/$arch";
+    my $dest = "$repo_dep/rh$rel/$arch";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
     make_path($dest);
@@ -656,9 +642,9 @@ sub deploy_target {
     }
     assert_required_deps($dest);
     sign_and_index_repo($dest);
-    write_dep_repo_metadata($dest, $osdir, $tfam);
+    write_dep_repo_metadata($dest, $rel);
     my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
-    print "Deployed $osdir/$arch: $n rpms\n";
+    print "Deployed rh$rel/$arch: $n rpms\n";
 }
 
 # createrepo_c command with upstream-matching, deterministic metadata. The tool's
@@ -690,17 +676,14 @@ sub sign_and_index_repo {
 }
 
 sub write_dep_repo_metadata {
-    my ($dir, $osdir, $tfam) = @_;
-    # yum channel for EL (rh<N>), zypper/sles channel for SUSE (sles<N>).
-    my $baseurl = ($tfam // 'el') eq 'suse'
-        ? "https://xcat.org/files/xcat/repos/sles/devel/xcat-dep/$osdir/$arch"
-        : "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/$osdir/$arch";
+    my ($dir, $rel) = @_;
+    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$arch";
     my $gpgcheck = $gpg_sign ? 1 : 0;
     my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
-name=xCAT 2 dependencies ($osdir $arch)
+name=xCAT 2 dependencies (rh$rel $arch)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
@@ -735,7 +718,7 @@ EOS
     my $release = strftime('snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH));
     open my $b, '>', "$dir/buildinfo.txt" or die "Cannot write $dir/buildinfo.txt: $!\n";
     print {$b} <<"EOF";
-TARGET=$osdir/$arch
+TARGET=rh$rel/$arch
 RELEASE=$release
 BUILD_TIME=$build_time
 BUILD_MACHINE=$build_machine
@@ -748,21 +731,21 @@ EOF
 
 # --finalize-xcat-dep: cross-populate the noarch xCAT-genesis-base between each matching
 # <os>/x86_64 and <os>/ppc64le repo pair, then re-index + re-sign the repos that changed.
-# <x86-repo>/<ppc-repo> are the two per-arch repo roots (each holding rh8/rh9/rh10/<arch>,
-# and possibly sles<N>/<arch>). They may be the same path (both arches built into one tree)
-# or two separate trees (one per build host); either way pairs are matched by <os> subdir.
+# <x86_64-repo>/<ppc64le-repo> are the two per-arch repo roots (each holding rh8/rh9/rh10/<arch>).
+# They may be the same path (both arches built into one tree) or two separate trees (one per
+# build host); either way pairs are matched by <os> subdir.
 sub finalize_xcat_dep {
-    my ($x86_repo, $ppc_repo) = @_;
+    my ($x86_64_repo, $ppc64le_repo) = @_;
     print_step('Finalize xcat-dep: cross-arch genesis-base provisioning (issue #7610)');
-    print "x86-repo: $x86_repo\n";
-    print "ppc-repo: $ppc_repo\n";
-    # Every OS-release dir under the x86 repo that actually has an x86_64 sub-repo.
-    my @osdirs = grep { -d "$_/x86_64" } glob("$x86_repo/*");
+    print "x86_64-repo:  $x86_64_repo\n";
+    print "ppc64le-repo: $ppc64le_repo\n";
+    # Every OS-release dir under the x86_64 repo that actually has an x86_64 sub-repo.
+    my @osdirs = grep { -d "$_/x86_64" } glob("$x86_64_repo/*");
     my $pairs = 0;
     for my $p (sort @osdirs) {
         my $osdir  = basename($p);
-        my $x86dir = "$x86_repo/$osdir/x86_64";
-        my $ppcdir = "$ppc_repo/$osdir/ppc64le";
+        my $x86dir = "$x86_64_repo/$osdir/x86_64";
+        my $ppcdir = "$ppc64le_repo/$osdir/ppc64le";
         if (!-d $ppcdir) {
             print "[finalize] $osdir: no ppc64le peer at $ppcdir -- skipping\n";
             next;
@@ -778,7 +761,7 @@ sub finalize_xcat_dep {
         $pairs++;
     }
     die "FATAL: --finalize-xcat-dep found no <os>/x86_64 + <os>/ppc64le repo pair under\n"
-      . "  --x86-repo '$x86_repo'\n  --ppc-repo '$ppc_repo'\n" if $pairs == 0;
+      . "  --x86_64-repo '$x86_64_repo'\n  --ppc64le-repo '$ppc64le_repo'\n" if $pairs == 0;
     print_step('Finalize complete');
 }
 
@@ -852,14 +835,15 @@ Options:
                           are assembled + signed here (default: <output>/xcat-dep)
   --force-unlock          Remove a stale <output>/.lock before acquiring it
   --finalize-xcat-dep     Post-build cross-arch genesis mode (builds nothing). Requires
-                          --x86-repo and --ppc-repo. For each matching <os>/x86_64 and
+                          --x86_64-repo and --ppc64le-repo. For each matching <os>/x86_64 and
                           <os>/ppc64le repo pair, copies the noarch xCAT-genesis-base-ppc64
-                          into the x86_64 repo and xCAT-genesis-base-x86_64 into the ppc64le
-                          repo (dropping any stale foreign-arch genesis), then re-indexes +
-                          re-signs. Restores the 2.17 cross-arch genesis (issue #7610).
-                          Honors --gpg-sign/--gpg-key-name/--gpg-home. Use alone.
-  --x86-repo PATH         (finalize) x86_64 repo root holding <os>/x86_64 (e.g. rh9/x86_64)
-  --ppc-repo PATH         (finalize) ppc64le repo root holding <os>/ppc64le
+                          (the ppc64le genesis; xCAT names it -ppc64 via tarch, no big-endian
+                          code) into the x86_64 repo and xCAT-genesis-base-x86_64 into the
+                          ppc64le repo (dropping any stale foreign-arch genesis), then
+                          re-indexes + re-signs. Restores the 2.17 cross-arch genesis
+                          (issue #7610). Honors --gpg-sign/--gpg-key-name/--gpg-home. Use alone.
+  --x86_64-repo PATH      (finalize) x86_64 repo root holding <os>/x86_64 (e.g. rh9/x86_64)
+  --ppc64le-repo PATH     (finalize) ppc64le repo root holding <os>/ppc64le
   --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
@@ -969,10 +953,14 @@ sub run_build_steps_parallel {
     my $max_processes = $args{max_processes} // 1;
     return if !@{$steps};
 
-    # Individual dep-builder failures are TOLERATED (some packages are el-/arch-pinned or
-    # have dead upstream source URLs, e.g. elilo on el10, perl-Sys-Virt on el8, a moved grub2
-    # src.rpm). We collect whatever built and assert the REQUIRED set later (assert_required_deps),
-    # matching the historical build behaviour.
+    # Individual dep-builder failures here are TOLERATED only so one flaky builder does not abort
+    # the others. This is load-bearing, NOT laziness: some builders are expected to fail on a given
+    # arch/el (e.g. perl-Sys-Virt on el8 -- not a required dep), and some REQUIRED builders "fail"
+    # cosmetically while still producing their rpm (xCAT-genesis-base: xcat-core buildrpms.pl exits
+    # non-zero on an unrelated post-build xCAT-release-latest cp, yet the genesis rpm is built). So
+    # correctness is enforced by RESULT, not exit code: assert_required_deps runs after collection
+    # and fails the whole run if any REQUIRED rpm is missing -- caught at assert time, not swept
+    # under the rug. (A blanket "die on any builder failure" reddens the build on these non-issues.)
     if ($dry_run || $max_processes <= 1 || @{$steps} == 1) {
         for my $step (@{$steps}) {
             my $ok = eval { run_step(%{$step}); 1 };
