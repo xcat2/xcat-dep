@@ -90,10 +90,28 @@ make_path($log_dir);
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
-print_step("Download upstream source");
-run("wget --spider " . sh_quote($source_url));
-run("wget -O " . sh_quote($source_path) . " " . sh_quote($source_url));
-normalize_source_archive($source_path, $version, $work_dir);
+print_step("Prepare source archive");
+# The elilo source tarball is tracked in the repo, already normalized to an elilo/ top-level
+# tree. Re-downloading + normalizing rewrites $source_path IN PLACE -- and it lives in the
+# shared (NFS) checkout that BOTH arch build hosts (x86 + ppc) build against at the same time,
+# so the other host's concurrent elilo build can read it mid-rewrite and get a truncated
+# archive (intermittent "missing elilo top-level tree" failures). Use the tracked copy
+# read-only when it is already normalized; only fetch upstream if it is absent/unnormalized.
+my $have_normalized = 0;
+if (-f $source_path) {
+    my $top = capture(
+        "tar -tzf " . sh_quote($source_path) .
+        " 2>/dev/null | grep -E '^(\\./)?elilo/' | head -n1 || true"
+    );
+    $have_normalized = 1 if $top ne '';
+}
+if ($have_normalized) {
+    print "Using tracked normalized source archive (no upstream fetch, no shared write): $source_path\n";
+} else {
+    run("wget --spider " . sh_quote($source_url));
+    run("wget -O " . sh_quote($source_path) . " " . sh_quote($source_url));
+    normalize_source_archive($source_path, $version, $work_dir);
+}
 
 print_step("Verify spec assets");
 for my $asset (@spec_assets) {
