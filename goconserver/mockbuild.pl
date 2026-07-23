@@ -171,14 +171,22 @@ StateDirectory=goconserver
 WantedBy=multi-user.target
 SERVICE
 
+# The goconserver binary parses server.conf as YAML. Ship a VALID YAML default: the old INI-style
+# ([server]\nhost = ...) is read by the YAML parser as a sequence -> `panic: cannot unmarshal !!seq into
+# common.ServerConfig` at startup -> systemd rate-limits the service to `failed`. On an xCAT MN,
+# xCAT::Goconserver.pm overwrites this with a cert-enabled config, so this default only has to PARSE and
+# start (no SSL here -- the xcat certs don't exist until xCAT is configured). Keys/ports mirror the schema
+# xCAT itself writes (api 12429, console 12430).
 write_file("$payload_dir/etc/goconserver/server.conf", <<'CONF');
-[server]
-host = 0.0.0.0
-port = 12430
-console_port = 12431
-log_file = /var/log/goconserver/server.log
-log_timestamp = true
-log_level = info
+global:
+  host: 0.0.0.0
+  logfile: /var/log/goconserver/server.log
+api:
+  port: 12429
+console:
+  datadir: /var/lib/goconserver/
+  port: 12430
+  log_timestamp: true
 CONF
 
 my $tarball = "$rpmbuild_top/SOURCES/goconserver-$version.tar.gz";
@@ -190,7 +198,7 @@ print_step("Create spec and build RPM");
 my $spec_content = <<"SPEC";
 Name:           goconserver
 Version:        $version
-Release:        3.el$rel
+Release:        4.el$rel
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
@@ -226,6 +234,11 @@ install -m 644 etc/goconserver/server.conf %{buildroot}/etc/goconserver/server.c
 %dir /var/lib/goconserver
 
 %changelog
+* Thu Jul 23 2026 xCAT build - 0.3.3-4.el10
+- Ship /etc/goconserver/server.conf in YAML (the format the goconserver binary parses) instead of the
+  old INI [server] style, which the YAML parser reads as a sequence -> panic (cannot unmarshal !!seq) at
+  startup -> systemd rate-limits the service to failed before xCAT can convert the config. Fixes console
+  provisioning (makegocons) on the management node.
 * Mon Jun 08 2026 xCAT EL10 build - 0.3.3-2.el10
 - Replace archived github.com/kr/pty with github.com/creack/pty to fix
   "Setctty set but Ctty not valid in child" console fork failure on modern Go.
