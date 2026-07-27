@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use Cwd qw(abs_path);
-use File::Basename qw(dirname basename);
+use File::Basename qw(dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
 use Getopt::Long qw(GetOptions);
@@ -13,7 +13,6 @@ my $repo_root  = abs_path("$script_dir/..");
 my $pkg_dir    = "$repo_root/ipmitool";
 my $spec_file  = "$pkg_dir/ipmitool.spec";
 
-my $source_url = 'https://github.com/ipmitool/ipmitool/archive/refs/tags/IPMITOOL_1_8_18.tar.gz';
 my $source_file = '';
 my $work_dir = '/tmp/ipmitool-xcat-mockbuild';
 my $mock_cfg = '';
@@ -24,7 +23,6 @@ my $skip_install = 0;
 my $build_timestamp;
 
 GetOptions(
-    'source-url=s'   => \$source_url,
     'source-file=s'  => \$source_file,
     'work-dir=s'     => \$work_dir,
     'mock-cfg=s'     => \$mock_cfg,
@@ -38,7 +36,7 @@ GetOptions(
 die "Run as root (current uid=$>)\n" if $> != 0;
 die "Missing spec file: $spec_file\n" if !-f $spec_file;
 
-for my $bin (qw(wget mock rpmbuild rpm dnf ldd bash)) {
+for my $bin (qw(mock rpmbuild rpm dnf ldd bash)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
@@ -80,7 +78,6 @@ print "result_dir: $result_dir\n";
 print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
-print "source_url: $source_url\n";
 print "source_file:$source_file\n";
 print "skip_install: $skip_install\n";
 print "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH\n";
@@ -91,10 +88,22 @@ make_path($log_dir);
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
-print_step("Download upstream source");
-run("wget --spider " . sh_quote($source_url));
-run("wget -O " . sh_quote($source_path) . " " . sh_quote($source_url));
-normalize_source_archive($source_path, $version, $work_dir);
+print_step("Verify tracked source archive");
+# The ipmitool source (ipmitool-<ver>.tar.gz) is tracked in the repo, already normalized to the
+# ipmitool-<ver>/ top-level that %setup -n expects, and consumed directly by mock (--sources
+# $pkg_dir below). There is nothing to download: the old fetch re-derived this SAME tracked file
+# and rewrote it IN PLACE, and the checkout is shared between the two arch build hosts building at
+# once -- so the in-place rewrite raced the other host's concurrent ipmitool build, which could
+# read the file mid-write and get a truncated archive. We only READ it now, so concurrent builds
+# can never race on it. Fail loudly (do NOT silently re-fetch) if the checkout is missing/broken.
+die "Tracked ipmitool source missing: $source_path (incomplete checkout?)\n" if !-f $source_path;
+my $top = capture(
+    "tar -tzf " . sh_quote($source_path) .
+    " 2>/dev/null | grep -E '^(\\./)?ipmitool-$version/' | head -n1 || true"
+);
+die "Tracked ipmitool source is not the expected ipmitool-$version/ tree: $source_path\n"
+    if $top eq '';
+print "Using tracked source archive (read-only, no fetch, no shared write): $source_path\n";
 
 print_step("Verify spec assets");
 for my $asset (@spec_assets) {
@@ -258,7 +267,6 @@ exit 0;
 sub usage {
     return <<"USAGE";
 Usage: $0 [options]
-  --source-url URL      Upstream tarball URL (default: $source_url)
   --source-file FILE    Source filename stored in ipmitool/ (default: inferred from spec version)
   --work-dir PATH       Temporary work dir (default: $work_dir)
   --mock-cfg NAME       Mock config (default: <ID>+epel-10-<ARCH>)
@@ -306,38 +314,6 @@ sub parse_spec {
     } @assets;
 
     return ($version, @assets);
-}
-
-sub normalize_source_archive {
-    my ($archive, $version, $work_base) = @_;
-
-    my $normalize_dir = "$work_base/source-normalize";
-    remove_tree($normalize_dir) if -d $normalize_dir;
-    make_path($normalize_dir);
-
-    run("tar -xzf " . sh_quote($archive) . " -C " . sh_quote($normalize_dir));
-
-    my @entries = grep { $_ !~ m{/\.\.?$} } glob("$normalize_dir/*");
-    die "Unexpected archive layout in $archive\n" if @entries != 1;
-    my $top_path = $entries[0];
-    die "Unexpected non-directory top-level entry in $archive: $top_path\n"
-        if !-d $top_path;
-
-    my $expected_top = "ipmitool-$version";
-    my $actual_top = basename($top_path);
-    if ($actual_top ne $expected_top) {
-        my $new_path = "$normalize_dir/$expected_top";
-        run("rm -rf " . sh_quote($new_path));
-        run("mv " . sh_quote($top_path) . " " . sh_quote($new_path));
-    }
-
-    # Repack using the expected top-level directory required by the spec.
-    run(
-        "tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
-        " -C " . sh_quote($normalize_dir) .
-        " -czf " . sh_quote($archive) .
-        " " . sh_quote($expected_top)
-    );
 }
 
 sub print_step {

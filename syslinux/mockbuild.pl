@@ -13,7 +13,6 @@ my $repo_root  = abs_path("$script_dir/..");
 my $pkg_dir    = "$repo_root/syslinux";
 my $spec_file  = "$pkg_dir/syslinux-xcat.spec";
 
-my $source_url   = 'https://www.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.03.tar.xz';
 my $source_file  = '';
 my $work_dir     = '/tmp/syslinux-xcat-mockbuild';
 my $mock_cfg     = '';
@@ -21,11 +20,9 @@ my $mock_uniqueext = '';
 my $result_dir   = "$repo_root/build-output/list3/syslinux-xcat";
 my $log_dir      = "$repo_root/build-logs/list3/syslinux-xcat";
 my $skip_install = 0;
-my $skip_upstream_download = 0;
 my $build_timestamp;
 
 GetOptions(
-    'source-url=s'            => \$source_url,
     'source-file=s'           => \$source_file,
     'work-dir=s'              => \$work_dir,
     'mock-cfg=s'              => \$mock_cfg,
@@ -33,14 +30,13 @@ GetOptions(
     'result-dir=s'            => \$result_dir,
     'log-dir=s'               => \$log_dir,
     'skip-install!'           => \$skip_install,
-    'skip-upstream-download!' => \$skip_upstream_download,
     'build-timestamp=i'       => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
 die "Missing spec file: $spec_file\n" if !-f $spec_file;
 
-for my $bin (qw(wget mock rpmbuild rpm dnf file bash grep cut)) {
+for my $bin (qw(mock rpmbuild rpm dnf file bash grep)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
@@ -90,10 +86,8 @@ print "pkg_name:   $pkg_name\n";
 print "version:    $version\n";
 print "mock_cfg:   $mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
-print "source_url: $source_url\n";
 print "source_file:$source_file\n";
 print "skip_install: $skip_install\n";
-print "skip_upstream_download: $skip_upstream_download\n";
 
 make_path($result_dir);
 make_path($log_dir);
@@ -101,21 +95,22 @@ make_path($log_dir);
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
-if (!$skip_upstream_download) {
-    print_step("Download upstream source");
-    run("wget --spider " . sh_quote($source_url));
-    run("wget -O " . sh_quote($source_path) . " " . sh_quote($source_url));
-
-    my $sha = capture("sha256sum " . sh_quote($source_path) . " | cut -d ' ' -f1");
-    my $meta_file = "$log_dir/upstream-source.txt";
-    open my $mfh, '>', $meta_file or die "Cannot write $meta_file: $!\n";
-    print {$mfh} "url=$source_url\n";
-    print {$mfh} "file=$source_path\n";
-    print {$mfh} "sha256=$sha\n";
-    close $mfh;
-    print "Downloaded source: $source_path\n";
-    print "SHA256: $sha\n";
-}
+print_step("Verify tracked source archive");
+# The syslinux source (syslinux-<ver>.tar.xz, Source0) is tracked in the repo, has the
+# syslinux-<ver>/ top-level that %setup -n expects, and is consumed directly by mock (--sources
+# $pkg_dir below). There is nothing to download: the old fetch re-downloaded this SAME tracked file
+# and rewrote it IN PLACE, and the checkout is shared between the two arch build hosts building at
+# once -- so the in-place rewrite raced the other host's concurrent syslinux build, which could
+# read the file mid-write and get a truncated archive. We only READ it now, so concurrent builds
+# can never race on it. Fail loudly (do NOT silently re-fetch) if the checkout is missing/broken.
+die "Tracked syslinux source missing: $source_path (incomplete checkout?)\n" if !-f $source_path;
+my $top = capture(
+    "tar -tf " . sh_quote($source_path) .
+    " 2>/dev/null | grep -E '^(\\./)?syslinux-' | head -n1 || true"
+);
+die "Tracked syslinux source is not a syslinux-*/ source tree: $source_path\n"
+    if $top eq '';
+print "Using tracked source archive (read-only, no fetch, no shared write): $source_path\n";
 
 print_step("Verify spec assets");
 for my $asset (@all_assets) {
@@ -280,7 +275,6 @@ exit 0;
 sub usage {
     return <<"USAGE";
 Usage: $0 [options]
-  --source-url URL      Upstream tarball URL (default: $source_url)
   --source-file FILE    Source filename stored in syslinux/ (default: inferred from spec)
   --work-dir PATH       Temporary work dir (default: $work_dir)
   --mock-cfg NAME       Mock config (default: <ID>+epel-10-<ARCH>)
@@ -288,7 +282,6 @@ Usage: $0 [options]
   --result-dir PATH     Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH        Log directory (default: $log_dir)
   --build-timestamp EPOCH   SOURCE_DATE_EPOCH for deterministic builds
-  --skip-upstream-download  Skip wget download step
   --skip-install        Skip dnf install + smoke tests
 USAGE
 }
