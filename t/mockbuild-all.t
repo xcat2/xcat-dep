@@ -10,7 +10,7 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
-use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5
+use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version
                       cross_copy_genesis finalize_xcat_dep read_manifest);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
@@ -64,19 +64,24 @@ ok( version_matches('anything', '*'),    "'*' matches any version");
     is_deeply({read_manifest("$dir/nope.conf")}, {}, 'read_manifest: missing file -> empty');
 }
 
+# rpm_sigmd5 on a missing/unreadable rpm returns '' (so cross_copy treats it as "not identical").
+is(rpm_sigmd5('/nonexistent/xCAT-genesis-base-ppc64-9.9.9.noarch.rpm'), '',
+    'rpm_sigmd5 returns empty for a missing rpm');
+
 # ---- RPM-identity comparison + cross_copy_genesis (needs rpmbuild for real rpms) --------------
 SKIP: {
-    skip 'rpmbuild not available', 5 if system('command -v rpmbuild >/dev/null 2>&1') != 0;
+    skip 'rpmbuild not available', 6 if system('command -v rpmbuild >/dev/null 2>&1') != 0;
     my $tmp = tempdir(CLEANUP => 1);
     my $seq = 0;
     my $mk = sub {                       # build a genesis-named rpm with a given marker payload
-        my ($tarch, $content) = @_;
+        my ($tarch, $content, $version) = @_;
+        $version ||= '2.19.0';
         my $out = "$tmp/out" . (++$seq);   # unique dir: same NVR would overwrite in a shared one
         my $spec = "$tmp/$tarch-$seq.spec";
         open my $fh, '>', $spec or die;
         print $fh <<"SPEC";
 Name: xCAT-genesis-base-$tarch
-Version: 2.19.0
+Version: $version
 Release: snapTEST
 Summary: test fixture
 License: EPL
@@ -122,6 +127,13 @@ SPEC
     my @signed;
     quiet { cross_copy_genesis($from2, $to2, 'ppc64', sub { push @signed, $_[0] }) };
     is_deeply(\@signed, ["$to2/$base"], 'the sign callback runs on each copied rpm');
+
+    # rpm_version dies when a dir holds two DIFFERENT versions of the same package (stale artifact).
+    my $vdir = "$tmp/vers"; make_path($vdir);
+    system("cp '" . $mk->('ppc64', 'x', '2.19.0') . "' '$vdir/'");
+    system("cp '" . $mk->('ppc64', 'x', '2.18.0') . "' '$vdir/'");
+    my $vdied = !eval { rpm_version($vdir, 'xCAT-genesis-base'); 1 };
+    ok($vdied, 'rpm_version dies when a dir holds multiple distinct versions of a package');
 }
 
 # ---- finalize_xcat_dep: require the genesis inputs (no silent no-op) --------------------------
@@ -137,6 +149,13 @@ SPEC
     make_path("$tmp2/x", "$tmp2/p");
     my $ok2 = eval { quiet { finalize_xcat_dep("$tmp2/x", "$tmp2/p") }; 1 };
     ok(!$ok2, 'finalize dies when no <os>/x86_64 + <os>/ppc64le pair is found');
+
+    # A missing ppc64le PEER repo (not just missing rpms) is fatal, not a silent skip.
+    my $tmp3 = tempdir(CLEANUP => 1);
+    make_path("$tmp3/x/rh9/x86_64");    # x86_64 OS present, but NO ppc64le peer dir at all
+    my $ok3 = eval { quiet { finalize_xcat_dep("$tmp3/x", "$tmp3/p") }; 1 };
+    ok(!$ok3, 'finalize dies when an x86_64 OS has no ppc64le peer repo (no silent skip)');
+    like($@, qr/no ppc64le peer repo/, 'finalize error names the missing peer');
 }
 
 done_testing;

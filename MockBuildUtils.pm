@@ -84,6 +84,7 @@ sub rpm_version {
     my $glob = ($name eq 'xCAT-genesis-base')
         ? "$dir/xCAT-genesis-base-*.rpm"
         : "$dir/${name}-*.rpm";
+    my %vers;   # distinct %{version}s of the matching binary rpms
     for my $f (sort glob($glob)) {
         next if $f =~ /\.src\.rpm$/ || $f =~ /-debug(?:info|source)-/;
         my $n = `rpm -qp --qf '%{name}' ${\ sh_quote($f)} 2>/dev/null`;
@@ -92,9 +93,16 @@ sub rpm_version {
         next unless $match;
         my $v = `rpm -qp --qf '%{version}' ${\ sh_quote($f)} 2>/dev/null`;
         chomp $v;
-        return $v;
+        $vers{$v} = 1 if $v ne '';
     }
-    return undef;
+    return undef unless %vers;
+    # More than one distinct version present means a stale artifact was not cleaned before the
+    # build -- a version pin could then pass against the wrong rpm and both could be shipped.
+    # (For genesis both arches share the same Version, so a normal x86_64+ppc64 pair is one entry.)
+    die "Multiple versions of $name present in $dir: " . join(', ', sort keys %vers)
+      . " (stale artifact not cleaned before the build)\n" if keys(%vers) > 1;
+    my ($v) = keys %vers;
+    return $v;
 }
 
 # read_manifest: parse packages-manifest.conf into %{ target => { package => version|'*' } }.
@@ -137,7 +145,10 @@ sub cross_copy_genesis {
         my $up_to_date = 1;
         for my $base (keys %want) {
             my $dst = "$to/$base";
-            if (!-f $dst || rpm_sigmd5($want{$base}) ne rpm_sigmd5($dst)) { $up_to_date = 0; last; }
+            my $src_sig = rpm_sigmd5($want{$base});
+            # An empty SIGMD5 (unreadable rpm) means "cannot confirm identical" -> refresh rather
+            # than risk skipping on a false match (two '' would otherwise compare equal).
+            if (!-f $dst || $src_sig eq '' || $src_sig ne rpm_sigmd5($dst)) { $up_to_date = 0; last; }
         }
         return 0 if $up_to_date;
     }
@@ -175,10 +186,11 @@ sub finalize_xcat_dep {
         my $osdir  = basename($p);
         my $x86dir = "$x86_64_repo/$osdir/x86_64";
         my $ppcdir = "$ppc64le_repo/$osdir/ppc64le";
-        if (!-d $ppcdir) {
-            print "[finalize] $osdir: no ppc64le peer at $ppcdir -- skipping\n";
-            next;
-        }
+        # Require the peer repo itself: in the CD both arches build every EL, so a missing
+        # ppc64le peer for an x86_64 OS means an incomplete input, not something to skip past
+        # (skipping would leave that OS's x86_64 repo without the ppc64 genesis and still exit 0).
+        die "FATAL: [finalize] $osdir: no ppc64le peer repo at $ppcdir\n"
+          . "  (both arches must build every EL before finalize)\n" if !-d $ppcdir;
         # Require the expected inputs: each arch's build must have produced its OWN genesis rpm
         # before finalize cross-populates them. Without this, a pair whose builds produced no
         # genesis rpms would make finalize a silent no-op that still exits 0 (the bug this guards).
