@@ -11,6 +11,10 @@ use File::Path qw(make_path);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
+use FindBin qw($RealBin);
+use lib $RealBin;
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs have_rpm
+                      read_manifest rpm_version rpm_sigmd5 cross_copy_genesis finalize_xcat_dep);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
@@ -131,7 +135,16 @@ if ($finalize_xcat_dep) {
     my $ppc = abs_path($ppc64le_repo) or die "--ppc64le-repo '$ppc64le_repo' not found\n";
     die "--x86_64-repo '$x86' is not a directory\n" if !-d $x86;
     die "--ppc64le-repo '$ppc' is not a directory\n" if !-d $ppc;
-    finalize_xcat_dep($x86, $ppc);
+    # Inject the per-rpm gpg re-sign and the repo re-index as callbacks so the finalize logic in
+    # MockBuildUtils stays free of this script's gpg/createrepo state.
+    finalize_xcat_dep($x86, $ppc,
+        sign => ($gpg_sign ? sub {
+            my ($rpm) = @_;
+            local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
+            run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign ) . sh_quote($rpm));
+        } : undef),
+        reindex => \&reindex_and_sign_repo,
+    );
     exit 0;
 }
 
@@ -517,22 +530,12 @@ if (!$skip_build) {
             }
         }
 
-        # Zero-tolerance: any required (manifest) package that failed to build fails the run.
-        # genesis is the one exception -- xcat-core's buildrpms.pl exits non-zero on an unrelated
-        # post-build xCAT-release-latest cp even when the genesis rpm IS produced, so genesis
-        # counts as failed only if its rpm is absent, not on exit code.
-        my @hard;
-        for my $id (@failed) {
-            if ($id eq 'genesis') {
-                my @g = grep { !/\.src\.rpm$/ }
-                        glob("$xcat_src/dist/$target/rpms/xCAT-genesis-base-*.rpm");
-                push @hard, $id unless @g;
-            }
-            else {
-                push @hard, $id;
-            }
-        }
-        die "FATAL: required build step(s) failed for $target: @hard\n" if @hard;
+        # Zero-tolerance: any build step that failed fails the whole run -- genesis included.
+        # (xcat-core #7696 is merged: buildrpms.pl now exits 0 iff it actually produced the
+        # genesis rpm, so there is no cosmetic non-zero exit left to tolerate. The old workaround
+        # -- ignore a genesis failure when a matching rpm already exists in dist/ -- is gone; a
+        # stale artifact from a previous build must never mask a failed genesis build.)
+        die "FATAL: required build step(s) failed for $target: @failed\n" if @failed;
     }
 }
 
@@ -590,7 +593,9 @@ if (!$skip_genesis && !$dry_run) {
 # (which carries the per-EL dist tag and the genesis snap timestamp).
 if (!$dry_run && !$skip_build) {
     my @vmiss;
-    for my $pkg (sort keys %req) {
+    # Only validate packages whose builder was NOT skipped -- so a clean --skip-* run does not
+    # fail on packages it deliberately did not build.
+    for my $pkg (required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep)) {
         my $want = $req{$pkg};
         next if !defined($want) || $want eq '*';
         my $got = rpm_version($repo_dir, $pkg);
@@ -798,77 +803,7 @@ EOF
     close $b;
 }
 
-# --finalize-xcat-dep: cross-populate the noarch xCAT-genesis-base between each matching
-# <os>/x86_64 and <os>/ppc64le repo pair, then re-index + re-sign the repos that changed.
-# <x86_64-repo>/<ppc64le-repo> are the two per-arch repo roots (each holding rh8/rh9/rh10/<arch>).
-# They may be the same path (both arches built into one tree) or two separate trees (one per
-# build host); either way pairs are matched by <os> subdir.
-sub finalize_xcat_dep {
-    my ($x86_64_repo, $ppc64le_repo) = @_;
-    print_step('Finalize xcat-dep: cross-arch genesis-base provisioning (issue #7610)');
-    print "x86_64-repo:  $x86_64_repo\n";
-    print "ppc64le-repo: $ppc64le_repo\n";
-    # Every OS-release dir under the x86_64 repo that actually has an x86_64 sub-repo.
-    my @osdirs = grep { -d "$_/x86_64" } glob("$x86_64_repo/*");
-    my $pairs = 0;
-    for my $p (sort @osdirs) {
-        my $osdir  = basename($p);
-        my $x86dir = "$x86_64_repo/$osdir/x86_64";
-        my $ppcdir = "$ppc64le_repo/$osdir/ppc64le";
-        if (!-d $ppcdir) {
-            print "[finalize] $osdir: no ppc64le peer at $ppcdir -- skipping\n";
-            next;
-        }
-        # xCAT collapses ppc/ppc64/ppc64le into tarch=ppc64, so the ppc genesis rpm is
-        # named xCAT-genesis-base-ppc64-*. Cross-copy both directions.
-        my $to_x86 = cross_copy_genesis($ppcdir, $x86dir, 'ppc64');
-        my $to_ppc = cross_copy_genesis($x86dir, $ppcdir, 'x86_64');
-        reindex_and_sign_repo($x86dir) if $to_x86;
-        reindex_and_sign_repo($ppcdir) if $to_ppc;
-        printf "[finalize] %s: %d ppc64 genesis -> x86_64, %d x86_64 genesis -> ppc64le\n",
-            $osdir, $to_x86, $to_ppc;
-        $pairs++;
-    }
-    die "FATAL: --finalize-xcat-dep found no <os>/x86_64 + <os>/ppc64le repo pair under\n"
-      . "  --x86_64-repo '$x86_64_repo'\n  --ppc64le-repo '$ppc64le_repo'\n" if $pairs == 0;
-    print_step('Finalize complete');
-}
 
-# Cross-copy the noarch xCAT-genesis-base-<tarch>-*.rpm from $from into $to. Drops any
-# stale foreign-arch genesis already in $to (e.g. issue #7610's 2.16.3 ppc leftover) so
-# the repo ends with exactly the fresh set. Returns the number of rpms newly copied
-# (0 = already up to date, so the caller can skip re-indexing). Idempotent.
-sub cross_copy_genesis {
-    my ($from, $to, $tarch) = @_;
-    my @src = grep { !/\.src\.rpm$/ } glob("$from/xCAT-genesis-base-$tarch-*.rpm");
-    return 0 if !@src;
-    my %want = map { basename($_) => $_ } @src;
-    my @existing = grep { !/\.src\.rpm$/ } glob("$to/xCAT-genesis-base-$tarch-*.rpm");
-    my %have = map { basename($_) => 1 } @existing;
-    # Already exactly the fresh set (same basenames)? idempotent no-op.
-    if (scalar(keys %want) == scalar(keys %have) && !grep { !$have{$_} } keys %want) {
-        return 0;
-    }
-    for my $old (@existing) {
-        unlink $old or die "Failed to remove stale genesis $old: $!\n";
-        print "[finalize]   - " . basename($old) . " (stale foreign-arch, removed from $to)\n";
-    }
-    my $copied = 0;
-    for my $base (sort keys %want) {
-        copy($want{$base}, "$to/$base")
-            or die "Failed to cross-copy genesis $want{$base} -> $to: $!\n";
-        print "[finalize]   + $base  ($from -> $to)\n";
-        # The source rpm is already signed by the build, but re-assert it under --gpg-sign
-        # so the deploy signing gate never sees an unsigned cross-copied rpm.
-        if ($gpg_sign) {
-            local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
-            run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
-                . sh_quote("$to/$base"));
-        }
-        $copied++;
-    }
-    return $copied;
-}
 
 # Re-run createrepo_c on a repo whose rpm set changed, and (under --gpg-sign) re-sign +
 # re-export repomd. Does NOT re-sign the rpms (cross_copy_genesis already did the copied
@@ -950,10 +885,6 @@ Notes:
 USAGE
 }
 
-sub print_step {
-    my ($msg) = @_;
-    print "\n== $msg ==\n";
-}
 
 sub require_command {
     my ($cmd) = @_;
@@ -1119,71 +1050,11 @@ sub run_build_steps_parallel {
     return sort keys %failed;
 }
 
-# have_rpm: is there a non-src rpm named <name>-... under $dir?
-sub have_rpm {
-    my ($dir, $name) = @_;
-    my @m = grep { !/\.src\.rpm$/ } glob("$dir/${name}-*.rpm");
-    return scalar(@m) > 0;
-}
 
-# rpm_version: %{version} of the built binary rpm named <name> under $dir (undef if absent).
-# Skips src/debug rpms and confirms the rpm's real %{name} matches (glob can over-match).
-# 'xCAT-genesis-base' matches the arch-suffixed rpm name (xCAT-genesis-base-x86_64 / -ppc64).
-# version_matches: does the built version $got satisfy the manifest pin $want? $want may be an
-# exact version (2.19.0), a shell-style glob (2.*  or  2.19.*), or '*' (any). Globs support * and
-# ? and are anchored. Used so xCAT-genesis-base can pin 2.* (its Version walks with xcat-core)
-# while the real xcat-dep packages stay exactly pinned.
-sub version_matches {
-    my ($got, $want) = @_;
-    return 1 if !defined($want) || $want eq '*';
-    return ($got eq $want) unless $want =~ /[*?]/;
-    my $re = quotemeta($want);
-    $re =~ s/\\\*/.*/g;
-    $re =~ s/\\\?/./g;
-    return $got =~ /\A$re\z/ ? 1 : 0;
-}
 
-sub rpm_version {
-    my ($dir, $name) = @_;
-    my $glob = ($name eq 'xCAT-genesis-base')
-        ? "$dir/xCAT-genesis-base-*.rpm"
-        : "$dir/${name}-*.rpm";
-    for my $f (sort glob($glob)) {
-        next if $f =~ /\.src\.rpm$/ || $f =~ /-debug(?:info|source)-/;
-        my $n = `rpm -qp --qf '%{name}' ${\ sh_quote($f)} 2>/dev/null`;
-        my $match = ($name eq 'xCAT-genesis-base')
-            ? ($n =~ /^xCAT-genesis-base-/) : ($n eq $name);
-        next unless $match;
-        my $v = `rpm -qp --qf '%{version}' ${\ sh_quote($f)} 2>/dev/null`;
-        chomp $v;
-        return $v;
-    }
-    return undef;
-}
 
-# read_manifest: parse packages-manifest.conf into %{ target => { package => version|'*' } }.
-# INI format: [target] sections; "package=version|*" entries; blank / "#" / ";" lines ignored.
-# Returns an empty hash if the file is absent (callers that build require a section per target).
-sub read_manifest {
-    my ($path) = @_;
-    my %m;
-    return %m unless -f $path;
-    open my $fh, '<', $path or die "Cannot read manifest $path: $!\n";
-    my $sec;
-    while (my $line = <$fh>) {
-        $line =~ s/\r?\n\z//;
-        $line =~ s/^\s+|\s+$//g;
-        next if $line eq '' || $line =~ /^[#;]/;
-        if ($line =~ /^\[(.+?)\]$/) { $sec = $1; $m{$sec} ||= {}; next; }
-        next unless defined $sec;
-        my ($k, $v) = split /=/, $line, 2;
-        $k =~ s/\s+\z//;
-        $v = defined($v) ? ($v =~ s/^\s+//r) : '';
-        $m{$sec}{$k} = ($v ne '') ? $v : '*';
-    }
-    close $fh;
-    return %m;
-}
+
+
 
 # assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is
 # fatal even though individual builder failures are tolerated above. genesis-base is required
@@ -1196,9 +1067,10 @@ sub assert_required_deps {
     # elilo-xcat is noarch but xCAT hard-requires it (Requires: elilo-xcat >= 3.14-6) on EVERY arch,
     # so a missing elilo makes the whole dep repo uninstallable -- it MUST be required here, not
     # silently tolerated (it builds from a tracked prebuilt on ppc64le/EL8, compiled elsewhere).
-    my @req = qw(elilo-xcat ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB);
-    push @req, 'xCAT-genesis-base' unless $skip_genesis;
+    # A package whose builder was skipped is not required (else a clean --skip-* run fails).
+    my @all = qw(elilo-xcat ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB xCAT-genesis-base);
+    my @req = required_pkgs(\@all, $skip_genesis, $skip_perl, $skip_xcat_dep);
     my @missing = grep { !have_rpm($dir, $_) } @req;
     die "FATAL: required deps missing from $dir: @missing\n" if @missing;
     print "[deps] required set present in $dir: @req\n";
@@ -1443,9 +1315,3 @@ sub slurp_chomp {
     return $line // '';
 }
 
-sub sh_quote {
-    my ($s) = @_;
-    $s = '' if !defined $s;
-    $s =~ s/'/'"'"'/g;
-    return "'$s'";
-}

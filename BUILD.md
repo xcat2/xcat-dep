@@ -304,6 +304,19 @@ find <REPO_ROOT>/build-output/mockbuild-all/<RUN_ID>/build-logs -type f | sort
 - `mock target not found`
   - Validate with `mock -r <TARGET> --print-root-path` and install the required mock config packages.
 
+# Tests
+
+The reusable, side-effect-free helpers live in `MockBuildUtils.pm` (package selection under the
+`--skip-*` flags, version-pin matching incl. globs, RPM-identity comparison, and the cross-arch
+genesis `finalize` logic). Focused fixture tests cover them:
+
+```bash
+prove t/            # or: perl t/mockbuild-all.t
+```
+
+The RPM-identity / `cross_copy_genesis` cases build tiny fixture rpms and are skipped
+automatically if `rpmbuild` is unavailable.
+
 # References
 
 - [mock project repository](https://github.com/rpm-software-management/mock)
