@@ -59,12 +59,13 @@ Each build path uses `mock` for chroot isolation. Top-level steps are paralleliz
 
 1. Optional chroot cleanup (`--scrub-all-chroots`)
 2. Parallel build execution
-3. Optional install/smoke checks inside child builders (disabled with `--skip-install`)
-4. Binary RPM collection into `repo/<ARCH>/`
-5. Source RPM collection into `repo-src/`
-6. `createrepo --update` on both repo trees
-7. Tarball creation for both repo trees
-8. Summary generation (`summary.txt`)
+3. Post-build chroot scrub — reclaims each build step's mock chroot (unless `--keep-buildroots`)
+4. Optional install/smoke checks inside child builders (disabled with `--skip-install`)
+5. Binary RPM collection into `repo/<ARCH>/`
+6. Source RPM collection into `repo-src/`
+7. `createrepo --update` on both repo trees
+8. Tarball creation for both repo trees
+9. Summary generation (`summary.txt`)
 
 # Skip and Control Flags
 
@@ -86,6 +87,16 @@ Use these flags to skip specific operations:
   - Skips tarball creation for both binary and SRPM repos.
 - `--scrub-all-chroots`
   - Runs `mock -r <TARGET> --scrub=all` before build and collection.
+- `--keep-buildroots`
+  - Keeps each build step's mock chroot after the build instead of scrubbing it. By default,
+    after the parallel build phase every step's buildroot (dep packages, the per-package perl
+    chroots, and `xCAT-genesis-base`) is reclaimed with
+    `mock -r <CHROOT> --uniqueext <EXT> --scrub=chroot --scrub=bootstrap` — a lock-safe scrub (a
+    chroot still held by a concurrent build is refused and skipped). Both the build chroot and its
+    per-uniqueext bootstrap chroot are removed (each build step gets its own bootstrap, so both
+    must go); the shared root cache under `/var/cache/mock` is kept so rebuilds stay fast. This
+    stops `/var/lib/mock` from growing unbounded across runs. Pass `--keep-buildroots` to preserve
+    a buildroot for debugging a failed build.
 - `--collect-dir <PATH>`
   - Adds extra artifact roots to the collection phase (repeatable).
 - `--dry-run`

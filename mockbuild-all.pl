@@ -41,6 +41,7 @@ my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
 my $scrub_all_chroots = 0;
+my $keep_buildroots = 0;   # keep per-step mock chroots after build (default: --scrub=chroot each)
 my $dry_run = 0;
 my @extra_collect_dirs;
 my $repo_dep = '';
@@ -85,6 +86,7 @@ GetOptions(
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
     'scrub-all-chroots!' => \$scrub_all_chroots,
+    'keep-buildroots!'  => \$keep_buildroots,
     'collect-dir=s@'    => \@extra_collect_dirs,
     'dry-run!'          => \$dry_run,
 ) or die usage();
@@ -356,6 +358,7 @@ print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
 print "skip_tarball:     $skip_tarball\n";
 print "scrub_all_chroots:$scrub_all_chroots\n";
+print "keep_buildroots:  $keep_buildroots\n";
 print "dry_run:          $dry_run\n";
 print "perl_builder:     $perl_builder\n";
 print "tarball:          $tarball\n";
@@ -399,6 +402,8 @@ if (!$skip_build) {
                 step => "Build xcat-dep: $name",
                 cmd  => $cmd,
                 log  => "$log_root/$name/run.log",
+                scrub_cfg       => $target,
+                scrub_uniqueext => $step_uniqueext,
             };
             push @collect_roots, $step_result;
         }
@@ -425,6 +430,7 @@ if (!$skip_build) {
             # committed .src.rpm, so hand the suffix down for the builder to re-stamp them.
             ($RELEASE_BUMP ne '' ? ('--release-suffix', sh_quote($RELEASE_BUMP)) : ()),
             ($skip_install ? '--skip-install' : ()),
+            ($keep_buildroots ? '--keep-buildroots' : ()),
         );
         push @build_steps, {
             id   => 'perl',
@@ -468,6 +474,7 @@ if (!$skip_build) {
             cmd  => $cmd,
             cwd  => $xcat_src,
             log  => "$log_root/genesis-build.log",
+            scrub_cfg => "xCAT-genesis-base-$target",
         };
     }
 
@@ -482,6 +489,23 @@ if (!$skip_build) {
             steps         => \@build_steps,
             max_processes => $effective_parallel_builds,
         );
+
+        # Reclaim each build step's mock chroot now that the step copied its RPMs/logs out to
+        # its --result-dir (collect_rpms reads those, never /var/lib/mock). mock's own cleanup
+        # leaves these chroots behind -- and keeps them entirely on failure -- so /var/lib/mock
+        # grows ~15-17G per run until the host fills and every dnf transaction fails for lack of
+        # space. Scrub each via `mock --scrub=chroot --scrub=bootstrap` (never rm): it takes the
+        # chroot lock, so a chroot still used by a concurrent build is refused and safely skipped.
+        # Both the build chroot and its per-uniqueext bootstrap are removed; the root cache stays
+        # for fast rebuilds. Perl packages are scrubbed inside mockbuild-perl-packages.pl (it
+        # derives its own per-package uniqueexts).
+        unless ($keep_buildroots) {
+            for my $s (@build_steps) {
+                next unless defined $s->{scrub_cfg};
+                (my $slug = $s->{id}) =~ s/[^\w.-]+/-/g;
+                scrub_buildroot($s->{scrub_cfg}, $s->{scrub_uniqueext}, "$log_root/scrub-$slug.log");
+            }
+        }
     }
 }
 
@@ -945,6 +969,29 @@ sub run_step {
         my $exit = $rc == -1 ? 255 : ($rc >> 8);
         die "Step failed (rc=$exit): $step\nCommand: $cmd\n";
     }
+}
+
+# Scrub a single mock buildroot via mock's own lock-safe --scrub. Never rm: if a concurrent build
+# still holds the chroot lock, mock refuses and we skip it. Failures (already scrubbed, locked, or
+# config missing) are tolerated -- a cleanup hiccup must never fail the build. Scrubs both the
+# build chroot and its per-uniqueext bootstrap chroot (each build step gets its own bootstrap, so
+# both must go or /var/lib/mock still leaks). The shared root cache under /var/cache/mock is kept,
+# so rebuilds stay fast. $uniqueext is optional (genesis has none).
+sub scrub_buildroot {
+    my ($cfg, $uniqueext, $log) = @_;
+    return if !defined $cfg || $cfg eq '';
+    my $ext = (defined $uniqueext && $uniqueext ne '')
+        ? ' --uniqueext ' . sh_quote($uniqueext) : '';
+    eval {
+        run_step(
+            step => "Scrub chroot $cfg$ext",
+            cmd  => "mock -r " . sh_quote($cfg) . $ext . " --scrub=chroot --scrub=bootstrap",
+            log  => $log,
+        );
+        1;
+    } or do {
+        warn "WARN: chroot scrub failed (tolerated) for $cfg$ext: $@";
+    };
 }
 
 sub run_build_steps_parallel {

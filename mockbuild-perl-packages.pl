@@ -13,6 +13,7 @@ my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
 my $mock_cfg  = '';
 my $mock_uniqueext = '';
+my $keep_buildroots = 0;
 my $result_dir = '';
 my $log_dir    = '';
 my $packages_csv = '';
@@ -29,6 +30,7 @@ GetOptions(
     'work-dir=s'      => \$work_dir,
     'mock-cfg=s'      => \$mock_cfg,
     'mock-uniqueext=s' => \$mock_uniqueext,
+    'keep-buildroots!' => \$keep_buildroots,
     'result-dir=s'    => \$result_dir,
     'log-dir=s'       => \$log_dir,
     'packages=s'      => \$packages_csv,
@@ -230,6 +232,17 @@ for my $idx (0 .. $#packages) {
         allow_erasing => $allow_erasing,
         release_suffix => $release_suffix,
     );
+    unless ($keep_buildroots) {
+        # Reclaim this perl package's chroot AND its per-uniqueext bootstrap via mock's lock-safe
+        # --scrub (never rm). Each package has its own uniqueext (hence its own chroot+bootstrap),
+        # so scrubbing one never touches a sibling's concurrent build. Runs regardless of build
+        # result so failed chroots are reclaimed too; the root cache is kept for fast rebuilds.
+        # The orchestrator can't name these chroots (package_uniqueext derives them), so we scrub
+        # here.
+        (my $ps = $pkg) =~ s/[^\w.-]+/-/g;
+        system("mock -r " . sh_quote($mock_cfg) . " --uniqueext " . sh_quote($pkg_uniqueext)
+             . " --scrub=chroot --scrub=bootstrap > " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
+    }
     $pm->finish($ok ? 0 : 1);
 }
 $pm->wait_all_children;
