@@ -294,6 +294,13 @@ sub build_one_target {
     my ($rel) = $target =~ /epel-(\d+)-/;
     die "Could not parse EL release from target '$target'\n" unless defined $rel;
 
+    # Per-target required set from packages-manifest.conf: build ONLY these packages, and fail the
+    # run if any of them fails. A package absent from this target's section is not built for it.
+    my %MANIFEST = read_manifest("$repo_root/packages-manifest.conf");
+    my %req = %{ $MANIFEST{$target} // {} };
+    die "FATAL: no manifest section for target '$target' in packages-manifest.conf\n"
+        if !$skip_build && !%req;
+
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
 my $log_root     = "$run_root/build-logs";
@@ -381,6 +388,7 @@ if (!$skip_build) {
 
     if (!$skip_xcat_dep) {
         for my $builder (@active_dep_builders) {
+            next unless $req{ $builder->{name} };   # manifest: build only required dep packages
             my $name = $builder->{name};
             my $script = $builder->{script};
             my $step_result = "$build_root/$name";
@@ -409,7 +417,8 @@ if (!$skip_build) {
         }
     }
 
-    if (!$skip_perl) {
+    my @perl_pkgs = sort grep { /^perl-/ } keys %req;   # manifest: perl packages required here
+    if (!$skip_perl && @perl_pkgs) {
         my $perl_result = "$build_root/perl/$arch";
         my $perl_log    = "$log_root/perl/$arch";
         my $perl_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, 'perl-list6');
@@ -423,6 +432,7 @@ if (!$skip_build) {
             '--result-dir', sh_quote($perl_result),
             '--log-dir', sh_quote($perl_log),
             '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
+            '--packages', sh_quote(join(',', @perl_pkgs)),   # manifest: only required perl pkgs
             (($max_build_workers && $max_build_workers >= 1) ? ('--jobs', $max_build_workers) : ()),
             '--build-timestamp', $SOURCE_DATE_EPOCH,
             # CD bump: the in-tree spec Release bump above only reaches the spec-mode perl
@@ -451,7 +461,7 @@ if (!$skip_build) {
     # (run in the xcat-core dir) derives the same snapYYYYMMDDHHMM Release from
     # xcat-core's Gitepoch, so it matches xCAT-genesis-scripts (built in core) and
     # the exact-version dependency genesis-scripts -> genesis-base resolves.
-    if (!$skip_genesis) {
+    if (!$skip_genesis && $req{'xCAT-genesis-base'}) {
         # buildrpms.pl stages sources in $HOME/rpmbuild (via rpmdev-setuptree). Give each
         # per-target genesis build its own HOME so parallel EL targets don't race on the shared
         # /root/rpmbuild tree (that race is what made concurrent genesis builds fail).
@@ -485,7 +495,7 @@ if (!$skip_build) {
               ($max_build_workers && $max_build_workers >= 1) ? $max_build_workers
             : defined($parallel_builds)                       ? $parallel_builds
             :                                                   scalar(@build_steps);
-        run_build_steps_parallel(
+        my @failed = run_build_steps_parallel(
             steps         => \@build_steps,
             max_processes => $effective_parallel_builds,
         );
@@ -506,6 +516,23 @@ if (!$skip_build) {
                 scrub_buildroot($s->{scrub_cfg}, $s->{scrub_uniqueext}, "$log_root/scrub-$slug.log");
             }
         }
+
+        # Zero-tolerance: any required (manifest) package that failed to build fails the run.
+        # genesis is the one exception -- xcat-core's buildrpms.pl exits non-zero on an unrelated
+        # post-build xCAT-release-latest cp even when the genesis rpm IS produced, so genesis
+        # counts as failed only if its rpm is absent, not on exit code.
+        my @hard;
+        for my $id (@failed) {
+            if ($id eq 'genesis') {
+                my @g = grep { !/\.src\.rpm$/ }
+                        glob("$xcat_src/dist/$target/rpms/xCAT-genesis-base-*.rpm");
+                push @hard, $id unless @g;
+            }
+            else {
+                push @hard, $id;
+            }
+        }
+        die "FATAL: required build step(s) failed for $target: @hard\n" if @hard;
     }
 }
 
@@ -1000,20 +1027,21 @@ sub run_build_steps_parallel {
     my $max_processes = $args{max_processes} // 1;
     return if !@{$steps};
 
-    # Individual dep-builder failures here are TOLERATED only so one flaky builder does not abort
-    # the others. This is load-bearing, NOT laziness: some builders are expected to fail on a given
-    # arch/el (e.g. perl-Sys-Virt on el8 -- not a required dep), and some REQUIRED builders "fail"
-    # cosmetically while still producing their rpm (xCAT-genesis-base: xcat-core buildrpms.pl exits
-    # non-zero on an unrelated post-build xCAT-release-latest cp, yet the genesis rpm is built). So
-    # correctness is enforced by RESULT, not exit code: assert_required_deps runs after collection
-    # and fails the whole run if any REQUIRED rpm is missing -- caught at assert time, not swept
-    # under the rug. (A blanket "die on any builder failure" reddens the build on these non-issues.)
+    # Returns the ids of any steps that failed; the caller (build_one_target) enforces
+    # zero-tolerance -- any failed manifest package fails the whole run. We build only packages
+    # required for the target (per packages-manifest.conf), so there is no "expected to fail on this
+    # arch/el" case left to tolerate. genesis is the sole exception the CALLER handles: xcat-core's
+    # buildrpms.pl exits non-zero on an unrelated post-build xCAT-release-latest cp even when the
+    # genesis rpm IS built, so the caller treats genesis as failed only if its rpm is absent.
     if ($dry_run || $max_processes <= 1 || @{$steps} == 1) {
+        my @failed;
         for my $step (@{$steps}) {
             my $ok = eval { run_step(%{$step}); 1 };
-            warn "WARN: build step failed (tolerated): $step->{step}\n" . ($@ // '') unless $ok;
+            next if $ok;
+            warn "ERROR: build step failed: $step->{step}\n" . ($@ // '');
+            push @failed, (defined($step->{id}) && $step->{id} ne '' ? $step->{id} : $step->{step});
         }
-        return;
+        return @failed;
     }
 
     my $workers = $max_processes;
@@ -1068,10 +1096,9 @@ sub run_build_steps_parallel {
             push @lines,
                 "$id (exit=$f->{exit}, signal=$f->{signal}, core_dump=$f->{core_dump})";
         }
-        # Tolerated: warn, don't die. The REQUIRED set is asserted after collection/deploy.
-        warn "WARN: some build steps failed (tolerated; required deps asserted after deploy):\n  "
-            . join("\n  ", @lines) . "\n";
+        warn "ERROR: build step(s) failed:\n  " . join("\n  ", @lines) . "\n";
     }
+    return sort keys %failed;
 }
 
 # have_rpm: is there a non-src rpm named <name>-... under $dir?
@@ -1079,6 +1106,30 @@ sub have_rpm {
     my ($dir, $name) = @_;
     my @m = grep { !/\.src\.rpm$/ } glob("$dir/${name}-*.rpm");
     return scalar(@m) > 0;
+}
+
+# read_manifest: parse packages-manifest.conf into %{ target => { package => version|'*' } }.
+# INI format: [target] sections; "package=version|*" entries; blank / "#" / ";" lines ignored.
+# Returns an empty hash if the file is absent (callers that build require a section per target).
+sub read_manifest {
+    my ($path) = @_;
+    my %m;
+    return %m unless -f $path;
+    open my $fh, '<', $path or die "Cannot read manifest $path: $!\n";
+    my $sec;
+    while (my $line = <$fh>) {
+        $line =~ s/\r?\n\z//;
+        $line =~ s/^\s+|\s+$//g;
+        next if $line eq '' || $line =~ /^[#;]/;
+        if ($line =~ /^\[(.+?)\]$/) { $sec = $1; $m{$sec} ||= {}; next; }
+        next unless defined $sec;
+        my ($k, $v) = split /=/, $line, 2;
+        $k =~ s/\s+\z//;
+        $v = defined($v) ? ($v =~ s/^\s+//r) : '';
+        $m{$sec}{$k} = ($v ne '') ? $v : '*';
+    }
+    close $fh;
+    return %m;
 }
 
 # assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is

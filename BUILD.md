@@ -55,10 +55,24 @@ This guide uses the following placeholders consistently:
 
 Each build path uses `mock` for chroot isolation. Top-level steps are parallelized by `mockbuild-all.pl`, and perl dependency builds are also parallelized internally by `mockbuild-perl-packages.pl`.
 
+## Per-target package manifest
+
+`packages-manifest.conf` (repo root) declares, per target, exactly which packages are required —
+one `[<target>]` section (matching `--target`, e.g. `[alma+epel-10-x86_64]`) of
+`<package>=<version|*>` lines. For each target, `mockbuild-all.pl` builds **only** the packages
+listed for it; a package absent from a target's section is not built for that target (e.g.
+`conserver-xcat` is not required by any target, and the per-EL perl set differs because the OS/
+EPEL already provides some modules). The lists were derived empirically — on a clean MN of each
+(EL, arch), `dnf install xCAT` from xcat.org latest, and the packages whose `from_repo=xcat-dep`
+are exactly the required set. See the file header for details.
+
+Build failures are **not tolerated**: any required (manifest) package that fails to build fails
+the whole run.
+
 `mockbuild-all.pl` does more than building RPMs. In a default run it performs these stages:
 
 1. Optional chroot cleanup (`--scrub-all-chroots`)
-2. Parallel build execution
+2. Parallel build execution — only the target's manifest packages; any failure fails the run
 3. Post-build chroot scrub — reclaims each build step's mock chroot (unless `--keep-buildroots`)
 4. Optional install/smoke checks inside child builders (disabled with `--skip-install`)
 5. Binary RPM collection into `repo/<ARCH>/`
