@@ -594,8 +594,8 @@ if (!$dry_run && !$skip_build) {
         my $want = $req{$pkg};
         next if !defined($want) || $want eq '*';
         my $got = rpm_version($repo_dir, $pkg);
-        if    (!defined $got) { push @vmiss, "$pkg: not built"; }
-        elsif ($got ne $want) { push @vmiss, "$pkg: built $got, manifest pins $want"; }
+        if    (!defined $got)                 { push @vmiss, "$pkg: not built"; }
+        elsif (!version_matches($got, $want)) { push @vmiss, "$pkg: built $got, manifest pins $want"; }
     }
     die "FATAL: manifest version mismatch for $target:\n  " . join("\n  ", @vmiss) . "\n"
         if @vmiss;
@@ -1129,6 +1129,20 @@ sub have_rpm {
 # rpm_version: %{version} of the built binary rpm named <name> under $dir (undef if absent).
 # Skips src/debug rpms and confirms the rpm's real %{name} matches (glob can over-match).
 # 'xCAT-genesis-base' matches the arch-suffixed rpm name (xCAT-genesis-base-x86_64 / -ppc64).
+# version_matches: does the built version $got satisfy the manifest pin $want? $want may be an
+# exact version (2.19.0), a shell-style glob (2.*  or  2.19.*), or '*' (any). Globs support * and
+# ? and are anchored. Used so xCAT-genesis-base can pin 2.* (its Version walks with xcat-core)
+# while the real xcat-dep packages stay exactly pinned.
+sub version_matches {
+    my ($got, $want) = @_;
+    return 1 if !defined($want) || $want eq '*';
+    return ($got eq $want) unless $want =~ /[*?]/;
+    my $re = quotemeta($want);
+    $re =~ s/\\\*/.*/g;
+    $re =~ s/\\\?/./g;
+    return $got =~ /\A$re\z/ ? 1 : 0;
+}
+
 sub rpm_version {
     my ($dir, $name) = @_;
     my $glob = ($name eq 'xCAT-genesis-base')
