@@ -584,6 +584,24 @@ if (!$skip_genesis && !$dry_run) {
     }
 }
 
+# Manifest version pins: every required package must be present at its pinned version. A build
+# that produces a different version (a source version bump not reflected here) fails the run;
+# a manifest value of '*' accepts any version. Only the Version is pinned, not the Release
+# (which carries the per-EL dist tag and the genesis snap timestamp).
+if (!$dry_run && !$skip_build) {
+    my @vmiss;
+    for my $pkg (sort keys %req) {
+        my $want = $req{$pkg};
+        next if !defined($want) || $want eq '*';
+        my $got = rpm_version($repo_dir, $pkg);
+        if    (!defined $got) { push @vmiss, "$pkg: not built"; }
+        elsif ($got ne $want) { push @vmiss, "$pkg: built $got, manifest pins $want"; }
+    }
+    die "FATAL: manifest version mismatch for $target:\n  " . join("\n  ", @vmiss) . "\n"
+        if @vmiss;
+    print "[manifest] version pins satisfied for $target\n";
+}
+
 print_step('Collect source RPM artifacts');
 print "source collection roots:\n";
 print "  $_\n" for @srpm_collect_roots;
@@ -1106,6 +1124,27 @@ sub have_rpm {
     my ($dir, $name) = @_;
     my @m = grep { !/\.src\.rpm$/ } glob("$dir/${name}-*.rpm");
     return scalar(@m) > 0;
+}
+
+# rpm_version: %{version} of the built binary rpm named <name> under $dir (undef if absent).
+# Skips src/debug rpms and confirms the rpm's real %{name} matches (glob can over-match).
+# 'xCAT-genesis-base' matches the arch-suffixed rpm name (xCAT-genesis-base-x86_64 / -ppc64).
+sub rpm_version {
+    my ($dir, $name) = @_;
+    my $glob = ($name eq 'xCAT-genesis-base')
+        ? "$dir/xCAT-genesis-base-*.rpm"
+        : "$dir/${name}-*.rpm";
+    for my $f (sort glob($glob)) {
+        next if $f =~ /\.src\.rpm$/ || $f =~ /-debug(?:info|source)-/;
+        my $n = `rpm -qp --qf '%{name}' ${\ sh_quote($f)} 2>/dev/null`;
+        my $match = ($name eq 'xCAT-genesis-base')
+            ? ($n =~ /^xCAT-genesis-base-/) : ($n eq $name);
+        next unless $match;
+        my $v = `rpm -qp --qf '%{version}' ${\ sh_quote($f)} 2>/dev/null`;
+        chomp $v;
+        return $v;
+    }
+    return undef;
 }
 
 # read_manifest: parse packages-manifest.conf into %{ target => { package => version|'*' } }.
