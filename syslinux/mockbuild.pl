@@ -96,6 +96,8 @@ print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
 print_step("Verify tracked source archive");
+# Upstream source (documented for provenance; NOT fetched at build time -- see below):
+#   https://www.kernel.org/pub/linux/utils/boot/syslinux/syslinux-6.03.tar.xz
 # The syslinux source (syslinux-<ver>.tar.xz, Source0) is tracked in the repo, has the
 # syslinux-<ver>/ top-level that %setup -n expects, and is consumed directly by mock (--sources
 # $pkg_dir below). There is nothing to download: the old fetch re-downloaded this SAME tracked file

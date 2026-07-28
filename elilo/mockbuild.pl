@@ -88,6 +88,8 @@ print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
 print_step("Verify tracked source archive");
+# Upstream source (documented for provenance; NOT fetched at build time -- see below):
+#   https://downloads.sourceforge.net/project/elilo/elilo/elilo-3.14/elilo-3.14-all.tar.gz
 # Source0 (elilo-<ver>-source.tar.gz) is tracked in the repo, already normalized to an elilo/
 # top-level tree, and consumed directly by mock (--sources $pkg_dir below). There is nothing to
 # download: the old fetch re-derived this SAME tracked file and rewrote it IN PLACE. Because the

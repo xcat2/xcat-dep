@@ -89,6 +89,8 @@ print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
 print_step("Verify tracked source archive");
+# Upstream source (documented for provenance; NOT fetched at build time -- see below):
+#   https://github.com/ipmitool/ipmitool/archive/refs/tags/IPMITOOL_1_8_18.tar.gz
 # The ipmitool source (ipmitool-<ver>.tar.gz) is tracked in the repo, already normalized to the
 # ipmitool-<ver>/ top-level that %setup -n expects, and consumed directly by mock (--sources
 # $pkg_dir below). There is nothing to download: the old fetch re-derived this SAME tracked file
