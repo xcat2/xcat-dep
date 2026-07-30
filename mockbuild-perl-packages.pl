@@ -233,19 +233,34 @@ for my $idx (0 .. $#packages) {
         release_suffix => $release_suffix,
     );
     unless ($keep_buildroots) {
-        # Reclaim this perl package's chroot AND its per-uniqueext bootstrap via mock's lock-safe
-        # --scrub (never rm). Each package has its own uniqueext (hence its own chroot+bootstrap),
-        # so scrubbing one never touches a sibling's concurrent build. Runs regardless of build
-        # result so failed chroots are reclaimed too; the root cache is kept for fast rebuilds.
-        # The orchestrator can't name these chroots (package_uniqueext derives them), so we scrub
-        # here.
+        # Reclaim ONLY this package's build chroot here (it's the ~GB disk hog). --scrub=chroot is
+        # uniqueext-local, so it never touches a concurrent sibling. Do NOT --scrub=bootstrap here:
+        # despite the --uniqueext, mock's bootstrap scrub removes the CONFIG-LEVEL shared bootstrap
+        # cache (/var/cache/mock/<cfg>-bootstrap/, keyed by config name, NOT uniqueext). Doing that
+        # mid-batch deletes the cache a still-starting sibling is about to bind-mount into its own
+        # bootstrap root -> `mount rc=32` and a spurious build failure (observed: perl-Sys-Virt's
+        # buildsrpm raced a faster sibling's post-build bootstrap scrub). The shared bootstrap is
+        # reclaimed once below, after ALL workers finish, when nothing can be binding it.
         (my $ps = $pkg) =~ s/[^\w.-]+/-/g;
         system("mock -r " . sh_quote($mock_cfg) . " --uniqueext " . sh_quote($pkg_uniqueext)
-             . " --scrub=chroot --scrub=bootstrap > " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
+             . " --scrub=chroot > " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
     }
     $pm->finish($ok ? 0 : 1);
 }
 $pm->wait_all_children;
+
+# Now that every worker has exited, reclaim the per-uniqueext bootstrap roots + the shared
+# config-level bootstrap cache. Serialized and post-join, so no scrub can race a concurrent
+# bind (that race is exactly what the per-package note above avoids). Best-effort: the first
+# scrub drops /var/cache/mock/<cfg>-bootstrap; each also removes its uniqueext bootstrap root.
+unless ($keep_buildroots) {
+    for my $idx (0 .. $#packages) {
+        my $pkg_uniqueext = package_uniqueext($mock_uniqueext, $idx + 1, $packages[$idx]);
+        (my $ps = $packages[$idx]) =~ s/[^\w.-]+/-/g;
+        system("mock -r " . sh_quote($mock_cfg) . " --uniqueext " . sh_quote($pkg_uniqueext)
+             . " --scrub=bootstrap >> " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
+    }
+}
 
 for my $pkg (@packages) {
     my $status_file = "$log_dir/$pkg/status.txt";
