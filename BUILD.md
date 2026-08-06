@@ -260,6 +260,49 @@ find <REPO_ROOT>/build-output/mockbuild-all/<RUN_ID>/build-logs -type f | sort
 - `mock target not found`
   - Validate with `mock -r <TARGET> --print-root-path` and install the required mock config packages.
 
+# Ubuntu / Debian dependency build (apt, sbuild)
+
+The EL/SUSE path above uses `mockbuild-all.pl` (rpm). The Ubuntu/Debian dependency packages are
+built as **.deb** and assembled into a signed **apt** repository, with the compiled deps built
+**per codename inside matching `sbuild` chroots** so each binary links against that release's
+libc/toolchain (a noble/glibc-2.39 binary won't run on focal/glibc-2.31).
+
+Codename ↔ version: `focal`=20.04, `jammy`=22.04, `noble`=24.04, `resolute`=26.04.
+
+## Scripts
+
+- **`mk-dep-chroots.sh`** — create the per-codename `sbuild` chroots the deb build needs. Run as
+  **root** on the Ubuntu build host (the amd64 host for `amd64`, the ppc host for `ppc64el`); one
+  chroot per codename (`<codename>-<arch>-sbuild`). Idempotent. Gotchas baked in: `archive.ubuntu.com`
+  times out from some hosts (use a fast mirror, override with `MIRROR=`); the chroot `sources.list`
+  must carry **main + universe** (build-deps like `quilt` live in universe); a missing debootstrap
+  script is symlinked to the generic one. Env: `MIRROR`, `DEB_ARCH` (default `amd64`), `CODENAMES`
+  (default `focal jammy noble resolute`).
+
+- **`build-dep-debs.sh <PREFIX> "<DISTS>" [<GENESIS_BASE_RPM>] [<GENESIS_BASE_RPM_PPC>]`** — build
+  every xcat-dep `.deb` for this host's arch and stage them under `<PREFIX>/repos/apt/<ubuntuXX.YY>/`
+  for each requested codename. Run once per arch (amd64 on the x86 host, ppc64el on the ppc host).
+  The compiled deps (ipmitool, syslinux, conserver, goconserver, grub2-xcat, elilo, xnba) are built
+  **inside** the matching `schroot -c <codename>-<arch>-sbuild` — never built once and re-labeled.
+  `xCAT-genesis-base-{amd64,ppc64el}` are `Architecture:all`, so the amd64 host builds them once and
+  stages them into every codename (cross-arch netboot, issue #7610). A missing chroot fails that
+  codename loudly (no silent re-label).
+
+- **`build-apt-repo.sh`** (already in this repo) — assemble the staged per-codename debs into ONE apt
+  tree signed with the xCAT key (the same key as xcat-core apt).
+
+## Flow (per arch)
+
+```
+mk-dep-chroots.sh                                       # once, as root: create the sbuild chroots
+build-dep-debs.sh <PREFIX> "focal jammy noble resolute" # build + stage the .debs per codename
+build-apt-repo.sh ...                                   # assemble + sign the apt tree
+```
+
+> NOTE: `mk-dep-chroots.sh` / `build-dep-debs.sh` originated in the xCAT CI (xcat-core-ci-cd) and
+> still carry CI-specific path assumptions (e.g. a bind-mount of the shared build tree in
+> `mk-dep-chroots.sh`); genericizing them for standalone use is tracked in the xCAT CI issue queue.
+
 # References
 
 - [mock project repository](https://github.com/rpm-software-management/mock)
