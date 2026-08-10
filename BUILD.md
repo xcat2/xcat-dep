@@ -260,49 +260,74 @@ find <REPO_ROOT>/build-output/mockbuild-all/<RUN_ID>/build-logs -type f | sort
 - `mock target not found`
   - Validate with `mock -r <TARGET> --print-root-path` and install the required mock config packages.
 
-# Ubuntu / Debian dependency build (apt, sbuild)
+# Ubuntu / Debian dependency build (`sbuild-all.pl`)
 
-The EL/SUSE path above uses `mockbuild-all.pl` (rpm). The Ubuntu/Debian dependency packages are
-built as **.deb** and assembled into a signed **apt** repository, with the compiled deps built
-**per codename inside matching `sbuild` chroots** so each binary links against that release's
-libc/toolchain (a noble/glibc-2.39 binary won't run on focal/glibc-2.31).
+The EL/SUSE path above uses `mockbuild-all.pl` (rpm + mock). The Ubuntu/Debian dependency packages
+are built as **.deb** and assembled into a signed **apt** repository by **`sbuild-all.pl`** — the
+apt/sbuild analogue of `mockbuild-all.pl`. It shares the same CLI vocabulary (`BuildUtils.pm`'s
+`standard_options`) and the same manifest-driven, zero-tolerance, fail-hard design, and it **absorbs**
+the three former shell scripts (`mk-dep-chroots.sh`, `build-dep-debs.sh`, `build-apt-repo.sh`) into one
+Perl entrypoint. The testable helpers live in `BuildUtils.pm` and are exercised by `t/sbuild-all.t`.
 
-Codename ↔ version: `focal`=20.04, `jammy`=22.04, `noble`=24.04, `resolute`=26.04.
+The compiled deps are built **per codename inside the matching `sbuild` chroot** so each binary links
+against that release's libc/toolchain (a noble/glibc-2.39 binary won't run on focal/glibc-2.31). The
+build never mutates the checkout: each package tree is copied out-of-tree and stamped from
+`SOURCE_DATE_EPOCH` (reproducible), and the maintained `debian/` packaging is reused verbatim.
 
-## Scripts
+Codename ↔ version (the single supported set — `BuildUtils` is the source of truth):
+`focal`=20.04, `jammy`=22.04, `noble`=24.04, `resolute`=26.04.
 
-- **`mk-dep-chroots.sh`** — create the per-codename `sbuild` chroots the deb build needs. Run as
-  **root** on the Ubuntu build host (the amd64 host for `amd64`, the ppc host for `ppc64el`); one
-  chroot per codename (`<codename>-<arch>-sbuild`). Idempotent. Gotchas baked in: `archive.ubuntu.com`
-  times out from some hosts (use a fast mirror, override with `MIRROR=`); the chroot `sources.list`
-  must carry **main + universe** (build-deps like `quilt` live in universe); a missing debootstrap
-  script is symlinked to the generic one. Env: `MIRROR`, `DEB_ARCH` (default `amd64`), `CODENAMES`
-  (default `focal jammy noble resolute`).
+## Design (how the review's correctness concerns are met)
 
-- **`build-dep-debs.sh <PREFIX> "<DISTS>" [<GENESIS_BASE_RPM>] [<GENESIS_BASE_RPM_PPC>]`** — build
-  every xcat-dep `.deb` for this host's arch and stage them under `<PREFIX>/repos/apt/<ubuntuXX.YY>/`
-  for each requested codename. Run once per arch (amd64 on the x86 host, ppc64el on the ppc host).
-  The compiled deps (ipmitool, syslinux, conserver, goconserver, grub2-xcat, elilo, xnba) are built
-  **inside** the matching `schroot -c <codename>-<arch>-sbuild` — never built once and re-labeled.
-  `xCAT-genesis-base-{amd64,ppc64el}` are `Architecture:all`, so the amd64 host builds them once and
-  stages them into every codename (cross-arch netboot, issue #7610). A missing chroot fails that
-  codename loudly (no silent re-label).
+- **Fresh staging + promote-on-success.** Everything is built + validated into a per-run staging tree
+  first; the published apt repo is (re)assembled from staging ONLY after the complete expected set
+  validates — a partial/failed build never reaches the repo and stale debs never accumulate.
+- **Per-arch package sets (`debs-manifest.conf`).** One `[<codename>-<arch>]` section per target. The
+  x86 boot components (`syslinux`/`elilo`/`xnba`, `Architecture:all`) are built ONCE on amd64
+  (single producer) and assembled into every arch's `Packages` index; ppc64el builds only the
+  genuinely arch-specific compiled deps (`ipmitool-xcat`, `conserver-xcat`, `goconserver`).
+- **Fail-hard.** Any required chroot / package / artifact failure, or any version-pin mismatch, fails
+  the whole run non-zero.
+- **Genesis keeps its maintained packaging.** A native `xcat-genesis-base` deb is INGESTED as-is when
+  provided (`--genesis-deb`); a converted rpm keeps the maintained control (Depends/Breaks/Replaces)
+  and maintainer scripts from `xcat-core/xCAT-genesis-builder/debian/`. Cross-arch ppc64el genesis on
+  the amd64 host (issue #7610) is `--require-ppc-genesis`-gated.
+- **First-run chroots.** `sbuild-all.pl` auto-initializes any missing `<codename>-<arch>-sbuild` chroot
+  (main + universe so `quilt` et al. resolve; fast mirror; shared-tree bind-mount) — no separate step.
 
-- **`build-apt-repo.sh`** (already in this repo) — assemble the staged per-codename debs into ONE apt
-  tree signed with the xCAT key (the same key as xcat-core apt).
+## Files
 
-## Flow (per arch)
+- **`sbuild-all.pl`** — the orchestrator (run as **root** on the Ubuntu build host: the amd64 host for
+  `amd64`, the ppc host for `ppc64el`).
+- **`BuildUtils.pm`** — shared, unit-tested helpers + the canonical CLI spec (mirrors `MockBuildUtils.pm`).
+- **`<dep>/sbuild.pl`** ×7 — per-package builders (mirror `<dep>/mockbuild.pl`); each drives its
+  maintained `debian/` in the chroot and collects the `.deb`(s). Invoked by `sbuild-all.pl`.
+- **`debs-manifest.conf`** — per `[<codename>-<arch>]` required set + version pins.
+- **`t/sbuild-all.t`** — fixture tests (`prove t/sbuild-all.t`).
 
+## Usage (per arch, as root on the matching build host)
+
+```bash
+# amd64 host — build all four codenames, sign, assemble the apt tree:
+./sbuild-all.pl --arch amd64 --dists "focal jammy noble resolute" \
+  --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm> \
+  --genesis-rpm-ppc <ppc64 xCAT-genesis-base rpm> \
+  --gpg-sign --gpg-key-id xcat@megware.com --gpg-home <gpg-home>
+
+# ppc64el host — arch-specific deps only (the arch:all boot components come from amd64):
+./sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" \
+  --xcat-source ../xcat-core --genesis-rpm <ppc64 xCAT-genesis-base rpm> --gpg-sign ...
+
+# a single target / a dry run:
+./sbuild-all.pl --target noble-amd64 ...
+./sbuild-all.pl --dry-run --skip-build --skip-genesis ...
 ```
-mk-dep-chroots.sh                                       # once, as root: create the sbuild chroots
-build-dep-debs.sh <PREFIX> "focal jammy noble resolute" # build + stage the .debs per codename
-build-apt-repo.sh ...                                   # assemble + sign the apt tree
-```
 
-> NOTE: `mk-dep-chroots.sh` / `build-dep-debs.sh` originated in the xCAT CI (xcat-core-ci-cd) and
-> still carry CI-specific path assumptions (e.g. a bind-mount of the shared build tree in
-> `mk-dep-chroots.sh`); genericizing them for standalone use is tracked in the xCAT CI issue queue.
+`sbuild-all.pl --help` lists every option; the shared flags (`--repo-root`, `--manifest`,
+`--skip-build/-install/-genesis/-xcat-dep`, `--build-number`, `--gpg-sign`, `--dry-run`, …) match
+`mockbuild-all.pl`.
 
 # References
 
 - [mock project repository](https://github.com/rpm-software-management/mock)
+- [sbuild / schroot](https://wiki.debian.org/sbuild)
