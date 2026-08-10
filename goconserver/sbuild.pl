@@ -87,4 +87,12 @@ print "+ $cmd\n";
 my $rc = system('bash', '-c', $cmd);
 my $ec = $rc == -1 ? -1 : ($rc >> 8);
 die "[$pkg] build failed (rc=$ec)\n" if $ec != 0;
-print "[$pkg] OK\n";
+# The debs were copied to --result-dir from INSIDE the chroot session, which only reaches the host if
+# --result-dir is on a path bind-mounted into the chroot (the shared /opt/xcat-ci-shared tree). Verify
+# host-side that they actually landed, so a mis-configured (chroot-local, e.g. /tmp) result-dir fails
+# LOUD instead of silently producing nothing.
+my @debs = glob("$result_dir/*.deb");
+die "[$pkg] build succeeded in the chroot but no .deb is visible at $result_dir on the host\n"
+  . "  (is --result-dir on a path bind-mounted into the chroot, e.g. under /opt/xcat-ci-shared?)\n"
+  unless @debs;
+print "[$pkg] OK (" . scalar(@debs) . " deb(s) in $result_dir)\n";
