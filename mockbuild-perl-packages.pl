@@ -202,11 +202,13 @@ my @summary_lines;
 
 print_step("Build packages");
 print "parallel jobs: $jobs\n";
+my %child_rc;   # pkg => child exit code; the AUTHORITATIVE pass/fail for that build
 my $pm = Parallel::ForkManager->new($jobs);
 $pm->run_on_finish(
     sub {
         my ($pid, $exit_code, $ident) = @_;
         my $label = defined $ident ? $ident : "pid=$pid";
+        $child_rc{$ident} = $exit_code if defined $ident;   # record it; do not trust status.txt alone
         my $state = $exit_code == 0 ? 'PASS' : "FAIL(rc=$exit_code)";
         print "[$label] $state\n";
     }
@@ -264,6 +266,17 @@ unless ($keep_buildroots) {
 
 for my $pkg (@packages) {
     my $status_file = "$log_dir/$pkg/status.txt";
+    # The child exit code is authoritative: a package is PASS only if its worker exited 0 AND wrote
+    # a PASS status this run. A missing/non-zero child result is FAIL regardless of any status.txt
+    # (which could be a stale PASS left in a reused log dir, or unwritten because the worker crashed).
+    my $rc = $child_rc{$pkg};
+    if (!defined $rc || $rc != 0) {
+        push @failed, $pkg;
+        push @summary_lines, defined $rc
+            ? "$pkg FAIL worker exited rc=$rc"
+            : "$pkg FAIL no worker result recorded";
+        next;
+    }
     if (!-f $status_file) {
         push @failed, $pkg;
         push @summary_lines, "$pkg FAIL missing status file ($status_file)";
@@ -328,6 +341,9 @@ sub build_package {
     make_path($pkg_run_dir);
     make_path($pkg_result);
     make_path($pkg_log);
+    # Clear any status/error left by an earlier run in a reused log dir BEFORE building, so a crash
+    # between here and the status write below can never leave a stale PASS the aggregate would trust.
+    unlink $status_file, "$pkg_log/error.txt";
 
     my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $pkg_run_dir);
 

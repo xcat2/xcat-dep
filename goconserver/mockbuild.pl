@@ -20,7 +20,11 @@ my $log_dir     = "$repo_root/build-logs/list5/goconserver";
 my $skip_install = 0;
 my $version     = '0.3.3';
 my $go_repo     = 'https://github.com/xcat2/goconserver.git';
-my $go_ref      = 'master';
+# Immutable pin: goconserver 0.3.3 is unreleased (newest tag v0.3.2) so it lives only on master.
+# mockbuild-all.pl passes --go-ref with the canonical pin; this default keeps standalone runs
+# reproducible too. `git clone --branch` cannot take a raw SHA, so the clone below fetches by ref.
+my $go_ref      = '6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f';
+my $release_suffix = '';   # CD Release bump (".snap<YYYYMMDDHHMM>.<n>"); passed by mockbuild-all.pl
 my $build_timestamp;
 
 GetOptions(
@@ -33,6 +37,7 @@ GetOptions(
     'version=s'        => \$version,
     'go-repo=s'        => \$go_repo,
     'go-ref=s'         => \$go_ref,
+    'release-suffix=s' => \$release_suffix,
     'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
@@ -100,9 +105,14 @@ for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) {
 
 print_step("Clone goconserver source");
 my $src_dir = "$work_dir/goconserver-src";
-run("git clone --depth 1 --branch " . sh_quote($go_ref) . " " .
-    sh_quote($go_repo) . " " . sh_quote($src_dir) .
-    " >" . sh_quote("$log_dir/git-clone.log") . " 2>&1");
+# Fetch the exact pinned ref (a SHA, or a branch/tag). `git clone --branch` rejects a raw SHA, so
+# init + shallow fetch the one object + checkout it -- reproducible and immutable, never "latest
+# master". (xcat2/goconserver has allowReachableSHA1InWant, so fetching a master-reachable SHA works.)
+my $clone_log = sh_quote("$log_dir/git-clone.log");
+run("git init -q " . sh_quote($src_dir) . " >$clone_log 2>&1");
+run("git -C " . sh_quote($src_dir) . " remote add origin " . sh_quote($go_repo) . " >>$clone_log 2>&1");
+run("git -C " . sh_quote($src_dir) . " fetch --depth 1 origin " . sh_quote($go_ref) . " >>$clone_log 2>&1");
+run("git -C " . sh_quote($src_dir) . " checkout -q FETCH_HEAD >>$clone_log 2>&1");
 
 # etcd storage backend has broken deps with modern Go modules;
 # xCAT only uses file storage, so remove etcd before building.
@@ -198,7 +208,7 @@ print_step("Create spec and build RPM");
 my $spec_content = <<"SPEC";
 Name:           goconserver
 Version:        $version
-Release:        4.el$rel
+Release:        4.el$rel$release_suffix
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver

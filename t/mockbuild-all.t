@@ -10,8 +10,8 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
-use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version
-                      cross_copy_genesis finalize_xcat_dep read_manifest);
+use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_is_signed
+                      restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -156,6 +156,55 @@ SPEC
     my $ok3 = eval { quiet { finalize_xcat_dep("$tmp3/x", "$tmp3/p") }; 1 };
     ok(!$ok3, 'finalize dies when an x86_64 OS has no ppc64le peer repo (no silent skip)');
     like($@, qr/no ppc64le peer repo/, 'finalize error names the missing peer');
+}
+
+# ---- restamp_release_line: CD --build-number Release stamping (PR #62 review point 1) ----------
+# A fresh stamp is appended after the Release token, preserving any %{?dist} macro.
+{
+    my ($l, $ch) = restamp_release_line("Release:        1%{?dist}\n", '.snap202607161200.57');
+    is($l, "Release:        1%{?dist}.snap202607161200.57\n", 'stamps a fresh Release, macro preserved');
+    is($ch, 1, 'reports changed');
+}
+# Idempotent: the exact same suffix is a no-op (concurrent per-arch build / same-tree re-run).
+{
+    my $line = "Release:        1%{?dist}.snap202607161200.57\n";
+    my ($l, $ch) = restamp_release_line($line, '.snap202607161200.57');
+    is($l, $line, 're-stamping the SAME suffix is a no-op');
+    is($ch, 0, 'reports unchanged');
+}
+# A DIFFERENT build-number REPLACES the prior stamp (does not accumulate) -- the double-stamp bug.
+{
+    my ($l, $ch) = restamp_release_line("Release: 1%{?dist}.snap202607161200.57\n", '.snap202607161200.58');
+    is($l, "Release: 1%{?dist}.snap202607161200.58\n", 'a new build-number replaces the old stamp');
+    is($ch, 1, 'reports changed');
+    unlike($l, qr/\.snap\d{12}\.\d+\.snap/, 'never leaves two stacked .snap stamps');
+}
+# Even an already-corrupted (double-stamped) line is healed back to a single stamp.
+{
+    my ($l) = restamp_release_line("Release: 5.snap202601010000.1.snap202601020000.2\n", '.snap202607161200.9');
+    is($l, "Release: 5.snap202607161200.9\n", 'strips multiple stacked prior stamps before re-stamping');
+}
+# A non-Release line is never touched.
+{
+    my ($l, $ch) = restamp_release_line("Version: 0.3.3\n", '.snap202607161200.57');
+    is($l, "Version: 0.3.3\n", 'non-Release line untouched');
+    is($ch, 0, 'reports unchanged');
+}
+
+# ---- rpm_is_signed: unreadable / missing -> not signed (used by the finalize idempotency fix) ---
+is(rpm_is_signed(undef), 0, 'rpm_is_signed(undef) is 0');
+is(rpm_is_signed("/no/such/file.rpm"), 0, 'rpm_is_signed on a missing file is 0');
+
+# ---- manifest <-> docs consistency: conserver-xcat is in EVERY target section (PR #62 point 7c) --
+# BUILD.md documents conserver-xcat as built for every target; guard that the manifest agrees so the
+# doc and the manifest can never silently drift apart again.
+{
+    my %m = read_manifest("$RealBin/../packages-manifest.conf");
+    my @targets = sort keys %m;
+    cmp_ok(scalar(@targets), '>=', 1, 'packages-manifest.conf has at least one target section');
+    my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
+    is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
+        or diag("missing conserver-xcat in: @missing");
 }
 
 done_testing;

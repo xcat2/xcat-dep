@@ -60,9 +60,10 @@ Each build path uses `mock` for chroot isolation. Top-level steps are paralleliz
 `packages-manifest.conf` (repo root) declares, per target, exactly which packages are required —
 one `[<target>]` section (matching `--target`, e.g. `[alma+epel-10-x86_64]`) of
 `<package>=<version|*>` lines. For each target, `mockbuild-all.pl` builds **only** the packages
-listed for it; a package absent from a target's section is not built for that target (e.g.
-`conserver-xcat` is not required by any target, and the per-EL perl set differs because the OS/
-EPEL already provides some modules). The lists were derived empirically — on a clean MN of each
+listed for it; a package absent from a target's section is not built for that target (the per-EL
+perl set differs because the OS/EPEL already provides some modules). Note `conserver-xcat` is **not**
+pulled in by `dnf install xCAT` (goconserver superseded it), yet it is listed in — and therefore
+built for — every target, because some deployments still use it. The lists were derived empirically — on a clean MN of each
 (EL, arch), `dnf install xCAT` from xcat.org latest, and the packages whose `from_repo=xcat-dep`
 are exactly the required set. See the file header for details.
 
@@ -163,7 +164,9 @@ mock -r <TARGET> ...
 ```
 
 By default (no `--target`), `mockbuild-all.pl` builds all three EL releases for the host
-arch: `rh8`, `rh9`, and `rh10`. Pass `--target` (repeatable) to restrict the set.
+arch: `rh8`, `rh9`, and `rh10`. Pass `--target <TARGET>` to build a single target instead; it
+takes **one** value and is not repeatable — run the script once per target to build several, or
+omit it to build all three.
 
 # Build the Dependency Repository
 

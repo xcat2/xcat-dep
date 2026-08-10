@@ -7,14 +7,15 @@ use Cwd qw(abs_path cwd);
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Find qw(find);
-use File::Path qw(make_path);
+use File::Path qw(make_path remove_tree);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs have_rpm
-                      read_manifest rpm_version rpm_sigmd5 cross_copy_genesis finalize_xcat_dep);
+                      read_manifest rpm_version rpm_sigmd5 restamp_release_line
+                      cross_copy_genesis finalize_xcat_dep);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
@@ -37,6 +38,10 @@ my $build_timestamp;
 # fresh, monotonic NVR (deploy's additive rsync is a no-op otherwise). NOT applied
 # to xCAT-genesis-base (built from xcat-core, kept in lockstep with genesis-scripts).
 my $build_number;
+# Pinned goconserver upstream commit (xcat2/goconserver). goconserver 0.3.3 is unreleased (the
+# newest tag is v0.3.2), so it exists only on master -- pin an immutable SHA instead of the moving
+# branch so the build is reproducible. Bump this deliberately when uptaking a new goconserver.
+my $GOCONSERVER_REF = '6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f';
 my $skip_install = 0;
 my $skip_build = 0;
 my $skip_xcat_dep = 0;
@@ -96,6 +101,11 @@ GetOptions(
 ) or die usage();
 
 die "Run as root (uid=$>)\n" if $> != 0 && !$finalize_xcat_dep;
+# --skip-build collects a prior build's artifacts from that build's per-target tree, so it must
+# know the target. Without --target the default is "all three EL targets", and each would collect
+# the same artifacts and cross-publish them into every repo (foreign-EL / foreign-arch rpms).
+die "--skip-build requires an explicit --target (collection is per-target)\n"
+    if $skip_build && $target eq '';
 die "--parallel-builds must be >= 1\n"
     if defined($parallel_builds) && $parallel_builds < 1;
 
@@ -157,7 +167,13 @@ my $RELEASE_BUMP = '';
 if (defined $build_number) {
     die "--build-number must be a non-negative integer\n" if $build_number < 0;
     $RELEASE_BUMP = strftime('.snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH)) . ".$build_number";
-    bump_dep_release_suffix($repo_root, $RELEASE_BUMP);
+    # A dry run must not touch the tree. Report what would be stamped and leave the specs alone;
+    # $RELEASE_BUMP is still set so the rest of the (no-op) dry-run plan reflects it.
+    if ($dry_run) {
+        print "[dry-run] would stamp Release suffix '$RELEASE_BUMP' on xcat-dep specs under $repo_root (no files written)\n";
+    } else {
+        bump_dep_release_suffix($repo_root, $RELEASE_BUMP);
+    }
 }
 
 # Single output base for every NFS-shared write. Two hosts build in parallel on one NFS by
@@ -258,7 +274,6 @@ exit 0;
 # does not double-stamp). Preserves any %{?dist}/%{?distver} macro already on the line.
 sub bump_dep_release_suffix {
     my ($root, $suffix) = @_;
-    my $qs = quotemeta($suffix);
     my @specs;
     find(sub { push @specs, $File::Find::name if /\.spec$/ && -f $_ }, $root);
     my ($with_release, $bumped, $already) = (0, 0, 0);
@@ -271,9 +286,11 @@ sub bump_dep_release_suffix {
             # case-insensitive: some specs (e.g. Sys-Virt.spec) use a lowercase `release:`
             next unless $line =~ /^Release:\s*\S/i;
             $has_release = 1;
-            if ($line =~ /$qs\s*$/) { last }     # already stamped (idempotent / concurrent arch)
-            $line =~ s/(^Release:\s*\S+)/$1$suffix/i;
-            $changed = 1;
+            # restamp_release_line is idempotent (no-op if already carrying $suffix) and strips any
+            # prior .snap stamp before applying the new one, so a re-run with a different
+            # --build-number replaces rather than accumulates (unit-tested in t/mockbuild-all.t).
+            my ($new, $ch) = restamp_release_line($line, $suffix);
+            if ($ch) { $line = $new; $changed = 1; }
             last;                                 # only the first Release: line
         }
         $with_release++ if $has_release;
@@ -312,7 +329,7 @@ sub build_one_target {
     my %MANIFEST = read_manifest("$repo_root/packages-manifest.conf");
     my %req = %{ $MANIFEST{$target} // {} };
     die "FATAL: no manifest section for target '$target' in packages-manifest.conf\n"
-        if !$skip_build && !%req;
+        if !%req;
 
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
@@ -322,6 +339,16 @@ my $summary_file = "$run_root/summary.txt";
 my $tarball      = "$output_root/mockbuild-all-$target-$run_id.tar.gz";
 my $srpm_repo_dir = "$run_root/repo-src";
 my $srpm_tarball  = "$output_root/mockbuild-all-$target-$run_id-srpm.tar.gz";
+
+# Each real build must start from a clean per-target tree. run_id is derived from the deterministic
+# commit timestamp, so re-runs of the same commit resolve to the SAME $run_root -- without a wipe, a
+# stale rpm or a stale perl status.txt from an earlier (possibly failed) run could be reused and mask
+# a failure (see mockbuild-perl-packages.pl, which reads per-package status files back). --skip-build
+# deliberately KEEPS the tree (it collects a prior build's artifacts); --dry-run writes nothing.
+if (!$skip_build && !$dry_run && -d $run_root) {
+    print "Cleaning stale per-target tree before build: $run_root\n";
+    remove_tree($run_root);
+}
 
 # All dep builders run natively on every arch. xnba-undi and grub2-xcat are noarch packagings of
 # committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
@@ -417,6 +444,14 @@ if (!$skip_build) {
                 '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
                 ($skip_install ? '--skip-install' : ()),
+                # goconserver generates its spec at build time (from an upstream clone), so the
+                # in-tree spec Release bump above cannot reach it. Hand the CD suffix down so its
+                # NVR advances per run too, and pin the clone to an immutable commit (not the moving
+                # 'master') so the build is reproducible.
+                ($name eq 'goconserver'
+                    ? ('--go-ref', sh_quote($GOCONSERVER_REF),
+                       ($RELEASE_BUMP ne '' ? ('--release-suffix', sh_quote($RELEASE_BUMP)) : ()))
+                    : ()),
             );
             push @build_steps, {
                 id   => "xcat-dep:$name",
@@ -545,16 +580,12 @@ if (!$skip_build) {
 my $xcat_rpms_dir = "$xcat_src/dist/$target/rpms";
 
 if ($skip_build) {
-    push @collect_roots,
-        "$repo_root/build-output/list3/elilo-xcat",
-        "$repo_root/build-output/list3/grub2-xcat",
-        "$repo_root/build-output/list3/ipmitool-xcat",
-        "$repo_root/build-output/list3/syslinux-xcat",
-        "$repo_root/build-output/list3/xnba-undi",
-        "$repo_root/build-output/list5/goconserver/$arch",
-        "$repo_root/goconserver-build-$arch/results/rpm",
-        "$repo_root/build-output/list6/perl/$arch",
-        "$repo_root/perl-list6/$arch";
+    # Collect THIS target's previously-built artifacts from its own per-target build tree -- the
+    # same $build_root a normal build populates (collect_rpms recurses). NOT the legacy EL-agnostic
+    # build-output/list* dirs: those are scoped only by $arch, so an el8 rpm left there would be
+    # pulled into an el9/el10 repo, and with --target omitted the same rpms would be published into
+    # every EL repo. (--target is now required for --skip-build, see the option check above.)
+    push @collect_roots, $build_root;
 }
 
 push @collect_roots, @extra_collect_dirs;
@@ -590,8 +621,10 @@ if (!$skip_genesis && !$dry_run) {
 # Manifest version pins: every required package must be present at its pinned version. A build
 # that produces a different version (a source version bump not reflected here) fails the run;
 # a manifest value of '*' accepts any version. Only the Version is pinned, not the Release
-# (which carries the per-EL dist tag and the genesis snap timestamp).
-if (!$dry_run && !$skip_build) {
+# (which carries the per-EL dist tag and the genesis snap timestamp). This also runs under
+# --skip-build so a collection-only publish is validated against the target's manifest exactly
+# like a fresh build (a stale/foreign-arch collected rpm fails here instead of shipping).
+if (!$dry_run) {
     my @vmiss;
     # Only validate packages whose builder was NOT skipped -- so a clean --skip-* run does not
     # fail on packages it deliberately did not build.
@@ -856,7 +889,7 @@ Options:
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
   --parallel-builds N     Max concurrent top-level build steps within one EL target (default: auto)
   --parallel-targets N    Concurrent EL targets (rh8/rh9/rh10). 0/auto = all at once, 1 = serial,
-                          N = cap at N. Each target is fully output-isolated (default: auto)
+                          N = cap at N. Each target is fully output-isolated (default: 1 = serial)
   --max-parallel N        Global cap on concurrent mock builds across ALL targets, to avoid
                           oversubscribing the host. Split evenly across active targets.
                           0/auto = host nproc (default: auto)

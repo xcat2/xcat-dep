@@ -12,7 +12,7 @@ use File::Copy qw(copy);
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs have_rpm read_manifest
-    rpm_version rpm_sigmd5
+    rpm_version rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep
 );
 
@@ -74,6 +74,36 @@ sub rpm_sigmd5 {
     my $v = `rpm -qp --qf '%{SIGMD5}' ${\ sh_quote($f)} 2>/dev/null`;
     chomp $v;
     return $v;
+}
+
+# rpm_is_signed: does the rpm carry a PGP/GPG header signature? SIGMD5 (above) is content-only and
+# is identical whether or not the rpm is signed, so a cross-copied genesis that was copied but not
+# yet signed (a crash between the copy and the rpmsign) still matches by SIGMD5. finalize uses this
+# to treat such a rpm as NOT up to date so the copy+sign path re-runs and heals it.
+sub rpm_is_signed {
+    my ($f) = @_;
+    return 0 unless defined $f && -f $f;
+    my $v = `rpm -qp --qf '%{SIGPGP}%{SIGGPG}' ${\ sh_quote($f)} 2>/dev/null`;
+    return 0 if !defined $v;
+    $v =~ s/\(none\)//g;      # unsigned rpms report "(none)" for both tags
+    $v =~ s/\s+//g;
+    return $v ne '' ? 1 : 0;
+}
+
+# restamp_release_line: given a spec `Release: ...` line and a CD suffix (".snap<YYYYMMDDHHMM>.<n>"),
+# return (new_line, changed). Idempotent: a line already ending in exactly $suffix is returned
+# unchanged (changed=0). A line carrying a DIFFERENT prior .snap stamp (or several, from an earlier
+# corrupted run) has it stripped before the new suffix is appended, so a re-run in a reused tree
+# REPLACES the stamp instead of accumulating a second one (…snap...57 -> …snap...58, never
+# …snap...57.snap...58). Only the Release token is touched; a non-Release line is returned as-is.
+sub restamp_release_line {
+    my ($line, $suffix) = @_;
+    return ($line, 0) unless defined $line && $line =~ /^Release:\s*\S/i;
+    my $qs = quotemeta($suffix);
+    return ($line, 0) if $line =~ /$qs\s*$/;                 # already carries THIS suffix
+    (my $new = $line) =~ s/(?:\.snap\d{12}\.\d+)+(\s*)$/$1/; # drop any prior CD stamp(s)
+    $new =~ s/(^Release:\s*\S+)/$1$suffix/i;
+    return ($new, 1);
 }
 
 # rpm_version: %{version} of the built binary rpm named <name> under $dir (undef if absent).
@@ -149,6 +179,10 @@ sub cross_copy_genesis {
             # An empty SIGMD5 (unreadable rpm) means "cannot confirm identical" -> refresh rather
             # than risk skipping on a false match (two '' would otherwise compare equal).
             if (!-f $dst || $src_sig eq '' || $src_sig ne rpm_sigmd5($dst)) { $up_to_date = 0; last; }
+            # Content matches, but SIGMD5 cannot see the signature: a crash between the copy and the
+            # per-rpm sign leaves a same-content-but-UNSIGNED rpm. When a signer is configured, treat
+            # an unsigned dst as not-up-to-date so the copy+sign path re-runs and signs it.
+            if ($sign && !rpm_is_signed($dst)) { $up_to_date = 0; last; }
         }
         return 0 if $up_to_date;
     }
@@ -202,8 +236,12 @@ sub finalize_xcat_dep {
         # named xCAT-genesis-base-ppc64-*. Cross-copy both directions.
         my $to_x86 = cross_copy_genesis($ppcdir, $x86dir, 'ppc64',  $sign);
         my $to_ppc = cross_copy_genesis($x86dir, $ppcdir, 'x86_64', $sign);
-        $reindex->($x86dir) if $to_x86 && $reindex;
-        $reindex->($ppcdir) if $to_ppc && $reindex;
+        # Re-index+sign BOTH repos of the pair every finalize, not only when an rpm was copied this
+        # run. A crash after a prior run's copy+sign but before its createrepo leaves the genesis rpm
+        # on disk (so cross_copy_genesis now returns 0) yet ABSENT from repomd.xml -- which no
+        # signature gate catches. Re-indexing is cheap (these are tiny repos) and idempotent, and it
+        # heals that partial state; skipped only when no signer/indexer was injected.
+        if ($reindex) { $reindex->($x86dir); $reindex->($ppcdir); }
         printf "[finalize] %s: %d ppc64 genesis -> x86_64, %d x86_64 genesis -> ppc64le\n",
             $osdir, $to_x86, $to_ppc;
         $pairs++;
