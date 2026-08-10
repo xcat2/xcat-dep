@@ -12,7 +12,7 @@ use File::Copy qw(copy);
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs have_rpm read_manifest
-    rpm_version rpm_sigmd5 rpm_is_signed restamp_release_line
+    rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep
 );
 
@@ -133,6 +133,27 @@ sub rpm_version {
       . " (stale artifact not cleaned before the build)\n" if keys(%vers) > 1;
     my ($v) = keys %vers;
     return $v;
+}
+
+# rpm_release: %{release} of the built binary rpm named <name> under $dir (undef if absent). Same
+# name-matching as rpm_version. Used to confirm a CD --build-number/--release-suffix bump actually
+# landed in the built rpm's Release (validating %{VERSION} alone can't catch a silently un-bumped NVR).
+sub rpm_release {
+    my ($dir, $name) = @_;
+    my $glob = ($name eq 'xCAT-genesis-base')
+        ? "$dir/xCAT-genesis-base-*.rpm"
+        : "$dir/${name}-*.rpm";
+    for my $f (sort glob($glob)) {
+        next if $f =~ /\.src\.rpm$/ || $f =~ /-debug(?:info|source)-/;
+        my $n = `rpm -qp --qf '%{name}' ${\ sh_quote($f)} 2>/dev/null`;
+        my $match = ($name eq 'xCAT-genesis-base')
+            ? ($n =~ /^xCAT-genesis-base-/) : ($n eq $name);
+        next unless $match;
+        my $r = `rpm -qp --qf '%{release}' ${\ sh_quote($f)} 2>/dev/null`;
+        chomp $r;
+        return $r if $r ne '';
+    }
+    return undef;
 }
 
 # read_manifest: parse packages-manifest.conf into %{ target => { package => version|'*' } }.

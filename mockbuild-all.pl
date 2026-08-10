@@ -14,7 +14,7 @@ use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs have_rpm
-                      read_manifest rpm_version rpm_sigmd5 restamp_release_line
+                      read_manifest rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep);
 
 my $script_dir = abs_path(dirname(__FILE__));
@@ -275,7 +275,13 @@ exit 0;
 sub bump_dep_release_suffix {
     my ($root, $suffix) = @_;
     my @specs;
-    find(sub { push @specs, $File::Find::name if /\.spec$/ && -f $_ }, $root);
+    # Only stamp xcat-dep's OWN specs. If someone checked xcat-core out NESTED under $repo_root (the
+    # legacy `xcat-source-code`/`xcat-core` layout), do NOT descend into it -- rewriting a core spec
+    # (e.g. xCAT-genesis-base.spec's dynamic Release) would break the lockstep with genesis-scripts.
+    find(sub {
+        if (-d $_ && ($_ eq 'xcat-core' || $_ eq 'xcat-source-code')) { $File::Find::prune = 1; return; }
+        push @specs, $File::Find::name if /\.spec$/ && -f $_;
+    }, $root);
     my ($with_release, $bumped, $already) = (0, 0, 0);
     for my $spec (sort @specs) {
         open my $in, '<', $spec or die "open $spec: $!\n";
@@ -543,10 +549,21 @@ if (!$skip_build) {
               ($max_build_workers && $max_build_workers >= 1) ? $max_build_workers
             : defined($parallel_builds)                       ? $parallel_builds
             :                                                   scalar(@build_steps);
-        my @failed = run_build_steps_parallel(
-            steps         => \@build_steps,
-            max_processes => $effective_parallel_builds,
-        );
+        # Make --max-parallel a REAL cap. The perl builder is a single step that internally forks up
+        # to $effective_parallel_builds mock jobs of its own, so running it concurrently with the dep
+        # builders pushed live mock builds to ~2x the cap. Run it in its OWN phase, after the dep
+        # builders (which are quick) -- each phase then runs at most $effective_parallel_builds mock
+        # builds, so the cap holds, at a small bounded wall-clock cost. (The perl step sets no
+        # scrub_cfg and scrubs its own chroots; the scrub loop below still covers the dep/genesis steps.)
+        my @perl_steps    = grep { $_->{id} eq 'perl' } @build_steps;
+        my @nonperl_steps = grep { $_->{id} ne 'perl' } @build_steps;
+        my @failed;
+        push @failed, run_build_steps_parallel(
+            steps => \@nonperl_steps, max_processes => $effective_parallel_builds,
+        ) if @nonperl_steps;
+        push @failed, run_build_steps_parallel(
+            steps => \@perl_steps, max_processes => $effective_parallel_builds,
+        ) if @perl_steps;
 
         # Reclaim each build step's mock chroot now that the step copied its RPMs/logs out to
         # its --result-dir (collect_rpms reads those, never /var/lib/mock). mock's own cleanup
@@ -638,6 +655,24 @@ if (!$dry_run) {
     die "FATAL: manifest version mismatch for $target:\n  " . join("\n  ", @vmiss) . "\n"
         if @vmiss;
     print "[manifest] version pins satisfied for $target\n";
+
+    # When a CD --build-number bump is in effect, confirm it actually LANDED in the built rpms'
+    # Release -- validating %{VERSION} alone can't catch a silently un-bumped NVR (which deploy's
+    # additive rsync would then dedup away). Every built dep + perl package carries the suffix;
+    # xCAT-genesis-base is intentionally NOT bumped (kept in lockstep with xcat-core's genesis-scripts).
+    if ($RELEASE_BUMP ne '') {
+        my @rmiss;
+        for my $pkg (required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep)) {
+            next if $pkg eq 'xCAT-genesis-base';
+            my $rel = rpm_release($repo_dir, $pkg);
+            next if !defined $rel;   # a missing rpm was already reported by the version-pin check
+            push @rmiss, "$pkg: Release '$rel' is missing the CD bump '$RELEASE_BUMP'"
+                if index($rel, $RELEASE_BUMP) < 0;
+        }
+        die "FATAL: --build-number bump '$RELEASE_BUMP' did not land in built rpm(s) for $target:\n  "
+          . join("\n  ", @rmiss) . "\n" if @rmiss;
+        print "[manifest] Release bump '$RELEASE_BUMP' present on all built dep rpms for $target\n";
+    }
 }
 
 print_step('Collect source RPM artifacts');

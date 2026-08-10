@@ -10,7 +10,7 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
-use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_is_signed
+use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
@@ -194,6 +194,9 @@ SPEC
 # ---- rpm_is_signed: unreadable / missing -> not signed (used by the finalize idempotency fix) ---
 is(rpm_is_signed(undef), 0, 'rpm_is_signed(undef) is 0');
 is(rpm_is_signed("/no/such/file.rpm"), 0, 'rpm_is_signed on a missing file is 0');
+
+# ---- rpm_release: absent package -> undef (used by the --build-number bump-landed check) ---------
+is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is undef when no rpm matches');
 
 # ---- manifest <-> docs consistency: conserver-xcat is in EVERY target section (PR #62 point 7c) --
 # BUILD.md documents conserver-xcat as built for every target; guard that the manifest agrees so the
