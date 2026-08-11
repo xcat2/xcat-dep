@@ -47,7 +47,8 @@ my $apt_dir    = '';
 my $manifest   = '';
 my $dists      = '';                 # space/comma list of codenames; default = all known
 my $arch       = '';                 # dpkg arch (amd64/ppc64el); default from host
-my $mirror     = 'http://br.archive.ubuntu.com/ubuntu';
+my $mirror     = '';   # default is arch-aware (set after --arch is resolved): amd64 -> archive mirror,
+                       # ppc64el -> ubuntu-ports (ppc64el is not on archive.ubuntu.com).
 my $run_id     = '';
 my $build_timestamp;
 my $build_number;
@@ -137,6 +138,10 @@ $manifest  ||= "$repo_root/debs-manifest.conf";
 $arch      ||= `dpkg --print-architecture 2>/dev/null`; chomp $arch;
 $arch      ||= 'amd64';
 die "FATAL: unsupported --arch '$arch' (amd64|ppc64el)\n" unless $arch =~ /^(amd64|ppc64el)$/;
+# Arch-aware chroot bootstrap mirror: ppc64el is NOT served by archive.ubuntu.com -- it lives on
+# ubuntu-ports. Only defaulted when --mirror was not given explicitly.
+$mirror    ||= ($arch eq 'ppc64el') ? 'http://ports.ubuntu.com/ubuntu-ports'
+                                     : 'http://br.archive.ubuntu.com/ubuntu';
 
 # --target "<codename>-<arch>" pins a single codename (and cross-checks the arch); otherwise --dists.
 my @dist_list;
@@ -591,7 +596,8 @@ Staging + build-output base / published apt tree (default C<< <repo-root>/repos/
 
 =item B<--mirror> C<url>
 
-Chroot bootstrap mirror (default: a fast BR archive mirror; C<archive.ubuntu.com> times out from the
+Chroot bootstrap mirror. Default is arch-aware: amd64 uses a fast BR archive mirror, ppc64el uses
+C<ports.ubuntu.com/ubuntu-ports> (ppc64el is not served by archive.ubuntu.com). C<archive.ubuntu.com> times out from the
 build hosts).
 
 =item B<--genesis-deb> C<path|url>
