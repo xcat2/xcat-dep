@@ -52,6 +52,11 @@ my $mirror     = '';   # default is arch-aware (set after --arch is resolved): a
 my $run_id     = '';
 my $build_timestamp;
 my $build_number;
+# Per-codename build concurrency ON THIS host/arch. 0 = auto = build every requested codename in
+# parallel (each in its own <codename>-<arch>-sbuild chroot). With the Jenkinsfile running the two
+# arches on their two hosts in parallel, "all 4 codenames per host" gives 8 concurrent build streams
+# (4 per host). N caps it to N; 1 forces serial.
+my $parallel_targets = 0;
 my ($skip_build, $skip_install, $skip_genesis, $skip_xcat_dep) = (0,0,0,0);
 my ($skip_createrepo, $skip_tarball) = (0,0);
 my $dry_run = 0;
@@ -119,6 +124,7 @@ $spec{'arch=s'}                = \$arch;
 $spec{'apt-dir=s'}             = \$apt_dir;
 $spec{'mirror=s'}              = \$mirror;
 $spec{'gpg-key-id=s'}          = \$gpg_key_id;
+$spec{'parallel-targets=i'}    = \$parallel_targets;
 $spec{'genesis-deb=s'}         = \@genesis_debs;
 $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
@@ -246,37 +252,79 @@ sub ensure_chroots {
 # ---------------------------------------------------------------------------------------------------
 # Phase: build the compiled deps (drives each <dep>/sbuild.pl in the matching chroot)
 # ---------------------------------------------------------------------------------------------------
+# build_one_codename: build every required (non-genesis) package for ONE codename, serially, each in
+# that codename's <codename>-<arch>-sbuild chroot. Returns 0 on success, non-zero if any package
+# failed. Called either directly (serial mode) or inside a forked child (parallel mode).
+sub build_one_codename {
+    my ($cn) = @_;
+    my $tgt = "$cn-$arch";
+    my $out = "$staging/$cn/$arch"; remove_tree($out) if -d $out; make_path($out);
+    my @pkgs = grep { $_ ne 'xcat-genesis-base' }
+               required_pkgs([sort keys %{$MANIFEST{$tgt}}], $skip_genesis, $skip_xcat_dep);
+    print "== [$cn] building: @pkgs -> $out ==\n";
+    for my $pkg (@pkgs) {
+        my $dir = $PKG_DIR{$pkg}
+            or die "FATAL: no builder dir mapped for manifest package '$pkg'\n";
+        my $builder = "$repo_root/$dir/sbuild.pl";
+        die "FATAL: missing builder $builder (required for $pkg on $tgt)\n" unless -f $builder;
+        my $log = "$out/$pkg.buildlog";
+        my $cmd = join(' ',
+            'perl', sh_quote($builder),
+            '--codename', sh_quote($cn),
+            '--arch', sh_quote($arch),
+            '--chroot', sh_quote(chroot_name($cn, $arch)),
+            '--result-dir', sh_quote($out),
+            '--log-dir', sh_quote($out),
+            '--build-timestamp', sh_quote($build_timestamp),
+            (defined $build_number ? ('--build-number', sh_quote($build_number)) : ()),
+            ($skip_install ? ('--skip-install') : ()),
+            '>', sh_quote($log), '2>&1',
+        );
+        print "  [$cn] -> $pkg ($dir/sbuild.pl)\n";
+        my $ec = run($cmd, nofail => 1);
+        if ($ec != 0) { warn "FATAL: [$cn] $pkg build failed (rc=$ec) -- see $log\n"; return 1; }
+    }
+    print "== [$cn] done ==\n";
+    return 0;
+}
+
+# build_deps: build every requested codename ON THIS host. By default all codenames build IN PARALLEL
+# (one forked child per codename, each in its own chroot -- so with the two arches running on their two
+# hosts, the matrix builds as 8 concurrent streams, 4 per host). --parallel-targets N caps concurrency;
+# 1 (or --dry-run) is serial. Fails the run non-zero if ANY codename's build failed.
 sub build_deps {
-    print_step("Build compiled deps ($arch)");
-    for my $cn (@dist_list) {
-        my $tgt = "$cn-$arch";
-        my $out = "$staging/$cn/$arch"; remove_tree($out) if -d $out; make_path($out);
-        my @pkgs = grep { $_ ne 'xcat-genesis-base' }
-                   required_pkgs([sort keys %{$MANIFEST{$tgt}}], $skip_genesis, $skip_xcat_dep);
-        print "== [$cn] building: @pkgs -> $out ==\n";
-        for my $pkg (@pkgs) {
-            my $dir = $PKG_DIR{$pkg}
-                or die "FATAL: no builder dir mapped for manifest package '$pkg'\n";
-            my $builder = "$repo_root/$dir/sbuild.pl";
-            die "FATAL: missing builder $builder (required for $pkg on $tgt)\n" unless -f $builder;
-            my $log = "$out/$pkg.buildlog";
-            my $cmd = join(' ',
-                'perl', sh_quote($builder),
-                '--codename', sh_quote($cn),
-                '--arch', sh_quote($arch),
-                '--chroot', sh_quote(chroot_name($cn, $arch)),
-                '--result-dir', sh_quote($out),
-                '--log-dir', sh_quote($out),
-                '--build-timestamp', sh_quote($build_timestamp),
-                (defined $build_number ? ('--build-number', sh_quote($build_number)) : ()),
-                ($skip_install ? ('--skip-install') : ()),
-                '>', sh_quote($log), '2>&1',
-            );
-            print "  -> $pkg ($dir/sbuild.pl)\n";
-            my $ec = run($cmd, nofail => 1);
-            die "FATAL: [$cn] $pkg build failed (rc=$ec) -- see $log\n" if $ec != 0;
+    my $max = $parallel_targets > 0 ? $parallel_targets : scalar(@dist_list);
+    $max = 1 if $dry_run;   # keep dry-run output ordered + side-effect-free
+    print_step("Build compiled deps ($arch) -- "
+        . scalar(@dist_list) . " codename(s), up to $max in parallel");
+
+    if ($max <= 1) {
+        my @fail = grep { build_one_codename($_) != 0 } @dist_list;
+        die "FATAL: build failed for codename(s): @fail\n" if @fail;
+        return;
+    }
+
+    my @queue = @dist_list;
+    my (%pid2cn, %fail);
+    my $running = 0;
+    while (@queue || $running) {
+        while (@queue && $running < $max) {
+            my $cn = shift @queue;
+            my $pid = fork();
+            die "FATAL: fork failed: $!\n" unless defined $pid;
+            if ($pid == 0) { exit(build_one_codename($cn)); }   # child
+            $pid2cn{$pid} = $cn; $running++;
+        }
+        my $pid = wait();
+        if ($pid > 0) {
+            my $ec = $? >> 8;
+            my $cn = delete $pid2cn{$pid} // '?';
+            $fail{$cn} = $ec if $ec != 0;
+            $running--;
         }
     }
+    die "FATAL: build failed for codename(s): "
+        . join(', ', map { "$_ (rc=$fail{$_})" } sort keys %fail) . "\n" if %fail;
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -619,6 +667,12 @@ Sign C<Release>/C<InRelease> with the given key from the given GNUPGHOME.
 =item B<--build-number> C<n> B<--build-timestamp> C<epoch> B<--run-id> C<id>
 
 CD identifiers; C<--build-timestamp> also sets C<SOURCE_DATE_EPOCH> for reproducible builds.
+
+=item B<--parallel-targets> C<N>
+
+Per-codename build concurrency on this host. Default 0 = auto = build every requested codename in
+parallel (each in its own chroot); N caps it; 1 forces serial. With the two arches on their two hosts,
+the default gives 8 concurrent build streams for a 4-codename matrix (4 per host).
 
 =item B<--skip-build> B<--skip-install> B<--skip-genesis> B<--skip-xcat-dep> B<--skip-createrepo> B<--skip-tarball>
 
