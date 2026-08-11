@@ -277,7 +277,7 @@ build never mutates the checkout: each package tree is copied out-of-tree and st
 Codename ↔ version (the single supported set — `BuildUtils` is the source of truth):
 `focal`=20.04, `jammy`=22.04, `noble`=24.04, `resolute`=26.04.
 
-## Design (how the review's correctness concerns are met)
+## Design
 
 - **Fresh staging + promote-on-success.** Everything is built + validated into a per-run staging tree
   first; the published apt repo is (re)assembled from staging ONLY after the complete expected set
@@ -319,7 +319,7 @@ codename: `20.04`=`focal`, `22.04`=`jammy`, `24.04`=`noble`, `26.04`=`resolute`.
 ./sbuild-all.pl --arch amd64 --dists "focal jammy noble resolute" \
   --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base-x86_64 rpm> \
   --genesis-rpm-ppc <xCAT-genesis-base-ppc64 rpm> \
-  --gpg-sign --gpg-key-id xcat@megware.com --gpg-home <gpg-home>
+  --gpg-sign --gpg-key-id xcat@example.com --gpg-home <gpg-home>
 ```
 
 `--dists` may be omitted entirely — with no `--dists`/`--target`, **all supported codenames** are
