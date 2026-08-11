@@ -2,7 +2,7 @@ Source: goconserver
 Section: admin
 Priority: optional
 Maintainer: xCAT <xcat-user@lists.sourceforge.net>
-Build-Depends: debhelper (>= 13), golang
+Build-Depends: debhelper (>= 12), golang
 Standards-Version: 4.6.0
 Homepage: https://github.com/xcat2/goconserver
 

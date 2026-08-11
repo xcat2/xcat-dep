@@ -17,7 +17,9 @@ use warnings;
 use Exporter 'import';
 use File::Basename qw(basename);
 use File::Copy qw(copy);
+use File::Path qw(make_path);
 use Digest::MD5;
+use MIME::Base64 qw(encode_base64);
 
 our @EXPORT_OK = qw(
     sh_quote print_step
@@ -26,6 +28,7 @@ our @EXPORT_OK = qw(
     chroot_name chroot_sources_list
     deb_snap_version rewrite_changelog_top control_field genesis_deb_control
     deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb
+    build_deb_in_chroot
 );
 
 # Canonical Ubuntu codename <-> ubuntuXX.YY map. This is the SINGLE source of truth for the
@@ -367,6 +370,74 @@ sub cross_copy_genesis_deb {
         $copied++;
     }
     return $copied;
+}
+
+# ---------------------------------------------------------------------------------------------------
+# Per-package build orchestration (shared by every <dep>/sbuild.pl; the deb analogue of what
+# MockBuildUtils' helpers do for the per-package mockbuild.pl builders).
+# ---------------------------------------------------------------------------------------------------
+
+# build_deb_in_chroot: build ONE package inside its <codename>-<arch>-sbuild chroot and collect the
+# produced .deb(s) into $result_dir. The COMMON orchestration lives here -- an ephemeral schroot
+# session, apt update, install of common tools + the package's debian/control Build-Depends, an
+# OUT-OF-TREE copy of the package dir (the checkout is never mutated), SOURCE_DATE_EPOCH for
+# reproducible builds, deb collection, and a host-side check that the debs actually landed (a
+# chroot-local --result-dir would otherwise be a silent no-output). Each <dep>/sbuild.pl supplies
+# only its package-specific $build snippet (the source prep + dpkg-buildpackage that used to live in
+# make_deb.sh); $build runs with CWD = the copied package dir and must leave its .deb(s) somewhere
+# under the build work tree. Dies on any failure.
+#   %args: pkg, chroot, pkg_dir, result_dir, build_timestamp, build (required); extra_tools (arrayref, optional)
+sub build_deb_in_chroot {
+    my (%a) = @_;
+    defined $a{$_} or die "build_deb_in_chroot: missing '$_'\n"
+        for qw(pkg chroot pkg_dir result_dir build_timestamp build);
+    my $pkg = $a{pkg};
+    die "FATAL: chroot $a{chroot} missing (run sbuild-all.pl to auto-init it)\n"
+        if system("schroot -l 2>/dev/null | grep -qx chroot:$a{chroot}") != 0;
+    make_path($a{result_dir});
+    my $extra = join(' ', @{ $a{extra_tools} || [] });
+    my $b64   = encode_base64($a{build}, '');
+
+    # The whole per-package build runs in ONE schroot session (ephemeral overlay). schroot SANITIZES
+    # the environment, so values are passed as POSITIONAL ARGS to the inner bash; the package-specific
+    # build is passed base64-encoded to avoid any quoting interplay through schroot.
+    my $inner = <<'INNER';
+set -uo pipefail
+PKGSRC="$1"; OUT="$2"; SDE="$3"; EXTRA="$4"; B64="$5"
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=nocheck SOURCE_DATE_EPOCH="$SDE"
+for t in 1 2 3; do apt-get update -q && break; sleep 5; done
+apt-get install -y --no-install-recommends \
+    git wget curl ca-certificates devscripts quilt fakeroot build-essential $EXTRA >/dev/null 2>&1 || true
+W=$(mktemp -d); cp -a "$PKGSRC" "$W/pkg"; cd "$W/pkg"
+if [ -f debian/control ]; then
+  BD=$(sed -n '/^Build-Depends:/,/^\S/p' debian/control | tr ',' '\n' \
+       | sed -E 's/^Build-Depends://; s/\(.*\)//; s/\[.*\]//; s/[[:space:]]//g' \
+       | grep -E '^[a-z0-9]' | grep -v '^debhelper-compat' | sort -u | tr '\n' ' ')
+  [ -n "$BD" ] && { apt-get install -y $BD >/dev/null 2>&1 || echo "[warn] some build-deps failed to install"; }
+fi
+printf '%s' "$B64" | base64 -d > "$W/pkgbuild.sh"
+( cd "$W/pkg" && bash "$W/pkgbuild.sh" ) || { echo "package build FAILED"; exit 1; }
+found=$(find "$W" -maxdepth 3 -name '*.deb' ! -name '*-dbgsym_*' -print)
+[ -n "$found" ] || { echo "build produced no .deb"; exit 1; }
+mkdir -p "$OUT"; echo "$found" | while read -r d; do cp -v "$d" "$OUT/"; done
+INNER
+
+    my $cmd = 'schroot -c ' . sh_quote($a{chroot}) . ' -u root -d / -- bash -c '
+            . sh_quote($inner) . ' bash '
+            . sh_quote($a{pkg_dir}) . ' ' . sh_quote($a{result_dir}) . ' '
+            . sh_quote($a{build_timestamp}) . ' ' . sh_quote($extra) . ' ' . sh_quote($b64);
+    print "[$pkg] building in chroot $a{chroot} -> $a{result_dir} (SOURCE_DATE_EPOCH=$a{build_timestamp})\n";
+    my $rc = system('bash', '-c', $cmd);
+    my $ec = $rc == -1 ? -1 : ($rc >> 8);
+    die "[$pkg] build failed (rc=$ec)\n" if $ec != 0;
+    # The debs were copied from INSIDE the chroot; that only reaches the host if --result-dir is on a
+    # bind-mounted path. Verify host-side so a mis-configured (chroot-local) result-dir fails LOUD.
+    my @debs = glob("$a{result_dir}/*.deb");
+    die "[$pkg] build succeeded in the chroot but no .deb is visible at $a{result_dir} on the host\n"
+      . "  (is --result-dir on a path bind-mounted into the chroot, e.g. under /opt/xcat-ci-shared?)\n"
+      unless @debs;
+    print "[$pkg] OK (" . scalar(@debs) . " deb(s) in $a{result_dir})\n";
+    return scalar @debs;
 }
 
 1;

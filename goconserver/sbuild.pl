@@ -1,98 +1,103 @@
 #!/usr/bin/env perl
-# <dep>/sbuild.pl -- per-package Ubuntu/Debian builder; the apt/sbuild analogue of <dep>/mockbuild.pl.
-#
-# It drives THIS package's MAINTAINED debian/ packaging (via the package's make_deb.sh, which copies
-# debian/ into an extracted/cloned source tree and runs dpkg-buildpackage) INSIDE the matching
-# <codename>-<arch>-sbuild chroot, then collects the produced .deb(s) into --result-dir. Invoked by
-# sbuild-all.pl once per (codename,arch); also runnable standalone.
-#
-# This file is intentionally GENERIC and identical across every dep dir -- the package identity is
-# derived from its own directory, and the per-package build specifics live in that package's
-# maintained make_deb.sh + debian/ (so the maintained packaging is reused, never re-implemented:
-# review concern #2). A package that ever needs bespoke handling can diverge its own copy.
-#
-# Out-of-tree guarantee: the checkout is never mutated -- the package tree is copied to a temp work
-# dir in the chroot session and make_deb.sh stamps the COPY's debian/changelog from SOURCE_DATE_EPOCH.
+# goconserver/sbuild.pl -- per-package Ubuntu/Debian builder for goconserver; the apt/sbuild analogue
+# of goconserver/mockbuild.pl. Builds the package inside the matching <codename>-<arch>-sbuild chroot
+# from its MAINTAINED debian/ packaging and collects the .deb(s) into --result-dir. Invoked by
+# sbuild-all.pl per (codename,arch); also runnable standalone. Out-of-tree: the build runs on a COPY of
+# the package tree (the checkout is never mutated). The common chroot orchestration lives in
+# BuildUtils::build_deb_in_chroot; goconserver's source clone + Go toolchain + build is below.
 use strict;
 use warnings;
 use Cwd qw(abs_path);
 use File::Basename qw(basename);
-use File::Path qw(make_path);
 use Getopt::Long qw(GetOptions);
 use FindBin qw($RealBin);
 use lib "$RealBin/..";
-use BuildUtils qw(sh_quote chroot_name);
+use BuildUtils qw(chroot_name build_deb_in_chroot);
 
 my $pkg_dir = abs_path($RealBin);
 my $pkg     = basename($pkg_dir);
-
 my ($codename, $arch, $chroot, $result_dir, $log_dir) = ('', '', '', '', '');
 my ($build_timestamp, $build_number, $skip_install) = (undef, undef, 0);
 GetOptions(
-    'codename=s'        => \$codename,
-    'arch=s'            => \$arch,
-    'chroot=s'          => \$chroot,
-    'result-dir=s'      => \$result_dir,
-    'log-dir=s'         => \$log_dir,
-    'build-timestamp=i' => \$build_timestamp,
-    'build-number=i'    => \$build_number,
-    'skip-install!'     => \$skip_install,
+    'codename=s' => \$codename, 'arch=s' => \$arch, 'chroot=s' => \$chroot,
+    'result-dir=s' => \$result_dir, 'log-dir=s' => \$log_dir,
+    'build-timestamp=i' => \$build_timestamp, 'build-number=i' => \$build_number,
+    'skip-install!' => \$skip_install,
 ) or die "bad options\n";
-
-$arch ||= `dpkg --print-architecture 2>/dev/null`; chomp $arch;
-$arch ||= 'amd64';
+$arch ||= `dpkg --print-architecture 2>/dev/null`; chomp $arch; $arch ||= 'amd64';
 die "FATAL: --codename required\n" unless $codename;
 $chroot     ||= chroot_name($codename, $arch);
-$result_dir ||= "$pkg_dir/../build-output/sbuild/$codename";
-$log_dir    ||= $result_dir;
-make_path($result_dir, $log_dir);
+$result_dir ||= "$pkg_dir/../build-output/sbuild/$codename/$arch";
 $build_timestamp = time() unless defined $build_timestamp;
 
-die "FATAL: $pkg has no make_deb.sh (maintained deb packaging expected)\n" unless -f "$pkg_dir/make_deb.sh";
-die "FATAL: chroot $chroot missing (run sbuild-all.pl to auto-init it)\n"
-    if system("schroot -l 2>/dev/null | grep -qx chroot:$chroot") != 0;
+# goconserver's pinned SHA + Go toolchain (see the shell below). goconserver 0.3.3 is UNRELEASED so it
+# lives only on master -- pin an immutable SHA so every matrix cell builds the SAME source (reproducible,
+# matching the EL GOCONSERVER_REF in mockbuild-all.pl). Its modules require Go >= 1.25, but the Ubuntu
+# codenames ship older toolchains (focal=go1.13 ... noble=go1.22) and the pre-1.21 ones cannot even
+# auto-switch toolchains; goconserver is a static CGO-free binary, so a pinned Go downloaded into the
+# build works in ANY codename chroot and keeps the compiler reproducible. Bump these two deliberately.
 
-# The whole per-package build runs in ONE schroot session (ephemeral overlay). schroot SANITIZES the
-# environment, so the package dir / out dir / epoch are passed as POSITIONAL ARGS to the inner bash.
-# The 'INNER' heredoc is single-quoted so inner shell vars do not expand out here.
-my $inner = <<'INNER';
-set -uo pipefail
-PKGSRC="$1"; OUT="$2"; SDE="$3"
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=nocheck
-export SOURCE_DATE_EPOCH="$SDE"
-for t in 1 2 3; do apt-get update -q && break; sleep 5; done
-# common tooling the make_deb.sh scripts use beyond debian/control Build-Depends (goconserver
-# git-clones + go-builds; others extract an upstream tarball).
-apt-get install -y --no-install-recommends git wget curl ca-certificates golang-go devscripts quilt fakeroot >/dev/null 2>&1 || true
-W=$(mktemp -d); cp -a "$PKGSRC" "$W/pkg"; cd "$W/pkg"
-if [ -f debian/control ]; then
-  BD=$(sed -n '/^Build-Depends:/,/^\S/p' debian/control | tr ',' '\n' \
-       | sed -E 's/^Build-Depends://; s/\(.*\)//; s/\[.*\]//; s/[[:space:]]//g' \
-       | grep -E '^[a-z0-9]' | grep -v '^debhelper-compat' | sort -u | tr '\n' ' ')
-  [ -n "$BD" ] && { apt-get install -y $BD >/dev/null 2>&1 || echo "[warn] some build-deps failed to install"; }
+# ---- package-specific build (absorbed from the former make_deb.sh); CWD = the copied package dir ----
+# The maintained debian/ is at ./debian in the copied package dir; the upstream source is cloned fresh
+# at the pinned SHA into ./gcsrc, the maintained debian/ copied in, and dpkg-buildpackage run there
+# (its .deb(s) land in the copied package dir, which the collector picks up).
+my $build = <<'BUILD';
+set -e
+VERSION=0.3.3
+REPO=https://github.com/xcat2/goconserver.git
+REF=6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f
+GO_PIN=1.25.12
+
+# pinned modern Go toolchain (static CGO-free build, portable across codenames; reproducible compiler)
+go_arch=$(dpkg --print-architecture); [ "$go_arch" = ppc64el ] && go_arch=ppc64le
+echo "installing pinned go${GO_PIN} (${go_arch}) for the goconserver build"
+rm -rf /usr/local/go
+curl -fsSL "https://go.dev/dl/go${GO_PIN}.linux-${go_arch}.tar.gz" | tar -C /usr/local -xz
+export PATH=/usr/local/go/bin:$PATH
+export GOTOOLCHAIN=local     # use exactly the pinned toolchain; never auto-download another
+go version
+
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    SNAP_TS=$(date -d "@$SOURCE_DATE_EPOCH" --utc '+%Y%m%d%H%M')
+else
+    SNAP_TS=$(date '+%Y%m%d%H%M')
 fi
-chmod +x make_deb.sh
-./make_deb.sh || { echo "make_deb.sh FAILED"; exit 1; }
-# make_deb.sh drops the .deb(s) beside the package dir; collect from the work tree.
-found=$(find "$W" -maxdepth 2 -name '*.deb' ! -name '*-dbgsym_*' -print)
-[ -n "$found" ] || { echo "build produced no .deb"; exit 1; }
-mkdir -p "$OUT"; echo "$found" | while read -r d; do cp -v "$d" "$OUT/"; done
-INNER
+FULL_VERSION="${VERSION}-snap${SNAP_TS}"
 
-my $cmd = 'schroot -c ' . sh_quote($chroot) . ' -u root -d / -- '
-        . 'bash -c ' . sh_quote($inner) . ' bash '
-        . sh_quote($pkg_dir) . ' ' . sh_quote($result_dir) . ' ' . sh_quote($build_timestamp);
-print "[$pkg] building in chroot $chroot -> $result_dir (SOURCE_DATE_EPOCH=$build_timestamp)\n";
-print "+ $cmd\n";
-my $rc = system('bash', '-c', $cmd);
-my $ec = $rc == -1 ? -1 : ($rc >> 8);
-die "[$pkg] build failed (rc=$ec)\n" if $ec != 0;
-# The debs were copied to --result-dir from INSIDE the chroot session, which only reaches the host if
-# --result-dir is on a path bind-mounted into the chroot (the shared /opt/xcat-ci-shared tree). Verify
-# host-side that they actually landed, so a mis-configured (chroot-local, e.g. /tmp) result-dir fails
-# LOUD instead of silently producing nothing.
-my @debs = glob("$result_dir/*.deb");
-die "[$pkg] build succeeded in the chroot but no .deb is visible at $result_dir on the host\n"
-  . "  (is --result-dir on a path bind-mounted into the chroot, e.g. under /opt/xcat-ci-shared?)\n"
-  unless @debs;
-print "[$pkg] OK (" . scalar(@debs) . " deb(s) in $result_dir)\n";
+# shallow-fetch the pinned commit by object id (GitHub allows reachable-SHA fetches)
+gc=gcsrc
+git init -q "$gc"
+git -C "$gc" remote add origin "$REPO"
+git -C "$gc" fetch -q --depth 1 origin "$REF"
+git -C "$gc" checkout -q FETCH_HEAD
+
+# etcd storage backend has broken deps with modern Go modules
+rm -rf "$gc/storage/etcd.go" "$gc/storage/etcd/"
+cp -rL debian "$gc/debian"
+cd "$gc"
+
+export GOPATH="$PWD/.gopath" GOCACHE="$PWD/.gocache" GOMODCACHE="$PWD/.gomodcache" CGO_ENABLED=0
+go mod init github.com/xcat2/goconserver
+# kr/pty is abandoned and its pty.Start sets Ctty in a way Go >=1.15 rejects; creack/pty is the
+# maintained, API-compatible fork that fixes it.
+go mod edit -replace github.com/kr/pty=github.com/creack/pty@v1.1.21
+go mod tidy
+
+# stamp the maintained debian/ to the snapshot version, OUT-OF-TREE (this is the cloned copy)
+sed -i "s/Version=${VERSION}/Version=${FULL_VERSION}/g" debian/rules
+export DEBEMAIL="${DEBEMAIL:-xcat-build@xcat.org}" DEBFULLNAME="${DEBFULLNAME:-xCAT Build}"
+if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
+    deterministic_date=$(date -R -d "@$SOURCE_DATE_EPOCH" --utc)
+    sed -i "1s/(.*)/(${FULL_VERSION})/" debian/changelog
+    sed -i "s/^ -- .*/ -- $DEBFULLNAME <$DEBEMAIL>  $deterministic_date/" debian/changelog
+else
+    dch -v "$FULL_VERSION" -b -D unstable "Snap build for xCAT"
+fi
+
+dpkg-buildpackage -uc -us
+BUILD
+
+build_deb_in_chroot(
+    pkg => $pkg, chroot => $chroot, pkg_dir => $pkg_dir, result_dir => $result_dir,
+    build_timestamp => $build_timestamp, build => $build,
+);
