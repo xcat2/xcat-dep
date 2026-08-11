@@ -307,23 +307,52 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
 
 ## Usage (per arch, as root on the matching build host)
 
+Run `sbuild-all.pl` on the build host for the arch you are building (amd64 on the x86 Ubuntu host,
+ppc64el on the ppc Ubuntu host). The Ubuntu version(s) to build are selected with **`--dists`** (a
+space/comma list of codenames) or, for exactly one, **`--target <codename>-<arch>`**. Version ↔
+codename: `20.04`=`focal`, `22.04`=`jammy`, `24.04`=`noble`, `26.04`=`resolute`.
+
+### Build ALL supported Ubuntu versions
+
 ```bash
-# amd64 host — build all four codenames, sign, assemble the apt tree:
+# amd64 host — build focal+jammy+noble+resolute, sign, assemble the apt tree:
 ./sbuild-all.pl --arch amd64 --dists "focal jammy noble resolute" \
-  --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm> \
-  --genesis-rpm-ppc <ppc64 xCAT-genesis-base rpm> \
+  --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base-x86_64 rpm> \
+  --genesis-rpm-ppc <xCAT-genesis-base-ppc64 rpm> \
   --gpg-sign --gpg-key-id xcat@megware.com --gpg-home <gpg-home>
-
-# ppc64el host — arch-specific deps only (the arch:all boot components come from amd64):
-./sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" \
-  --xcat-source ../xcat-core --genesis-rpm <ppc64 xCAT-genesis-base rpm> --gpg-sign ...
-
-# a single target / a dry run:
-./sbuild-all.pl --target noble-amd64 ...
-./sbuild-all.pl --dry-run --skip-build --skip-genesis ...
 ```
 
-`sbuild-all.pl --help` lists every option; the shared flags (`--repo-root`, `--manifest`,
+`--dists` may be omitted entirely — with no `--dists`/`--target`, **all supported codenames** are
+built (the default is `focal jammy noble resolute`).
+
+### Build ONE specific Ubuntu version
+
+```bash
+# just 24.04 (noble) on amd64 — two equivalent forms:
+./sbuild-all.pl --arch amd64 --dists noble  --xcat-source ../xcat-core --genesis-rpm <rpm> --gpg-sign ...
+./sbuild-all.pl --target noble-amd64        --xcat-source ../xcat-core --genesis-rpm <rpm> --gpg-sign ...
+
+# just 20.04 (focal):
+./sbuild-all.pl --arch amd64 --dists focal  ...
+```
+
+### ppc64el host
+
+```bash
+# arch-specific deps only (the Architecture:all boot components come from the amd64 build):
+./sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" \
+  --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base-ppc64 rpm> --gpg-sign ...
+```
+
+### Handy variants
+
+```bash
+./sbuild-all.pl --dry-run --arch amd64 --dists noble        # print the plan, do nothing
+./sbuild-all.pl --skip-build --skip-genesis --gpg-sign ...  # assemble-only (re-index/re-sign staging)
+```
+
+`sbuild-all.pl --help` lists every option and `sbuild-all.pl --man` (or `perldoc sbuild-all.pl`)
+prints the full manual; the shared flags (`--repo-root`, `--manifest`,
 `--skip-build/-install/-genesis/-xcat-dep`, `--build-number`, `--gpg-sign`, `--dry-run`, …) match
 `mockbuild-all.pl`.
 

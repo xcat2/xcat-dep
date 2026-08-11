@@ -30,6 +30,7 @@ use File::Path qw(make_path remove_tree);
 use File::Copy qw(copy);
 use File::Temp qw(tempdir);
 use Getopt::Long qw(GetOptions);
+use Pod::Usage qw(pod2usage);
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin;
@@ -122,9 +123,10 @@ $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
 $spec{'require-ppc-genesis!'}  = \$require_ppc_genesis;
 $spec{'output=s'}              = \$output_root;   # --output alias
-$spec{'help|h'}                = sub { usage(); exit 0; };
+$spec{'help|h'}                = sub { pod2usage(-verbose => 1, -exitval => 0); };
+$spec{'man'}                   = sub { pod2usage(-verbose => 2, -exitval => 0); };
 
-GetOptions(%spec) or die usage();
+GetOptions(%spec) or pod2usage(-verbose => 1, -exitval => 2);
 
 # ---------------------------------------------------------------------------------------------------
 # Configuration
@@ -460,29 +462,9 @@ sub make_tarball {
     return if $skip_tarball;
     print_step('Tarball');
     my $tb = "$output_root/$run_id/xcat-dep-$arch-$run_id.tar.gz";
+    make_path(dirname($tb)) unless $dry_run;   # the run dir may not exist yet (e.g. an assemble-only run)
     run("tar -C " . sh_quote(dirname($apt_dir)) . " -czf " . sh_quote($tb) . " " . sh_quote(basename($apt_dir)), nofail => 1);
     print "  $tb\n";
-}
-
-sub usage {
-    return <<"USAGE";
-Usage: sbuild-all.pl [options]
-  --arch <amd64|ppc64el>     host arch (default: dpkg --print-architecture)
-  --dists "<codenames>"      codenames to build (default: @{[known_codenames()]})
-  --target <codename-arch>   build a single target (arch must match --arch)
-  --manifest <path>          per-target manifest (default: <repo-root>/debs-manifest.conf)
-  --repo-root / --xcat-source <path>
-  --output-root <path> / --apt-dir <path>
-  --mirror <url>             chroot bootstrap mirror (default: BR archive)
-  --genesis-deb <path|url>   native xcat-genesis-base deb to INGEST (repeatable; preferred)
-  --genesis-rpm <path|url>   native-arch genesis rpm to convert (fallback)
-  --genesis-rpm-ppc <p|url>  cross-arch ppc genesis rpm to convert on amd64 (#7610)
-  --require-ppc-genesis      make a missing ppc64el genesis fatal (default: warn)
-  --gpg-sign --gpg-key-id <id> --gpg-home <dir>
-  --build-number <n> --build-timestamp <epoch> --run-id <id>
-  --skip-build --skip-install --skip-genesis --skip-xcat-dep --skip-createrepo --skip-tarball
-  --dry-run
-USAGE
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -497,3 +479,158 @@ validate_manifest();
 assemble_apt();
 make_tarball();
 print_step("Completed ($arch: @dist_list)");
+
+__END__
+
+=head1 NAME
+
+sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian apt repository
+
+=head1 SYNOPSIS
+
+  sbuild-all.pl [options]
+
+  # build ALL supported Ubuntu versions for this host's arch, sign + assemble the apt tree:
+  sbuild-all.pl --arch amd64 --dists "focal jammy noble resolute" \
+      --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm> \
+      --gpg-sign --gpg-key-id xcat@megware.com --gpg-home <gpg-home>
+
+  # build ONE Ubuntu version only:
+  sbuild-all.pl --arch amd64 --dists noble  ...
+  sbuild-all.pl --target noble-amd64        ...   # equivalent single-target form
+
+  # assemble-only (re-sign/re-index from already-built staging):
+  sbuild-all.pl --skip-build --skip-genesis --gpg-sign --gpg-key-id <id> --gpg-home <dir>
+
+  sbuild-all.pl --help        # option summary
+  sbuild-all.pl --man         # this manual
+  perldoc sbuild-all.pl
+
+=head1 DESCRIPTION
+
+sbuild-all.pl is the top-level Ubuntu/Debian dependency-build orchestrator for xcat-dep -- the
+apt/sbuild analogue of the EL C<mockbuild-all.pl>, sharing its CLI vocabulary
+(C<BuildUtils::standard_options>) and its manifest-driven, zero-tolerance, fail-hard design. It
+absorbs the three former shell scripts (C<mk-dep-chroots.sh>, C<build-dep-debs.sh>,
+C<build-apt-repo.sh>) into one Perl entrypoint and drives each package's B<maintained> C<debian/>
+packaging (never re-implemented) via its per-package C<< <dep>/sbuild.pl >> builder.
+
+One host builds one architecture (C<--arch>, default C<dpkg --print-architecture>) for a set of
+Ubuntu codenames (C<--dists>). Each C<< <codename>-<arch> >> is a B<target> with a section in
+C<debs-manifest.conf>. Everything is built and validated into a fresh, per-arch B<staging> tree
+first; the published apt repo is (re)assembled from validated staging only after the complete
+expected set validates -- so a partial or failed build never reaches the repo and stale debs never
+accumulate. Any missing chroot / package / artifact, or any version-pin mismatch, fails the whole
+run non-zero.
+
+=head1 PHASES
+
+=over 4
+
+=item Ensure chroots
+
+Auto-initializes any missing C<< <codename>-<arch>-sbuild >> chroot on first run (main + universe,
+fast mirror, shared-tree bind-mount); idempotent. Skipped with C<--skip-build>.
+
+=item Build
+
+Runs each manifest package's C<< <dep>/sbuild.pl >> in the matching chroot into
+C<staging/E<lt>codenameE<gt>/E<lt>archE<gt>/>.
+
+=item Genesis
+
+Produces the C<xcat-genesis-base> deb: a native deb is ingested as-is when provided
+(C<--genesis-deb>); otherwise the rpm is converted while B<preserving the maintained control>
+(Depends/Breaks/Replaces) and maintainer scripts. The amd64 host also converts the cross-arch
+ppc64el genesis (issue #7610) unless C<--require-ppc-genesis> gates it. Skipped with C<--skip-genesis>.
+
+=item Validate
+
+Asserts every manifest-required package is present at its pinned version (zero tolerance).
+
+=item Assemble
+
+Wipes+repopulates each codename's published C<pool>/C<dists> from validated staging, indexes per
+C<binary-E<lt>archE<gt>> (Architecture:all packages land in every arch index) and gpg-signs
+C<Release>/C<InRelease>. Skipped with C<--skip-createrepo>.
+
+=item Tarball
+
+A repo tarball build artifact (the deployable offline FRS dep bundle is produced by the pipeline's
+C<deploy.sh --tarball-kind dep>). Skipped with C<--skip-tarball>.
+
+=back
+
+=head1 OPTIONS
+
+=over 4
+
+=item B<--arch> C<amd64|ppc64el>
+
+Host architecture. Default: C<dpkg --print-architecture>.
+
+=item B<--dists> C<"E<lt>codenamesE<gt>">
+
+Space/comma list of Ubuntu codenames to build. Default: all supported (C<focal jammy noble resolute>).
+
+=item B<--target> C<< <codename>-<arch> >>
+
+Build a single target; the arch must match C<--arch>.
+
+=item B<--manifest> C<path>
+
+Per-target manifest. Default: C<< <repo-root>/debs-manifest.conf >>.
+
+=item B<--repo-root> / B<--xcat-source> C<path>
+
+xcat-dep root (default: the script's dir) / xcat-core root (for the maintained genesis packaging).
+
+=item B<--output-root> / B<--apt-dir> C<path>
+
+Staging + build-output base / published apt tree (default C<< <repo-root>/repos/apt >>).
+
+=item B<--mirror> C<url>
+
+Chroot bootstrap mirror (default: a fast BR archive mirror; C<archive.ubuntu.com> times out from the
+build hosts).
+
+=item B<--genesis-deb> C<path|url>
+
+Native C<xcat-genesis-base> deb to ingest (repeatable; preferred over conversion).
+
+=item B<--genesis-rpm> / B<--genesis-rpm-ppc> C<path|url>
+
+Native-arch genesis rpm to convert / cross-arch ppc genesis rpm to convert on amd64 (issue #7610).
+
+=item B<--require-ppc-genesis>
+
+Make a missing ppc64el genesis fatal (default: warn).
+
+=item B<--gpg-sign> B<--gpg-key-id> C<id> B<--gpg-home> C<dir>
+
+Sign C<Release>/C<InRelease> with the given key from the given GNUPGHOME.
+
+=item B<--build-number> C<n> B<--build-timestamp> C<epoch> B<--run-id> C<id>
+
+CD identifiers; C<--build-timestamp> also sets C<SOURCE_DATE_EPOCH> for reproducible builds.
+
+=item B<--skip-build> B<--skip-install> B<--skip-genesis> B<--skip-xcat-dep> B<--skip-createrepo> B<--skip-tarball>
+
+Skip the corresponding phase(s). C<--skip-build --skip-genesis> gives an assemble-only run.
+
+=item B<--dry-run>
+
+Print the planned actions without executing them.
+
+=item B<--help> / B<--man>
+
+Option summary / this manual.
+
+=back
+
+=head1 SEE ALSO
+
+C<mockbuild-all.pl> (the EL analogue), C<BuildUtils.pm>, C<< <dep>/sbuild.pl >>,
+C<debs-manifest.conf>, and F<BUILD.md>.
+
+=cut
