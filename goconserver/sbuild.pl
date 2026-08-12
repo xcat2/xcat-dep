@@ -80,18 +80,20 @@ cp -rL debian "$gc/debian"
 cd "$gc"
 
 export GOPATH="$PWD/.gopath" GOCACHE="$PWD/.gocache" GOMODCACHE="$PWD/.gomodcache" CGO_ENABLED=0
-# Guard `go mod init`: the pinned upstream tree may already carry a go.mod at this SHA, and re-running
-# `go mod init` on an existing module aborts (fatal under `set -e`). Only initialize when absent.
-[ -f go.mod ] || go mod init github.com/xcat2/goconserver
-# kr/pty is abandoned and its pty.Start sets Ctty in a way Go >=1.15 rejects; creack/pty is the
-# maintained, API-compatible fork that fixes it.
-go mod edit -replace github.com/kr/pty=github.com/creack/pty@v1.1.21
-# TODO(reproducibility): commit go.sum for the pinned SHA (6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f)
-# and build with `go mod download`/module verification instead of `go mod tidy`. The EL branch pins
-# deps via a committed go.sum (built from a goconserver/gomod/ tree); this Ubuntu branch has no such
-# committed go.mod/go.sum, and producing one soundly requires a Go build with network access, so
-# `go mod tidy` (which resolves module versions from the network at build time) stays for now.
-go mod tidy
+# Overlay the committed, PINNED go.mod/go.sum for this exact upstream SHA (generated with this same
+# GO_PIN toolchain -- see ../gomod/README.md). go.mod replaces the abandoned github.com/kr/pty with
+# creack/pty (pty.Start sets Ctty in a way Go >=1.15 rejects); go.sum integrity-checks every module.
+# Build with -mod=mod: modules are downloaded from the proxy but PINNED + verified by go.sum, so the
+# build is reproducible -- NO `go mod tidy` floating transitive versions from the network at build time.
+# (The etcd backend removed above is why the pinned graph omits github.com/coreos/bbolt, which now
+# declares its path as go.etcd.io/bbolt and breaks a fresh `go mod tidy`.)
+if [ ! -f ../gomod/go.mod ] || [ ! -f ../gomod/go.sum ]; then
+    echo "FATAL: pinned ../gomod/go.{mod,sum} missing -- regenerate per goconserver/gomod/README.md" >&2
+    exit 1
+fi
+cp ../gomod/go.mod go.mod
+cp ../gomod/go.sum go.sum
+export GOFLAGS=-mod=mod
 
 # stamp the maintained debian/ to the snapshot version, OUT-OF-TREE (this is the cloned copy)
 sed -i "s/Version=${VERSION}/Version=${FULL_VERSION}/g" debian/rules
