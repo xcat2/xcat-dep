@@ -162,7 +162,7 @@ sub verify_repo_packages {
         my $pin = $expected->{$pkg};
         my $got = $present->{$pkg};
         if (!defined $got) {
-            push @problems, "MISSING $pkg (manifest requires $pin)";
+            push @problems, "MISSING $pkg (manifest requires " . (defined($pin) ? $pin : '*') . ")";
             next;
         }
         push @problems, "VERSION $pkg: repo has $got, manifest pins $pin"
@@ -197,30 +197,16 @@ sub verify_repo_signature {
     return @problems;
 }
 
-# _dpkg_available / _dpkg_ver_gt: a pure version-ORDERING oracle used only to break duplicate-stanza
-# ties in parse_packages_index. dpkg is asked to compare two version STRINGS (no repo/disk/manifest
-# I/O, deterministic); when the dpkg binary is absent the caller falls back to last-wins. Duplicate
-# package stanzas essentially never occur in an apt-ftparchive-generated index (one stanza per
-# package), so this path is defensive.
-my $DPKG_AVAILABLE;
-sub _dpkg_available {
-    return $DPKG_AVAILABLE if defined $DPKG_AVAILABLE;
-    $DPKG_AVAILABLE = (system('command -v dpkg >/dev/null 2>&1') == 0) ? 1 : 0;
-    return $DPKG_AVAILABLE;
-}
-sub _dpkg_ver_gt {
-    my ($a, $b) = @_;
-    return system('dpkg', '--compare-versions', $a, 'gt', $b) == 0 ? 1 : 0;
-}
-
 # parse_packages_index($text) -> \%{ package_name => version }
 # Parse a Debian 'Packages' index: RFC822 stanzas separated by blank line(s); each carries a
 # 'Package:' and a 'Version:'. Returns name => version (the FULL Debian version verbatim, epoch +
 # revision included -- the caller strips to the upstream part with deb_upstream_version). A stanza
 # lacking either field is skipped; malformed/empty input yields an empty hash.
-# DUP-NAME CHOICE: if a name appears in more than one stanza, keep the HIGHEST by dpkg version order
-# when dpkg is available, else LAST-WINS (the last stanza's version). Pure: no file/repo I/O (the only
-# subprocess is dpkg as a version-comparison oracle for the rare duplicate).
+# DUPLICATE = LOUD ERROR: apt-ftparchive emits one stanza per package, so a name appearing twice with
+# DISTINCT versions means a stale .deb was not cleaned from the pool before assemble -- a version pin
+# could then pass against the wrong .deb and both could ship. This dies (mirroring the EL rpm_version
+# behaviour), so EL and Ubuntu AGREE: a duplicate is always a hard failure, never a silent keep-one.
+# (An identical repeated version is harmless and kept.)
 sub parse_packages_index {
     my ($text) = @_;
     my %map;
@@ -230,15 +216,10 @@ sub parse_packages_index {
         my ($name) = $stanza =~ /^Package:[ \t]*(\S+)/m;
         my ($ver)  = $stanza =~ /^Version:[ \t]*(\S+)/m;
         next unless defined $name && defined $ver;
-        if (exists $map{$name}) {
-            if (_dpkg_available()) {
-                $map{$name} = $ver if _dpkg_ver_gt($ver, $map{$name});   # keep the highest
-            } else {
-                $map{$name} = $ver;                                      # last-wins fallback
-            }
-        } else {
-            $map{$name} = $ver;
-        }
+        die "FATAL: duplicate package '$name' in the Packages index with distinct versions "
+          . "'$map{$name}' and '$ver' (stale artifact not cleaned before assemble)\n"
+            if exists $map{$name} && $map{$name} ne $ver;
+        $map{$name} = $ver;
     }
     return \%map;
 }

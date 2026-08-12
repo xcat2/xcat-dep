@@ -200,6 +200,18 @@ PKG
         'malformed input (no Package:/Version:) -> empty hash');
 }
 
+# DUPLICATE = loud error: a package appearing twice with DISTINCT versions (a stale .deb left in the
+# pool) must DIE -- so EL and Ubuntu AGREE that a duplicate is a hard failure, never a silent keep-one.
+{
+    my $dup  = "Package: ipmitool-xcat\nVersion: 1.8.18-4\n\nPackage: ipmitool-xcat\nVersion: 1.8.17-3\n";
+    my $ok   = eval { parse_packages_index($dup); 1 };
+    ok(!$ok, 'duplicate package with distinct versions dies (loud error)');
+    like($@, qr/duplicate package 'ipmitool-xcat'/, '... and names the offending package');
+    # an IDENTICAL repeated version is harmless (idempotent) and must NOT die.
+    my $m2 = eval { parse_packages_index("Package: a\nVersion: 1-1\n\nPackage: a\nVersion: 1-1\n") };
+    is(($m2 && $m2->{a}), '1-1', 'an identical repeated version is kept, not an error');
+}
+
 # ---- deb_upstream_version: strip epoch + debian revision ----------------------------------------
 is(deb_upstream_version('1.8.18-4'), '1.8.18', 'strip -revision');
 is(deb_upstream_version('2:0.3.3-snap202608101400.57'), '0.3.3', 'strip epoch and -revision');

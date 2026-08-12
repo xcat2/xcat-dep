@@ -356,6 +356,38 @@ prints the full manual; the shared flags (`--repo-root`, `--manifest`,
 `--skip-build/-install/-genesis/-xcat-dep`, `--build-number`, `--gpg-sign`, `--dry-run`, …) match
 `mockbuild-all.pl`.
 
+# Repository verification gate
+
+After the apt repo is assembled + signed, `sbuild-all.pl` runs a **manifest-driven gate** that fails
+the build if the published repo is incomplete or mis-signed. It uses `debs-manifest.conf` as the
+single source of truth and is layered so the decision logic is pure and unit-tested
+(`BuildUtils::verify_repo_packages` / `verify_repo_signature`; `parse_packages_index` /
+`resolve_present_names` for parsing/resolution), separate from the disk/gpg I/O.
+
+- **Runs automatically** at the end of `assemble_apt`, **per codename × arch**. Suppress with
+  `--no-verify-repo`; skipped under `--dry-run`. Verify an assembled tree out of band with
+  `--verify-repo=<apt_dir>` (manifest/dists/key from `--manifest`/`--dists`/`--gpg-key-id`/`--gpg-home`).
+- **Completeness:** for each cell, every package that codename×arch's manifest section requires (after
+  `required_pkgs` skip-filtering) must appear in the published `binary-<arch>/Packages` with a version
+  satisfying its pin. The arch-suffixed genesis (`xcat-genesis-base`) is resolved to **this cell's
+  arch** (`xcat-genesis-base-<arch>`) — never a different arch, so a missing native genesis is caught.
+- **Signature:** each `dists/<cn>/InRelease` (or detached `Release`+`Release.gpg`) must be a *good*
+  signature whose **primary-key fingerprint equals the fingerprint of `--gpg-key-id`** — the repo was
+  signed by exactly the CLI key. Expired/revoked keys and expired signatures are rejected; if the CLI
+  key does not resolve to a fingerprint the gate fails (`SIGKEY`), never passes. A signature is only
+  *required* when `--gpg-sign` was used (an intentionally-unsigned repo does not false-fail).
+
+**Semantic idiosyncrasies (intentional, and mirrored in the EL `mockbuild-all.pl` gate):**
+
+- **What "the repo" is:** the Ubuntu gate reads the **published `binary-<arch>/Packages` index** (what
+  apt serves, per codename×arch); the EL gate reads the **binary rpm files** in the per-target dir.
+  Both check the artifact that ships; they differ only in the Debian-vs-RHEL notion of "the repository".
+- **Duplicate = hard error:** a package appearing in the index with **two distinct versions** (a stale
+  `.deb` not cleaned from the pool) makes `parse_packages_index` **die loudly** rather than keep one —
+  identical behaviour to the EL `rpm_version` gate.
+- **Version pins** are the manifest's *upstream* version; the published Debian version's epoch/revision
+  is stripped (`deb_upstream_version`) before the pin compare.
+
 # References
 
 - [mock project repository](https://github.com/rpm-software-management/mock)

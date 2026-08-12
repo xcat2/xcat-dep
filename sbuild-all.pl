@@ -575,7 +575,7 @@ sub resolve_expected_key {
 # fingerprint, that real fingerprint is returned so a mismatch surfaces as WRONGKEY. Otherwise the gate
 # degrades to presence-only (returns the expected key on success) rather than emit a spurious WRONGKEY.
 sub sig_observed_key {
-    my ($adir, $cn, $expected_key, $expected_is_fpr) = @_;
+    my ($adir, $cn) = @_;
     my $g = $gpg_home ? "GNUPGHOME=" . sh_quote($gpg_home) . " " : '';
     my $inrel  = "$adir/dists/$cn/InRelease";
     my $rel    = "$adir/dists/$cn/Release";
@@ -601,10 +601,12 @@ sub sig_observed_key {
             last;
         }
     }
-    # Only compare when we extracted a full fingerprint AND the expected side is one; otherwise degrade
-    # to presence-only (return the expected value so the pure decider sees a match). We deliberately do
-    # NOT fall back to a short GOODSIG keyid, which could never equal the 40-hex expected fpr.
-    return ($expected_is_fpr && $obs_fpr ne '') ? $obs_fpr : $expected_key;
+    # STRICT: return the signer's primary-key fingerprint, or undef if we could not extract one. No
+    # presence-only fallback -- the caller compares this against the resolved --gpg-key-id fingerprint,
+    # so the gate always confirms the repo was signed by EXACTLY the CLI key (undef -> UNSIGNED, a
+    # different fingerprint -> WRONGKEY). We never return a short GOODSIG keyid (it could not equal the
+    # 40-hex expected fpr) nor the expected value itself (which would rubber-stamp a pass).
+    return $obs_fpr ne '' ? $obs_fpr : undef;
 }
 
 # verify_assembled_repo($manifest_href, $apt_dir, $dists_aref): the ONE completeness+signature gate,
@@ -626,8 +628,12 @@ sub verify_assembled_repo {
     my $expected_is_fpr = ($expected_key =~ /^[0-9A-Fa-f]{16,}$/) ? 1 : 0;
     print "  apt-dir: $adir\n";
     print "  signature check: " . ($sig_enabled
-        ? "on (expected key $expected_key" . ($expected_is_fpr ? '' : ' [unresolved -> presence-only]') . ")"
+        ? "on (expected key $expected_key" . ($expected_is_fpr ? '' : ' [UNRESOLVED -> hard fail]') . ")"
         : "SKIPPED (no --gpg-home/--gpg-sign)") . "\n";
+    # STRICT: if signing is expected but --gpg-key-id does not resolve to a fingerprint (not in the
+    # keyring), we CANNOT confirm the signer -- that is a hard failure, never a presence-only pass.
+    push @all, "SIGKEY: cannot resolve --gpg-key-id '$gpg_key_id' to a fingerprint (in the $gpg_home keyring?)"
+        if $sig_enabled && !$expected_is_fpr;
 
     my (%exp_sig, %obs_sig);
     for my $cn (@$dists) {
@@ -649,13 +655,14 @@ sub verify_assembled_repo {
             my %pins = map { $_ => $req->{$_} } @names;
             push @all, map { "[$cn/$a] $_" } verify_repo_packages(\%pins, \%present);
         }
-        # signature IO: record the expected + observed signer for this codename (decided in bulk below).
-        if ($sig_enabled) {
+        # signature IO: record the expected + observed signer for this codename (compared in bulk below).
+        # Only when the expected key resolved to a fingerprint (else the SIGKEY hard-fail above stands).
+        if ($sig_enabled && $expected_is_fpr) {
             $exp_sig{$cn} = $expected_key;
-            $obs_sig{$cn} = sig_observed_key($adir, $cn, $expected_key, $expected_is_fpr);
+            $obs_sig{$cn} = sig_observed_key($adir, $cn);
         }
     }
-    push @all, verify_repo_signature(\%exp_sig, \%obs_sig) if $sig_enabled;
+    push @all, verify_repo_signature(\%exp_sig, \%obs_sig) if $sig_enabled && $expected_is_fpr;
 
     if (@all) {
         print "$_\n" for @all;
