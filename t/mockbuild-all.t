@@ -11,7 +11,8 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
-                      restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest);
+                      restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
+                      bump_dep_release_suffix);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -208,6 +209,43 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
     is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
         or diag("missing conserver-xcat in: @missing");
+}
+
+# ---- bump_dep_release_suffix: stamps xcat-dep specs, prunes nested xcat-core, idempotent --------
+# Reviewer asked for a test on this path. It walks a tree, stamps the first Release: line of every
+# xcat-dep spec, prunes a nested xcat-core/ checkout, and is idempotent on a re-run.
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    # (a) a top-level dep spec that MUST be stamped
+    open my $a, '>', "$tmp/a.spec" or die;
+    print $a "Name: a\nVersion: 1.0\nRelease: 5%{?dist}\n";
+    close $a;
+    # (b) a spec NESTED under xcat-core/ that MUST be pruned (left untouched)
+    make_path("$tmp/xcat-core");
+    open my $b, '>', "$tmp/xcat-core/b.spec" or die;
+    print $b "Name: b\nVersion: 1.0\nRelease: 9\n";
+    close $b;
+    # (c) a spec with no Release: line at all (ignored, never stamped)
+    open my $c, '>', "$tmp/c.spec" or die;
+    print $c "Name: c\nVersion: 1.0\n";
+    close $c;
+
+    my $n = quiet { bump_dep_release_suffix($tmp, '.snap202601010000') };
+    is($n, 1, 'bump_dep_release_suffix stamps exactly the one dep spec with a Release line');
+
+    my $a_after = do { open my $fh, '<', "$tmp/a.spec" or die; local $/; <$fh> };
+    like($a_after, qr/^Release: 5%\{\?dist\}\.snap202601010000$/m,
+        'a.spec Release now carries the CD suffix, macro preserved');
+
+    my $b_after = do { open my $fh, '<', "$tmp/xcat-core/b.spec" or die; local $/; <$fh> };
+    is($b_after, "Name: b\nVersion: 1.0\nRelease: 9\n",
+        'nested xcat-core/b.spec is pruned and left untouched');
+
+    # A SECOND call is idempotent: nothing newly stamped, a.spec content unchanged.
+    my $n2 = quiet { bump_dep_release_suffix($tmp, '.snap202601010000') };
+    is($n2, 0, 'a second bump_dep_release_suffix call stamps nothing (idempotent)');
+    my $a_again = do { open my $fh, '<', "$tmp/a.spec" or die; local $/; <$fh> };
+    is($a_again, $a_after, 'a.spec content unchanged on the idempotent second call');
 }
 
 done_testing;

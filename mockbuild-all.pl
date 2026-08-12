@@ -15,7 +15,7 @@ use FindBin qw($RealBin);
 use lib $RealBin;
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs have_rpm
                       read_manifest rpm_version rpm_release rpm_sigmd5 restamp_release_line
-                      cross_copy_genesis finalize_xcat_dep);
+                      cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
@@ -151,7 +151,7 @@ if ($finalize_xcat_dep) {
         sign => ($gpg_sign ? sub {
             my ($rpm) = @_;
             local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
-            run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign ) . sh_quote($rpm));
+            run_simple("rpmsign --define " . sh_quote("%_gpg_name $gpg_key_name") . " --addsign " . sh_quote($rpm));
         } : undef),
         reindex => \&reindex_and_sign_repo,
     );
@@ -267,56 +267,6 @@ die "FATAL: $tgt_fail target(s) failed\n" if $tgt_fail;
 
 print_step('All targets completed');
 exit 0;
-
-# Append $suffix (e.g. ".snap202607161200.57") to the Release: line of every xcat-dep
-# package spec under $root, so the CD build stamps a fresh, monotonic NVR. Idempotent:
-# a spec already carrying this exact suffix is left alone (so a re-run in the same tree
-# does not double-stamp). Preserves any %{?dist}/%{?distver} macro already on the line.
-sub bump_dep_release_suffix {
-    my ($root, $suffix) = @_;
-    my @specs;
-    # Only stamp xcat-dep's OWN specs. If someone checked xcat-core out NESTED under $repo_root (the
-    # legacy `xcat-source-code`/`xcat-core` layout), do NOT descend into it -- rewriting a core spec
-    # (e.g. xCAT-genesis-base.spec's dynamic Release) would break the lockstep with genesis-scripts.
-    find(sub {
-        if (-d $_ && ($_ eq 'xcat-core' || $_ eq 'xcat-source-code')) { $File::Find::prune = 1; return; }
-        push @specs, $File::Find::name if /\.spec$/ && -f $_;
-    }, $root);
-    my ($with_release, $bumped, $already) = (0, 0, 0);
-    for my $spec (sort @specs) {
-        open my $in, '<', $spec or die "open $spec: $!\n";
-        my @lines = <$in>;
-        close $in;
-        my ($has_release, $changed) = (0, 0);
-        for my $line (@lines) {
-            # case-insensitive: some specs (e.g. Sys-Virt.spec) use a lowercase `release:`
-            next unless $line =~ /^Release:\s*\S/i;
-            $has_release = 1;
-            # restamp_release_line is idempotent (no-op if already carrying $suffix) and strips any
-            # prior .snap stamp before applying the new one, so a re-run with a different
-            # --build-number replaces rather than accumulates (unit-tested in t/mockbuild-all.t).
-            my ($new, $ch) = restamp_release_line($line, $suffix);
-            if ($ch) { $line = $new; $changed = 1; }
-            last;                                 # only the first Release: line
-        }
-        $with_release++ if $has_release;
-        $already++      if $has_release && !$changed;
-        next unless $changed;
-        # atomic write (temp + rename) so a concurrent per-arch build on the shared NFS tree never
-        # sees a torn spec; identical suffix -> identical content, so last-writer-wins is safe.
-        my $tmp = "$spec.bump.$$";
-        open my $out, '>', $tmp or die "open> $tmp: $!\n";
-        print {$out} @lines;
-        close $out;
-        rename $tmp, $spec or die "rename $tmp -> $spec: $!\n";
-        $bumped++;
-    }
-    print "Release bump '$suffix': $bumped newly stamped, $already already stamped, of $with_release spec(s) with a Release line under $root\n";
-    # Only a genuine "no dep specs at all" is fatal. All-already-stamped is the expected idempotent
-    # case (re-run in the same tree, or the other arch bumped first) -- NOT an error.
-    die "FATAL: --build-number given but NO spec carried a Release: line under $root (wrong tree?)\n"
-        if $with_release == 0;
-}
 
 # Build a single target into its own build-output/<target-runid> tree and return
 # { repo_dir, rel }. Everything below through the summary is per-target work.
@@ -782,7 +732,12 @@ sub deploy_target {
         copy($rpm, "$dest/" . basename($rpm))
             or die "Failed to copy $rpm -> $dest: $!\n";
     }
-    assert_required_deps($dest);
+    # Derive the required package set from THIS target's manifest section (the single source of
+    # truth), dropping any package whose builder was skipped, and assert each landed in the repo.
+    my %MAN = read_manifest("$repo_root/packages-manifest.conf");
+    my %req = %{ $MAN{$tgt} // {} };
+    my @required = required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep);
+    assert_required_deps($dest, \@required);
     sign_and_index_repo($dest);
     write_dep_repo_metadata($dest, $rel);
     my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
@@ -804,7 +759,7 @@ sub sign_and_index_repo {
     my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
-        run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
+        run_simple("rpmsign --define " . sh_quote("%_gpg_name $gpg_key_name") . " --addsign "
             . join(' ', map { sh_quote($_) } @rpms));
     }
     run_simple(createrepo_c_cmd($dir));
@@ -812,8 +767,8 @@ sub sign_and_index_repo {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
         unlink "$repomd.asc" if -f "$repomd.asc";
-        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . sh_quote($repomd));
-        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . sh_quote("$repomd.key"));
+        run_simple("gpg -a --detach-sign --default-key " . sh_quote($gpg_key_name) . ' ' . sh_quote($repomd));
+        run_simple("gpg -a --export " . sh_quote($gpg_key_name) . " > " . sh_quote("$repomd.key"));
     }
 }
 
@@ -883,8 +838,8 @@ sub reindex_and_sign_repo {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
         unlink "$repomd.asc" if -f "$repomd.asc";
-        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . sh_quote($repomd));
-        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . sh_quote("$repomd.key"));
+        run_simple("gpg -a --detach-sign --default-key " . sh_quote($gpg_key_name) . ' ' . sh_quote($repomd));
+        run_simple("gpg -a --export " . sh_quote($gpg_key_name) . " > " . sh_quote("$repomd.key"));
     }
 }
 
@@ -1045,11 +1000,12 @@ sub run_build_steps_parallel {
     return if !@{$steps};
 
     # Returns the ids of any steps that failed; the caller (build_one_target) enforces
-    # zero-tolerance -- any failed manifest package fails the whole run. We build only packages
-    # required for the target (per packages-manifest.conf), so there is no "expected to fail on this
-    # arch/el" case left to tolerate. genesis is the sole exception the CALLER handles: xcat-core's
-    # buildrpms.pl exits non-zero on an unrelated post-build xCAT-release-latest cp even when the
-    # genesis rpm IS built, so the caller treats genesis as failed only if its rpm is absent.
+    # zero-tolerance -- ANY failed step fails the whole run, genesis included, with no special-case.
+    # We build only packages required for the target (per packages-manifest.conf), so there is no
+    # "expected to fail on this arch/el" case left to tolerate. There is likewise no genesis
+    # exception: since xcat-core #7696, buildrpms.pl exits 0 iff it produced the genesis rpm, so a
+    # non-zero genesis exit is a real failure (the old "tolerate if the rpm is already present"
+    # workaround is gone -- a stale artifact must never mask a failed build).
     if ($dry_run || $max_processes <= 1 || @{$steps} == 1) {
         my @failed;
         for my $step (@{$steps}) {
@@ -1125,20 +1081,19 @@ sub run_build_steps_parallel {
 
 
 # assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is
-# fatal even though individual builder failures are tolerated above. genesis-base is required
-# unless --skip-genesis.
+# fatal even though individual builder failures are tolerated above. The required set is derived
+# by the caller from this target's packages-manifest.conf section (the single source of truth) and
+# passed in as $required_ref, rather than duplicated as a hard-coded list here.
 sub assert_required_deps {
-    my ($dir) = @_;
+    my ($dir, $required_ref) = @_;
     # xCAT Requires all of these on every arch, and every one of them builds natively on every
     # arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed artifacts), so
     # a self-sufficient per-arch build produces the whole set with no cross-arch import.
     # elilo-xcat is noarch but xCAT hard-requires it (Requires: elilo-xcat >= 3.14-6) on EVERY arch,
-    # so a missing elilo makes the whole dep repo uninstallable -- it MUST be required here, not
-    # silently tolerated (it builds from a tracked prebuilt on ppc64le/EL8, compiled elsewhere).
-    # A package whose builder was skipped is not required (else a clean --skip-* run fails).
-    my @all = qw(elilo-xcat ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB xCAT-genesis-base);
-    my @req = required_pkgs(\@all, $skip_genesis, $skip_perl, $skip_xcat_dep);
+    # so a missing elilo makes the whole dep repo uninstallable -- it is listed in every manifest
+    # target section, so it is always part of the required set below (not silently tolerated).
+    # A package whose builder was skipped is not required (the caller applies required_pkgs()).
+    my @req = @$required_ref;
     my @missing = grep { !have_rpm($dir, $_) } @req;
     die "FATAL: required deps missing from $dir: @missing\n" if @missing;
     print "[deps] required set present in $dir: @req\n";

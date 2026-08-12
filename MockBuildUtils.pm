@@ -8,12 +8,14 @@ use warnings;
 use Exporter 'import';
 use File::Basename qw(basename);
 use File::Copy qw(copy);
+use File::Find;
+use Sys::Hostname;
 
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs have_rpm read_manifest
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
-    cross_copy_genesis finalize_xcat_dep
+    cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
 );
 
 # sh_quote: single-quote a string for safe use in a shell command.
@@ -270,6 +272,61 @@ sub finalize_xcat_dep {
     die "FATAL: --finalize-xcat-dep found no <os>/x86_64 + <os>/ppc64le repo pair under\n"
       . "  --x86_64-repo '$x86_64_repo'\n  --ppc64le-repo '$ppc64le_repo'\n" if $pairs == 0;
     print_step('Finalize complete');
+}
+
+# bump_dep_release_suffix: append $suffix (e.g. ".snap202607161200.57") to the Release: line of
+# every xcat-dep package spec under $repo_root, so the CD build stamps a fresh, monotonic NVR.
+# Idempotent: a spec already carrying this exact suffix is left alone (a re-run in the same tree
+# does not double-stamp). Preserves any %{?dist}/%{?distver} macro already on the line. Returns the
+# count of specs newly stamped. Dies only if NO spec under $repo_root carries a Release: line.
+# Pure (takes everything as args) so t/mockbuild-all.t can exercise it directly.
+sub bump_dep_release_suffix {
+    my ($repo_root, $suffix) = @_;
+    my @specs;
+    # Only stamp xcat-dep's OWN specs. If someone checked xcat-core out NESTED under $repo_root (the
+    # legacy `xcat-source-code`/`xcat-core` layout), do NOT descend into it -- rewriting a core spec
+    # (e.g. xCAT-genesis-base.spec's dynamic Release) would break the lockstep with genesis-scripts.
+    find(sub {
+        if (-d $_ && ($_ eq 'xcat-core' || $_ eq 'xcat-source-code')) { $File::Find::prune = 1; return; }
+        push @specs, $File::Find::name if /\.spec$/ && -f $_;
+    }, $repo_root);
+    my ($with_release, $bumped, $already) = (0, 0, 0);
+    for my $spec (sort @specs) {
+        open my $in, '<', $spec or die "open $spec: $!\n";
+        my @lines = <$in>;
+        close $in;
+        my ($has_release, $changed) = (0, 0);
+        for my $line (@lines) {
+            # case-insensitive: some specs (e.g. Sys-Virt.spec) use a lowercase `release:`
+            next unless $line =~ /^Release:\s*\S/i;
+            $has_release = 1;
+            # restamp_release_line is idempotent (no-op if already carrying $suffix) and strips any
+            # prior .snap stamp before applying the new one, so a re-run with a different
+            # --build-number replaces rather than accumulates (unit-tested in t/mockbuild-all.t).
+            my ($new, $ch) = restamp_release_line($line, $suffix);
+            if ($ch) { $line = $new; $changed = 1; }
+            last;                                 # only the first Release: line
+        }
+        $with_release++ if $has_release;
+        $already++      if $has_release && !$changed;
+        next unless $changed;
+        # atomic write (temp + rename) so a concurrent per-arch build on the shared NFS tree never
+        # sees a torn spec; identical suffix -> identical content, so last-writer-wins is safe. The
+        # temp name carries the hostname AND pid: the two arch build hosts share the NFS tree and can
+        # reuse the same pid, so pid alone could collide across hosts.
+        my $tmp = "$spec.bump." . hostname() . ".$$";
+        open my $out, '>', $tmp or die "open> $tmp: $!\n";
+        print {$out} @lines;
+        close $out;
+        rename $tmp, $spec or die "rename $tmp -> $spec: $!\n";
+        $bumped++;
+    }
+    print "Release bump '$suffix': $bumped newly stamped, $already already stamped, of $with_release spec(s) with a Release line under $repo_root\n";
+    # Only a genuine "no dep specs at all" is fatal. All-already-stamped is the expected idempotent
+    # case (re-run in the same tree, or the other arch bumped first) -- NOT an error.
+    die "FATAL: --build-number given but NO spec carried a Release: line under $repo_root (wrong tree?)\n"
+        if $with_release == 0;
+    return $bumped;
 }
 
 1;
