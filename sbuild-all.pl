@@ -27,6 +27,7 @@ use warnings;
 use Cwd qw(abs_path);
 use File::Basename qw(dirname basename);
 use File::Path qw(make_path remove_tree);
+use File::Find;
 use File::Copy qw(copy);
 use File::Temp qw(tempdir);
 use Getopt::Long qw(GetOptions);
@@ -189,18 +190,18 @@ for my $cn (@dist_list) {
 my $staging = "$output_root/staging";
 unless ($dry_run) { make_path($staging); }
 
-# Fail-fast exclusive run lock. $staging and $apt_dir are STABLE, SHARED paths (not per-run), so two
-# overlapping sbuild-all runs against the same --output-root corrupt each other -- the observed
-# "remove_tree .../staging/<cn>/<arch>: Directory not empty" is an NFS silly-rename from a concurrent
-# run holding files open. Hold an exclusive flock on <output_root>/.sbuild-all.lock for the whole
-# process (LOCK_NB -> fail fast rather than block), mirroring how mockbuild-all.pl locks its output
-# base. Not taken under --dry-run (no side effects to protect).
+# Fail-fast PER-ARCH run lock. Within ONE pipeline run the amd64 and ppc64el stages run CONCURRENTLY
+# on their own hosts against the SAME --output-root (different arch subdirs), so a single shared lock
+# would wrongly serialize them (or deadlock). Lock per-arch instead: <output_root>/.sbuild-all.<arch>.lock
+# is only ever contended by same-arch stages, which all run on the SAME host -- so a plain local flock
+# is authoritative (no cross-host NFS lockd needed). This still blocks a SECOND run's same-arch stage
+# (cron vs manual) from racing on this arch's staging + the shared apt tree. Not taken under --dry-run.
 unless ($dry_run) {
     make_path($output_root);
-    my $lockfile = "$output_root/.sbuild-all.lock";
+    my $lockfile = "$output_root/.sbuild-all.$arch.lock";
     open($RUN_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open run lock $lockfile: $!\n";
     unless (flock($RUN_LOCK_FH, LOCK_EX | LOCK_NB)) {
-        die "FATAL: another sbuild-all is running (lock held): $lockfile\n";
+        die "FATAL: another sbuild-all ($arch) is already running (lock held): $lockfile\n";
     }
 }
 
@@ -229,16 +230,28 @@ sub run {
     return $ec;
 }
 
-# wipe_tree: remove_tree that FAILS LOUD. A bare remove_tree() carps-and-ignores an ENOTEMPTY (e.g. an
-# NFS silly-rename from a concurrent run); make_path then no-ops on the surviving dir and stale debs
-# persist. Capturing {error} and dying makes the corruption fatal instead of silent.
+# wipe_tree: remove_tree that FAILS LOUD on real leftovers but TOLERATES NFS silly-rename artifacts.
+# A bare remove_tree() carps-and-ignores errors, so stale debs could silently persist -- we must not
+# do that. But an ENOTEMPTY here is usually a .nfsXXXX silly-rename: an already-unlinked file that a
+# still-open handle (often a peer or aborted build) keeps alive; it is NOT stale build output and
+# self-heals when the holder closes. So retry once after a short pause, then die ONLY if a real
+# (non-.nfs*) file survives. If the sole survivors are .nfs* artifacts, warn and continue -- assemble
+# globs *.deb (never .nfs*), so they cannot leak into the published repo.
 sub wipe_tree {
     my (@dirs) = @_;
     remove_tree(@dirs, { safe => 1, error => \my $err });
-    if ($err && @$err) {
-        my @msgs = map { my ($f, $m) = %$_; ($f eq '') ? $m : "$f: $m" } @$err;
-        die "FATAL: failed to remove @dirs: " . join('; ', @msgs) . "\n";
+    return unless $err && @$err;
+    sleep 2;   # give a transient silly-rename holder a chance to close
+    remove_tree(@dirs, { safe => 1, error => \my $err2 });
+    return unless $err2 && @$err2;
+    my @real;
+    for my $d (@dirs) {
+        next unless -d $d;
+        find(sub { push @real, $File::Find::name if -f $_ && $_ !~ /^\.nfs[0-9a-f]+$/i }, $d);
     }
+    die "FATAL: failed to wipe @dirs -- real files survive: @real\n" if @real;
+    warn "WARN: @dirs still holds only NFS silly-rename (.nfs*) leftovers after retry; "
+       . "tolerating (they self-heal and are never *.deb)\n";
 }
 
 # deb_ver_gt: is Debian version $a strictly greater than $b? Uses dpkg's version comparison (the only
