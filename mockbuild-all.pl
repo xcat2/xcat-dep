@@ -14,7 +14,8 @@ use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs have_rpm
-                      read_manifest rpm_version rpm_release rpm_sigmd5 restamp_release_line
+                      read_manifest verify_repo_packages verify_repo_signature
+                      rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix);
 
 my $script_dir = abs_path(dirname(__FILE__));
@@ -63,6 +64,13 @@ my $force_unlock = 0;
 my $finalize_xcat_dep = 0;
 my $x86_64_repo = '';
 my $ppc64le_repo = '';
+# --verify-repo=<repo>: standalone, build-free completeness + signature gate over one already-built
+# per-target repo (see verify_target_repo). Empty means "not in standalone verify mode". The target
+# is derived from the repo path (.../rh<N>/<arch> -> alma+epel-<N>-<arch>) or taken from --target.
+my $verify_repo = '';
+# --no-verify-repo suppresses the AUTOMATIC post-build gate deploy_target runs after each target is
+# finalized+signed (for iteration/debug). Verification is ON by default.
+my $no_verify_repo = 0;
 my $HELD_LOCK;        # path of the output lock this process owns (for cleanup on exit)
 my $LOCK_OWNER_PID;   # pid that created the lock; forked children must NOT remove it
 
@@ -79,6 +87,8 @@ GetOptions(
     'finalize-xcat-dep!' => \$finalize_xcat_dep,
     'x86_64-repo=s'     => \$x86_64_repo,
     'ppc64le-repo=s'    => \$ppc64le_repo,
+    'verify-repo=s'     => \$verify_repo,
+    'no-verify-repo!'   => \$no_verify_repo,
     'target=s'          => \$target,
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
@@ -100,7 +110,7 @@ GetOptions(
     'dry-run!'          => \$dry_run,
 ) or die usage();
 
-die "Run as root (uid=$>)\n" if $> != 0 && !$finalize_xcat_dep;
+die "Run as root (uid=$>)\n" if $> != 0 && !$finalize_xcat_dep && !$verify_repo;
 # --skip-build collects a prior build's artifacts from that build's per-target tree, so it must
 # know the target. Without --target the default is "all three EL targets", and each would collect
 # the same artifacts and cross-publish them into every repo (foreign-EL / foreign-arch rpms).
@@ -125,6 +135,23 @@ $ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 if ($run_id eq '') {
     $run_id = strftime('%Y%m%d-%H%M%S', gmtime($SOURCE_DATE_EPOCH));
+}
+
+# --verify-repo=<repo>: a distinct, build-free completeness + signature gate over ONE already-built
+# per-target repo. The value is just the repo dir; the manifest comes from the script's existing
+# resolution (repo_root/packages-manifest.conf) and the gpg key/home from --gpg-key-name/--gpg-home.
+# The target is derived from the repo path (.../rh<N>/<arch> -> alma+epel-<N>-<arch>) unless --target
+# is given. Delegates the whole check to verify_target_repo (the SAME gate the auto-run uses), so it
+# exits 0 when complete or dies listing every problem. Runs alone -- no build, no lock, no root.
+if ($verify_repo ne '') {
+    require_command('rpm');
+    my $rdir = abs_path($verify_repo) or die "--verify-repo repo '$verify_repo' not found\n";
+    die "--verify-repo repo '$rdir' is not a directory\n" if !-d $rdir;
+    my $tgt = $target ne '' ? $target : derive_target_from_repo_path($rdir);
+    die "--verify-repo: cannot derive a target from repo path '$rdir'; pass --target\n"
+        if !defined($tgt) || $tgt eq '';
+    verify_target_repo($rdir, $tgt);   # manifest defaults to repo_root/packages-manifest.conf
+    exit 0;
 }
 
 # --finalize-xcat-dep: a distinct, build-free mode. After BOTH arch build hosts have
@@ -585,44 +612,25 @@ if (!$skip_genesis && !$dry_run) {
     }
 }
 
-# Manifest version pins: every required package must be present at its pinned version. A build
-# that produces a different version (a source version bump not reflected here) fails the run;
-# a manifest value of '*' accepts any version. Only the Version is pinned, not the Release
-# (which carries the per-EL dist tag and the genesis snap timestamp). This also runs under
-# --skip-build so a collection-only publish is validated against the target's manifest exactly
-# like a fresh build (a stale/foreign-arch collected rpm fails here instead of shipping).
-if (!$dry_run) {
-    my @vmiss;
-    # Only validate packages whose builder was NOT skipped -- so a clean --skip-* run does not
-    # fail on packages it deliberately did not build.
+# Repo completeness -- every required package present at its pinned version (a '*' pin accepts any),
+# missing packages included -- is now gated ONCE, centrally, in deploy_target via verify_target_repo
+# (the single consolidated gate; it also runs under --skip-build and validates the deployed repo).
+# The only per-build check kept here is the CD --build-number bump: confirm it actually LANDED in the
+# built rpms' Release, since validating %{VERSION} alone can't catch a silently un-bumped NVR (which
+# deploy's additive rsync would then dedup away). Every built dep + perl package carries the suffix;
+# xCAT-genesis-base is intentionally NOT bumped (kept in lockstep with xcat-core's genesis-scripts).
+if (!$dry_run && $RELEASE_BUMP ne '') {
+    my @rmiss;
     for my $pkg (required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep)) {
-        my $want = $req{$pkg};
-        next if !defined($want) || $want eq '*';
-        my $got = rpm_version($repo_dir, $pkg);
-        if    (!defined $got)                 { push @vmiss, "$pkg: not built"; }
-        elsif (!version_matches($got, $want)) { push @vmiss, "$pkg: built $got, manifest pins $want"; }
+        next if $pkg eq 'xCAT-genesis-base';
+        my $rel = rpm_release($repo_dir, $pkg);
+        next if !defined $rel;   # a missing rpm is caught by the completeness gate in deploy_target
+        push @rmiss, "$pkg: Release '$rel' is missing the CD bump '$RELEASE_BUMP'"
+            if index($rel, $RELEASE_BUMP) < 0;
     }
-    die "FATAL: manifest version mismatch for $target:\n  " . join("\n  ", @vmiss) . "\n"
-        if @vmiss;
-    print "[manifest] version pins satisfied for $target\n";
-
-    # When a CD --build-number bump is in effect, confirm it actually LANDED in the built rpms'
-    # Release -- validating %{VERSION} alone can't catch a silently un-bumped NVR (which deploy's
-    # additive rsync would then dedup away). Every built dep + perl package carries the suffix;
-    # xCAT-genesis-base is intentionally NOT bumped (kept in lockstep with xcat-core's genesis-scripts).
-    if ($RELEASE_BUMP ne '') {
-        my @rmiss;
-        for my $pkg (required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep)) {
-            next if $pkg eq 'xCAT-genesis-base';
-            my $rel = rpm_release($repo_dir, $pkg);
-            next if !defined $rel;   # a missing rpm was already reported by the version-pin check
-            push @rmiss, "$pkg: Release '$rel' is missing the CD bump '$RELEASE_BUMP'"
-                if index($rel, $RELEASE_BUMP) < 0;
-        }
-        die "FATAL: --build-number bump '$RELEASE_BUMP' did not land in built rpm(s) for $target:\n  "
-          . join("\n  ", @rmiss) . "\n" if @rmiss;
-        print "[manifest] Release bump '$RELEASE_BUMP' present on all built dep rpms for $target\n";
-    }
+    die "FATAL: --build-number bump '$RELEASE_BUMP' did not land in built rpm(s) for $target:\n  "
+      . join("\n  ", @rmiss) . "\n" if @rmiss;
+    print "[manifest] Release bump '$RELEASE_BUMP' present on all built dep rpms for $target\n";
 }
 
 print_step('Collect source RPM artifacts');
@@ -732,14 +740,13 @@ sub deploy_target {
         copy($rpm, "$dest/" . basename($rpm))
             or die "Failed to copy $rpm -> $dest: $!\n";
     }
-    # Derive the required package set from THIS target's manifest section (the single source of
-    # truth), dropping any package whose builder was skipped, and assert each landed in the repo.
-    my %MAN = read_manifest("$repo_root/packages-manifest.conf");
-    my %req = %{ $MAN{$tgt} // {} };
-    my @required = required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep);
-    assert_required_deps($dest, \@required);
     sign_and_index_repo($dest);
     write_dep_repo_metadata($dest, $rel);
+    # Automatic completeness + signature gate on the finalized, signed repo -- the single
+    # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
+    # manifest-required package is present at its pinned version AND that the repomd signature
+    # verifies. Suppressible with --no-verify-repo for iteration/debug.
+    verify_target_repo($dest, $tgt) unless $no_verify_repo;
     my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
     print "Deployed rh$rel/$arch: $n rpms\n";
 }
@@ -871,6 +878,15 @@ Options:
                           (issue #7610). Honors --gpg-sign/--gpg-key-name/--gpg-home. Use alone.
   --x86_64-repo PATH      (finalize) x86_64 repo root holding <os>/x86_64 (e.g. rh9/x86_64)
   --ppc64le-repo PATH     (finalize) ppc64le repo root holding <os>/ppc64le
+  --verify-repo PATH      Standalone completeness + signature gate over the per-target repo at PATH
+                          (builds nothing). Asserts every package packages-manifest.conf requires for
+                          the target is present at a version satisfying its pin AND that the repomd
+                          is signed by --gpg-key-name; exits 0 if complete, or lists each MISSING/
+                          VERSION/UNSIGNED/WRONGKEY problem and fails. The target is derived from the path
+                          (.../rh<N>/<arch> -> alma+epel-<N>-<arch>) unless --target is given; the
+                          manifest and gpg key/home come from the usual options. Use alone.
+  --no-verify-repo        Suppress the AUTOMATIC post-build completeness+signature gate that runs
+                          after each target's repo is finalized (default: verification ON)
   --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
@@ -1080,23 +1096,100 @@ sub run_build_steps_parallel {
 
 
 
-# assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is
-# fatal even though individual builder failures are tolerated above. The required set is derived
-# by the caller from this target's packages-manifest.conf section (the single source of truth) and
-# passed in as $required_ref, rather than duplicated as a hard-coded list here.
-sub assert_required_deps {
-    my ($dir, $required_ref) = @_;
-    # xCAT Requires all of these on every arch, and every one of them builds natively on every
-    # arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed artifacts), so
-    # a self-sufficient per-arch build produces the whole set with no cross-arch import.
-    # elilo-xcat is noarch but xCAT hard-requires it (Requires: elilo-xcat >= 3.14-6) on EVERY arch,
-    # so a missing elilo makes the whole dep repo uninstallable -- it is listed in every manifest
-    # target section, so it is always part of the required set below (not silently tolerated).
-    # A package whose builder was skipped is not required (the caller applies required_pkgs()).
-    my @req = @$required_ref;
-    my @missing = grep { !have_rpm($dir, $_) } @req;
-    die "FATAL: required deps missing from $dir: @missing\n" if @missing;
-    print "[deps] required set present in $dir: @req\n";
+# repo_present_versions: thin disk layer for the repo gate. Given a built repo dir and the list of
+# required package names, return %present = (name => rpm_version($dir, $name)) for each -- reusing the
+# EXISTING rpm_version so genesis's arch-suffixed naming resolves exactly as the in-line manifest pin
+# check does. rpm_version returns undef for an absent package, which verify_repo_packages then reports
+# as MISSING. Pure disk read; the decision itself lives in verify_repo_packages.
+sub repo_present_versions {
+    my ($dir, $names) = @_;
+    my %present;
+    $present{$_} = rpm_version($dir, $_) for @$names;
+    return %present;
+}
+
+# gpg_key_fingerprint: resolve a gpg key NAME (e.g. "xCAT Signing Key") to its primary-key
+# fingerprint in the given keyring, so the expected and observed signing identities are compared in
+# the SAME form (a fingerprint). Falls back to the name itself when it cannot be resolved.
+sub gpg_key_fingerprint {
+    my ($keyname, $home) = @_;
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $out = `gpg$h --with-colons --fingerprint --list-keys ${\ sh_quote($keyname)} 2>/dev/null`;
+    for my $line (split /\n/, $out // '') {
+        return $1 if $line =~ /^fpr:+([0-9A-Fa-f]+):/;   # first fpr = primary key fingerprint
+    }
+    return $keyname;
+}
+
+# repomd_observed_signer: run gpg --verify on the detached repomd signature and extract the identity
+# of the key that actually signed it, as a primary-key fingerprint (the last field of the VALIDSIG
+# status line). Returns '' when the .asc is absent or verification fails (both read as "unsigned").
+sub repomd_observed_signer {
+    my ($asc, $file, $home) = @_;
+    return '' unless -f $asc && -f $file;
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $out = `gpg$h --status-fd=1 --verify ${\ sh_quote($asc)} ${\ sh_quote($file)} 2>/dev/null`;
+    for my $line (split /\n/, $out // '') {
+        # VALIDSIG <signing-fpr> <dates...> <primary-key-fpr>; the trailing field is the primary fpr.
+        if ($line =~ /^\[GNUPG:\]\s+VALIDSIG\s+(.*\S)\s*$/) {
+            my @f = split ' ', $1;
+            return $f[-1];
+        }
+    }
+    return '';
+}
+
+# verify_target_repo: the completeness + signature gate for ONE built per-target repo -- the single
+# source of truth for "is this repo shippable?", replacing the old assert_required_deps + in-line
+# version-pin loop. It does the IO (manifest parse, rpm_version, gpg --verify) and delegates every
+# DECISION to the two PURE helpers: verify_repo_packages (missing/version) and verify_repo_signature
+# (unsigned/wrongkey). Both problem lists are merged. Prints a one-line OK, or dies listing every
+# problem. Both the automatic post-build gate (deploy_target) and the standalone --verify-repo mode
+# call this, so there is exactly one gate implementation.
+sub verify_target_repo {
+    my ($dir, $tgt, $manifest) = @_;
+    $manifest //= "$repo_root/packages-manifest.conf";
+    my %MAN = read_manifest($manifest);
+    my %req = %{ $MAN{$tgt} // {} };
+    die "FATAL: no manifest section for target '$tgt' in $manifest\n" if !%req;
+    # Skip flags default 0 -> the full required set. A package whose builder was skipped is not required.
+    my @names   = required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep);
+    my %present = repo_present_versions($dir, \@names);
+    my %expected = map { $_ => $req{$_} } @names;
+    my @problems = verify_repo_packages(\%expected, \%present);
+
+    # Signature gate: the IO (gpg) lives here; the decision is the pure verify_repo_signature. The
+    # pipeline always signs, so a signed repo's repomd MUST be signed by --gpg-key-name. We resolve
+    # that key to a fingerprint and extract the fingerprint that actually signed repomd, then compare.
+    # Skipped with a printed note only when no gpg key/home is configured (nothing to check against).
+    if ($gpg_sign || $gpg_home ne '') {
+        require_command('gpg');
+        my $repomd = "$dir/repodata/repomd.xml";
+        my $asc    = "$repomd.asc";
+        my %exp_sig = ('repomd' => gpg_key_fingerprint($gpg_key_name, $gpg_home));
+        my %obs_sig = ('repomd' => repomd_observed_signer($asc, $repomd, $gpg_home));
+        push @problems, verify_repo_signature(\%exp_sig, \%obs_sig);
+    } else {
+        print "[verify-repo] $tgt: no gpg key/home configured -- skipping repomd signature check\n";
+    }
+
+    if (@problems) {
+        print "  - $_\n" for @problems;
+        die "FATAL: repo INCOMPLETE for $tgt at $dir (" . scalar(@problems) . " problem(s))\n";
+    }
+    print "[verify-repo] $tgt complete: " . scalar(@names)
+        . " required packages present + version-pinned in $dir\n";
+    return 1;
+}
+
+# derive_target_from_repo_path: map a deployed per-target repo path .../rh<N>/<arch> to its manifest
+# target section name alma+epel-<N>-<arch>. Returns undef when the path lacks that rh<N>/<arch> tail,
+# so the standalone --verify-repo mode can require an explicit --target instead.
+sub derive_target_from_repo_path {
+    my ($dir) = @_;
+    return undef unless defined $dir;
+    return "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    return undef;
 }
 
 sub collect_rpms {

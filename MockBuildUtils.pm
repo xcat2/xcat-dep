@@ -14,6 +14,7 @@ use Sys::Hostname;
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs have_rpm read_manifest
+    verify_repo_packages verify_repo_signature
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
 );
@@ -58,6 +59,53 @@ sub required_pkgs {
         && !($skip_perl    && /^perl-/)
         && !($skip_dep     && $_ ne 'xCAT-genesis-base' && $_ !~ /^perl-/)
     } @$pkgs;
+}
+
+# verify_repo_packages: the PURE completeness-decision layer of the repo gate. Given the manifest's
+# %expected { pkg => version-pin } and the %present { pkg => version-found-or-undef } actually in a
+# built repo, return a list of human-readable problem strings (empty list = every package present at
+# its pin):
+#   "MISSING <pkg> (manifest requires <pin>)"              when %present has no (defined) version for <pkg>
+#   "VERSION <pkg>: repo has <got>, manifest pins <pin>"   when present but !version_matches(got, pin)
+# Uses version_matches (same semantics as the in-line manifest pin loop), so a '*' or glob pin is
+# accepted exactly as there. No file/manifest I/O here -- the disk layer builds %present and passes
+# both hashes in, keeping this unit-testable in isolation.
+sub verify_repo_packages {
+    my ($expected, $present) = @_;
+    my @problems;
+    for my $pkg (sort keys %$expected) {
+        my $pin = $expected->{$pkg};
+        my $got = $present->{$pkg};
+        if (!defined $got) {
+            push @problems, "MISSING $pkg (manifest requires " . (defined($pin) ? $pin : '*') . ")";
+        } elsif (!version_matches($got, $pin)) {
+            push @problems, "VERSION $pkg: repo has $got, manifest pins $pin";
+        }
+    }
+    return @problems;
+}
+
+# verify_repo_signature: the PURE signature-decision layer of the repo gate. Given %expected
+# { unit => expected signing-key identity } and %observed { unit => key that ACTUALLY signed (a
+# string the script extracts from gpg), or undef/'' when unsigned / verification failed }, return a
+# list of problem strings (empty = every unit signed by the expected key). For EL the single unit is
+# 'repomd'. This does a plain string compare only -- it invokes NO gpg: the caller runs gpg --verify,
+# extracts the observed key id, and resolves --gpg-key-name to the SAME identity form before calling.
+#   "UNSIGNED <unit> (expected <key>)"                     when %observed is absent/empty for <unit>
+#   "WRONGKEY <unit>: signed by <observed>, expected <key>" when both defined but differ
+sub verify_repo_signature {
+    my ($expected, $observed) = @_;
+    my @problems;
+    for my $unit (sort keys %$expected) {
+        my $exp = $expected->{$unit};
+        my $obs = $observed->{$unit};
+        if (!defined($obs) || $obs eq '') {
+            push @problems, "UNSIGNED $unit (expected " . (defined($exp) ? $exp : '') . ")";
+        } elsif (defined($exp) && $obs ne $exp) {
+            push @problems, "WRONGKEY $unit: signed by $obs, expected $exp";
+        }
+    }
+    return @problems;
 }
 
 # have_rpm: is there a non-src rpm named <name>-... under $dir?

@@ -12,7 +12,7 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
-                      bump_dep_release_suffix);
+                      verify_repo_packages verify_repo_signature bump_dep_release_suffix);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -246,6 +246,65 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is($n2, 0, 'a second bump_dep_release_suffix call stamps nothing (idempotent)');
     my $a_again = do { open my $fh, '<', "$tmp/a.spec" or die; local $/; <$fh> };
     is($a_again, $a_after, 'a.spec content unchanged on the idempotent second call');
+}
+
+# ---- verify_repo_packages: pure repo-completeness decision (MISSING + VERSION + wildcard) ---------
+# The gate's completeness layer: given manifest pins and the versions actually present in a repo,
+# return the list of problems (empty = complete). No I/O -- exercised directly with plain hashes.
+{
+    # happy: every required package present, one exact-pinned + one wildcard -> no problems.
+    my @p = verify_repo_packages({ a => '1.0', b => '*' }, { a => '1.0', b => '9.9' });
+    is_deeply(\@p, [], 'verify_repo_packages: all present + pins satisfied -> 0 problems');
+
+    # missing: present lacks 'a' entirely -> exactly one MISSING problem naming 'a'.
+    my @m = verify_repo_packages({ a => '1.0', b => '*' }, { b => '9.9' });
+    is(scalar(@m), 1, 'verify_repo_packages: an absent package yields exactly one problem');
+    like($m[0], qr/^MISSING a\b/, 'verify_repo_packages: absent package reported as MISSING <pkg>');
+
+    # missing via explicit undef present value is treated the same as absent.
+    my @mu = verify_repo_packages({ a => '1.0' }, { a => undef });
+    is(scalar(@mu), 1, 'verify_repo_packages: undef present version counts as MISSING');
+    like($mu[0], qr/^MISSING a\b/, 'verify_repo_packages: undef present version reported as MISSING');
+
+    # version: present but the wrong version -> exactly one VERSION problem naming 'a'.
+    my @v = verify_repo_packages({ a => '1.0' }, { a => '2.0' });
+    is(scalar(@v), 1, 'verify_repo_packages: a mismatched version yields exactly one problem');
+    like($v[0], qr/^VERSION a\b/, 'verify_repo_packages: version mismatch reported as VERSION <pkg>');
+
+    # wildcard: a '*' pin accepts any present version -> no problem.
+    my @w = verify_repo_packages({ c => '*' }, { c => '0.0.1' });
+    is_deeply(\@w, [], "verify_repo_packages: '*' pin accepts any present version");
+
+    # combined: one MISSING and one VERSION -> two problems (sorted by package name: a before b).
+    my @c = verify_repo_packages({ a => '1.0', b => '2.0' }, { b => '9.9' });
+    is(scalar(@c), 2, 'verify_repo_packages: one MISSING + one VERSION -> two problems');
+    like($c[0], qr/^MISSING a\b/,  'verify_repo_packages: combined case reports MISSING a');
+    like($c[1], qr/^VERSION b\b/, 'verify_repo_packages: combined case reports VERSION b');
+}
+
+# ---- verify_repo_signature: pure signature decision (match / unsigned / wrongkey) ----------------
+# Given the expected signing-key identity per unit and the key that actually signed, return the list
+# of problems (empty = every unit signed by the expected key). Plain string compare -- no gpg here.
+{
+    # happy: repomd signed by exactly the expected key -> no problems.
+    my @ok = verify_repo_signature({ repomd => 'KEYFPR' }, { repomd => 'KEYFPR' });
+    is_deeply(\@ok, [], 'verify_repo_signature: observed == expected -> 0 problems');
+
+    # unsigned: observed empty -> one UNSIGNED problem naming the unit + expected key.
+    my @us = verify_repo_signature({ repomd => 'KEYFPR' }, { repomd => '' });
+    is(scalar(@us), 1, 'verify_repo_signature: empty observed yields exactly one problem');
+    like($us[0], qr/^UNSIGNED repomd\b/, 'verify_repo_signature: empty observed reported as UNSIGNED');
+    like($us[0], qr/expected KEYFPR/,   'verify_repo_signature: UNSIGNED names the expected key');
+
+    # unsigned via explicit undef observed is treated the same as empty.
+    my @uu = verify_repo_signature({ repomd => 'KEYFPR' }, { repomd => undef });
+    like($uu[0], qr/^UNSIGNED repomd\b/, 'verify_repo_signature: undef observed reported as UNSIGNED');
+
+    # wrongkey: signed, but by a different key -> one WRONGKEY problem naming both.
+    my @wk = verify_repo_signature({ repomd => 'GOODFPR' }, { repomd => 'EVILFPR' });
+    is(scalar(@wk), 1, 'verify_repo_signature: a mismatched signer yields exactly one problem');
+    like($wk[0], qr/^WRONGKEY repomd: signed by EVILFPR, expected GOODFPR$/,
+        'verify_repo_signature: mismatch reported as WRONGKEY <unit>: signed by <obs>, expected <exp>');
 }
 
 done_testing;
