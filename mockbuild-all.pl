@@ -13,7 +13,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin;
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs have_rpm
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
                       read_manifest verify_repo_packages verify_repo_signature
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix);
@@ -1128,8 +1128,12 @@ sub repomd_observed_signer {
     my ($asc, $file, $home) = @_;
     return '' unless -f $asc && -f $file;
     my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
-    my $out = `gpg$h --status-fd=1 --verify ${\ sh_quote($asc)} ${\ sh_quote($file)} 2>/dev/null`;
-    for my $line (split /\n/, $out // '') {
+    my $out = `gpg$h --status-fd=1 --verify ${\ sh_quote($asc)} ${\ sh_quote($file)} 2>/dev/null` // '';
+    # An EXPIRED or REVOKED key, or an expired signature, still emits VALIDSIG -- reject those
+    # explicitly so a no-longer-trustworthy signature is a problem, not a pass. A fully-good signature
+    # emits GOODSIG; the degraded cases emit EXPKEYSIG/REVKEYSIG/EXPSIG instead.
+    return '' if $out =~ /^\[GNUPG:\]\s+(?:EXPKEYSIG|REVKEYSIG|EXPSIG)\b/m;
+    for my $line (split /\n/, $out) {
         # VALIDSIG <signing-fpr> <dates...> <primary-key-fpr>; the trailing field is the primary fpr.
         if ($line =~ /^\[GNUPG:\]\s+VALIDSIG\s+(.*\S)\s*$/) {
             my @f = split ' ', $1;
