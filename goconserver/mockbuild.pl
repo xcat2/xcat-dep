@@ -282,8 +282,11 @@ for my $log (qw(build.log root.log state.log)) {
 
 # Reclaim goconserver's own build chroot. mockbuild-all's scrub keys on the TARGET cfg (el$rel), not
 # the el10 build cfg used here, so scrub it ourselves to avoid leaking /var/lib/mock. Best-effort.
+# Scrub BOTH the chroot and its bootstrap: the el10 build cfg is bootstrap-image based, so
+# --scrub=chroot alone leaves the ~190 MiB <cfg>-bootstrap-<uniqueext> tree behind (it accumulated
+# one per target per run in /var/lib/mock -- the disk leak of VersatusHPC/xcat-core#51).
 system("mock -r " . sh_quote($build_cfg) . $mock_uniqueext_opt .
-       " --scrub=chroot >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
+       " --scrub=chroot --scrub=bootstrap >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
 
 if (!$skip_install) {
     print_step("Install and smoke test");
