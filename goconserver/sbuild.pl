@@ -18,6 +18,9 @@ my $pkg_dir = abs_path($RealBin);
 my $pkg     = basename($pkg_dir);
 my ($codename, $arch, $chroot, $result_dir, $log_dir) = ('', '', '', '', '');
 my ($build_timestamp, $build_number, $skip_install) = (undef, undef, 0);
+# --log-dir / --build-number / --skip-install are accepted for CLI-compat with sbuild-all.pl (which
+# passes them uniformly to every per-package builder) but are intentionally UNUSED here: sbuild-all
+# does its own per-package logging and there is no deb install-smoke. They are parsed and ignored.
 GetOptions(
     'codename=s' => \$codename, 'arch=s' => \$arch, 'chroot=s' => \$chroot,
     'result-dir=s' => \$result_dir, 'log-dir=s' => \$log_dir,
@@ -77,10 +80,17 @@ cp -rL debian "$gc/debian"
 cd "$gc"
 
 export GOPATH="$PWD/.gopath" GOCACHE="$PWD/.gocache" GOMODCACHE="$PWD/.gomodcache" CGO_ENABLED=0
-go mod init github.com/xcat2/goconserver
+# Guard `go mod init`: the pinned upstream tree may already carry a go.mod at this SHA, and re-running
+# `go mod init` on an existing module aborts (fatal under `set -e`). Only initialize when absent.
+[ -f go.mod ] || go mod init github.com/xcat2/goconserver
 # kr/pty is abandoned and its pty.Start sets Ctty in a way Go >=1.15 rejects; creack/pty is the
 # maintained, API-compatible fork that fixes it.
 go mod edit -replace github.com/kr/pty=github.com/creack/pty@v1.1.21
+# TODO(reproducibility): commit go.sum for the pinned SHA (6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f)
+# and build with `go mod download`/module verification instead of `go mod tidy`. The EL branch pins
+# deps via a committed go.sum (built from a goconserver/gomod/ tree); this Ubuntu branch has no such
+# committed go.mod/go.sum, and producing one soundly requires a Go build with network access, so
+# `go mod tidy` (which resolves module versions from the network at build time) stays for now.
 go mod tidy
 
 # stamp the maintained debian/ to the snapshot version, OUT-OF-TREE (this is the cloned copy)

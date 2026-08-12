@@ -18,6 +18,9 @@ my $pkg_dir = abs_path($RealBin);
 my $pkg     = basename($pkg_dir);
 my ($codename, $arch, $chroot, $result_dir, $log_dir) = ('', '', '', '', '');
 my ($build_timestamp, $build_number, $skip_install) = (undef, undef, 0);
+# --log-dir / --build-number / --skip-install are accepted for CLI-compat with sbuild-all.pl (which
+# passes them uniformly to every per-package builder) but are intentionally UNUSED here: sbuild-all
+# does its own per-package logging and there is no deb install-smoke. They are parsed and ignored.
 GetOptions(
     'codename=s' => \$codename, 'arch=s' => \$arch, 'chroot=s' => \$chroot,
     'result-dir=s' => \$result_dir, 'log-dir=s' => \$log_dir,

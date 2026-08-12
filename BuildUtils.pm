@@ -26,7 +26,7 @@ our @EXPORT_OK = qw(
     version_matches required_pkgs read_manifest standard_options
     codename_to_version version_to_codename known_codenames
     chroot_name chroot_sources_list
-    deb_snap_version rewrite_changelog_top control_field genesis_deb_control
+    control_field genesis_deb_control
     deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb
     build_deb_in_chroot
 );
@@ -162,46 +162,6 @@ sub chroot_sources_list {
         "deb $mirror $codename-updates main universe",
         "deb $mirror $codename-security main universe",
     );
-}
-
-# ---------------------------------------------------------------------------------------------------
-# Debian version / changelog helpers (out-of-tree stamping: NEVER edit a tracked debian/changelog).
-# ---------------------------------------------------------------------------------------------------
-
-# deb_snap_version: derive the CD snapshot Debian version from a base upstream version, a build
-# timestamp (YYYYMMDDHHMM), and an optional monotonic build number, e.g.
-#   deb_snap_version('0.3.3', '202608101400', 57) -> '0.3.3-snap202608101400.57'
-#   deb_snap_version('0.3.3', '202608101400')     -> '0.3.3-snap202608101400'
-# Idempotent / self-healing: a $base that ALREADY carries one or more '-snap<ts>[.n]' stamps (from a
-# reused build tree or an earlier corrupted run) has them stripped before the fresh stamp is applied,
-# so a re-run REPLACES the stamp instead of stacking a second one. Mirrors the intent of the EL
-# MockBuildUtils::restamp_release_line, in Debian version grammar (the stamp is the debian_revision).
-sub deb_snap_version {
-    my ($base, $ts, $build_number) = @_;
-    die "deb_snap_version: base version required\n" if !defined $base || $base eq '';
-    die "deb_snap_version: timestamp required\n"    if !defined $ts   || $ts !~ /^\d{12}$/;
-    (my $clean = $base) =~ s/-snap\d{12}(?:\.\d+)?(?:-snap\d{12}(?:\.\d+)?)*\z//;
-    my $rev = "snap$ts";
-    $rev .= ".$build_number" if defined $build_number && $build_number ne '';
-    return "$clean-$rev";
-}
-
-# rewrite_changelog_top: return $changelog_text with the TOP (newest) entry rewritten to $new_version
-# and, when $maint/$date are given, its trailer line set to "-- $maint  $date". Pure string function
-# (no file I/O) so it is unit-testable and so the caller can apply it to a COPY of debian/changelog in
-# an out-of-tree build dir — the tracked changelog in the checkout is never touched. A Debian
-# changelog's first line is "pkg (version) dist; urgency=..."; only the first "(version)" and the
-# first "-- ... date" trailer are changed.
-sub rewrite_changelog_top {
-    my ($text, $new_version, $maint, $date) = @_;
-    return $text unless defined $text && defined $new_version;
-    # Rewrite the version in the first header line only.
-    $text =~ s/^(\S[^\n]*?\()[^)]*(\)[^\n]*)/$1$new_version$2/;
-    # Rewrite the first trailer line if maintainer + date supplied.
-    if (defined $maint && defined $date) {
-        $text =~ s/^ --[^\n]*/ -- $maint  $date/m;
-    }
-    return $text;
 }
 
 # ---------------------------------------------------------------------------------------------------

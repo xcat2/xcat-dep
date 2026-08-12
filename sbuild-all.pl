@@ -32,11 +32,12 @@ use File::Temp qw(tempdir);
 use Getopt::Long qw(GetOptions);
 use Pod::Usage qw(pod2usage);
 use POSIX qw(strftime);
+use Fcntl qw(:flock);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
                   codename_to_version known_codenames chroot_name chroot_sources_list
-                  deb_snap_version rewrite_changelog_top control_field genesis_deb_control
+                  control_field genesis_deb_control
                   deb_field deb_version deb_hash cross_copy_genesis_deb);
 
 my $script_dir = abs_path(dirname(__FILE__));
@@ -67,6 +68,9 @@ my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): p
 my $genesis_rpm = '';                # fallback: native-arch genesis rpm to convert
 my $genesis_rpm_ppc = '';            # fallback: cross-arch ppc genesis rpm to convert (amd64 host)
 my $require_ppc_genesis = 0;
+# File-scoped exclusive run-lock handle. MUST be file-scoped (not a lexical inside a block) so the
+# flock lives for the WHOLE process -- a lexical would close the FH and release the lock early.
+my $RUN_LOCK_FH;
 
 # Builder map: manifest binary-package name -> the in-tree package dir that carries <dir>/sbuild.pl
 # and the maintained debian/. (goconserver's dir == its binary name.)
@@ -185,6 +189,21 @@ for my $cn (@dist_list) {
 my $staging = "$output_root/staging";
 unless ($dry_run) { make_path($staging); }
 
+# Fail-fast exclusive run lock. $staging and $apt_dir are STABLE, SHARED paths (not per-run), so two
+# overlapping sbuild-all runs against the same --output-root corrupt each other -- the observed
+# "remove_tree .../staging/<cn>/<arch>: Directory not empty" is an NFS silly-rename from a concurrent
+# run holding files open. Hold an exclusive flock on <output_root>/.sbuild-all.lock for the whole
+# process (LOCK_NB -> fail fast rather than block), mirroring how mockbuild-all.pl locks its output
+# base. Not taken under --dry-run (no side effects to protect).
+unless ($dry_run) {
+    make_path($output_root);
+    my $lockfile = "$output_root/.sbuild-all.lock";
+    open($RUN_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open run lock $lockfile: $!\n";
+    unless (flock($RUN_LOCK_FH, LOCK_EX | LOCK_NB)) {
+        die "FATAL: another sbuild-all is running (lock held): $lockfile\n";
+    }
+}
+
 print_step('Configuration');
 print "  repo-root:   $repo_root\n";
 print "  xcat-source: $xcat_src\n";
@@ -208,6 +227,27 @@ sub run {
     my $ec = $rc == -1 ? -1 : ($rc >> 8);
     die "FATAL: command failed (rc=$ec): $cmd\n" if $ec != 0 && !$o{nofail};
     return $ec;
+}
+
+# wipe_tree: remove_tree that FAILS LOUD. A bare remove_tree() carps-and-ignores an ENOTEMPTY (e.g. an
+# NFS silly-rename from a concurrent run); make_path then no-ops on the surviving dir and stale debs
+# persist. Capturing {error} and dying makes the corruption fatal instead of silent.
+sub wipe_tree {
+    my (@dirs) = @_;
+    remove_tree(@dirs, { safe => 1, error => \my $err });
+    if ($err && @$err) {
+        my @msgs = map { my ($f, $m) = %$_; ($f eq '') ? $m : "$f: $m" } @$err;
+        die "FATAL: failed to remove @dirs: " . join('; ', @msgs) . "\n";
+    }
+}
+
+# deb_ver_gt: is Debian version $a strictly greater than $b? Uses dpkg's version comparison (the only
+# correct arbiter of Debian version ordering). A missing/empty $b makes any $a "greater".
+sub deb_ver_gt {
+    my ($a, $b) = @_;
+    return 1 if !defined $b || $b eq '';
+    return 0 if !defined $a || $a eq '';
+    return system('dpkg', '--compare-versions', $a, 'gt', $b) == 0 ? 1 : 0;
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -258,7 +298,7 @@ sub ensure_chroots {
 sub build_one_codename {
     my ($cn) = @_;
     my $tgt = "$cn-$arch";
-    my $out = "$staging/$cn/$arch"; remove_tree($out) if -d $out; make_path($out);
+    my $out = "$staging/$cn/$arch"; wipe_tree($out) if -d $out; make_path($out);
     my @pkgs = grep { $_ ne 'xcat-genesis-base' }
                required_pkgs([sort keys %{$MANIFEST{$tgt}}], $skip_genesis, $skip_xcat_dep);
     print "== [$cn] building: @pkgs -> $out ==\n";
@@ -372,7 +412,7 @@ sub convert_genesis_rpm {
 }
 sub build_genesis {
     print_step('Genesis-base deb (maintained packaging preserved)');
-    my $gen = "$output_root/$run_id/genesis"; remove_tree($gen) if -d $gen; make_path($gen);
+    my $gen = "$output_root/$run_id/genesis"; wipe_tree($gen) if -d $gen; make_path($gen);
     my $native_arch_pkg = "xcat-genesis-base-$arch";
     my $produced_native = 0;
     # 1) prefer an ingested native deb (full metadata + maintainer scripts, no conversion loss)
@@ -410,11 +450,23 @@ sub build_genesis {
     }
     # stage the arch:all genesis deb(s) into every codename (this host's arch subdir; the cross-arch
     # ppc genesis produced on the amd64 host rides in the amd64 subdir and is picked up by assemble).
+    # Use BuildUtils::cross_copy_genesis_deb -- the tested, hash-based, stale-dropping copier -- once
+    # per genesis package-arch present in $gen (the native-arch one, plus the cross-converted ppc64el
+    # one on the amd64 host). It refreshes a stale same-name deb by content and is idempotent.
+    my %gen_arches;
+    for my $d (glob("$gen/*.deb")) {
+        $gen_arches{$1}++ if basename($d) =~ /^xcat-genesis-base-([a-z0-9]+)_/;
+    }
     for my $cn (@dist_list) {
-        make_path("$staging/$cn/$arch") unless $dry_run;
-        for my $d (glob("$gen/*.deb")) {
-            copy($d, "$staging/$cn/$arch/" . basename($d)) unless $dry_run;
-            print "  staged " . basename($d) . " -> $cn/$arch\n";
+        my $dst = "$staging/$cn/$arch";
+        if ($dry_run) {
+            print "  [dry-run] would stage genesis (" . join(',', sort keys %gen_arches) . ") -> $cn/$arch\n";
+            next;
+        }
+        make_path($dst);
+        for my $ga (sort keys %gen_arches) {
+            my $n = cross_copy_genesis_deb($gen, $dst, $ga, undef);
+            print "  staged xcat-genesis-base-$ga -> $cn/$arch ($n newly copied)\n";
         }
     }
 }
@@ -454,11 +506,36 @@ sub assemble_apt {
         # wipe ONLY this codename's published pool+dists, then repopulate from validated staging
         # (both arches: staging/<cn>/{amd64,ppc64el}/*.deb). Wiping first is what removes stale debs
         # from a prior run so the published repo never carries a mixture (concern #1).
-        remove_tree($pool, "$apt_dir/dists/$cn", "$apt_dir/$ver") unless $dry_run;
+        wipe_tree($pool, "$apt_dir/dists/$cn", "$apt_dir/$ver") unless $dry_run;
         make_path($pool, "$apt_dir/$ver") unless $dry_run;
-        for my $deb (glob("$staging/$cn/*/*.deb")) {
-            my $b = basename($deb);
-            unless ($dry_run) { link($deb, "$pool/$b") or copy($deb, "$pool/$b"); copy($deb, "$apt_dir/$ver/$b"); }
+        unless ($dry_run) {
+            # Collect this codename's staged debs across both arches, deduping on binary package
+            # NAME+ARCH: if two files resolve to the same package+arch (e.g. a native ppc genesis and
+            # an amd64-host cross-converted one both claiming xcat-genesis-base-ppc64el/all) only ONE
+            # may reach the pool. Keep the highest version and warn naming both -- a safety net that
+            # holds regardless of the --skip-genesis single-producer contract (concern #4).
+            my %best;   # "name|arch" => { file => path, ver => version }
+            for my $deb (glob("$staging/$cn/*/*.deb")) {
+                my $name  = deb_field($deb, 'Package');
+                my $darch = deb_field($deb, 'Architecture');
+                my $dver  = deb_field($deb, 'Version');
+                my $key   = "$name|$darch";
+                if (my $cur = $best{$key}) {
+                    my $new_wins = deb_ver_gt($dver, $cur->{ver});
+                    my ($win, $lose) = $new_wins ? ($deb, $cur->{file}) : ($cur->{file}, $deb);
+                    warn "WARN: duplicate binary $name/$darch in staging for $cn -- keeping "
+                       . basename($win) . ", dropping " . basename($lose) . "\n";
+                    $best{$key} = { file => $deb, ver => $dver } if $new_wins;
+                    next;
+                }
+                $best{$key} = { file => $deb, ver => $dver };
+            }
+            for my $key (sort keys %best) {
+                my $deb = $best{$key}{file};
+                my $b = basename($deb);
+                link($deb, "$pool/$b") or copy($deb, "$pool/$b");
+                copy($deb, "$apt_dir/$ver/$b");
+            }
         }
         # Packages index per binary-<arch>: an arch's index carries that arch's debs + all Architecture:all.
         for my $a (qw(amd64 ppc64el)) {
@@ -476,13 +553,18 @@ sub assemble_apt {
             run("gzip -9 -kf -n " . sh_quote("$bindir/Packages"));
         }
         next if $dry_run;
+        # Advertise ONLY the arches actually staged for this codename: an arch counts iff its
+        # binary-<arch>/Packages is non-empty. A single-arch run must not claim a missing arch in
+        # Release (apt would then error on the absent index).
+        my @staged_arches = grep { -s "$apt_dir/dists/$cn/main/binary-$_/Packages" } qw(amd64 ppc64el);
+        @staged_arches = ('amd64') unless @staged_arches;   # never emit an empty Architectures line
         # Release + sign
         my @rel = ('apt-ftparchive',
             '-o', 'APT::FTPArchive::Release::Origin=xCAT',
             '-o', 'APT::FTPArchive::Release::Label=xcat-dep',
             '-o', "APT::FTPArchive::Release::Suite=$cn",
             '-o', "APT::FTPArchive::Release::Codename=$cn",
-            '-o', 'APT::FTPArchive::Release::Architectures=amd64 ppc64el',
+            '-o', 'APT::FTPArchive::Release::Architectures=' . join(' ', @staged_arches),
             '-o', 'APT::FTPArchive::Release::Components=main',
             '-o', "APT::FTPArchive::Release::Description=xCAT dependency packages for $ver",
             'release', "$apt_dir/dists/$cn/");

@@ -15,7 +15,7 @@ use File::Basename qw(basename);
 use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list
-                  deb_snap_version rewrite_changelog_top control_field genesis_deb_control
+                  control_field genesis_deb_control
                   deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
@@ -71,36 +71,6 @@ is(chroot_name('noble', 'amd64'), 'noble-amd64-sbuild', 'chroot_name shape');
     ok((grep { /jammy main universe/ } @lines), 'main + universe enabled (quilt lives in universe)');
     like(chroot_sources_list('http://my.mirror/ubuntu', 'noble'), qr{http://my\.mirror/ubuntu noble },
         'mirror override honored');
-}
-
-# ---- deb_snap_version: out-of-tree CD stamping (idempotent / self-healing) ----------------------
-is(deb_snap_version('0.3.3', '202608101400', 57), '0.3.3-snap202608101400.57',
-    'snap stamp with build number');
-is(deb_snap_version('0.3.3', '202608101400'), '0.3.3-snap202608101400',
-    'snap stamp without build number');
-is(deb_snap_version('0.3.3-snap202601010000.1', '202608101400', 58), '0.3.3-snap202608101400.58',
-    'a prior snap stamp is REPLACED, not stacked');
-unlike(deb_snap_version('0.3.3-snap202601010000.1', '202608101400', 58), qr/snap.*snap/,
-    'never leaves two stacked snap stamps');
-{
-    my $died = !eval { deb_snap_version('0.3.3', 'notatimestamp'); 1 };
-    ok($died, 'deb_snap_version dies on a non-YYYYMMDDHHMM timestamp');
-}
-
-# ---- rewrite_changelog_top: edit a COPY of debian/changelog (never the tracked one) -------------
-{
-    my $cl = "goconserver (0.3.3-1) unstable; urgency=medium\n\n  * something\n\n"
-           . " -- xCAT <old\@example.com>  Mon, 01 Jan 2024 00:00:00 +0000\n\n"
-           . "goconserver (0.3.2-1) unstable; urgency=low\n\n  * older\n\n"
-           . " -- xCAT <old\@example.com>  Sun, 01 Jan 2023 00:00:00 +0000\n";
-    my $out = rewrite_changelog_top($cl, '0.3.3-snap202608101400.57',
-        'xCAT Build <xcat-build@xcat.org>', 'Mon, 10 Aug 2026 14:00:00 +0000');
-    like($out, qr/^goconserver \(0\.3\.3-snap202608101400\.57\) unstable/,
-        'top entry version rewritten');
-    like($out, qr/ -- xCAT Build <xcat-build\@xcat\.org>  Mon, 10 Aug 2026/,
-        'top trailer rewritten to the build identity + date');
-    like($out, qr/goconserver \(0\.3\.2-1\)/, 'older entry left untouched');
-    is(scalar(() = $out =~ /urgency=/g), 2, 'still two entries (nothing duplicated/dropped)');
 }
 
 # ---- control_field: parse a control paragraph, folding continuations ----------------------------
