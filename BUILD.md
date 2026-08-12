@@ -320,6 +320,35 @@ prove t/            # or: perl t/mockbuild-all.t
 The RPM-identity / `cross_copy_genesis` cases build tiny fixture rpms and are skipped
 automatically if `rpmbuild` is unavailable.
 
+# Repository verification gate
+
+After each per-target repo is built + signed, `mockbuild-all.pl` runs a **manifest-driven gate** that
+fails the build if the published repo is incomplete or mis-signed. It uses `packages-manifest.conf` as
+the single source of truth and is layered so the decision logic is pure and unit-tested
+(`MockBuildUtils::verify_repo_packages` / `verify_repo_signature`), separate from the disk/gpg I/O.
+
+- **Runs automatically** at the end of `deploy_target` (per `rh<N>/<arch>` cell). Suppress with
+  `--no-verify-repo`. Verify an already-built repo out of band with `--verify-repo=<repo>`
+  (target derived from the `rh<N>/<arch>` path, or pass `--target`; manifest from `<repo-root>/
+  packages-manifest.conf`; key/home from `--gpg-key-name`/`--gpg-home`).
+- **Completeness:** every package the target's manifest section requires (after `required_pkgs`
+  skip-filtering) must be present with a version satisfying its pin.
+- **Signature:** the repo's `repodata/repomd.xml.asc` must be a *good* signature whose **primary-key
+  fingerprint equals the fingerprint of `--gpg-key-name`** — i.e. the repo was signed by exactly the
+  CLI key. Expired/revoked keys and expired signatures are rejected (not just `VALIDSIG`). If the CLI
+  key cannot be resolved to a fingerprint (not in the keyring) the gate fails (`SIGKEY`), never passes.
+
+**Semantic idiosyncrasies (intentional, and mirrored in the Ubuntu `sbuild-all.pl` gate):**
+
+- **What "the repo" is:** the EL gate reads the **binary rpm files** in the per-target dir (via
+  `rpm_version`); the Ubuntu gate reads the **published `binary-<arch>/Packages` index**. Both check
+  the artifact that ships; they differ only in the RHEL-vs-Debian notion of "the repository".
+- **Duplicate = hard error:** if a required package appears with **two distinct versions** (a stale
+  artifact not cleaned before the build), the gate **dies loudly** rather than silently picking one —
+  identical on both EL (`rpm_version`) and Ubuntu (`parse_packages_index`).
+- **Version pins** are the manifest's *upstream* version; the Debian gate strips the epoch/revision
+  (`deb_upstream_version`) before comparing, the EL gate compares `%{version}` directly.
+
 # References
 
 - [mock project repository](https://github.com/rpm-software-management/mock)

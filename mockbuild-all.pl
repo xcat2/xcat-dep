@@ -1168,11 +1168,18 @@ sub verify_target_repo {
     # Skipped with a printed note only when no gpg key/home is configured (nothing to check against).
     if ($gpg_sign || $gpg_home ne '') {
         require_command('gpg');
-        my $repomd = "$dir/repodata/repomd.xml";
-        my $asc    = "$repomd.asc";
-        my %exp_sig = ('repomd' => gpg_key_fingerprint($gpg_key_name, $gpg_home));
-        my %obs_sig = ('repomd' => repomd_observed_signer($asc, $repomd, $gpg_home));
-        push @problems, verify_repo_signature(\%exp_sig, \%obs_sig);
+        my $repomd  = "$dir/repodata/repomd.xml";
+        my $asc     = "$repomd.asc";
+        my $exp_fpr = gpg_key_fingerprint($gpg_key_name, $gpg_home);
+        # STRICT: the CLI key MUST resolve to a fingerprint so we can confirm it signed the repo. If it
+        # does not (not in the keyring), we cannot verify -> hard fail, never a presence-only pass.
+        if ($exp_fpr !~ /^[0-9A-Fa-f]{16,}$/) {
+            push @problems, "SIGKEY: cannot resolve --gpg-key-name '$gpg_key_name' to a fingerprint (in the $gpg_home keyring?)";
+        } else {
+            my %exp_sig = ('repomd' => $exp_fpr);
+            my %obs_sig = ('repomd' => repomd_observed_signer($asc, $repomd, $gpg_home));
+            push @problems, verify_repo_signature(\%exp_sig, \%obs_sig);
+        }
     } else {
         print "[verify-repo] $tgt: no gpg key/home configured -- skipping repomd signature check\n";
     }
