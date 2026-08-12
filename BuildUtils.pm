@@ -24,7 +24,7 @@ use MIME::Base64 qw(encode_base64);
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs read_manifest standard_options
-    verify_repo_packages verify_repo_signature parse_packages_index
+    verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
     codename_to_version version_to_codename known_codenames
     chroot_name chroot_sources_list
     control_field genesis_deb_control
@@ -241,6 +241,27 @@ sub parse_packages_index {
         }
     }
     return \%map;
+}
+
+# resolve_present_names(\%parsed, $arch, \@names) -> \%present  (name => upstream version | undef)
+# PURE. Resolves each manifest package NAME to the version actually in the parsed index (\%parsed from
+# parse_packages_index), reducing to the upstream version so it compares against the manifest's
+# upstream pins. Resolution order:
+#   - exact index key (e.g. ipmitool-xcat), else
+#   - the arch-suffixed key for THIS cell's arch (e.g. xcat-genesis-base -> xcat-genesis-base-<arch>).
+# It deliberately does NOT fall back to a DIFFERENT-arch suffix: the xcat-genesis-base-<arch> debs are
+# Architecture:all and appear in EVERY arch's binary index, so an alphabetical prefix match would
+# resolve the ppc64el cell to xcat-genesis-base-amd64 and MASK a missing native ppc genesis (#7610).
+sub resolve_present_names {
+    my ($parsed, $arch, $names) = @_;
+    my %present;
+    for my $name (@$names) {
+        my $full;
+        if    (exists $parsed->{$name})            { $full = $parsed->{$name}; }
+        elsif (exists $parsed->{"$name-$arch"})    { $full = $parsed->{"$name-$arch"}; }
+        $present{$name} = defined $full ? deb_upstream_version($full) : undef;
+    }
+    return \%present;
 }
 
 # ---------------------------------------------------------------------------------------------------

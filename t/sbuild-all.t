@@ -13,7 +13,7 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
 use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
-                  verify_repo_packages verify_repo_signature parse_packages_index
+                  verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list
                   control_field genesis_deb_control
@@ -290,6 +290,34 @@ SKIP: {
     for my $t (grep { /-amd64$/ } @targets) {
         ok(exists $m{$t}{'syslinux-xcat'}, "syslinux-xcat built on amd64 target $t");
     }
+}
+
+# ---- resolve_present_names: PURE name-resolution incl. per-arch genesis (guards the #7610 false-PASS)
+{
+    # An index as it is actually published: exact-named compiled deps + BOTH Architecture:all genesis
+    # debs (they appear in every arch's binary index). Versions carry the debian revision.
+    my %parsed = (
+        'ipmitool-xcat'          => '1.8.18-snap202601010000',
+        'xcat-genesis-base-amd64'   => '2.19.0-snap202601010000',
+        'xcat-genesis-base-ppc64el' => '2.19.0-snap202601010000',
+    );
+    my @names = ('ipmitool-xcat', 'xcat-genesis-base');
+
+    my $amd = resolve_present_names(\%parsed, 'amd64', \@names);
+    is($amd->{'ipmitool-xcat'}, '1.8.18', 'resolve: exact name reduced to upstream');
+    is($amd->{'xcat-genesis-base'}, '2.19.0', 'resolve: genesis -> amd64-suffixed for the amd64 cell');
+
+    my $ppc = resolve_present_names(\%parsed, 'ppc64el', \@names);
+    is($ppc->{'xcat-genesis-base'}, '2.19.0', 'resolve: genesis -> ppc64el-suffixed for the ppc64el cell');
+
+    # The false-PASS the reviewer caught: only the amd64 genesis is published. The ppc64el cell MUST
+    # NOT resolve to it (that would mask a missing native ppc genesis, #7610) -> undef -> later MISSING.
+    my %only_amd = ('xcat-genesis-base-amd64' => '2.19.0-snap202601010000');
+    my $miss = resolve_present_names(\%only_amd, 'ppc64el', ['xcat-genesis-base']);
+    is($miss->{'xcat-genesis-base'}, undef,
+        'resolve: ppc64el cell does NOT borrow the amd64 genesis (guards the #7610 false-PASS)');
+    my @prob = verify_repo_packages({ 'xcat-genesis-base' => '2.*' }, $miss);
+    like($prob[0], qr/^MISSING xcat-genesis-base\b/, '... and the gate then reports it MISSING');
 }
 
 done_testing;

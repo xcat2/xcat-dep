@@ -37,7 +37,7 @@ use Fcntl qw(:flock);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
-                  verify_repo_packages verify_repo_signature parse_packages_index
+                  verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
                   codename_to_version known_codenames chroot_name chroot_sources_list
                   control_field genesis_deb_control
                   deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
@@ -546,21 +546,12 @@ sub validate_manifest {
 # The published Version carries epoch+revision, so it is reduced to the UPSTREAM part (what the manifest
 # pins) via deb_upstream_version before it reaches the pure comparator.
 sub repo_present_from_index {
-    my ($idx, @names) = @_;
-    my %present = map { $_ => undef } @names;
+    my ($idx, $arch, @names) = @_;
     my $text = do { local $/; open my $fh, '<', $idx or die "FATAL: cannot read $idx: $!\n"; <$fh> };
     my $parsed = parse_packages_index($text);
-    for my $name (@names) {
-        my $full;
-        if (exists $parsed->{$name}) {
-            $full = $parsed->{$name};                                   # exact index key
-        } else {
-            my ($k) = sort grep { /^\Q$name\E-/ } keys %$parsed;        # arch-suffixed (genesis)
-            $full = $parsed->{$k} if defined $k;
-        }
-        $present{$name} = defined $full ? deb_upstream_version($full) : undef;
-    }
-    return %present;
+    # Name-resolution (incl. the arch-suffixed genesis, matched to THIS cell's arch -- never a
+    # different arch's genesis, which would mask a missing native one) is the pure resolve_present_names.
+    return %{ resolve_present_names($parsed, $arch, \@names) };
 }
 
 # resolve_expected_key(): the expected signing-key IDENTITY that --gpg-key-id names, resolved (via the
@@ -597,21 +588,22 @@ sub sig_observed_key {
     } else {
         return undef;   # no signature file at all -> UNSIGNED
     }
-    my $out = `$cmd`;
-    return undef if ($? >> 8) != 0;   # gpg --verify FAILED -> treat as unsigned/bad
+    my $out = `$cmd` // '';
+    return undef if ($? >> 8) != 0;   # gpg --verify FAILED (BADSIG/NO_PUBKEY) -> unsigned/bad
+    # An EXPIRED or REVOKED key, or an expired signature, still emits VALIDSIG (and gpg may exit 0),
+    # so reject those explicitly -- a no-longer-trustworthy signature must be a problem, not a pass.
+    return undef if $out =~ /^\[GNUPG:\]\s+(?:EXPKEYSIG|REVKEYSIG|EXPSIG)\b/m;
     my $obs_fpr = '';
-    for my $line (split /\n/, ($out // '')) {
+    for my $line (split /\n/, $out) {
         if ($line =~ /^\[GNUPG:\]\s+VALIDSIG\s+(.*)$/) {
             my @f = split /\s+/, $1;
-            $obs_fpr = $f[-1];        # last field = primary key fingerprint
+            $obs_fpr = $f[-1];        # last field = primary key fingerprint (full 40-hex)
             last;
         }
     }
-    if ($obs_fpr eq '') {
-        for my $line (split /\n/, ($out // '')) {
-            if ($line =~ /^\[GNUPG:\]\s+GOODSIG\s+(\S+)/) { $obs_fpr = $1; last; }
-        }
-    }
+    # Only compare when we extracted a full fingerprint AND the expected side is one; otherwise degrade
+    # to presence-only (return the expected value so the pure decider sees a match). We deliberately do
+    # NOT fall back to a short GOODSIG keyid, which could never equal the 40-hex expected fpr.
     return ($expected_is_fpr && $obs_fpr ne '') ? $obs_fpr : $expected_key;
 }
 
@@ -624,9 +616,12 @@ sub sig_observed_key {
 # verify_repo_signature (per codename). Package problems are [<cn>/<arch>]-prefixed; the pure signature
 # problems already carry the codename unit. Any problem dies non-zero.
 sub verify_assembled_repo {
-    my ($man, $adir, $dists) = @_;
+    my ($man, $adir, $dists, $sig_enabled) = @_;
     my @all;
-    my $sig_enabled = ($gpg_home ne '' || $gpg_sign);
+    # $sig_enabled: whether a valid signature is REQUIRED. The post-assembly auto-run passes $gpg_sign
+    # -- a repo assembled WITHOUT --gpg-sign is intentionally unsigned, so don't demand a signature and
+    # false-fail. Standalone --verify-repo passes undef -> fall back to "a gpg key/home is configured".
+    $sig_enabled = ($gpg_home ne '' || $gpg_sign) unless defined $sig_enabled;
     my $expected_key = $sig_enabled ? resolve_expected_key() : '';
     my $expected_is_fpr = ($expected_key =~ /^[0-9A-Fa-f]{16,}$/) ? 1 : 0;
     print "  apt-dir: $adir\n";
@@ -647,10 +642,10 @@ sub verify_assembled_repo {
             my @names = required_pkgs([sort keys %$req], $skip_genesis, $skip_xcat_dep);
             my $idx = "$adir/dists/$cn/main/binary-$a/Packages";
             unless (-f $idx) {
-                push @all, "[$cn/$a] MISSING-INDEX $cn/$a (no $idx)";
+                push @all, "[$cn/$a] MISSING-INDEX (no $idx)";
                 next;
             }
-            my %present = repo_present_from_index($idx, @names);
+            my %present = repo_present_from_index($idx, $a, @names);
             my %pins = map { $_ => $req->{$_} } @names;
             push @all, map { "[$cn/$a] $_" } verify_repo_packages(\%pins, \%present);
         }
@@ -772,7 +767,9 @@ sub assemble_apt {
     # --no-verify-repo (iteration/debug); skipped under --dry-run (nothing was published).
     unless ($no_verify_repo || $dry_run) {
         print_step('Verify published apt repo (post-assembly completeness + signature gate)');
-        verify_assembled_repo(\%MANIFEST, $apt_dir, \@dist_list);
+        # Require a valid signature iff we actually signed (--gpg-sign); a repo assembled without it is
+        # intentionally unsigned and must not false-fail. (Standalone --verify-repo omits this arg.)
+        verify_assembled_repo(\%MANIFEST, $apt_dir, \@dist_list, $gpg_sign);
     }
 }
 
