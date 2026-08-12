@@ -13,6 +13,7 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
 use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
+                  verify_repo_packages verify_repo_signature parse_packages_index
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list
                   control_field genesis_deb_control
@@ -115,6 +116,88 @@ CTRL
     like($c, qr/^Package: xcat-genesis-base-ppc64el$/m, 'minimal control still names the package');
     like($c, qr/^Architecture: all$/m,                  'minimal control still arch:all');
     unlike($c, qr/^Replaces:/m, 'no Replaces invented when the maintained control is absent');
+}
+
+# ---- verify_repo_packages: PURE completeness decision (no I/O; manifest = source of truth) -------
+{
+    my %req = ('ipmitool-xcat' => '1.8.18', 'goconserver' => '0.3.3', 'xcat-genesis-base' => '*');
+
+    # happy: every required package present at a matching version (incl a '*' pin) -> no problems.
+    my %ok = ('ipmitool-xcat' => '1.8.18', 'goconserver' => '0.3.3', 'xcat-genesis-base' => '2.18.0');
+    is_deeply([verify_repo_packages(\%req, \%ok)], [],
+        'all present + version-matching (incl * pin) -> no problems');
+
+    # missing: a required package absent -> exactly one MISSING problem.
+    my %miss = ('ipmitool-xcat' => '1.8.18', 'xcat-genesis-base' => '2.18.0');   # goconserver absent
+    my @m = verify_repo_packages(\%req, \%miss);
+    is(scalar(@m), 1, 'a missing required package -> one problem');
+    like($m[0], qr/^MISSING goconserver /, 'missing package -> "MISSING <pkg> ..."');
+
+    # version: present but the pin is not satisfied -> exactly one VERSION problem.
+    my %ver = ('ipmitool-xcat' => '1.8.17', 'goconserver' => '0.3.3', 'xcat-genesis-base' => '2.18.0');
+    my @v = verify_repo_packages(\%req, \%ver);
+    is(scalar(@v), 1, 'a version-pin mismatch -> one problem');
+    like($v[0], qr/^VERSION ipmitool-xcat: repo has 1\.8\.17, manifest pins 1\.8\.18$/,
+        'mismatch -> "VERSION <pkg>: repo has <got>, manifest pins <pin>"');
+
+    # combined: one missing AND one mismatched -> two problems (one MISSING + one VERSION).
+    my %both = ('ipmitool-xcat' => '1.8.17', 'xcat-genesis-base' => '2.18.0');   # goconserver absent too
+    my @b = verify_repo_packages(\%req, \%both);
+    is(scalar(@b), 2, 'combined missing + mismatch -> two problems');
+    ok((grep { /^MISSING goconserver/ } @b),   'combined carries the MISSING problem');
+    ok((grep { /^VERSION ipmitool-xcat/ } @b), 'combined carries the VERSION problem');
+}
+
+# ---- verify_repo_signature: PURE signer decision (no gpg; IO layer passes %observed in) ----------
+{
+    my $KEY = 'C55A3A47C780A856';                        # the expected signing key identity (a unit)
+    my %exp = (focal => $KEY, jammy => $KEY, noble => $KEY);
+
+    # happy: every codename signed by the expected key -> no problems.
+    is_deeply([verify_repo_signature(\%exp, { focal => $KEY, jammy => $KEY, noble => $KEY })], [],
+        'all codenames signed by the expected key -> no problems');
+
+    # unsigned: undef AND '' both count as unsigned/failed -> UNSIGNED.
+    my @u = verify_repo_signature(\%exp, { focal => $KEY, jammy => undef, noble => '' });
+    is(scalar(@u), 2, 'two unsigned/failed codenames -> two problems');
+    ok((grep { $_ eq "UNSIGNED jammy (expected $KEY)" } @u), 'undef observed -> UNSIGNED <unit> (expected <key>)');
+    ok((grep { $_ eq "UNSIGNED noble (expected $KEY)" } @u), "empty observed -> UNSIGNED <unit> (expected <key>)");
+
+    # wrongkey: signed, but by a different key -> WRONGKEY (no false UNSIGNED for the good ones).
+    my @w = verify_repo_signature(\%exp, { focal => $KEY, jammy => 'DEADBEEFDEADBEEF', noble => $KEY });
+    is_deeply(\@w, ["WRONGKEY jammy: signed by DEADBEEFDEADBEEF, expected $KEY"],
+        'a different signer -> WRONGKEY <unit>: signed by <observed>, expected <key>');
+}
+
+# ---- parse_packages_index: PURE apt 'Packages' index parser (name => full version) --------------
+{
+    my $idx = <<'PKG';
+Package: ipmitool-xcat
+Version: 1.8.18-4snap202608101400
+Architecture: amd64
+Description: fixture
+
+Package: xcat-genesis-base-amd64
+Version: 2.18.0-snap202608101400.5
+Architecture: all
+Description: genesis netboot image
+
+Package: goconserver
+Version: 2:0.3.3-snap202608101400.57
+Architecture: amd64
+Description: fixture
+PKG
+    my $m = parse_packages_index($idx);
+    is($m->{'ipmitool-xcat'}, '1.8.18-4snap202608101400', 'first stanza name => version');
+    is($m->{'xcat-genesis-base-amd64'}, '2.18.0-snap202608101400.5',
+        'arch-suffixed genesis name parsed (across a blank-line separator)');
+    is($m->{'goconserver'}, '2:0.3.3-snap202608101400.57', 'epoch version kept verbatim');
+    is(scalar(keys %$m), 3, 'exactly the three stanzas parsed');
+
+    # malformed / empty input -> empty hash (a stanza lacking Package:/Version: is skipped).
+    is_deeply(parse_packages_index(''), {}, 'empty input -> empty hash');
+    is_deeply(parse_packages_index("garbage without fields\nno colon here\n"), {},
+        'malformed input (no Package:/Version:) -> empty hash');
 }
 
 # ---- deb_upstream_version: strip epoch + debian revision ----------------------------------------

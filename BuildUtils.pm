@@ -24,6 +24,7 @@ use MIME::Base64 qw(encode_base64);
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs read_manifest standard_options
+    verify_repo_packages verify_repo_signature parse_packages_index
     codename_to_version version_to_codename known_codenames
     chroot_name chroot_sources_list
     control_field genesis_deb_control
@@ -137,6 +138,109 @@ sub standard_options {
         finalize-xcat-dep! force-unlock!
         dry-run!
     );
+}
+
+# ---------------------------------------------------------------------------------------------------
+# Published-repo completeness gate (PURE decision + PURE index parsing; no I/O, no manifest parsing).
+# These are the unit-testable core of the manifest-driven completeness gate: the disk/name-resolution
+# layer (sbuild-all.pl) feeds them plain hashes/strings so the DECISION stays testable without a repo.
+# ---------------------------------------------------------------------------------------------------
+
+# verify_repo_packages(\%expected, \%present) -> @problems
+#   %expected : pkg name => manifest version pin ('*' = any)
+#   %present  : pkg name => the actual (upstream) version found in the repo, or undef/absent if not found
+# Returns human-readable problem strings (empty list = the repo is complete for this set):
+#   "MISSING <pkg> (manifest requires <pin>)"              -- required package not present at all
+#   "VERSION <pkg>: repo has <got>, manifest pins <pin>"   -- present but the pin is not satisfied
+# The pin semantics are exactly BuildUtils::version_matches (the same check validate_manifest uses on
+# freshly-built debs), so a repo that "validates on build" and a repo that "validates on publish" agree.
+# Pure: no I/O, deterministic ordering (problems returned in sorted package-name order).
+sub verify_repo_packages {
+    my ($expected, $present) = @_;
+    my @problems;
+    for my $pkg (sort keys %$expected) {
+        my $pin = $expected->{$pkg};
+        my $got = $present->{$pkg};
+        if (!defined $got) {
+            push @problems, "MISSING $pkg (manifest requires $pin)";
+            next;
+        }
+        push @problems, "VERSION $pkg: repo has $got, manifest pins $pin"
+            unless version_matches($got, $pin);
+    }
+    return @problems;
+}
+
+# verify_repo_signature(\%expected, \%observed) -> @problems
+#   %expected : unit => the expected signing-key identity (for Ubuntu the unit is the codename:
+#               { focal => <key>, jammy => <key>, ... })
+#   %observed : unit => the key that ACTUALLY signed the unit's metadata (the string the IO layer
+#               extracts from gpg), or undef/'' when the unit is unsigned / verification failed
+# Returns human-readable problem strings (empty list = every unit is signed by the expected key):
+#   "UNSIGNED <unit> (expected <key>)"                       -- no valid signature at all
+#   "WRONGKEY <unit>: signed by <observed>, expected <key>"  -- signed, but by a different key
+# Pure: a string comparison only -- NO gpg call, no I/O (the IO layer runs gpg and passes %observed in).
+# Deterministic (problems returned in sorted unit order).
+sub verify_repo_signature {
+    my ($expected, $observed) = @_;
+    my @problems;
+    for my $unit (sort keys %$expected) {
+        my $exp = $expected->{$unit};
+        my $obs = $observed->{$unit};
+        if (!defined $obs || $obs eq '') {
+            push @problems, "UNSIGNED $unit (expected $exp)";
+            next;
+        }
+        push @problems, "WRONGKEY $unit: signed by $obs, expected $exp"
+            unless $obs eq $exp;
+    }
+    return @problems;
+}
+
+# _dpkg_available / _dpkg_ver_gt: a pure version-ORDERING oracle used only to break duplicate-stanza
+# ties in parse_packages_index. dpkg is asked to compare two version STRINGS (no repo/disk/manifest
+# I/O, deterministic); when the dpkg binary is absent the caller falls back to last-wins. Duplicate
+# package stanzas essentially never occur in an apt-ftparchive-generated index (one stanza per
+# package), so this path is defensive.
+my $DPKG_AVAILABLE;
+sub _dpkg_available {
+    return $DPKG_AVAILABLE if defined $DPKG_AVAILABLE;
+    $DPKG_AVAILABLE = (system('command -v dpkg >/dev/null 2>&1') == 0) ? 1 : 0;
+    return $DPKG_AVAILABLE;
+}
+sub _dpkg_ver_gt {
+    my ($a, $b) = @_;
+    return system('dpkg', '--compare-versions', $a, 'gt', $b) == 0 ? 1 : 0;
+}
+
+# parse_packages_index($text) -> \%{ package_name => version }
+# Parse a Debian 'Packages' index: RFC822 stanzas separated by blank line(s); each carries a
+# 'Package:' and a 'Version:'. Returns name => version (the FULL Debian version verbatim, epoch +
+# revision included -- the caller strips to the upstream part with deb_upstream_version). A stanza
+# lacking either field is skipped; malformed/empty input yields an empty hash.
+# DUP-NAME CHOICE: if a name appears in more than one stanza, keep the HIGHEST by dpkg version order
+# when dpkg is available, else LAST-WINS (the last stanza's version). Pure: no file/repo I/O (the only
+# subprocess is dpkg as a version-comparison oracle for the rare duplicate).
+sub parse_packages_index {
+    my ($text) = @_;
+    my %map;
+    return \%map unless defined $text && $text ne '';
+    for my $stanza (split /\n\n+/, $text) {
+        next unless $stanza =~ /\S/;
+        my ($name) = $stanza =~ /^Package:[ \t]*(\S+)/m;
+        my ($ver)  = $stanza =~ /^Version:[ \t]*(\S+)/m;
+        next unless defined $name && defined $ver;
+        if (exists $map{$name}) {
+            if (_dpkg_available()) {
+                $map{$name} = $ver if _dpkg_ver_gt($ver, $map{$name});   # keep the highest
+            } else {
+                $map{$name} = $ver;                                      # last-wins fallback
+            }
+        } else {
+            $map{$name} = $ver;
+        }
+    }
+    return \%map;
 }
 
 # ---------------------------------------------------------------------------------------------------

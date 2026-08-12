@@ -37,9 +37,10 @@ use Fcntl qw(:flock);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
+                  verify_repo_packages verify_repo_signature parse_packages_index
                   codename_to_version known_codenames chroot_name chroot_sources_list
                   control_field genesis_deb_control
-                  deb_field deb_version deb_hash cross_copy_genesis_deb);
+                  deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = $script_dir;
@@ -62,6 +63,12 @@ my $parallel_targets = 0;
 my ($skip_build, $skip_install, $skip_genesis, $skip_xcat_dep) = (0,0,0,0);
 my ($skip_createrepo, $skip_tarball) = (0,0);
 my $dry_run = 0;
+# Completeness+signature gate on the PUBLISHED apt index (what apt clients see). $verify_repo_arg set
+# (--verify-repo=<apt_dir>) runs the gate STANDALONE against that assembled apt dir and exits (no lock,
+# no build). $no_verify_repo suppresses the AUTOMATIC post-assembly gate that otherwise runs at the end
+# of assemble_apt. Default: automatic gate ON.
+my $verify_repo_arg = '';
+my $no_verify_repo  = 0;
 my $gpg_sign = 0;
 my $gpg_key_id = 'xcat@megware.com';
 my $gpg_home = '';
@@ -134,6 +141,8 @@ $spec{'genesis-deb=s'}         = \@genesis_debs;
 $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
 $spec{'require-ppc-genesis!'}  = \$require_ppc_genesis;
+$spec{'verify-repo=s'}         = \$verify_repo_arg;   # standalone gate: --verify-repo=<apt_dir>
+$spec{'no-verify-repo!'}       = \$no_verify_repo;    # suppress the automatic post-assembly gate
 $spec{'output=s'}              = \$output_root;   # --output alias
 $spec{'help|h'}                = sub { pod2usage(-verbose => 1, -exitval => 0); };
 $spec{'man'}                   = sub { pod2usage(-verbose => 2, -exitval => 0); };
@@ -177,6 +186,19 @@ my $snap_ts = strftime("%Y%m%d%H%M", gmtime($build_timestamp));
 $ENV{SOURCE_DATE_EPOCH} = $build_timestamp;   # deterministic mtimes across the whole run
 
 my %MANIFEST = read_manifest($manifest);
+
+# Standalone gate: --verify-repo=<apt_dir> checks an already-assembled apt tree (completeness +
+# Release signatures) using THIS script's manifest resolution (--manifest or the default
+# debs-manifest.conf), --dists, and --gpg-key-id/--gpg-home, then exits. It takes NO run lock and does
+# NOT build. Dispatched here (after manifest + @dist_list are resolved) so it never trips the
+# build-only per-target section check below and never reaches the lock/build phases.
+if (length $verify_repo_arg) {
+    die "FATAL: --verify-repo apt dir not found: $verify_repo_arg\n" unless -d $verify_repo_arg;
+    print_step('Standalone repo verification (no build, no lock)');
+    verify_assembled_repo(\%MANIFEST, abs_path($verify_repo_arg), \@dist_list);
+    exit 0;
+}
+
 for my $cn (@dist_list) {
     my $tgt = "$cn-$arch";
     die "FATAL: no manifest section [$tgt] in $manifest\n" unless $MANIFEST{$tgt};
@@ -507,6 +529,150 @@ sub validate_manifest {
 }
 
 # ---------------------------------------------------------------------------------------------------
+# Phase: manifest-driven completeness + signature GATE on the PUBLISHED apt index (what apt clients
+# actually see). This replaces the coarse, pool-global, hard-coded Jenkinsfile check: the manifest is
+# the single source of truth and the assertion is made per codename x arch against the PUBLISHED
+# binary-<arch>/Packages index (not the staging pool). The pure DECISIONS (verify_repo_packages for
+# completeness, verify_repo_signature for the signer) and the index PARSING (parse_packages_index) live
+# in BuildUtils.pm and are unit-tested; this disk/IO layer only reads the index, resolves manifest names
+# to index keys, and drives gpg for the signature check.
+# ---------------------------------------------------------------------------------------------------
+
+# repo_present_from_index($idx, @names): parse the PUBLISHED $idx (a binary-<arch>/Packages file) and
+# resolve each required manifest @names against it, returning %present = (reqname => upstream-version |
+# undef). Name-resolution mirrors deb_version/validate_manifest: try an EXACT index key first (most
+# packages -- ipmitool-xcat, goconserver, grub2-xcat, the Architecture:all boot bits keep their plain
+# names), else a key matching ^<name>- (the arch-suffixed xcat-genesis-base -> xcat-genesis-base-<arch>).
+# The published Version carries epoch+revision, so it is reduced to the UPSTREAM part (what the manifest
+# pins) via deb_upstream_version before it reaches the pure comparator.
+sub repo_present_from_index {
+    my ($idx, @names) = @_;
+    my %present = map { $_ => undef } @names;
+    my $text = do { local $/; open my $fh, '<', $idx or die "FATAL: cannot read $idx: $!\n"; <$fh> };
+    my $parsed = parse_packages_index($text);
+    for my $name (@names) {
+        my $full;
+        if (exists $parsed->{$name}) {
+            $full = $parsed->{$name};                                   # exact index key
+        } else {
+            my ($k) = sort grep { /^\Q$name\E-/ } keys %$parsed;        # arch-suffixed (genesis)
+            $full = $parsed->{$k} if defined $k;
+        }
+        $present{$name} = defined $full ? deb_upstream_version($full) : undef;
+    }
+    return %present;
+}
+
+# resolve_expected_key(): the expected signing-key IDENTITY that --gpg-key-id names, resolved (via the
+# pipeline's GNUPGHOME) to the primary-key fingerprint so it can be compared against what gpg reports as
+# the actual signer. Falls back to the raw --gpg-key-id string when it cannot be resolved to a
+# fingerprint (then the gate degrades to presence-only -- see sig_observed_key).
+sub resolve_expected_key {
+    my $g = $gpg_home ? "GNUPGHOME=" . sh_quote($gpg_home) . " " : '';
+    my $out = `${g}gpg --list-keys --with-colons ${\ sh_quote($gpg_key_id)} 2>/dev/null`;
+    for my $line (split /\n/, ($out // '')) {
+        return $1 if $line =~ /^fpr:::::::::([0-9A-Fa-f]+):/;   # first fpr = primary key fingerprint
+    }
+    return $gpg_key_id;
+}
+
+# sig_observed_key($adir, $cn, $expected_key, $expected_is_fpr): run gpg --verify on the codename's
+# Release signature (clearsigned InRelease preferred, detached Release.gpg + Release fallback) and return
+# the key that ACTUALLY signed it -- undef when unsigned or verification FAILS, so verify_repo_signature
+# reports UNSIGNED. On success the primary-key fingerprint is extracted from the VALIDSIG status line
+# (GOODSIG keyid fallback); when a real fingerprint can be extracted AND the expected key resolved to a
+# fingerprint, that real fingerprint is returned so a mismatch surfaces as WRONGKEY. Otherwise the gate
+# degrades to presence-only (returns the expected key on success) rather than emit a spurious WRONGKEY.
+sub sig_observed_key {
+    my ($adir, $cn, $expected_key, $expected_is_fpr) = @_;
+    my $g = $gpg_home ? "GNUPGHOME=" . sh_quote($gpg_home) . " " : '';
+    my $inrel  = "$adir/dists/$cn/InRelease";
+    my $rel    = "$adir/dists/$cn/Release";
+    my $relgpg = "$adir/dists/$cn/Release.gpg";
+    my $cmd;
+    if (-f $inrel) {
+        $cmd = "${g}gpg --status-fd=1 --verify " . sh_quote($inrel) . " 2>/dev/null";
+    } elsif (-f $relgpg && -f $rel) {
+        $cmd = "${g}gpg --status-fd=1 --verify " . sh_quote($relgpg) . " " . sh_quote($rel) . " 2>/dev/null";
+    } else {
+        return undef;   # no signature file at all -> UNSIGNED
+    }
+    my $out = `$cmd`;
+    return undef if ($? >> 8) != 0;   # gpg --verify FAILED -> treat as unsigned/bad
+    my $obs_fpr = '';
+    for my $line (split /\n/, ($out // '')) {
+        if ($line =~ /^\[GNUPG:\]\s+VALIDSIG\s+(.*)$/) {
+            my @f = split /\s+/, $1;
+            $obs_fpr = $f[-1];        # last field = primary key fingerprint
+            last;
+        }
+    }
+    if ($obs_fpr eq '') {
+        for my $line (split /\n/, ($out // '')) {
+            if ($line =~ /^\[GNUPG:\]\s+GOODSIG\s+(\S+)/) { $obs_fpr = $1; last; }
+        }
+    }
+    return ($expected_is_fpr && $obs_fpr ne '') ? $obs_fpr : $expected_key;
+}
+
+# verify_assembled_repo($manifest_href, $apt_dir, $dists_aref): the ONE completeness+signature gate,
+# shared by the automatic post-assembly run (end of assemble_apt) and the standalone --verify-repo mode.
+# It is the IO layer: it PARSES the repository (parse_packages_index of each published
+# binary-<arch>/Packages -> %present; gpg --verify of each dists/<cn>/InRelease -> %observed signer),
+# PARSES the manifest (-> %expected pkg pins per cell) and resolves the GPG key (--gpg-key-id -> expected
+# signer), then delegates the DECISION to the pure verify_repo_packages (per codename x arch) and
+# verify_repo_signature (per codename). Package problems are [<cn>/<arch>]-prefixed; the pure signature
+# problems already carry the codename unit. Any problem dies non-zero.
+sub verify_assembled_repo {
+    my ($man, $adir, $dists) = @_;
+    my @all;
+    my $sig_enabled = ($gpg_home ne '' || $gpg_sign);
+    my $expected_key = $sig_enabled ? resolve_expected_key() : '';
+    my $expected_is_fpr = ($expected_key =~ /^[0-9A-Fa-f]{16,}$/) ? 1 : 0;
+    print "  apt-dir: $adir\n";
+    print "  signature check: " . ($sig_enabled
+        ? "on (expected key $expected_key" . ($expected_is_fpr ? '' : ' [unresolved -> presence-only]') . ")"
+        : "SKIPPED (no --gpg-home/--gpg-sign)") . "\n";
+
+    my (%exp_sig, %obs_sig);
+    for my $cn (@$dists) {
+        # completeness: manifest (source of truth) vs the PUBLISHED index, per codename x arch.
+        for my $a (qw(amd64 ppc64el)) {
+            my $tgt = "$cn-$a";
+            my $req = $man->{$tgt};
+            unless ($req && %$req) {
+                print "  [$cn/$a] no manifest section [$tgt] -- skipping (codename does not target this arch)\n";
+                next;
+            }
+            my @names = required_pkgs([sort keys %$req], $skip_genesis, $skip_xcat_dep);
+            my $idx = "$adir/dists/$cn/main/binary-$a/Packages";
+            unless (-f $idx) {
+                push @all, "[$cn/$a] MISSING-INDEX $cn/$a (no $idx)";
+                next;
+            }
+            my %present = repo_present_from_index($idx, @names);
+            my %pins = map { $_ => $req->{$_} } @names;
+            push @all, map { "[$cn/$a] $_" } verify_repo_packages(\%pins, \%present);
+        }
+        # signature IO: record the expected + observed signer for this codename (decided in bulk below).
+        if ($sig_enabled) {
+            $exp_sig{$cn} = $expected_key;
+            $obs_sig{$cn} = sig_observed_key($adir, $cn, $expected_key, $expected_is_fpr);
+        }
+    }
+    push @all, verify_repo_signature(\%exp_sig, \%obs_sig) if $sig_enabled;
+
+    if (@all) {
+        print "$_\n" for @all;
+        die "FATAL: apt repo INCOMPLETE (" . scalar(@all) . " problem(s))\n";
+    }
+    print "[verify-repo] complete: all required packages present + version-pinned"
+        . ($sig_enabled ? " + Release signatures valid (key $expected_key)" : "")
+        . " for [" . join(' ', @$dists) . "] x {amd64,ppc64el}\n";
+    return;
+}
+
+# ---------------------------------------------------------------------------------------------------
 # Phase: assemble + sign the apt repo (absorbed build-apt-repo.sh; promote-on-success)
 # ---------------------------------------------------------------------------------------------------
 sub assemble_apt {
@@ -600,6 +766,13 @@ sub assemble_apt {
         my $keysrc = "$repo_root/repomd.xml.key";
         if (-f $keysrc) { copy($keysrc, "$apt_dir/xcat-dep.asc"); }
         else { run("${g}gpg --armor --export " . sh_quote($gpg_key_id) . " > " . sh_quote("$apt_dir/xcat-dep.asc"), nofail => 1); }
+    }
+    # Automatic post-assembly GATE on the just-published index (completeness + Release signatures).
+    # Runs once every codename's dists/<cn>/.../Packages + signed Release are written. Suppressed with
+    # --no-verify-repo (iteration/debug); skipped under --dry-run (nothing was published).
+    unless ($no_verify_repo || $dry_run) {
+        print_step('Verify published apt repo (post-assembly completeness + signature gate)');
+        verify_assembled_repo(\%MANIFEST, $apt_dir, \@dist_list);
     }
 }
 
@@ -702,6 +875,19 @@ Wipes+repopulates each codename's published C<pool>/C<dists> from validated stag
 C<binary-E<lt>archE<gt>> (Architecture:all packages land in every arch index) and gpg-signs
 C<Release>/C<InRelease>. Skipped with C<--skip-createrepo>.
 
+=item Verify (published-repo gate)
+
+After assembly, a manifest-driven gate asserts -- per codename E<times> arch, against the B<published>
+C<binary-E<lt>archE<gt>/Packages> index apt clients actually see (not the staging pool) -- that every
+manifest-required package is present at its pinned upstream version, and that each codename's
+C<Release> is validly gpg-signed by the expected key (C<InRelease>, or detached C<Release.gpg>). Any
+missing package, version mismatch, missing index, or unsigned/wrong-key signature fails the run. The
+pure decisions (C<BuildUtils::verify_repo_packages> for completeness, C<BuildUtils::verify_repo_signature>
+for the signer) and the index parsing (C<BuildUtils::parse_packages_index>) are unit-tested; this
+script's IO layer parses the repository + resolves the gpg key and feeds those pure deciders. This
+automatic gate is suppressed with C<--no-verify-repo>; the same check runs standalone against an
+already-assembled tree via C<--verify-repo=E<lt>apt_dirE<gt>>.
+
 =item Tarball
 
 A repo tarball build artifact (the deployable offline FRS dep bundle is produced by the pipeline's
@@ -772,6 +958,18 @@ the default gives 8 concurrent build streams for a 4-codename matrix (4 per host
 =item B<--skip-build> B<--skip-install> B<--skip-genesis> B<--skip-xcat-dep> B<--skip-createrepo> B<--skip-tarball>
 
 Skip the corresponding phase(s). C<--skip-build --skip-genesis> gives an assemble-only run.
+
+=item B<--verify-repo> C<< =<apt_dir> >>
+
+Standalone mode: verify an already-assembled apt tree at C<< <apt_dir> >> (completeness + Release
+signatures) using this script's manifest resolution (C<--manifest> or the default
+C<debs-manifest.conf>), C<--dists>, and C<--gpg-key-id>/C<--gpg-home>, then exit. Takes no run lock and
+builds nothing.
+
+=item B<--no-verify-repo>
+
+Suppress the B<automatic> post-assembly completeness+signature gate (for iteration/debug). The gate is
+ON by default.
 
 =item B<--dry-run>
 
