@@ -38,6 +38,7 @@ use FindBin qw($RealBin);
 use lib $RealBin;
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
                   verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
+                  index_has_native_arch
                   codename_to_version known_codenames chroot_name chroot_sources_list
                   control_field genesis_deb_control
                   deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
@@ -651,8 +652,16 @@ sub verify_assembled_repo {
         # carries, while a genuinely single-arch run (e.g. BUILD_PPC=false, amd64 only) never
         # false-fails demanding an arch it did not build.
         my %want = map { $_ => 1 } @{ $arches || [] };
+        # Add an arch iff it published NATIVE debs (a Packages stanza with Architecture == that arch),
+        # NOT merely a non-empty index: every binary-<arch>/Packages carries the Architecture:all debs
+        # (grub2-xcat, genesis), so a non-empty ppc index does NOT imply ppc was built. Native-arch
+        # detection keeps a genuine single-arch run (BUILD_PPC=false) from demanding the ppc section.
         for my $a (qw(amd64 ppc64el)) {
-            $want{$a} = 1 if -s "$adir/dists/$cn/main/binary-$a/Packages";
+            my $idx = "$adir/dists/$cn/main/binary-$a/Packages";
+            next unless -f $idx;
+            open my $ifh, '<', $idx or next;
+            local $/; my $body = <$ifh>; close $ifh;
+            $want{$a} = 1 if index_has_native_arch($body, $a);
         }
         # completeness: manifest (source of truth) vs the PUBLISHED index, per codename x arch.
         for my $a (sort keys %want) {

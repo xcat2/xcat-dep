@@ -14,6 +14,7 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
                   verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
+                  index_has_native_arch
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list
                   control_field genesis_deb_control
@@ -330,6 +331,26 @@ SKIP: {
         'resolve: ppc64el cell does NOT borrow the amd64 genesis (guards the #7610 false-PASS)');
     my @prob = verify_repo_packages({ 'xcat-genesis-base' => '2.*' }, $miss);
     like($prob[0], qr/^MISSING xcat-genesis-base\b/, '... and the gate then reports it MISSING');
+}
+
+# ---- index_has_native_arch: PURE "was this arch actually built?" (native deb vs arch:all-only) ----
+# Guards the verify gate against treating an arch:all-only index (grub2-xcat/genesis, which ride into
+# EVERY binary-<arch>/Packages) as evidence the arch was built -- the BUILD_PPC=false false-fail.
+{
+    my $native_ppc = "Package: ipmitool-xcat\nVersion: 1.8.18-1\nArchitecture: ppc64el\n\n"
+                   . "Package: grub2-xcat\nVersion: 2.12-1\nArchitecture: all\n";
+    ok( index_has_native_arch($native_ppc, 'ppc64el'), 'native ppc64el deb -> ppc64el counts as built');
+    ok(!index_has_native_arch($native_ppc, 'amd64'),   'no native amd64 stanza here -> amd64 not built');
+
+    my $allonly_ppc = "Package: grub2-xcat\nVersion: 2.12-1\nArchitecture: all\n\n"
+                    . "Package: xcat-genesis-base-ppc64el\nVersion: 2.19.0\nArchitecture: all\n";
+    ok(!index_has_native_arch($allonly_ppc, 'ppc64el'),
+        'arch:all-only index (grub2/genesis) does NOT count ppc64el as built (BUILD_PPC=false shape)');
+
+    ok( index_has_native_arch("Package: x\nVersion: 1\nArchitecture: amd64\n", 'amd64'),
+        'native amd64 deb -> amd64 counts as built');
+    ok(!index_has_native_arch('',    'amd64'), 'empty index text -> not built');
+    ok(!index_has_native_arch(undef, 'amd64'), 'undef index text -> not built (no crash)');
 }
 
 done_testing;

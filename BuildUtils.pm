@@ -25,6 +25,7 @@ our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs read_manifest standard_options
     verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
+    index_has_native_arch
     codename_to_version version_to_codename known_codenames
     chroot_name chroot_sources_list
     control_field genesis_deb_control
@@ -221,6 +222,21 @@ sub parse_packages_index {
         $map{$name} = $ver;
     }
     return \%map;
+}
+
+# index_has_native_arch($packages_text, $arch): true iff the Packages index has at least one stanza
+# built FOR that arch (Architecture: <arch>), as opposed to only Architecture:all debs (grub2-xcat,
+# genesis) which EVERY binary-<arch> index carries. This lets the verify gate distinguish "this arch
+# was actually built" from "this arch's index merely inherited the arch:all debs" -- so a genuine
+# single-arch run (BUILD_PPC=false: amd64 natives + arch:all only) is not mistaken for a two-arch
+# repo and made to demand native ppc deps it never built. Pure: text in, boolean out.
+sub index_has_native_arch {
+    my ($text, $arch) = @_;
+    return 0 unless defined $text && defined $arch && $arch ne '';
+    for my $stanza (split /\n\n+/, $text) {
+        return 1 if $stanza =~ /^Architecture:[ \t]*\Q$arch\E[ \t]*$/m;
+    }
+    return 0;
 }
 
 # resolve_present_names(\%parsed, $arch, \@names) -> \%present  (name => upstream version | undef)
