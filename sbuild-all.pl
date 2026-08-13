@@ -542,9 +542,10 @@ sub validate_manifest {
 # resolve each required manifest @names against it, returning %present = (reqname => upstream-version |
 # undef). Name-resolution mirrors deb_version/validate_manifest: try an EXACT index key first (most
 # packages -- ipmitool-xcat, goconserver, grub2-xcat, the Architecture:all boot bits keep their plain
-# names), else a key matching ^<name>- (the arch-suffixed xcat-genesis-base -> xcat-genesis-base-<arch>).
-# The published Version carries epoch+revision, so it is reduced to the UPSTREAM part (what the manifest
-# pins) via deb_upstream_version before it reaches the pure comparator.
+# names), else exactly <name>-<arch> for THIS cell's arch (the arch-suffixed xcat-genesis-base ->
+# xcat-genesis-base-<arch>, never a different arch's). The published Version carries epoch+revision, so
+# it is reduced to the UPSTREAM part (what the manifest pins) via deb_upstream_version before the pure
+# comparator. (Resolution itself lives in the pure BuildUtils::resolve_present_names.)
 sub repo_present_from_index {
     my ($idx, $arch, @names) = @_;
     my $text = do { local $/; open my $fh, '<', $idx or die "FATAL: cannot read $idx: $!\n"; <$fh> };
@@ -560,20 +561,26 @@ sub repo_present_from_index {
 # fingerprint (then the gate degrades to presence-only -- see sig_observed_key).
 sub resolve_expected_key {
     my $g = $gpg_home ? "GNUPGHOME=" . sh_quote($gpg_home) . " " : '';
-    my $out = `${g}gpg --list-keys --with-colons ${\ sh_quote($gpg_key_id)} 2>/dev/null`;
-    for my $line (split /\n/, ($out // '')) {
-        return $1 if $line =~ /^fpr:::::::::([0-9A-Fa-f]+):/;   # first fpr = primary key fingerprint
+    my $out = `${g}gpg --list-keys --with-colons ${\ sh_quote($gpg_key_id)} 2>/dev/null` // '';
+    # Collect the PRIMARY-key fingerprint of every matching key (the fpr line right after a 'pub'
+    # record; subkey fprs follow 'sub' and are ignored). Return undef -- never the raw id -- when the
+    # key is absent (unresolved) or MORE THAN ONE key matches (ambiguous); the caller then hard-fails
+    # SIGKEY instead of comparing against a possibly-wrong key.
+    my (@fprs, $want);
+    for my $line (split /\n/, $out) {
+        if    ($line =~ /^pub:/) { $want = 1; }
+        elsif ($line =~ /^sub:/) { $want = 0; }
+        elsif ($want && $line =~ /^fpr:::::::::([0-9A-Fa-f]+):/) { push @fprs, $1; $want = 0; }
     }
-    return $gpg_key_id;
+    return @fprs == 1 ? $fprs[0] : undef;
 }
 
-# sig_observed_key($adir, $cn, $expected_key, $expected_is_fpr): run gpg --verify on the codename's
-# Release signature (clearsigned InRelease preferred, detached Release.gpg + Release fallback) and return
-# the key that ACTUALLY signed it -- undef when unsigned or verification FAILS, so verify_repo_signature
-# reports UNSIGNED. On success the primary-key fingerprint is extracted from the VALIDSIG status line
-# (GOODSIG keyid fallback); when a real fingerprint can be extracted AND the expected key resolved to a
-# fingerprint, that real fingerprint is returned so a mismatch surfaces as WRONGKEY. Otherwise the gate
-# degrades to presence-only (returns the expected key on success) rather than emit a spurious WRONGKEY.
+# sig_observed_key($adir, $cn): run gpg --verify on the codename's Release signature (clearsigned
+# InRelease preferred, detached Release.gpg + Release fallback) and return the PRIMARY-key fingerprint
+# that ACTUALLY signed it (the trailing field of the VALIDSIG status line), or undef when unsigned,
+# verification FAILS, or the key is expired/revoked. STRICT: no presence-only fallback and no short
+# GOODSIG keyid -- the caller compares this fingerprint against the resolved --gpg-key-id fingerprint,
+# so undef surfaces as UNSIGNED and a different fingerprint as WRONGKEY.
 sub sig_observed_key {
     my ($adir, $cn) = @_;
     my $g = $gpg_home ? "GNUPGHOME=" . sh_quote($gpg_home) . " " : '';
@@ -624,11 +631,11 @@ sub verify_assembled_repo {
     # -- a repo assembled WITHOUT --gpg-sign is intentionally unsigned, so don't demand a signature and
     # false-fail. Standalone --verify-repo passes undef -> fall back to "a gpg key/home is configured".
     $sig_enabled = ($gpg_home ne '' || $gpg_sign) unless defined $sig_enabled;
-    my $expected_key = $sig_enabled ? resolve_expected_key() : '';
-    my $expected_is_fpr = ($expected_key =~ /^[0-9A-Fa-f]{16,}$/) ? 1 : 0;
+    my $expected_key = $sig_enabled ? resolve_expected_key() : undef;
+    my $expected_is_fpr = defined($expected_key) ? 1 : 0;
     print "  apt-dir: $adir\n";
     print "  signature check: " . ($sig_enabled
-        ? "on (expected key $expected_key" . ($expected_is_fpr ? '' : ' [UNRESOLVED -> hard fail]') . ")"
+        ? "on (expected key " . ($expected_key // $gpg_key_id) . ($expected_is_fpr ? '' : ' [UNRESOLVED -> hard fail]') . ")"
         : "SKIPPED (no --gpg-home/--gpg-sign)") . "\n";
     # STRICT: if signing is expected but --gpg-key-id does not resolve to a fingerprint (not in the
     # keyring), we CANNOT confirm the signer -- that is a hard failure, never a presence-only pass.
