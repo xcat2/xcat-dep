@@ -364,6 +364,8 @@ SKIP: {
     is(control_binary_arch(undef,'x'),             undef, 'undef control -> undef (no crash)');
     is(control_binary_arch("Package: ipmitool-xcat\nArchitecture: ppc64el\n", 'ipmitool-xcat'),
         'ppc64el', 'native per-arch value returned verbatim');
+    is(control_binary_arch("Package: ipmitool-xcat\nArchitecture: i386 amd64 ia64 ppc64el\n", 'ipmitool-xcat'),
+        'i386 amd64 ia64 ppc64el', 'multi-arch Architecture returned in FULL, not just the first token');
 }
 
 # ---- skip_arch_all_on: the SHARED build/validate skip rule -----------------------------------------

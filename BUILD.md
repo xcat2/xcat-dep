@@ -397,10 +397,10 @@ single source of truth and is layered so the decision logic is pure and unit-tes
 - **`pyodbc`** is intentionally not built or listed: modern Ubuntu provides `python3-pyodbc` from apt
   (and EL from appstream/EPEL), so xcat-dep no longer ships its own. The legacy `pyodbc/` directory
   (an old `pyodbc-3.0.7` RPM spec, no `debian/`) is kept for historical reference only.
-- **`conserver`** was replaced by `goconserver` but is provided for completeness and backward
-  compatibility. Core packages depend on `goconserver`; to use `conserver` you must install it
-  explicitly (it is **not** pulled in as a dependency), disable the `goconserver` service and enable
-  the `conserver` service.
+- **`conserver-xcat`** was replaced by `goconserver` but is provided for completeness and backward
+  compatibility. Core packages depend on `goconserver`; to use conserver you must install
+  `conserver-xcat` explicitly (it is **not** pulled in as a dependency), disable the `goconserver`
+  service and enable the `conserver` service.
 
 # References
 
