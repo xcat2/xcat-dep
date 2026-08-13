@@ -38,7 +38,7 @@ use FindBin qw($RealBin);
 use lib $RealBin;
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
                   verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
-                  index_has_native_arch control_binary_arch
+                  index_has_native_arch control_binary_arch skip_arch_all_on
                   codename_to_version known_codenames chroot_name chroot_sources_list
                   control_field genesis_deb_control
                   deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
@@ -331,6 +331,19 @@ sub ensure_chroots {
 # build_one_codename: build every required (non-genesis) package for ONE codename, serially, each in
 # that codename's <codename>-<arch>-sbuild chroot. Returns 0 on success, non-zero if any package
 # failed. Called either directly (serial mode) or inside a forked child (parallel mode).
+# pkg_skip_on_arch($pkg, $arch): the SINGLE source of truth for "is $pkg an arch:all single-producer
+# that must be neither built nor per-arch-validated on $arch?". Reads the package's debian/control and
+# delegates the decision to the pure BuildUtils::skip_arch_all_on. Used by BOTH build_one_codename and
+# validate_manifest so they can never drift (a package the build skips must not be demanded by the
+# validation). Fail-safe: an unreadable/missing control yields no skip (the package is built/validated).
+sub pkg_skip_on_arch {
+    my ($pkg, $a) = @_;
+    my $dir = $PKG_DIR{$pkg} or return 0;
+    my $ctl = '';
+    if (open my $cf, '<', "$repo_root/$dir/debian/control") { local $/; $ctl = <$cf>; close $cf; }
+    return skip_arch_all_on($ctl, $pkg, $a);
+}
+
 sub build_one_codename {
     my ($cn) = @_;
     my $tgt = "$cn-$arch";
@@ -345,14 +358,11 @@ sub build_one_codename {
         # ONCE on amd64 -- their source is x86-only (syslinux compiles with nasm/gcc-multilib) -- and,
         # being Architecture:all, are assembled into every arch's Packages index. They stay REQUIRED in
         # the ppc64el manifest so the gate verifies the ppc repo actually carries them, but are NOT
-        # rebuilt here (a ppc build would fail). Detect arch:all from the package's own debian/control.
-        if ($arch ne 'amd64') {
-            my $ctl = '';
-            if (open my $cf, '<', "$repo_root/$dir/debian/control") { local $/; $ctl = <$cf>; close $cf; }
-            if ((control_binary_arch($ctl, $pkg) // '') eq 'all') {
-                print "  [$cn] -> $pkg: arch:all single-producer (built on amd64) -- not rebuilt on $arch\n";
-                next;
-            }
+        # rebuilt here. pkg_skip_on_arch() is the SHARED rule -- validate_manifest applies the SAME one
+        # so the per-arch validation never demands a package the build deliberately skipped.
+        if (pkg_skip_on_arch($pkg, $arch)) {
+            print "  [$cn] -> $pkg: arch:all single-producer (built on amd64) -- not rebuilt on $arch\n";
+            next;
         }
         my $builder = "$repo_root/$dir/sbuild.pl";
         die "FATAL: missing builder $builder (required for $pkg on $tgt)\n" unless -f $builder;
@@ -531,6 +541,10 @@ sub validate_manifest {
         my $tgt = "$cn-$arch";
         my $dir = "$staging/$cn/$arch";
         for my $pkg (required_pkgs([sort keys %{$MANIFEST{$tgt}}], $skip_genesis, $skip_xcat_dep)) {
+            # arch:all single-producer packages are built on amd64 and are NOT staged for this arch, so
+            # do not validate them per-arch here (build_one_codename skips them via the SAME rule). Their
+            # presence on this arch is verified later against the PUBLISHED index (verify_assembled_repo).
+            next if pkg_skip_on_arch($pkg, $arch);
             my $want = $MANIFEST{$tgt}{$pkg};
             my $got  = deb_version($dir, $pkg);
             if (!defined $got) { push @fail, "[$tgt] MISSING $pkg"; next; }

@@ -25,7 +25,7 @@ our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs read_manifest standard_options
     verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
-    index_has_native_arch control_binary_arch
+    index_has_native_arch control_binary_arch skip_arch_all_on
     codename_to_version version_to_codename known_codenames
     chroot_name chroot_sources_list
     control_field genesis_deb_control
@@ -240,20 +240,33 @@ sub index_has_native_arch {
 }
 
 # control_binary_arch($control_text, $binpkg): the Architecture field of the BINARY package $binpkg in
-# a debian/control (a source may declare several binary packages). Returns e.g. 'all', 'any',
-# 'ppc64el', or undef if that package/field is absent. Lets the builder tell an arch:all
-# single-producer package (built once on amd64 -- e.g. syslinux-xcat/grub2-xcat, whose source is
-# x86-only) from a genuinely per-arch one, so it is not rebuilt on ppc. Pure: text in, string out.
+# a debian/control (a source may declare several binary packages). Returns the field value verbatim --
+# 'all', 'any', or a space-separated arch list ('i386 amd64 ia64 ppc64el') -- or undef if that
+# package/field is absent. Lets the builder tell an arch:all single-producer package (built once on
+# amd64 -- e.g. syslinux-xcat/grub2-xcat, whose source is x86-only) from a genuinely per-arch one, so
+# it is not rebuilt on ppc. Pure: text in, string out.
 sub control_binary_arch {
     my ($text, $binpkg) = @_;
     return undef unless defined $text && defined $binpkg && $binpkg ne '';
     for my $para (split /\n\n+/, $text) {
         my ($p) = $para =~ /^Package:[ \t]*(\S+)/m;
         next unless defined $p && $p eq $binpkg;
-        my ($a) = $para =~ /^Architecture:[ \t]*(\S+)/m;
+        my ($a) = $para =~ /^Architecture:[ \t]*(.+?)[ \t]*$/m;   # full value (may be a space list)
         return $a;   # undef if this paragraph lacks an Architecture field
     }
     return undef;
+}
+
+# skip_arch_all_on($control_text, $binpkg, $arch): true iff $binpkg is an Architecture:all
+# single-producer package (built ONCE on amd64) and $arch is NOT amd64 -- so it must be neither BUILT
+# nor per-arch VALIDATED on $arch (it arrives from the amd64 producer; its presence on $arch is checked
+# later against the PUBLISHED index by verify_assembled_repo). The single source of truth shared by
+# build_one_codename and validate_manifest, so a package the build skips is never demanded by the
+# per-arch validation. Pure: control text in, boolean out.
+sub skip_arch_all_on {
+    my ($control_text, $binpkg, $arch) = @_;
+    return 0 if !defined $arch || $arch eq 'amd64';
+    return ((control_binary_arch($control_text, $binpkg) // '') eq 'all') ? 1 : 0;
 }
 
 # resolve_present_names(\%parsed, $arch, \@names) -> \%present  (name => upstream version | undef)

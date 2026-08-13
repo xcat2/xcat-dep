@@ -14,7 +14,7 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
                   verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
-                  index_has_native_arch control_binary_arch
+                  index_has_native_arch control_binary_arch skip_arch_all_on
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list
                   control_field genesis_deb_control
@@ -364,6 +364,20 @@ SKIP: {
     is(control_binary_arch(undef,'x'),             undef, 'undef control -> undef (no crash)');
     is(control_binary_arch("Package: ipmitool-xcat\nArchitecture: ppc64el\n", 'ipmitool-xcat'),
         'ppc64el', 'native per-arch value returned verbatim');
+}
+
+# ---- skip_arch_all_on: the SHARED build/validate skip rule -----------------------------------------
+# build_one_codename AND validate_manifest both consult this, so the arch:all boot tools the ppc build
+# skips are ALSO exempt from the per-arch validation (else the ppc build stage would false-fail MISSING
+# on packages it deliberately did not build -- the regression this guards).
+{
+    my $ctl = "Package: syslinux\nArchitecture: any\n\nPackage: syslinux-xcat\nArchitecture: all\n";
+    ok( skip_arch_all_on($ctl, 'syslinux-xcat', 'ppc64el'), 'arch:all pkg skipped on ppc64el (build+validate)');
+    ok(!skip_arch_all_on($ctl, 'syslinux-xcat', 'amd64'),   'arch:all pkg NOT skipped on amd64 (its producer)');
+    ok(!skip_arch_all_on("Package: ipmitool-xcat\nArchitecture: i386 amd64 ppc64el\n", 'ipmitool-xcat', 'ppc64el'),
+        'native multi-arch pkg NOT skipped on ppc64el (it IS built there)');
+    ok(!skip_arch_all_on('',   'x',             'ppc64el'), 'absent control -> not skipped (fail-safe)');
+    ok(!skip_arch_all_on($ctl, 'syslinux-xcat', undef),     'undef arch -> not skipped (no crash)');
 }
 
 done_testing;
