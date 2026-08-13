@@ -182,6 +182,26 @@ if ($finalize_xcat_dep) {
         } : undef),
         reindex => \&reindex_and_sign_repo,
     );
+
+    # finalize just RE-INDEXED + RE-SIGNED each per-EL repo and cross-copied the foreign-arch genesis
+    # in -- i.e. it produced the FINAL shipped state, which the per-target gate in deploy_target (run
+    # earlier, pre-finalize) never saw. So run the SAME manifest completeness + signature gate here, on
+    # every finalized cell, so the build script verifies its own final output by default (no external
+    # --verify-repo needed). Suppressible with --no-verify-repo.
+    unless ($no_verify_repo) {
+        my %seen;
+        for my $root ($x86, $ppc) {
+            my @cells = (glob("$root/rh*/x86_64"), glob("$root/rh*/ppc64le"));
+            for my $d (sort @cells) {
+                next unless -d $d;
+                my $abs = abs_path($d);
+                next if $seen{$abs}++;
+                my $tgt = derive_target_from_repo_path($abs)
+                    or die "FATAL: finalize verify -- cannot derive target from '$abs'\n";
+                verify_target_repo($abs, $tgt);
+            }
+        }
+    }
     exit 0;
 }
 
