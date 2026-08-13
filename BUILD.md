@@ -67,10 +67,6 @@ built for — every target, because some deployments still use it. The lists wer
 (EL, arch), `dnf install xCAT` from xcat.org latest, and the packages whose `from_repo=xcat-dep`
 are exactly the required set. See the file header for details.
 
-`pyodbc` is intentionally **not** built or listed in any target's manifest: modern EL provides
-`python3-pyodbc` from appstream/EPEL, so xcat-dep no longer ships its own. The legacy `pyodbc/`
-directory (an old `pyodbc-3.0.7` RPM spec) is kept for historical reference only.
-
 Build failures are **not tolerated**: any required (manifest) package that fails to build fails
 the whole run.
 
@@ -85,6 +81,16 @@ the whole run.
 7. `createrepo --update` on both repo trees
 8. Tarball creation for both repo trees
 9. Summary generation (`summary.txt`)
+
+# Packages notes
+
+- **`pyodbc`** is intentionally not built or listed in any target's manifest: modern EL provides
+  `python3-pyodbc` from appstream/EPEL, so xcat-dep no longer ships its own. The legacy `pyodbc/`
+  directory (an old `pyodbc-3.0.7` RPM spec) is kept for historical reference only.
+- **`conserver`** was replaced by `goconserver` but is provided for completeness and backward
+  compatibility. Core packages depend on `goconserver`; to use `conserver` you must install it
+  explicitly (it is **not** pulled in as a dependency), disable the `goconserver` service and enable
+  the `conserver` service.
 
 # Skip and Control Flags
 
