@@ -520,7 +520,15 @@ if (!$skip_build) {
         # buildrpms.pl's rpmdev-setuptree only runs during env setup, not per build, so create the
         # rpmbuild tree ourselves for this per-target HOME (else $HOME/rpmbuild/SOURCES is missing).
         my $mktree = join(' ', map { sh_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
+        # The genesis chroot (xCAT-genesis-base-<target>) is SHARED across runs -- buildrpms.pl builds it
+        # without a per-run --mock-uniqueext. mock's post-build scrub only runs on SUCCESS, so a killed
+        # or failFast-interrupted prior run leaves the chroot stunted (missing /bin/sh), and mock REUSES
+        # the corpse on the next run -> "FileNotFoundError: '/bin/sh'". Scrub it FIRST (lock-safe -- mock
+        # refuses if a concurrent build holds it -- and best-effort: a no-op on the first run before the
+        # config exists) so mock recreates the chroot fresh from the cached root (fast, no re-bootstrap).
+        my $genesis_scrub = "{ mock -r " . sh_quote("xCAT-genesis-base-$target")
+            . " --scrub=chroot --scrub=bootstrap >/dev/null 2>&1 || true; }";
+        my $cmd = "mkdir -p $mktree && $genesis_scrub && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
             'perl', sh_quote("$xcat_src/buildrpms.pl"),
             '--package', 'xCAT-genesis-base',
             '--target', sh_quote($target),
