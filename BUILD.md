@@ -67,6 +67,10 @@ built for — every target, because some deployments still use it. The lists wer
 (EL, arch), `dnf install xCAT` from xcat.org latest, and the packages whose `from_repo=xcat-dep`
 are exactly the required set. See the file header for details.
 
+`pyodbc` is intentionally **not** built or listed in any target's manifest: modern EL provides
+`python3-pyodbc` from appstream/EPEL, so xcat-dep no longer ships its own. The legacy `pyodbc/`
+directory (an old `pyodbc-3.0.7` RPM spec) is kept for historical reference only.
+
 Build failures are **not tolerated**: any required (manifest) package that fails to build fails
 the whole run.
 
