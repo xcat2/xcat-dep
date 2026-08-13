@@ -38,7 +38,7 @@ use FindBin qw($RealBin);
 use lib $RealBin;
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
                   verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
-                  index_has_native_arch
+                  index_has_native_arch control_binary_arch
                   codename_to_version known_codenames chroot_name chroot_sources_list
                   control_field genesis_deb_control
                   deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
@@ -341,6 +341,19 @@ sub build_one_codename {
     for my $pkg (@pkgs) {
         my $dir = $PKG_DIR{$pkg}
             or die "FATAL: no builder dir mapped for manifest package '$pkg'\n";
+        # arch:all single-producer packages (grub2-xcat/syslinux-xcat/elilo-xcat/xnba-undi) are built
+        # ONCE on amd64 -- their source is x86-only (syslinux compiles with nasm/gcc-multilib) -- and,
+        # being Architecture:all, are assembled into every arch's Packages index. They stay REQUIRED in
+        # the ppc64el manifest so the gate verifies the ppc repo actually carries them, but are NOT
+        # rebuilt here (a ppc build would fail). Detect arch:all from the package's own debian/control.
+        if ($arch ne 'amd64') {
+            my $ctl = '';
+            if (open my $cf, '<', "$repo_root/$dir/debian/control") { local $/; $ctl = <$cf>; close $cf; }
+            if ((control_binary_arch($ctl, $pkg) // '') eq 'all') {
+                print "  [$cn] -> $pkg: arch:all single-producer (built on amd64) -- not rebuilt on $arch\n";
+                next;
+            }
+        }
         my $builder = "$repo_root/$dir/sbuild.pl";
         die "FATAL: missing builder $builder (required for $pkg on $tgt)\n" unless -f $builder;
         my $log = "$out/$pkg.buildlog";

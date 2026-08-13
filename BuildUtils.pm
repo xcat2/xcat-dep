@@ -25,7 +25,7 @@ our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs read_manifest standard_options
     verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
-    index_has_native_arch
+    index_has_native_arch control_binary_arch
     codename_to_version version_to_codename known_codenames
     chroot_name chroot_sources_list
     control_field genesis_deb_control
@@ -237,6 +237,23 @@ sub index_has_native_arch {
         return 1 if $stanza =~ /^Architecture:[ \t]*\Q$arch\E[ \t]*$/m;
     }
     return 0;
+}
+
+# control_binary_arch($control_text, $binpkg): the Architecture field of the BINARY package $binpkg in
+# a debian/control (a source may declare several binary packages). Returns e.g. 'all', 'any',
+# 'ppc64el', or undef if that package/field is absent. Lets the builder tell an arch:all
+# single-producer package (built once on amd64 -- e.g. syslinux-xcat/grub2-xcat, whose source is
+# x86-only) from a genuinely per-arch one, so it is not rebuilt on ppc. Pure: text in, string out.
+sub control_binary_arch {
+    my ($text, $binpkg) = @_;
+    return undef unless defined $text && defined $binpkg && $binpkg ne '';
+    for my $para (split /\n\n+/, $text) {
+        my ($p) = $para =~ /^Package:[ \t]*(\S+)/m;
+        next unless defined $p && $p eq $binpkg;
+        my ($a) = $para =~ /^Architecture:[ \t]*(\S+)/m;
+        return $a;   # undef if this paragraph lacks an Architecture field
+    }
+    return undef;
 }
 
 # resolve_present_names(\%parsed, $arch, \@names) -> \%present  (name => upstream version | undef)

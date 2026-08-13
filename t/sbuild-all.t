@@ -14,7 +14,7 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
                   verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
-                  index_has_native_arch
+                  index_has_native_arch control_binary_arch
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list
                   control_field genesis_deb_control
@@ -289,19 +289,16 @@ SKIP: {
     is_deeply(\@miss_go, [], 'goconserver present in every manifest target')
         or diag("missing goconserver in: @miss_go");
 
-    # The x86 boot components are single-producer: present ONLY in amd64 sections, never on ppc64el
-    # (building syslinux/elilo/xnba on ppc is meaningless -- the review's concern #3).
+    # The noarch boot components (syslinux-xcat, grub2-xcat, elilo-xcat, xnba-undi) are Architecture:all
+    # single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target incl. ppc64el, so the
+    # gate verifies the ppc repo actually carries them (matches the EL manifest + the 2.16 ppc dep repo;
+    # a ppc MN needs them for netboot). It is the BUILD PHASE -- not the manifest -- that avoids
+    # rebuilding them on ppc (build_one_codename skips an Architecture:all package on non-amd64; see the
+    # control_binary_arch test below).
     for my $t (@targets) {
-        my $is_ppc = $t =~ /-ppc64el$/;
-        for my $x86only (qw(syslinux-xcat elilo-xcat xnba-undi)) {
-            if ($is_ppc) {
-                ok(!exists $m{$t}{$x86only}, "$x86only NOT built on ppc target $t (x86-only, single producer)");
-            }
+        for my $boot (qw(syslinux-xcat grub2-xcat elilo-xcat xnba-undi)) {
+            ok(exists $m{$t}{$boot}, "$boot required-present on $t (arch:all, verified on every arch)");
         }
-    }
-    # ...and each amd64 section DOES carry them (so they are produced exactly once, on amd64).
-    for my $t (grep { /-amd64$/ } @targets) {
-        ok(exists $m{$t}{'syslinux-xcat'}, "syslinux-xcat built on amd64 target $t");
     }
 }
 
@@ -351,6 +348,22 @@ SKIP: {
         'native amd64 deb -> amd64 counts as built');
     ok(!index_has_native_arch('',    'amd64'), 'empty index text -> not built');
     ok(!index_has_native_arch(undef, 'amd64'), 'undef index text -> not built (no crash)');
+}
+
+# ---- control_binary_arch: PURE Architecture lookup for a specific BINARY package in debian/control --
+# Drives build_one_codename's "skip arch:all on non-amd64" (single-producer) decision. Must pick the
+# right binary paragraph -- e.g. the syslinux SOURCE is 'any' but the syslinux-xcat subpackage is 'all'.
+{
+    my $ctl = "Source: syslinux\n\nPackage: syslinux\nArchitecture: any\n\n"
+            . "Package: syslinux-xcat\nArchitecture: all\n\n"
+            . "Package: syslinux-extlinux\nArchitecture: any\n";
+    is(control_binary_arch($ctl, 'syslinux-xcat'), 'all', 'picks the arch:all subpackage, not the source');
+    is(control_binary_arch($ctl, 'syslinux'),      'any', 'picks the per-arch main package by name');
+    is(control_binary_arch($ctl, 'nonesuch'),      undef, 'absent package -> undef');
+    is(control_binary_arch('',   'syslinux-xcat'), undef, 'empty control -> undef');
+    is(control_binary_arch(undef,'x'),             undef, 'undef control -> undef (no crash)');
+    is(control_binary_arch("Package: ipmitool-xcat\nArchitecture: ppc64el\n", 'ipmitool-xcat'),
+        'ppc64el', 'native per-arch value returned verbatim');
 }
 
 done_testing;
