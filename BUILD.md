@@ -283,9 +283,16 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
   first; the published apt repo is (re)assembled from staging ONLY after the complete expected set
   validates — a partial/failed build never reaches the repo and stale debs never accumulate.
 - **Per-arch package sets (`debs-manifest.conf`).** One `[<codename>-<arch>]` section per target. The
-  x86 boot components (`syslinux`/`elilo`/`xnba`, `Architecture:all`) are built ONCE on amd64
-  (single producer) and assembled into every arch's `Packages` index; ppc64el builds only the
-  genuinely arch-specific compiled deps (`ipmitool-xcat`, `conserver-xcat`, `goconserver`).
+  noarch boot components (`syslinux-xcat`/`grub2-xcat`/`elilo-xcat`/`xnba-undi`, `Architecture:all`)
+  are built ONCE on amd64 — single producer, their source is x86-only — and assembled into every
+  arch's `Packages` index. They are listed for **ppc64el too, as required-present**, so the gate
+  verifies the ppc repo actually carries them (a ppc MN needs them for netboot, matching the EL
+  manifest). `build_one_codename` **skips** an `Architecture:all` package on any non-amd64 arch
+  (detected via `control_binary_arch`), so ppc builds only the genuinely arch-specific compiled deps
+  (`ipmitool-xcat`, `conserver-xcat`, `goconserver`) yet still verifies the boot components.
+  `pyodbc` is intentionally **not** built or listed: modern Ubuntu provides `python3-pyodbc` from apt
+  (and EL from appstream/EPEL), so xcat-dep no longer ships its own; the legacy `pyodbc/` directory
+  (an old `pyodbc-3.0.7` RPM spec, no `debian/`) is kept for historical reference only.
 - **Fail-hard.** Any required chroot / package / artifact failure, or any version-pin mismatch, fails
   the whole run non-zero.
 - **Genesis keeps its maintained packaging.** A native `xcat-genesis-base` deb is INGESTED as-is when
