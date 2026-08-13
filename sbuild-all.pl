@@ -195,7 +195,7 @@ my %MANIFEST = read_manifest($manifest);
 if (length $verify_repo_arg) {
     die "FATAL: --verify-repo apt dir not found: $verify_repo_arg\n" unless -d $verify_repo_arg;
     print_step('Standalone repo verification (no build, no lock)');
-    verify_assembled_repo(\%MANIFEST, abs_path($verify_repo_arg), \@dist_list);
+    verify_assembled_repo(\%MANIFEST, abs_path($verify_repo_arg), \@dist_list, [$arch]);
     exit 0;
 }
 
@@ -625,7 +625,7 @@ sub sig_observed_key {
 # verify_repo_signature (per codename). Package problems are [<cn>/<arch>]-prefixed; the pure signature
 # problems already carry the codename unit. Any problem dies non-zero.
 sub verify_assembled_repo {
-    my ($man, $adir, $dists, $sig_enabled) = @_;
+    my ($man, $adir, $dists, $arches, $sig_enabled) = @_;
     my @all;
     # $sig_enabled: whether a valid signature is REQUIRED. The post-assembly auto-run passes $gpg_sign
     # -- a repo assembled WITHOUT --gpg-sign is intentionally unsigned, so don't demand a signature and
@@ -642,10 +642,21 @@ sub verify_assembled_repo {
     push @all, "SIGKEY: cannot resolve --gpg-key-id '$gpg_key_id' to a fingerprint (in the $gpg_home keyring?)"
         if $sig_enabled && !$expected_is_fpr;
 
-    my (%exp_sig, %obs_sig);
+    my (%exp_sig, %obs_sig, %checked_arch);
     for my $cn (@$dists) {
-        # completeness: manifest (source of truth) vs the PUBLISHED index, per codename x arch.
+        # Arches to verify for THIS codename: the caller's --arch set (the required FLOOR -- always
+        # checked, so an explicitly-requested arch whose index is empty/missing is still caught)
+        # UNIONed with any arch that actually published a non-empty binary-<arch>/Packages. This lets
+        # the multi-arch assemble (invoked with a single --arch amd64) still verify the ppc64el debs it
+        # carries, while a genuinely single-arch run (e.g. BUILD_PPC=false, amd64 only) never
+        # false-fails demanding an arch it did not build.
+        my %want = map { $_ => 1 } @{ $arches || [] };
         for my $a (qw(amd64 ppc64el)) {
+            $want{$a} = 1 if -s "$adir/dists/$cn/main/binary-$a/Packages";
+        }
+        # completeness: manifest (source of truth) vs the PUBLISHED index, per codename x arch.
+        for my $a (sort keys %want) {
+            $checked_arch{$a} = 1;
             my $tgt = "$cn-$a";
             my $req = $man->{$tgt};
             unless ($req && %$req) {
@@ -677,7 +688,7 @@ sub verify_assembled_repo {
     }
     print "[verify-repo] complete: all required packages present + version-pinned"
         . ($sig_enabled ? " + Release signatures valid (key $expected_key)" : "")
-        . " for [" . join(' ', @$dists) . "] x {amd64,ppc64el}\n";
+        . " for [" . join(' ', @$dists) . "] x {" . join(',', sort keys %checked_arch) . "}\n";
     return;
 }
 
@@ -783,7 +794,7 @@ sub assemble_apt {
         print_step('Verify published apt repo (post-assembly completeness + signature gate)');
         # Require a valid signature iff we actually signed (--gpg-sign); a repo assembled without it is
         # intentionally unsigned and must not false-fail. (Standalone --verify-repo omits this arg.)
-        verify_assembled_repo(\%MANIFEST, $apt_dir, \@dist_list, $gpg_sign);
+        verify_assembled_repo(\%MANIFEST, $apt_dir, \@dist_list, [$arch], $gpg_sign);
     }
 }
 
