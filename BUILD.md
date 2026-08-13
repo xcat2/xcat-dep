@@ -290,9 +290,6 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
   manifest). `build_one_codename` **skips** an `Architecture:all` package on any non-amd64 arch
   (detected via `control_binary_arch`), so ppc builds only the genuinely arch-specific compiled deps
   (`ipmitool-xcat`, `conserver-xcat`, `goconserver`) yet still verifies the boot components.
-  `pyodbc` is intentionally **not** built or listed: modern Ubuntu provides `python3-pyodbc` from apt
-  (and EL from appstream/EPEL), so xcat-dep no longer ships its own; the legacy `pyodbc/` directory
-  (an old `pyodbc-3.0.7` RPM spec, no `debian/`) is kept for historical reference only.
 - **Fail-hard.** Any required chroot / package / artifact failure, or any version-pin mismatch, fails
   the whole run non-zero.
 - **Genesis keeps its maintained packaging.** A native `xcat-genesis-base` deb is INGESTED as-is when
@@ -394,6 +391,16 @@ single source of truth and is layered so the decision logic is pure and unit-tes
   identical behaviour to the EL `rpm_version` gate.
 - **Version pins** are the manifest's *upstream* version; the published Debian version's epoch/revision
   is stripped (`deb_upstream_version`) before the pin compare.
+
+# Packages notes
+
+- **`pyodbc`** is intentionally not built or listed: modern Ubuntu provides `python3-pyodbc` from apt
+  (and EL from appstream/EPEL), so xcat-dep no longer ships its own. The legacy `pyodbc/` directory
+  (an old `pyodbc-3.0.7` RPM spec, no `debian/`) is kept for historical reference only.
+- **`conserver`** was replaced by `goconserver` but is provided for completeness and backward
+  compatibility. Core packages depend on `goconserver`; to use `conserver` you must install it
+  explicitly (it is **not** pulled in as a dependency), disable the `goconserver` service and enable
+  the `conserver` service.
 
 # References
 
