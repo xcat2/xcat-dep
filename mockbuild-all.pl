@@ -31,7 +31,10 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
 # mount mock leaks when we exit, so an aborted build can no longer leave corpse mounts under
 # /var/lib/mock. Best-effort: only as root (needs CAP_SYS_ADMIN) and only if `unshare` exists;
 # otherwise warn loudly and continue unisolated. MOCKBUILD_ALL_MOUNTNS guards against a re-exec loop.
-unless ($ENV{MOCKBUILD_ALL_MOUNTNS}) {
+# Build-free modes (--verify-repo, --finalize-xcat-dep) run no mock and are documented no-root, so they
+# skip the re-exec entirely -- no cgroup exposure, and no spurious non-root warning.
+my $mountns_build_free = grep { /^--(?:verify-repo|finalize-xcat-dep)(?:=|$)/ } @ARGV;
+unless ($ENV{MOCKBUILD_ALL_MOUNTNS} || $mountns_build_free) {
     if ($> != 0) {
         warn "WARN: not root -- skipping mount-namespace isolation (host-cgroup propagation guard); "
            . "run as root in CI so mock chroot teardown cannot unmount the host /sys/fs/cgroup\n";
@@ -40,8 +43,9 @@ unless ($ENV{MOCKBUILD_ALL_MOUNTNS}) {
            . "may unmount the host /sys/fs/cgroup on a shared-propagation host\n";
     } else {
         $ENV{MOCKBUILD_ALL_MOUNTNS} = 1;
-        # Absolute path to self so the re-exec'd perl finds the script regardless of cwd or a bare
-        # $PATH invocation (unshare does not change cwd, but $0 may be relative or a bare name).
+        # Absolute path to self (resolved against cwd, which unshare preserves) so the re-exec'd perl
+        # finds a relative $0. A bare $PATH-only $0 isn't resolved (abs_path doesn't search $PATH), but
+        # a shell invocation yields a full $0 there anyway.
         my $self = abs_path($0) // $0;
         my @reexec = ('unshare', '--mount', '--propagation', 'slave', '--', $^X, $self, @ARGV);
         exec { $reexec[0] } @reexec;
@@ -558,10 +562,14 @@ if (!$skip_build) {
         # The genesis chroot (xCAT-genesis-base-<target>) is SHARED across runs -- buildrpms.pl builds it
         # without a per-run --mock-uniqueext. mock's post-build scrub only runs on SUCCESS, so a killed
         # or failFast-interrupted prior run leaves the chroot stunted (missing /bin/sh), and mock REUSES
-        # the corpse on the next run -> "FileNotFoundError: '/bin/sh'". Scrub it FIRST (lock-safe -- mock
-        # refuses if a concurrent build holds it -- and best-effort: a no-op on the first run before the
-        # config exists) so mock recreates the chroot fresh from the cached root (fast, no re-bootstrap).
-        my $genesis_scrub = "{ mock -r " . sh_quote("xCAT-genesis-base-$target")
+        # the corpse on the next run -> "FileNotFoundError: '/bin/sh'". Scrub it FIRST (best-effort: a
+        # no-op on the first run before the config exists) so mock recreates the chroot from the cached
+        # root; --scrub=bootstrap goes too (the per-uniqueext bootstrap is the leak), so the fresh chroot
+        # re-bootstraps from the root cache. mock takes the buildroot lock for --scrub and BLOCKS (not
+        # skips) if a concurrent build holds it, but within a run the scrub is sequential before the
+        # build and the CD topology never runs a second same-target build at once; `timeout` bounds even
+        # a pathological wait so a stale lock can never hang the build.
+        my $genesis_scrub = "{ timeout 300 mock -r " . sh_quote("xCAT-genesis-base-$target")
             . " --scrub=chroot --scrub=bootstrap >/dev/null 2>&1 || true; }";
         my $cmd = "mkdir -p $mktree && $genesis_scrub && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
             'perl', sh_quote("$xcat_src/buildrpms.pl"),
@@ -1049,8 +1057,9 @@ sub run_step {
     }
 }
 
-# Scrub a single mock buildroot via mock's own lock-safe --scrub. Never rm: if a concurrent build
-# still holds the chroot lock, mock refuses and we skip it. Failures (already scrubbed, locked, or
+# Scrub a single mock buildroot via mock's own --scrub (never rm). mock takes the buildroot lock for
+# the scrub, so a concurrent build holding it makes mock BLOCK until release rather than corrupt a live
+# chroot (this can never rm a chroot out from under a running build). Failures (already scrubbed or
 # config missing) are tolerated -- a cleanup hiccup must never fail the build. Scrubs both the
 # build chroot and its per-uniqueext bootstrap chroot (each build step gets its own bootstrap, so
 # both must go or /var/lib/mock still leaks). The shared root cache under /var/cache/mock is kept,
