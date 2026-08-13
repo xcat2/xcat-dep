@@ -18,6 +18,36 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix);
 
+# --- Mount-namespace isolation: guard the host cgroup against mock teardown propagation ----------
+# mock mounts /sys/fs/cgroup into every build chroot. On these systemd build hosts every mount is
+# `shared`, so the chroot's cgroup joins the HOST's cgroup peer group. When mock tears a chroot down
+# -- its post-build --scrub, or an aborted build's cleanup -- the unmount PROPAGATES back through the
+# shared peer group and unmounts the HOST's /sys/fs/cgroup, after which every later mock (and even new
+# login sessions) dies with "Failed to determine whether the unified cgroups hierarchy is used: No
+# medium found". This bit ppc hardest (it leaks corpse chroot mounts on abort) but x86 shares the same
+# shared-cgroup exposure. Re-exec inside a private mount namespace made rslave
+# (`unshare --mount --propagation slave`): the namespace still sees host mounts (slave = one-way), but
+# nothing mock mounts/unmounts can propagate OUT to the host. As a bonus the namespace tears down every
+# mount mock leaks when we exit, so an aborted build can no longer leave corpse mounts under
+# /var/lib/mock. Best-effort: only as root (needs CAP_SYS_ADMIN) and only if `unshare` exists;
+# otherwise warn loudly and continue unisolated. MOCKBUILD_ALL_MOUNTNS guards against a re-exec loop.
+unless ($ENV{MOCKBUILD_ALL_MOUNTNS}) {
+    if ($> != 0) {
+        warn "WARN: not root -- skipping mount-namespace isolation (host-cgroup propagation guard); "
+           . "run as root in CI so mock chroot teardown cannot unmount the host /sys/fs/cgroup\n";
+    } elsif (system('sh', '-c', 'command -v unshare >/dev/null 2>&1') != 0) {
+        warn "WARN: 'unshare' not found -- skipping mount-namespace isolation; mock chroot teardown "
+           . "may unmount the host /sys/fs/cgroup on a shared-propagation host\n";
+    } else {
+        $ENV{MOCKBUILD_ALL_MOUNTNS} = 1;
+        my @reexec = ('unshare', '--mount', '--propagation', 'slave', '--', $^X, $0, @ARGV);
+        exec { $reexec[0] } @reexec;
+        # exec only returns on failure -- fall through and run unisolated rather than abort the build.
+        warn "WARN: exec unshare failed ($!) -- continuing without mount-namespace isolation\n";
+        delete $ENV{MOCKBUILD_ALL_MOUNTNS};
+    }
+}
+
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
 my $xcat_src   = "$repo_root/../xcat-core";
