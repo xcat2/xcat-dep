@@ -1114,11 +1114,19 @@ sub repo_present_versions {
 sub gpg_key_fingerprint {
     my ($keyname, $home) = @_;
     my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
-    my $out = `gpg$h --with-colons --fingerprint --list-keys ${\ sh_quote($keyname)} 2>/dev/null`;
-    for my $line (split /\n/, $out // '') {
-        return $1 if $line =~ /^fpr:+([0-9A-Fa-f]+):/;   # first fpr = primary key fingerprint
+    my $out = `gpg$h --with-colons --fingerprint --list-keys ${\ sh_quote($keyname)} 2>/dev/null` // '';
+    # Collect the PRIMARY-key fingerprint of every key matching $keyname (the fpr line right after a
+    # 'pub' record; subkey fprs follow 'sub' and are ignored). Return undef -- not a guess -- when the
+    # key is absent (unresolved) or when MORE THAN ONE key matches the name (ambiguous): the caller
+    # then hard-fails SIGKEY rather than comparing against a possibly-wrong key.
+    my (@fprs, $want);
+    for my $line (split /\n/, $out) {
+        if    ($line =~ /^pub:/) { $want = 1; }
+        elsif ($line =~ /^sub:/) { $want = 0; }
+        elsif ($want && $line =~ /^fpr:+([0-9A-Fa-f]+):/) { push @fprs, $1; $want = 0; }
     }
-    return $keyname;
+    return undef if @fprs != 1;
+    return $fprs[0];
 }
 
 # repomd_observed_signer: run gpg --verify on the detached repomd signature and extract the identity
@@ -1171,10 +1179,11 @@ sub verify_target_repo {
         my $repomd  = "$dir/repodata/repomd.xml";
         my $asc     = "$repomd.asc";
         my $exp_fpr = gpg_key_fingerprint($gpg_key_name, $gpg_home);
-        # STRICT: the CLI key MUST resolve to a fingerprint so we can confirm it signed the repo. If it
-        # does not (not in the keyring), we cannot verify -> hard fail, never a presence-only pass.
-        if ($exp_fpr !~ /^[0-9A-Fa-f]{16,}$/) {
-            push @problems, "SIGKEY: cannot resolve --gpg-key-name '$gpg_key_name' to a fingerprint (in the $gpg_home keyring?)";
+        # STRICT: the CLI key MUST resolve to exactly one fingerprint so we can confirm it signed the
+        # repo. Undef => absent or ambiguous in the keyring -> we cannot verify -> hard fail, never a
+        # presence-only pass.
+        if (!defined $exp_fpr) {
+            push @problems, "SIGKEY: cannot resolve --gpg-key-name '$gpg_key_name' to a single fingerprint (in the $gpg_home keyring?)";
         } else {
             my %exp_sig = ('repomd' => $exp_fpr);
             my %obs_sig = ('repomd' => repomd_observed_signer($asc, $repomd, $gpg_home));
