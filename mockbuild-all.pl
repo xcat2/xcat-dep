@@ -564,8 +564,8 @@ if (!$skip_build) {
         # or failFast-interrupted prior run leaves the chroot stunted (missing /bin/sh), and mock REUSES
         # the corpse on the next run -> "FileNotFoundError: '/bin/sh'". Scrub it FIRST (best-effort: a
         # no-op on the first run before the config exists) so mock recreates the chroot from the cached
-        # root; --scrub=bootstrap goes too (the per-uniqueext bootstrap is the leak), so the fresh chroot
-        # re-bootstraps from the root cache. mock takes the buildroot lock for --scrub and BLOCKS (not
+        # root; --scrub=bootstrap goes too (the genesis bootstrap chroot is part of the leak; genesis
+        # carries no --mock-uniqueext), so the fresh chroot re-bootstraps from the root cache. mock takes the buildroot lock for --scrub and BLOCKS (not
         # skips) if a concurrent build holds it, but within a run the scrub is sequential before the
         # build and the CD topology never runs a second same-target build at once; `timeout` bounds even
         # a pathological wait so a stale lock can never hang the build.
