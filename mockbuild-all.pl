@@ -40,7 +40,10 @@ unless ($ENV{MOCKBUILD_ALL_MOUNTNS}) {
            . "may unmount the host /sys/fs/cgroup on a shared-propagation host\n";
     } else {
         $ENV{MOCKBUILD_ALL_MOUNTNS} = 1;
-        my @reexec = ('unshare', '--mount', '--propagation', 'slave', '--', $^X, $0, @ARGV);
+        # Absolute path to self so the re-exec'd perl finds the script regardless of cwd or a bare
+        # $PATH invocation (unshare does not change cwd, but $0 may be relative or a bare name).
+        my $self = abs_path($0) // $0;
+        my @reexec = ('unshare', '--mount', '--propagation', 'slave', '--', $^X, $self, @ARGV);
         exec { $reexec[0] } @reexec;
         # exec only returns on failure -- fall through and run unisolated rather than abort the build.
         warn "WARN: exec unshare failed ($!) -- continuing without mount-namespace isolation\n";
@@ -180,7 +183,9 @@ if ($verify_repo ne '') {
     my $tgt = $target ne '' ? $target : derive_target_from_repo_path($rdir);
     die "--verify-repo: cannot derive a target from repo path '$rdir'; pass --target\n"
         if !defined($tgt) || $tgt eq '';
-    verify_target_repo($rdir, $tgt);   # manifest defaults to repo_root/packages-manifest.conf
+    # sig_required=1: a standalone verify MUST assert the repomd signature (its documented contract),
+    # never silently skip it when no gpg key/home is configured (that would be a false PASS on sigs).
+    verify_target_repo($rdir, $tgt, undef, 1);   # manifest defaults to repo_root/packages-manifest.conf
     exit 0;
 }
 
@@ -1217,7 +1222,7 @@ sub repomd_observed_signer {
 # problem. Both the automatic post-build gate (deploy_target) and the standalone --verify-repo mode
 # call this, so there is exactly one gate implementation.
 sub verify_target_repo {
-    my ($dir, $tgt, $manifest) = @_;
+    my ($dir, $tgt, $manifest, $sig_required) = @_;
     $manifest //= "$repo_root/packages-manifest.conf";
     my %MAN = read_manifest($manifest);
     my %req = %{ $MAN{$tgt} // {} };
@@ -1247,6 +1252,10 @@ sub verify_target_repo {
             my %obs_sig = ('repomd' => repomd_observed_signer($asc, $repomd, $gpg_home));
             push @problems, verify_repo_signature(\%exp_sig, \%obs_sig);
         }
+    } elsif ($sig_required) {
+        # Standalone --verify-repo advertises a signature check; with no keyring we cannot resolve the
+        # CLI key or read the signer, so refuse rather than silently pass (which would be a false PASS).
+        push @problems, "SIGKEY: --verify-repo requires --gpg-key-name + --gpg-home to check the repomd signature (none configured)";
     } else {
         print "[verify-repo] $tgt: no gpg key/home configured -- skipping repomd signature check\n";
     }
