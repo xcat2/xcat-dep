@@ -293,6 +293,74 @@ Because of this, to build `ppc64le` artifacts you must run `mockbuild-all.pl` on
 
 In short: build `ppc64le` packages on a Power machine.
 
+# riscv64 (EL10): cross-building on an x86_64 host
+
+There is no riscv64 build host in the xCAT build farm and no EPEL for riscv64, so the
+EL10 riscv64 dependency repository (`rh10/riscv64`) is cross-built on an x86_64 host:
+mock runs a Rocky Linux 10 riscv64 chroot through user-mode QEMU (`forcearch`), so the
+packages are compiled by the riscv64 toolchain of the chroot itself. The mock
+configuration for that chroot is shipped in this repository:
+
+- `mock-configs/rocky-10-riscv64-xcat.cfg`
+
+It includes the stock `templates/rocky-10.tpl` from mock-core-configs (Rocky 10 BaseOS,
+AppStream, CRB and extras for `$basearch` = riscv64) and sets
+`root = 'rocky-10-riscv64-xcat'`, `target_arch = 'riscv64'`,
+`legal_host_arches = ('x86_64', 'riscv64')` and `forcearch = 'riscv64'`. The stock
+`rocky-10-riscv64.cfg` cannot be used from an x86_64 host (it only admits a riscv64 host
+and names its chroot `rocky-10-x86_64`).
+
+## Host prerequisites
+
+On an x86_64 EL10 host with the baseline tooling from "Prerequisites":
+
+- `mock` (>= 5) and `mock-core-configs` providing `templates/rocky-10.tpl` and
+  `rocky-10-x86_64.cfg` (the native, EPEL-free Rocky 10 chroot used for the noarch
+  packages of the riscv64 build), `podman` (mock pulls the Rocky 10 bootstrap image),
+  `golang` (goconserver is cross-compiled on the host with `GOARCH=riscv64`).
+- A static user-mode QEMU for riscv64 registered in `binfmt_misc` with the `F` (fix
+  binary) flag. On Fedora this is the `qemu-user-static-riscv` package. EL10 has no such
+  package: copy `/usr/bin/qemu-riscv64-static` out of a Fedora container (for example
+  `registry.fedoraproject.org/fedora:44` with `dnf install qemu-user-static-riscv`) to
+  `/usr/local/bin/qemu-riscv64-static` on the host, then register it:
+
+  ```text
+  # /etc/binfmt.d/qemu-riscv64-static.conf
+  :qemu-riscv64:M::\x7fELF\x02\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\xf3\x00:\xff\xff\xff\xff\xff\xff\xff\x00\xff\xff\xff\xff\xff\xff\xff\xff\xfe\xff\xff\xff:/usr/local/bin/qemu-riscv64-static:FP
+  ```
+
+  ```bash
+  systemctl restart systemd-binfmt
+  cat /proc/sys/fs/binfmt_misc/qemu-riscv64        # enabled, flags: PF
+  ```
+
+- mock refuses `forcearch` unless `/usr/bin/qemu-riscv64-static` exists (it only checks
+  for the file; the kernel runs the interpreter registered above). When the binary lives
+  in `/usr/local/bin`, a symlink is enough:
+
+  ```bash
+  ln -s /usr/local/bin/qemu-riscv64-static /usr/bin/qemu-riscv64-static
+  ```
+
+Validate the host before building (all as root; mock also accepts members of the `mock`
+group):
+
+```bash
+podman run --rm --arch riscv64 quay.io/rockylinux/rockylinux:10 uname -m   # riscv64
+install -m 644 mock-configs/rocky-10-riscv64-xcat.cfg /etc/mock/
+mock -r rocky-10-riscv64-xcat --init                                       # ~3-4 min
+mock -r rocky-10-riscv64-xcat --chroot -- uname -m                         # riscv64
+```
+
+The per-package `mockbuild.pl` scripts reference the target by name only
+(`include('/etc/mock/<target>.cfg')` in their deterministic overlay), so the config must
+live in `/etc/mock/` for a build.
+
+Emulated builds are slow: a chroot init takes 3-4 minutes and a C or XS build 5-30
+minutes instead of seconds, so the riscv64 build of the dependency set takes on the order
+of an hour on a large host. Chroots and caches live under `/var/lib/mock` and
+`/var/cache/mock` as for any other mock target (about 1 GB per per-package chroot).
+
 # Validation Commands
 
 ```bash
