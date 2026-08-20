@@ -116,6 +116,17 @@ my %meta = (
         rpm_arch  => 'noarch',
         module    => 'Net::HTTPS::NB',
     },
+    'perl-Net-IP' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Net-IP",
+        srpm_globs => [
+            "$repo_root/perl-Net-IP/perl-Net-IP-1.26-30.el10_0.src.rpm",
+            "$repo_root/perl-Net-IP/perl-Net-IP-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Net-IP',
+        rpm_arch   => 'noarch',
+        module     => 'Net::IP',
+    },
     'perl-Net-Telnet' => {
         mode       => 'srpm',
         pkg_dir    => "$repo_root/perl-Net-Telnet",

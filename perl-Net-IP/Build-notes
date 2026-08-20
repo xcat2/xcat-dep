@@ -1,0 +1,4 @@
+perl-Net-IP (Net::IP, used by xCAT::NetworkUtils) is EPEL-only on EL10. The source rpm is
+the EPEL 10 one (Fedora spec, Net-IP 1.26, noarch).
+
+For RHEL 10, run "rpmbuild --rebuild perl-Net-IP-1.26-30.el10_0.src.rpm".
