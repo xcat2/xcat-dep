@@ -150,7 +150,11 @@ acquire_repository_lock($repo_dep, $force_unlock)
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
-my $arch = capture_command('uname', '-m');
+my $host_arch = capture_command('uname', '-m');
+# Arch of the target being built: the host arch, except for the forcearch targets below, which
+# cross-build another arch on this host. Set per target in build_one_target; the deploy and
+# the repo metadata take the arch from the target profile instead of this variable.
+my $arch = $host_arch;
 my %os = read_os_release('/etc/os-release');
 my $os_id = $os{ID} // '';
 my $version_id = $os{VERSION_ID} // '';
@@ -188,10 +192,28 @@ if ($genesis_release ne '') {
 
 # An explicit --target builds just that target; otherwise build the current host
 # arch across rh8/rh9/rh10 into a deployable per-EL xcat-dep repo. This script builds
-# ONLY the host arch (uname -m) -- the other arch is produced on its own build host.
+# ONLY the host arch (uname -m) -- the other arch is produced on its own build host --
+# except for the forcearch targets (%forcearch_targets, --target only), which are
+# cross-built here through qemu-user-static.
 my @build_targets = $target
     ? ($target)
-    : map { resolve_mock_cfg($os_id, $_, $arch) } (8, 9, 10);
+    : map { resolve_mock_cfg($os_id, $_, $host_arch) } (8, 9, 10);
+
+# What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
+# dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
+# another arch that has no EPEL: the x86-only bootloaders are not built for it, the EPEL-only
+# perl deps of xCAT are (mockbuild-perl-packages.pl --epel-gap), and the noarch deps are built
+# in the native, EPEL-free chroot of the same release (the rpms are identical for every arch
+# and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
+my %forcearch_targets = (
+    'rocky-10-riscv64-xcat' => {
+        rel          => 10,
+        arch         => 'riscv64',
+        noarch_cfg   => "rocky-10-$host_arch",
+        dep_builders => [qw(grub2-xcat ipmitool-xcat goconserver conserver-xcat)],
+        required     => [qw(ipmitool-xcat grub2-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    },
+);
 
 # NOTE: no dhcp- packages are built here. DHCP backend selection is an install-time
 # rich dep in xCAT.spec (kea if system-release>=10 else /usr/sbin/dhcpd), so there is
@@ -255,8 +277,9 @@ sub build_one_target {
     # different targets (e.g. alma+epel-8 vs -9) share build-output/<run_id> and
     # cross-contaminate. Fold the target into run_id so each target gets its own tree.
     $run_id = "$target-$run_id" unless index($run_id, $target) >= 0;
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    my $profile = target_profile($target);
+    my $rel = $profile->{rel};
+    $arch = $profile->{arch};
 
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
@@ -269,16 +292,18 @@ my $srpm_tarball  = "$output_root/mockbuild-all-$target-$run_id-srpm.tar.gz";
 
 # All dep builders run natively on every arch. xnba-undi and grub2-xcat are noarch packagings of
 # committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
-# step, so ppc builds them the same as x86 -- no cross-arch import.
+# step, so ppc builds them the same as x86 -- no cross-arch import. A forcearch target builds
+# only the builders its profile lists; the noarch ones run in the profile's native chroot.
 my @dep_builders = (
-    { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl" },
-    { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl" },
+    { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl", noarch => 1 },
+    { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl", noarch => 1 },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
     { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
-    { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl" },
+    { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
 );
+my %profile_builds = map { $_ => 1 } @{ $profile->{dep_builders} };
 
 my $perl_builder = "$repo_root/mockbuild-perl-packages.pl";
 
@@ -287,6 +312,7 @@ die "Missing xCAT build script: $xcat_src/buildrpms.pl\n"
 
 my @active_dep_builders;
 for my $b (@dep_builders) {
+    next if !$profile_builds{$b->{name}};
     if (-f $b->{script}) {
         push @active_dep_builders, $b;
         next;
@@ -320,6 +346,10 @@ print "xcat_source:      $xcat_src\n";
 print "output_root:      $output_root\n";
 print "run_root:         $run_root\n";
 print "arch:             $arch\n";
+print "host_arch:        $host_arch\n";
+print "forcearch:        $profile->{forcearch}\n";
+print "noarch_cfg:       $profile->{noarch_cfg}\n";
+print "epel:             $profile->{epel}\n";
 print "os_id:            $os_id\n";
 print "version_id:       $version_id\n";
 print "rel:              $rel\n";
@@ -343,12 +373,19 @@ print "srpm_tarball:     $srpm_tarball\n";
 
 my @collect_roots;
 
+install_mock_cfg($target);
+
 if ($scrub_all_chroots) {
     run_step(
         step => "Scrub all chroots for target $target",
         cmd  => "mock -r " . shell_quote($target) . " --scrub=all",
         log  => "$log_root/scrub-all-chroots.log",
     );
+    run_step(
+        step => "Scrub all chroots for noarch config $profile->{noarch_cfg}",
+        cmd  => "mock -r " . shell_quote($profile->{noarch_cfg}) . " --scrub=all",
+        log  => "$log_root/scrub-all-chroots-noarch.log",
+    ) if $profile->{noarch_cfg} ne $target;
 }
 
 if (!$skip_build) {
@@ -364,7 +401,8 @@ if (!$skip_build) {
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
             my $cmd = join(' ',
                 'perl', shell_quote($script),
-                '--mock-cfg', shell_quote($target),
+                '--mock-cfg', shell_quote($builder->{noarch} ? $profile->{noarch_cfg} : $target),
+                ($profile->{forcearch} && !$builder->{noarch} ? ('--target-arch', shell_quote($arch)) : ()),
                 '--mock-uniqueext', shell_quote($step_uniqueext),
                 '--result-dir', shell_quote($step_result),
                 '--log-dir', shell_quote($step_log),
@@ -393,6 +431,10 @@ if (!$skip_build) {
         my $cmd = join(' ',
             'perl', shell_quote($perl_builder),
             '--mock-cfg', shell_quote($target),
+            ($profile->{forcearch}
+                ? ('--target-arch', shell_quote($arch), '--noarch-mock-cfg', shell_quote($profile->{noarch_cfg}))
+                : ()),
+            ($profile->{epel} ? () : ('--epel-gap')),
             '--mock-uniqueext', shell_quote($perl_uniqueext),
             '--result-dir', shell_quote($perl_result),
             '--log-dir', shell_quote($perl_log),
@@ -602,7 +644,7 @@ if (!$dry_run) {
     print {$sfh} "run_root=$run_root\n";
     print {$sfh} "repo_dir=$repo_dir\n";
     print {$sfh} "target=$target\n";
-    print {$sfh} "arch=$arch\n";
+    print {$sfh} "arch=$profile->{arch}\n";
     print {$sfh} "os_id=$os_id\n";
     print {$sfh} "version_id=$version_id\n";
     print {$sfh} "rel=$rel\n";
@@ -631,7 +673,55 @@ print "Summary:               $summary_file\n" if !$dry_run;
 print "Tarball:               $tarball\n" if !$skip_tarball;
 print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 
-    return { repo_dir => $repo_dir, rel => $rel };
+    return { repo_dir => $repo_dir, rel => $rel, profile => $profile };
+}
+
+# The build profile of a target: EL release, arch of the rpms, where its noarch deps are built,
+# which dep builders run and which rpms the deployed repo must contain.
+sub target_profile {
+    my ($target) = @_;
+    if (my $fa = $forcearch_targets{$target}) {
+        return {
+            %{$fa},
+            forcearch => 1,
+            epel      => 0,
+        };
+    }
+    my ($rel) = $target =~ /epel-(\d+)-/;
+    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    return {
+        rel          => $rel,
+        arch         => $host_arch,
+        noarch_cfg   => $target,
+        forcearch    => 0,
+        epel         => 1,
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        # xCAT Requires all of these on every arch, and every one of them builds natively on
+        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
+        # artifacts), so a self-sufficient per-arch build produces the whole set.
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+    };
+}
+
+# The forcearch targets are shipped in mock-configs/; mock, and the include('/etc/mock/<cfg>.cfg')
+# overlays of the per-package builders, need them in /etc/mock. Install a missing one; never
+# overwrite one the host already has.
+sub install_mock_cfg {
+    my ($cfg) = @_;
+    my $src = "$repo_root/mock-configs/$cfg.cfg";
+    return if !-f $src;
+    my $dst = "/etc/mock/$cfg.cfg";
+    if (-f $dst) {
+        die "$dst differs from $src: the build would not use the configuration shipped in this"
+          . " tree. Remove or update the host copy (it is never overwritten here) and rerun.\n"
+            if system("cmp -s " . shell_quote($src) . ' ' . shell_quote($dst)) != 0;
+        return;
+    }
+    print "Installing mock config $src -> $dst\n";
+    return if $dry_run;
+    copy($src, $dst) or die "Failed to install $src -> $dst: $!\n";
+    chmod 0644, $dst;
 }
 
 # Assemble the built per-target repo into the deployable, signed per-EL layout
@@ -639,9 +729,10 @@ print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 # xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to xcat.org).
 sub deploy_target {
     my ($tgt, $info) = @_;
-    my $rel  = $info->{rel};
-    my $src  = $info->{repo_dir};
-    my $dest = "$repo_dep/rh$rel/$arch";
+    my $rel   = $info->{rel};
+    my $src   = $info->{repo_dir};
+    my $tarch = $info->{profile}{arch};
+    my $dest  = "$repo_dep/rh$rel/$tarch";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
     make_path($dest);
@@ -651,11 +742,11 @@ sub deploy_target {
         publish_file($rpm, $destination);
     }
     remove_genesis_packages($dest, 0) if $genesis_release;
-    assert_required_deps($dest);
+    assert_required_deps($dest, $info->{profile}{required});
     sign_and_index_repo($dest);
-    write_dep_repo_metadata($dest, $rel);
+    write_dep_repo_metadata($dest, $rel, $tarch);
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
-    print "Deployed rh$rel/$arch: $n rpms\n";
+    print "Deployed rh$rel/$tarch: $n rpms\n";
 }
 
 sub publish_genesis_common_repo {
@@ -757,14 +848,14 @@ sub sign_and_index_repo {
 }
 
 sub write_dep_repo_metadata {
-    my ($dir, $rel) = @_;
-    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$arch";
+    my ($dir, $rel, $tarch) = @_;
+    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$tarch";
     my $gpgcheck = $gpg_sign ? 1 : 0;
     my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
-name=xCAT 2 dependencies (rh$rel $arch)
+name=xCAT 2 dependencies (rh$rel $tarch)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
@@ -773,7 +864,7 @@ EOF
     close $r;
 
     write_local_repo_helper($dir);
-    write_buildinfo($dir, "rh$rel/$arch");
+    write_buildinfo($dir, "rh$rel/$tarch");
 }
 
 sub write_common_repo_metadata {
@@ -866,8 +957,10 @@ Options:
   --gpg-sign              Sign RPMs and repomd.xml in every published repository
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
-  --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>); default is
-                          the host arch across rh8, rh9 and rh10
+  --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>, or a forcearch
+                          config from mock-configs/ such as rocky-10-riscv64-xcat, which
+                          cross-builds that arch on this host); default is the host arch
+                          across rh8, rh9 and rh10
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
   --parallel-builds N     Max concurrent top-level build steps within one EL target (default: auto)
   --parallel-targets N    Concurrent EL targets (rh8/rh9/rh10). 0/auto = all at once, 1 = serial,
@@ -892,7 +985,7 @@ Options:
 
 Notes:
   - Run this script as root on the build host.
-  - ARCH is derived from: uname -m
+  - ARCH is derived from: uname -m (or from the forcearch target)
   - Top-level parallel queue includes xcat-dep mockbuild.pl steps, perl builder,
     and ../xcat-core/buildrpms.pl.
   - Child mockbuild scripts are invoked with per-step mock --uniqueext values
@@ -1045,16 +1138,12 @@ sub have_rpm {
     return scalar(@m) > 0;
 }
 
-# assert_required_deps: the per-EL dep repo is unusable without these, so a MISSING one is
-# fatal even though individual builder failures are tolerated above. genesis-base is required
-# unless --skip-genesis.
+# assert_required_deps: the per-EL dep repo is unusable without these (the target profile's
+# required set), so a MISSING one is fatal even though individual builder failures are
+# tolerated above. genesis-base is required unless --skip-genesis.
 sub assert_required_deps {
-    my ($dir) = @_;
-    # xCAT Requires all of these on every arch, and every one of them builds natively on every
-    # arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed artifacts), so
-    # a self-sufficient per-arch build produces the whole set with no cross-arch import.
-    my @req = qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB);
+    my ($dir, $required) = @_;
+    my @req = @{$required};
     push @req, 'xCAT-genesis-base' unless $skip_genesis;
     my @missing = grep { !have_rpm($dir, $_) } @req;
     die "FATAL: required deps missing from $dir: @missing\n" if @missing;

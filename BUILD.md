@@ -361,6 +361,55 @@ minutes instead of seconds, so the riscv64 build of the dependency set takes on 
 of an hour on a large host. Chroots and caches live under `/var/lib/mock` and
 `/var/cache/mock` as for any other mock target (about 1 GB per per-package chroot).
 
+## Building and deploying `rh10/riscv64`
+
+`mockbuild-all.pl` knows `rocky-10-riscv64-xcat` as a *forcearch target* (see
+`%forcearch_targets` in the script): it is selected with `--target` only (the default
+rh8/rh9/rh10 run stays the host arch), installs the shipped config into `/etc/mock/` if
+missing, and then builds:
+
+| what | how |
+|---|---|
+| ipmitool-xcat, conserver-xcat | `mock --rebuild` in the riscv64 chroot (emulated), `--target-arch riscv64` |
+| goconserver | cross-compiled on the host (`GOARCH=riscv64`), packaged with `rpmbuild --target riscv64` |
+| grub2-xcat (noarch) | built in the native, EPEL-free `rocky-10-x86_64` chroot |
+| perl list6 + EPEL gap (`--epel-gap`) | `mockbuild-perl-packages.pl --target-arch riscv64 --noarch-mock-cfg rocky-10-x86_64 --epel-gap`: XS modules in the riscv64 chroot, noarch modules in the native chroot |
+| elilo-xcat, syslinux-xcat, xnba-undi | not built (x86 bootloaders) |
+
+There is no EPEL for riscv64, so the perl deps of xCAT that EL10 otherwise takes from EPEL
+are built here as well (`--epel-gap` in `mockbuild-perl-packages.pl`: perl-Crypt-Blowfish,
+perl-Crypt-CBC, perl-Crypt-Rijndael, perl-Digest-SHA1, perl-Expect, perl-Mail-Sender,
+perl-Net-DNS, perl-Net-IP and the build-only perl-Path-Class), and the noarch deps are
+built once, natively, rather than imported from another repo. The required set asserted
+after the build is ipmitool-xcat, grub2-xcat, perl-IO-Stty, perl-HTTP-Async and
+perl-Net-HTTPS-NB (plus xCAT-genesis-base unless `--skip-genesis`).
+
+Deliberately not built for riscv64:
+
+- perl-DB_File: needs libdb, which EL10 dropped (EPEL 10 re-adds it for its own
+  architectures only, and Rocky Linux 10 riscv64 has no libdb at all). Only the Confluent
+  client of xCAT-server uses DB_File and xCAT-server only recommends perl-DB_File, so a
+  riscv64 management node installs without it.
+- perl-SOAP-Lite: its Fedora BuildRequires (IO::SessionData, MIME::Lite, XML::Parser::Lite,
+  Test::XML) are EPEL-only as well, so it can neither be built nor installed without EPEL;
+  xCAT uses it for HP blade and VirtualBox support only.
+
+```bash
+cd <REPO_ROOT>
+perl ./mockbuild-all.pl \
+  --target rocky-10-riscv64-xcat \
+  --output <OUTPUT> \
+  --skip-xcat --skip-genesis --skip-install \
+  --max-parallel 8
+```
+
+Outputs (as for every target): the build tree under `<OUTPUT>/mockbuild-all/` and the
+deployable repo `<OUTPUT>/xcat-dep/rh10/riscv64/` (rpms, `repodata/`, `xcat-dep.repo` with
+`baseurl=https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh10/riscv64`,
+`mklocalrepo.sh`, `buildinfo.txt`). Builder failures are tolerated and listed at the end.
+Pass `--skip-install` -- the host install smoke tests cannot install riscv64 rpms;
+ipmitool-xcat and conserver-xcat are smoke-tested inside the chroot instead.
+
 # Validation Commands
 
 ```bash
