@@ -14,6 +14,7 @@ my $pkg_dir    = "$repo_root/goconserver";
 
 my $work_dir    = '/tmp/goconserver-mockbuild';
 my $mock_cfg    = '';
+my $target_arch = '';
 my $mock_uniqueext = '';
 my $result_dir  = "$repo_root/build-output/list5/goconserver";
 my $log_dir     = "$repo_root/build-logs/list5/goconserver";
@@ -26,6 +27,7 @@ my $build_timestamp;
 GetOptions(
     'work-dir=s'       => \$work_dir,
     'mock-cfg=s'       => \$mock_cfg,
+    'target-arch=s'    => \$target_arch,
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'     => \$result_dir,
     'log-dir=s'        => \$log_dir,
@@ -50,6 +52,13 @@ if (!$mock_cfg) {
 
 my ($rel) = $mock_cfg =~ /-(\d+)-/;
 $rel //= '10';
+# Arch of the rpm to produce: the host arch unless --mock-cfg is a forcearch (cross) config,
+# e.g. rocky-10-riscv64-xcat built on x86_64 (see BUILD.md "riscv64"). goconserver is not built
+# in the chroot: go cross-compiles on the host and rpmbuild --target packages the result.
+$target_arch = $arch if $target_arch eq '';
+my %goarch = (x86_64 => 'amd64', aarch64 => 'arm64', ppc64le => 'ppc64le', s390x => 's390x', riscv64 => 'riscv64');
+my $cross = $target_arch ne $arch;
+die "No GOARCH known for target arch $target_arch\n" if $cross && !exists $goarch{$target_arch};
 
 my $SOURCE_DATE_EPOCH;
 $SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
@@ -77,6 +86,7 @@ print "result_dir: $result_dir\n";
 print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
 print "arch:       $arch\n";
+print "target_arch:$target_arch" . ($cross ? " (GOARCH=$goarch{$target_arch}, rpmbuild --target)" : '') . "\n";
 print "version:    $version\n";
 print "go_repo:    $go_repo\n";
 print "go_ref:     $go_ref\n";
@@ -114,6 +124,7 @@ $ENV{GOPATH}      = "$work_dir/gopath";
 $ENV{GOCACHE}     = "$work_dir/gocache";
 $ENV{GOMODCACHE}  = "$work_dir/gomodcache";
 $ENV{CGO_ENABLED} = '0';
+$ENV{GOARCH}      = $goarch{$target_arch} if $cross;
 
 # The archived github.com/kr/pty sets SysProcAttr.Ctty to the parent-side fd,
 # which modern Go's os/exec rejects with "Setctty set but Ctty not valid in
@@ -187,6 +198,9 @@ run("tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
     " goconserver-$version");
 
 print_step("Create spec and build RPM");
+# rpm refuses 'BuildArch: <foreign arch>' on this host, so a cross build gets its arch from
+# rpmbuild --target instead.
+my $buildarch_line = $cross ? '' : "BuildArch:      $arch";
 my $spec_content = <<"SPEC";
 Name:           goconserver
 Version:        $version
@@ -194,7 +208,7 @@ Release:        3.el$rel
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
-BuildArch:      $arch
+$buildarch_line
 
 Source0:        goconserver-%{version}.tar.gz
 
@@ -239,6 +253,7 @@ run(
     " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
     " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
     " --define " . sh_quote("_buildhost xcat-build") .
+    ($cross ? " --target " . sh_quote($target_arch) : '') .
     " -ba " . sh_quote($spec_file) .
     " >" . sh_quote("$log_dir/rpmbuild.log") . " 2>&1"
 );
@@ -250,7 +265,28 @@ for my $rpm (glob("$rpmbuild_top/RPMS/*/*.rpm"), glob("$rpmbuild_top/SRPMS/*.rpm
     print "Copied: $dest\n";
 }
 
-if (!$skip_install) {
+if (!$skip_install && $cross) {
+    # A cross-built rpm cannot be installed on this host. Unpack it and run the static Go
+    # binaries through the binfmt_misc handler (qemu-user-static) that the forcearch mock
+    # builds of the other deps need anyway.
+    print_step("Smoke test the $target_arch binaries (binfmt)");
+    my @built = glob("$rpmbuild_top/RPMS/$target_arch/goconserver-*.rpm");
+    die "No $target_arch RPM found\n" if !@built;
+    my $smoke_root = "$work_dir/smoke-root";
+    remove_tree($smoke_root) if -d $smoke_root;
+    make_path($smoke_root);
+    run("cd " . sh_quote($smoke_root) . " && rpm2cpio " . sh_quote($built[0]) . " | cpio -idm --quiet" .
+        " >" . sh_quote("$log_dir/smoke-unpack.log") . " 2>&1");
+    for my $bin (qw(goconserver congo)) {
+        my $path = "$smoke_root/usr/bin/$bin";
+        die "Missing $path in the $target_arch rpm\n" if !-x $path;
+        my $rc = run_rc(sh_quote($path) . " -h >" . sh_quote("$log_dir/smoke-$bin.log") . " 2>&1");
+        die "$bin -h failed (rc=$rc): running a $target_arch binary on this $arch host needs the"
+          . " qemu-user-static binfmt handler (or pass --skip-install)\n" if $rc > 1;
+    }
+    print "Smoke tests passed ($target_arch binaries ran through binfmt).\n";
+}
+elsif (!$skip_install) {
     print_step("Install and smoke test");
     my @built = glob("$rpmbuild_top/RPMS/$arch/goconserver-*.rpm");
     die "No arch RPM found\n" if !@built;
@@ -284,6 +320,8 @@ Build goconserver RPM from source.
 Options:
   --work-dir PATH       Working directory (default: /tmp/goconserver-mockbuild)
   --mock-cfg NAME       Mock config name (auto-detected if omitted)
+  --target-arch ARCH    Arch of the rpm to build (default: uname -m); another arch is
+                        cross-compiled (GOARCH) and packaged with rpmbuild --target
   --mock-uniqueext STR  Mock uniqueext value (for compatibility with mockbuild-all.pl)
   --result-dir PATH     Output directory for RPMs
   --log-dir PATH        Output directory for logs

@@ -12,6 +12,8 @@ use Parallel::ForkManager;
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
 my $mock_cfg  = '';
+my $noarch_mock_cfg = '';
+my $target_arch = '';
 my $mock_uniqueext = '';
 my $result_dir = '';
 my $log_dir    = '';
@@ -24,6 +26,8 @@ my $build_timestamp;
 GetOptions(
     'work-dir=s'      => \$work_dir,
     'mock-cfg=s'      => \$mock_cfg,
+    'noarch-mock-cfg=s' => \$noarch_mock_cfg,
+    'target-arch=s'   => \$target_arch,
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'    => \$result_dir,
     'log-dir=s'       => \$log_dir,
@@ -45,6 +49,12 @@ if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
     $mock_cfg = resolve_mock_cfg($os_id, $arch);
 }
+# Arch of the rpms --mock-cfg produces: the host arch unless the config is a forcearch (cross)
+# one, e.g. rocky-10-riscv64-xcat built on x86_64 (see BUILD.md "riscv64"). The noarch packages
+# may be built in a native chroot of the same release instead of the emulated one (their rpms
+# are identical for every arch and emulated builds are slow).
+$target_arch = $arch if $target_arch eq '';
+$noarch_mock_cfg = $mock_cfg if $noarch_mock_cfg eq '';
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
     : '';
@@ -63,10 +73,10 @@ $SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
 $ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 if (!$result_dir) {
-    $result_dir = "$repo_root/build-output/list6/perl/$arch";
+    $result_dir = "$repo_root/build-output/list6/perl/$target_arch";
 }
 if (!$log_dir) {
-    $log_dir = "$repo_root/build-logs/list6/perl/$arch";
+    $log_dir = "$repo_root/build-logs/list6/perl/$target_arch";
 }
 
 my %meta = (
@@ -189,7 +199,9 @@ print "work_dir:    $work_dir\n";
 print "result_dir:  $result_dir\n";
 print "log_dir:     $log_dir\n";
 print "arch:        $arch\n";
+print "target_arch: $target_arch\n";
 print "mock_cfg:    $mock_cfg\n";
+print "noarch_mock_cfg: $noarch_mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
 print "packages:    " . join(', ', @packages) . "\n";
 print "jobs:        $jobs\n";
@@ -198,6 +210,8 @@ print "allow_erasing:$allow_erasing\n";
 
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
+run("mock -r " . sh_quote($noarch_mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null")
+    if $noarch_mock_cfg ne $mock_cfg;
 
 my @failed;
 my @passed;
@@ -215,28 +229,36 @@ $pm->run_on_finish(
     }
 );
 
-for my $idx (0 .. $#packages) {
-    my $pkg = $packages[$idx];
-    my $cfg = $meta{$pkg};
-    my $pkg_uniqueext = package_uniqueext($mock_uniqueext, $idx + 1, $pkg);
+# A package that 'needs' others (see %meta) is built after them, with their rpms installed into
+# its chroot, so the waves run one after the other; the packages of a wave build in parallel.
+my %selected = map { $_ => 1 } @packages;
+my $idx = 0;
+for my $wave (build_waves(\@packages)) {
+    for my $pkg (@{$wave}) {
+        my $cfg = $meta{$pkg};
+        my $pkg_uniqueext = package_uniqueext($mock_uniqueext, ++$idx, $pkg);
+        my @needs = grep { $selected{$_} } @{ $cfg->{needs} // [] };
 
-    my $pid = $pm->start($pkg);
-    next if $pid;
-    my $ok = build_package(
-        pkg           => $pkg,
-        cfg           => $cfg,
-        work_dir      => $work_dir,
-        result_dir    => $result_dir,
-        log_dir       => $log_dir,
-        mock_cfg      => $mock_cfg,
-        mock_uniqueext => $pkg_uniqueext,
-        arch          => $arch,
-        skip_install  => $skip_install,
-        allow_erasing => $allow_erasing,
-    );
-    $pm->finish($ok ? 0 : 1);
+        my $pid = $pm->start($pkg);
+        next if $pid;
+        my $ok = build_package(
+            pkg           => $pkg,
+            cfg           => $cfg,
+            work_dir      => $work_dir,
+            result_dir    => $result_dir,
+            log_dir       => $log_dir,
+            mock_cfg      => ($cfg->{rpm_arch} eq 'noarch' ? $noarch_mock_cfg : $mock_cfg),
+            mock_uniqueext => $pkg_uniqueext,
+            arch          => $target_arch,
+            host_arch     => $arch,
+            needs         => \@needs,
+            skip_install  => $skip_install,
+            allow_erasing => $allow_erasing,
+        );
+        $pm->finish($ok ? 0 : 1);
+    }
+    $pm->wait_all_children;
 }
-$pm->wait_all_children;
 
 for my $pkg (@packages) {
     my $status_file = "$log_dir/$pkg/status.txt";
@@ -263,8 +285,9 @@ for my $pkg (@packages) {
 open my $sfh, '>', "$log_dir/build-summary.txt"
     or die "Cannot write $log_dir/build-summary.txt: $!\n";
 print {$sfh} "mock_cfg=$mock_cfg\n";
+print {$sfh} "noarch_mock_cfg=$noarch_mock_cfg\n" if $noarch_mock_cfg ne $mock_cfg;
 print {$sfh} "mock_uniqueext=$mock_uniqueext\n" if $mock_uniqueext ne '';
-print {$sfh} "arch=$arch\n";
+print {$sfh} "arch=$target_arch\n";
 print {$sfh} "result_dir=$result_dir\n";
 print {$sfh} "log_dir=$log_dir\n";
 print {$sfh} "packages=" . join(',', @packages) . "\n";
@@ -291,6 +314,8 @@ sub build_package {
     my $mock_cfg       = $args{mock_cfg};
     my $mock_uniqueext = $args{mock_uniqueext};
     my $arch           = $args{arch};
+    my $host_arch      = $args{host_arch} // $arch;
+    my $needs          = $args{needs} // [];
     my $skip_install   = $args{skip_install};
     my $allow_erasing  = $args{allow_erasing};
 
@@ -315,7 +340,9 @@ sub build_package {
 
     my $mock_uniqueext_opt = ' --uniqueext ' . sh_quote($mock_uniqueext);
     print_step("Build $pkg");
+    print "mock_cfg: $mock_cfg\n";
     print "mock_uniqueext: $mock_uniqueext\n";
+    print "needs: " . (@{$needs} ? join(', ', @{$needs}) : '(none)') . "\n";
 
     my $summary = '';
     my $ok = 0;
@@ -384,9 +411,19 @@ sub build_package {
             $srpm_path = $srpms[-1];
         }
 
+        # The rpms of the packages this one needs (built in an earlier wave) go into the chroot
+        # on top of the build requirements the chroot resolves itself.
+        my $additional_opt = '';
+        for my $need (@{$needs}) {
+            my @need_rpms = grep { !/\.src\.rpm$/ && !/-debug(?:info|source)-/ }
+                            sort glob("$result_dir/$need/*.rpm");
+            die "Needed package $need left no rpms in $result_dir/$need (build failed?)\n" if !@need_rpms;
+            $additional_opt .= " --additional-package " . sh_quote($_) for @need_rpms;
+        }
+
         run(
             "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
-            " --rebuild " . sh_quote($srpm_path) .
+            " --rebuild " . sh_quote($srpm_path) . $additional_opt .
             " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
             " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
             " --define " . sh_quote("_buildhost xcat-build") .
@@ -436,7 +473,22 @@ sub build_package {
             }
         }
 
-        if (!$skip_install) {
+        if (!$skip_install && $cfg->{rpm_arch} eq 'native' && $arch ne $host_arch) {
+            # A cross-built XS module cannot be loaded on this host: install the rpm into the
+            # (emulated) build chroot and import the module there.
+            my $module = $cfg->{module};
+            run_mock(
+                "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
+                " --install " . sh_quote($main_rpm) .
+                " > " . sh_quote("$pkg_log/smoke-chroot-install.log") . " 2>&1"
+            );
+            my $rc_mod = run_capture_rc(
+                "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
+                " -q --chroot -- perl -M$module -e 1",
+                "$pkg_log/smoke-perl-module.log");
+            die "Perl module import failed for $pkg ($module) in the $arch chroot, rc=$rc_mod\n" if $rc_mod != 0;
+        }
+        elsif (!$skip_install) {
             my $install_cmd = "dnf -y install ";
             $install_cmd .= "--allowerasing " if $allow_erasing;
             run($install_cmd . sh_quote($main_rpm));
@@ -466,6 +518,28 @@ sub build_package {
     return $ok;
 }
 
+# Order the selected packages in waves: a package comes after the selected packages it 'needs'
+# (installed into its chroot, see %meta). Needs outside the selection are ignored: the chroot
+# then has to provide the module itself (e.g. from EPEL).
+sub build_waves {
+    my ($pkgs) = @_;
+    my %selected = map { $_ => 1 } @{$pkgs};
+    my %done;
+    my @waves;
+    my @left = @{$pkgs};
+    while (@left) {
+        my @ready = grep {
+            my $p = $_;
+            !grep { $selected{$_} && !$done{$_} } @{ $meta{$p}{needs} // [] };
+        } @left;
+        die "Circular 'needs' among packages: @left\n" if !@ready;
+        push @waves, \@ready;
+        $done{$_} = 1 for @ready;
+        @left = grep { !$done{$_} } @left;
+    }
+    return @waves;
+}
+
 sub package_uniqueext {
     my ($base, $index, $pkg) = @_;
     my $tag = lc $pkg;
@@ -483,6 +557,11 @@ sub usage {
 Usage: $0 [options]
   --work-dir PATH      Temporary work dir (default: $work_dir)
   --mock-cfg NAME      Mock config (default: <ID>+epel-10-<ARCH>)
+  --noarch-mock-cfg NAME  Mock config for the noarch packages (default: --mock-cfg); with a
+                       forcearch --mock-cfg, a native config of the same release builds them
+                       without emulation
+  --target-arch ARCH   Arch of the rpms --mock-cfg produces (default: uname -m); a forcearch
+                       config such as rocky-10-riscv64-xcat needs it
   --mock-uniqueext TXT Optional mock --uniqueext suffix to isolate concurrent builds
   --jobs N             Number of parallel package workers (default: selected package count)
   --result-dir PATH    Output directory (default: build-output/list6/perl/<ARCH>)

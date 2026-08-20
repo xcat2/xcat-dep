@@ -25,6 +25,7 @@ my $version    = '8.2.1';
 
 my $work_dir       = '/tmp/conserver-mockbuild';
 my $mock_cfg       = '';
+my $target_arch    = '';
 my $mock_uniqueext = '';
 my $result_dir     = "$script_dir/../build-output/list-conserver/conserver";
 my $log_dir        = "$script_dir/../build-logs/list-conserver/conserver";
@@ -34,6 +35,7 @@ my $build_timestamp;
 GetOptions(
     'work-dir=s'        => \$work_dir,
     'mock-cfg=s'        => \$mock_cfg,
+    'target-arch=s'     => \$target_arch,
     'mock-uniqueext=s'  => \$mock_uniqueext,
     'result-dir=s'      => \$result_dir,
     'log-dir=s'         => \$log_dir,
@@ -63,12 +65,16 @@ if (!$mock_cfg) {
     my ($rel) = capture('rpm -E %rhel');
     $mock_cfg = "${os_id}+epel-${rel}-${arch}";
 }
+# Arch of the rpms --mock-cfg produces: the host arch unless the config is a forcearch (cross)
+# one, e.g. rocky-10-riscv64-xcat built on x86_64 (see BUILD.md "riscv64").
+$target_arch = $arch if $target_arch eq '';
 my $uniq = $mock_uniqueext ne '' ? ' --uniqueext ' . sh_quote($mock_uniqueext) : '';
 
 make_path($result_dir, $log_dir);
 print "package:    conserver-xcat\n";
 print "version:    $version\n";
 print "arch:       $arch\n";
+print "target-arch:$target_arch\n";
 print "mock-cfg:   $mock_cfg\n";
 print "result-dir: $result_dir\n";
 
@@ -104,7 +110,7 @@ run("mock -r " . sh_quote($mock_cfg) . $uniq
 my @rpms = grep { $_ !~ /\.src\.rpm$/ && $_ !~ /-debug(info|source)-/ }
            glob("$mock_result/*.rpm");
 die "FATAL: no binary RPM produced (see $log_dir/mock-rebuild.log)\n" unless @rpms;
-my ($main) = grep { basename($_) =~ /^conserver-xcat-\Q$version\E-.*\.(?:$arch|noarch)\.rpm$/ } @rpms;
+my ($main) = grep { basename($_) =~ /^conserver-xcat-\Q$version\E-.*\.(?:$target_arch|noarch)\.rpm$/ } @rpms;
 die "FATAL: main conserver-xcat RPM not found among: @rpms\n" unless $main;
 
 for my $r (@rpms) {
@@ -142,6 +148,6 @@ sub capture {
 }
 sub sh_quote { my ($s) = @_; $s =~ s/'/'\\''/g; return "'$s'"; }
 sub usage {
-    return "usage: mockbuild.pl --mock-cfg <cfg> [--result-dir DIR] [--work-dir DIR]\n"
+    return "usage: mockbuild.pl --mock-cfg <cfg> [--target-arch ARCH] [--result-dir DIR] [--work-dir DIR]\n"
          . "                    [--log-dir DIR] [--mock-uniqueext EXT] [--skip-install]\n";
 }
