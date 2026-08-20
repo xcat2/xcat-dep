@@ -514,7 +514,7 @@ sub build_package {
 
             my $srpm_result = "$pkg_run_dir/srpm";
             make_path($srpm_result);
-            run(
+            run_mock(
                 "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
                 " --buildsrpm --spec " . sh_quote($spec) .
                 " --sources " . sh_quote($source_dir) .
@@ -539,7 +539,7 @@ sub build_package {
             $additional_opt .= " --additional-package " . sh_quote($_) for @need_rpms;
         }
 
-        run(
+        run_mock(
             "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
             " --rebuild " . sh_quote($srpm_path) . $additional_opt .
             " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
@@ -782,6 +782,22 @@ sub capture {
     }
     chomp $out;
     return $out;
+}
+
+# mock exits 30 when its package manager failed (chroot init, build deps), which against public
+# mirrors is most often a transient download error (stale mirror metadata): retry such a run once.
+sub run_mock {
+    my ($cmd) = @_;
+    print "+ $cmd\n";
+    my $rc = system($cmd);
+    if ($rc != -1 && ($rc >> 8) == 30) {
+        print "mock failed with rc=30 (package manager); retrying once\n";
+        $rc = system($cmd);
+    }
+    if ($rc != 0) {
+        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+        die "Command failed (rc=$exit): $cmd\n";
+    }
 }
 
 sub run_capture_rc {

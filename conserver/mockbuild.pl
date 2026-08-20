@@ -102,7 +102,7 @@ print "SRPM: $srpm\n";
 print "== mock --rebuild ($mock_cfg) ==\n";
 my $mock_result = "$work_dir/mock-result";
 make_path($mock_result);
-run("mock -r " . sh_quote($mock_cfg) . $uniq
+run_mock("mock -r " . sh_quote($mock_cfg) . $uniq
     . " --rebuild " . sh_quote($srpm)
     . " --resultdir " . sh_quote($mock_result)
     . " > " . sh_quote("$log_dir/mock-rebuild.log") . " 2>&1");
@@ -145,6 +145,18 @@ sub capture {
     my $out = `$cmd`;
     chomp $out if defined $out;
     return $out // '';
+}
+# mock exits 30 when its package manager failed (chroot init, build deps), which against public
+# mirrors is most often a transient download error (stale mirror metadata): retry such a run once.
+sub run_mock {
+    my ($cmd) = @_;
+    my $rc = system('bash', '-c', $cmd);
+    if ($rc != -1 && ($rc >> 8) == 30) {
+        print "mock failed with rc=30 (package manager); retrying once\n";
+        $rc = system('bash', '-c', $cmd);
+    }
+    die "FATAL: command failed (rc=" . ($rc >> 8) . "): $cmd\n" if $rc != 0;
+    return 1;
 }
 sub sh_quote { my ($s) = @_; $s =~ s/'/'\\''/g; return "'$s'"; }
 sub usage {

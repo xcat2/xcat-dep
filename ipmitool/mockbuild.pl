@@ -138,7 +138,7 @@ print "Patch application check passed. Applied patches: $patch_count\n";
 print_step("Build SRPM with mock");
 my $srpm_out = "$work_dir/srpm";
 make_path($srpm_out);
-run(
+run_mock(
     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --buildsrpm --spec " . sh_quote($spec_file) .
     " --sources " . sh_quote($pkg_dir) .
@@ -156,7 +156,7 @@ print "SRPM: $srpm\n";
 print_step("Rebuild RPM with mock");
 my $rpm_out = "$work_dir/rpm";
 make_path($rpm_out);
-run(
+run_mock(
     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --rebuild " . sh_quote($srpm) .
     " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
@@ -205,7 +205,7 @@ if (!$skip_install && $target_arch ne $arch) {
     # A cross-built rpm cannot be installed on this host: install it into the (emulated) build
     # chroot instead and run the binary there.
     print_step("Install RPM into the chroot and run smoke tests");
-    run("mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt . " --install " . sh_quote($main_rpm)
+    run_mock("mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt . " --install " . sh_quote($main_rpm)
         . " > " . sh_quote("$log_dir/smoke-chroot-install.log") . " 2>&1");
     my $bin = '/opt/xcat/bin/ipmitool-xcat';
     my $version_log = "$log_dir/smoke-version.log";
@@ -401,6 +401,22 @@ sub capture {
     }
     chomp $out;
     return $out;
+}
+
+# mock exits 30 when its package manager failed (chroot init, build deps), which against public
+# mirrors is most often a transient download error (stale mirror metadata): retry such a run once.
+sub run_mock {
+    my ($cmd) = @_;
+    print "+ $cmd\n";
+    my $rc = system($cmd);
+    if ($rc != -1 && ($rc >> 8) == 30) {
+        print "mock failed with rc=30 (package manager); retrying once\n";
+        $rc = system($cmd);
+    }
+    if ($rc != 0) {
+        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+        die "Command failed (rc=$exit): $cmd\n";
+    }
 }
 
 sub run_capture_rc {
