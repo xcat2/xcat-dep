@@ -394,6 +394,18 @@ Deliberately not built for riscv64:
   Test::XML) are EPEL-only as well, so it can neither be built nor installed without EPEL;
   xCAT uses it for HP blade and VirtualBox support only.
 
+Known differences from the EPEL-fed x86_64 repo: perl-Net-DNS is the 0.80 release of
+`perl-Net-DNS/Net-DNS.spec`, built pure-perl (`--noxs`) as noarch, where EPEL 10 ships
+1.47 -- its spec BuildRequires perl(Net::LibIDN2), which is EPEL-only too. A newer,
+XS-free perl-Net-DNS without that BuildRequires is a follow-up. The riscv64 goconserver
+binaries are stripped by the Go linker (`-ldflags "-s -w"`, cross build only) because the
+host's brp-strip cannot strip a riscv64 ELF.
+
+On a host where `/` is small, note that every per-package mock chroot (riscv64 and the
+native noarch one) and its bootstrap chroot live under `/var/lib/mock` while it builds
+(about 0.5-1 GB each; the bootstrap dirs stay behind after a successful build until
+scrubbed), so `--max-parallel` bounds the peak disk usage as well as the CPU load.
+
 ```bash
 cd <REPO_ROOT>
 perl ./mockbuild-all.pl \
@@ -407,8 +419,11 @@ Outputs (as for every target): the build tree under `<OUTPUT>/mockbuild-all/` an
 deployable repo `<OUTPUT>/xcat-dep/rh10/riscv64/` (rpms, `repodata/`, `xcat-dep.repo` with
 `baseurl=https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh10/riscv64`,
 `mklocalrepo.sh`, `buildinfo.txt`). Builder failures are tolerated and listed at the end.
-Pass `--skip-install` -- the host install smoke tests cannot install riscv64 rpms;
-ipmitool-xcat and conserver-xcat are smoke-tested inside the chroot instead.
+The cross-built rpms are smoke-tested without installing them on the host: ipmitool-xcat,
+conserver-xcat and the XS perl modules inside the emulated chroot, goconserver by running
+its binaries through the binfmt handler. `--skip-install` only skips those checks and the
+host installation of the noarch perl rpms (built in the native chroot); pass it when the
+build host must stay untouched.
 
 # Validation Commands
 
