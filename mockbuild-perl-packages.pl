@@ -18,6 +18,7 @@ my $mock_uniqueext = '';
 my $result_dir = '';
 my $log_dir    = '';
 my $packages_csv = '';
+my $epel_gap = 0;
 my $jobs = 0;
 my $skip_install = 0;
 my $allow_erasing = 0;
@@ -32,6 +33,7 @@ GetOptions(
     'result-dir=s'    => \$result_dir,
     'log-dir=s'       => \$log_dir,
     'packages=s'      => \$packages_csv,
+    'epel-gap!'       => \$epel_gap,
     'jobs=i'          => \$jobs,
     'skip-install!'   => \$skip_install,
     'allow-erasing!'  => \$allow_erasing,
@@ -80,6 +82,37 @@ if (!$log_dir) {
 }
 
 my %meta = (
+    'perl-Crypt-Blowfish' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Crypt-Blowfish",
+        srpm_globs => [
+            "$repo_root/perl-Crypt-Blowfish/perl-Crypt-Blowfish-2.14-25.el10_0.src.rpm",
+            "$repo_root/perl-Crypt-Blowfish/perl-Crypt-Blowfish-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Crypt-Blowfish',
+        rpm_arch   => 'native',
+        module     => 'Crypt::Blowfish',
+        needs      => ['perl-Crypt-CBC'],   # optional tests (BuildRequires)
+    },
+    'perl-Crypt-CBC' => {
+        mode      => 'spec',
+        pkg_dir   => "$repo_root/perl-Crypt-CBC",
+        spec      => "$repo_root/perl-Crypt-CBC/perl-Crypt-CBC.spec",
+        rpm_name  => 'perl-Crypt-CBC',
+        rpm_arch  => 'noarch',
+        module    => 'Crypt::CBC',
+    },
+    'perl-Crypt-Rijndael' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Crypt-Rijndael",
+        srpm_globs => [
+            "$repo_root/perl-Crypt-Rijndael/perl-Crypt-Rijndael-1.13-10.fc29.src.rpm",
+            "$repo_root/perl-Crypt-Rijndael/perl-Crypt-Rijndael-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Crypt-Rijndael',
+        rpm_arch   => 'native',
+        module     => 'Crypt::Rijndael',
+    },
     'perl-Crypt-SSLeay' => {
         mode      => 'spec',
         pkg_dir   => "$repo_root/perl-Crypt-SSLeay",
@@ -87,6 +120,29 @@ my %meta = (
         rpm_name  => 'perl-Crypt-SSLeay',
         rpm_arch  => 'native',
         module    => 'Crypt::SSLeay',
+        needs     => ['perl-Path-Class'],   # Makefile.PL (configure_requires), EPEL-only on EL
+    },
+    'perl-Digest-SHA1' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Digest-SHA1",
+        srpm_globs => [
+            "$repo_root/perl-Digest-SHA1/perl-Digest-SHA1-2.13-23.fc28.src.rpm",
+            "$repo_root/perl-Digest-SHA1/perl-Digest-SHA1-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Digest-SHA1',
+        rpm_arch   => 'native',
+        module     => 'Digest::SHA1',
+    },
+    'perl-Expect' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Expect",
+        srpm_globs => [
+            "$repo_root/perl-Expect/perl-Expect-1.35-6.fc29.src.rpm",
+            "$repo_root/perl-Expect/perl-Expect-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Expect',
+        rpm_arch   => 'noarch',
+        module     => 'Expect',
     },
     'perl-HTML-Form' => {
         mode       => 'srpm',
@@ -118,6 +174,25 @@ my %meta = (
         rpm_arch   => 'noarch',
         module     => 'IO::Stty',
     },
+    'perl-Mail-Sender' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Mail-Sender",
+        srpm_globs => [
+            "$repo_root/perl-Mail-Sender/perl-Mail-Sender-0.903-7.fc29.src.rpm",
+            "$repo_root/perl-Mail-Sender/perl-Mail-Sender-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Mail-Sender',
+        rpm_arch   => 'noarch',
+        module     => 'Mail::Sender',
+    },
+    'perl-Net-DNS' => {
+        mode      => 'spec',
+        pkg_dir   => "$repo_root/perl-Net-DNS",
+        spec      => "$repo_root/perl-Net-DNS/Net-DNS.spec",
+        rpm_name  => 'perl-Net-DNS',
+        rpm_arch  => 'noarch',
+        module    => 'Net::DNS',
+    },
     'perl-Net-HTTPS-NB' => {
         mode      => 'spec',
         pkg_dir   => "$repo_root/perl-Net-HTTPS-NB",
@@ -148,6 +223,28 @@ my %meta = (
         rpm_arch   => 'noarch',
         module     => 'Net::Telnet',
     },
+    'perl-Path-Class' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Path-Class",
+        srpm_globs => [
+            "$repo_root/perl-Path-Class/perl-Path-Class-0.37-24.el10_0.src.rpm",
+            "$repo_root/perl-Path-Class/perl-Path-Class-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Path-Class',
+        rpm_arch   => 'noarch',
+        module     => 'Path::Class',
+    },
+    'perl-SOAP-Lite' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-SOAP-Lite",
+        srpm_globs => [
+            "$repo_root/perl-SOAP-Lite/perl-SOAP-Lite-1.27-3.fc29.src.rpm",
+            "$repo_root/perl-SOAP-Lite/perl-SOAP-Lite-*.src.rpm",
+        ],
+        rpm_name   => 'perl-SOAP-Lite',
+        rpm_arch   => 'noarch',
+        module     => 'SOAP::Lite',
+    },
     'perl-Sys-Virt' => {
         mode      => 'spec',
         pkg_dir   => "$repo_root/perl-Sys-Virt",
@@ -158,6 +255,7 @@ my %meta = (
     },
 );
 
+# xcat-dep's own perl deps of xCAT, built for every EL and arch ("list6").
 my @default_order = qw(
     perl-Crypt-SSLeay
     perl-HTML-Form
@@ -168,7 +266,25 @@ my @default_order = qw(
     perl-Sys-Virt
 );
 
+# The perl deps of xCAT that EL takes from EPEL. Built only where there is no EPEL (riscv64,
+# --epel-gap); the x86_64/ppc64le repos keep getting them from EPEL. perl-Path-Class is a
+# build dep of perl-Crypt-SSLeay only. Not here although in the table: perl-SOAP-Lite (its
+# fc29 BuildRequires IO::SessionData, MIME::Lite, XML::Parser::Lite, Test::XML are EPEL-only
+# too, so it cannot be built or installed without EPEL; xCAT uses it for HP blades only).
+my @epel_gap_order = qw(
+    perl-Crypt-Blowfish
+    perl-Crypt-CBC
+    perl-Crypt-Rijndael
+    perl-Digest-SHA1
+    perl-Expect
+    perl-Mail-Sender
+    perl-Net-DNS
+    perl-Net-IP
+    perl-Path-Class
+);
+
 my @packages = @default_order;
+push @packages, @epel_gap_order if $epel_gap;
 if ($packages_csv ne '') {
     @packages = grep { $_ ne '' } map { s/^\s+|\s+$//gr } split /,/, $packages_csv;
 }
@@ -203,6 +319,7 @@ print "target_arch: $target_arch\n";
 print "mock_cfg:    $mock_cfg\n";
 print "noarch_mock_cfg: $noarch_mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
+print "epel_gap:    $epel_gap\n";
 print "packages:    " . join(', ', @packages) . "\n";
 print "jobs:        $jobs\n";
 print "skip_install:$skip_install\n";
@@ -290,6 +407,7 @@ print {$sfh} "mock_uniqueext=$mock_uniqueext\n" if $mock_uniqueext ne '';
 print {$sfh} "arch=$target_arch\n";
 print {$sfh} "result_dir=$result_dir\n";
 print {$sfh} "log_dir=$log_dir\n";
+print {$sfh} "epel_gap=$epel_gap\n";
 print {$sfh} "packages=" . join(',', @packages) . "\n";
 print {$sfh} "passed=" . join(',', @passed) . "\n";
 print {$sfh} "failed=" . join(',', @failed) . "\n";
@@ -567,6 +685,8 @@ Usage: $0 [options]
   --result-dir PATH    Output directory (default: build-output/list6/perl/<ARCH>)
   --log-dir PATH       Log directory (default: build-logs/list6/perl/<ARCH>)
   --packages LIST      Comma-separated subset of packages to build
+  --epel-gap           Also build the perl deps of xCAT that EL takes from EPEL (for an arch
+                       without EPEL, e.g. riscv64)
   --build-timestamp EPOCH  Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
   --skip-install       Skip dnf install + perl module import checks
   --allow-erasing      Allow dnf to erase conflicting packages during install smoke tests

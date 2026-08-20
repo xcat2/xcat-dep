@@ -2,3 +2,7 @@
 1. Copy Crypt-Blowfish-2.14.tar.gz to /usr/src/packages/SOURCES/.
 2. Copy perl-Crypt-Blowfish.spec to /usr/src/packages/SPECS/
 3. Run "rpmbuild -ba /usr/src/packages/SPECS/perl-Crypt-Blowfish.spec" which creates /usr/src/packages/RPMS/x86_64/perl-Crypt-Blowfish-2.14-5.1.x86_64.rpm
+
+perl-Crypt-Blowfish.spec above is a SUSE spec (perl-macros). For RHEL 10 (EPEL-only there), run
+"rpmbuild --rebuild perl-Crypt-Blowfish-2.14-25.el10_0.src.rpm" (the EPEL 10 source rpm); its
+optional tests need perl(Crypt::CBC) at build time.
