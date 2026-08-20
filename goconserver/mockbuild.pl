@@ -140,6 +140,8 @@ my $go_build_dir = "$work_dir/bin";
 make_path($go_build_dir);
 
 my $ldflags = "-X main.Version=$version";
+# rpm's brp-strip on the host cannot strip a foreign-arch ELF, so let the Go linker do it.
+$ldflags .= ' -s -w' if $cross;
 
 run("cd " . sh_quote($src_dir) . " && " .
     "go build -trimpath -buildvcs=false -ldflags " . sh_quote($ldflags) .
