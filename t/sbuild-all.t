@@ -13,12 +13,14 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
 use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
-                  verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
+                  verify_repo_packages verify_repo_signature verify_repo_arches
+                  parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
                   codename_to_version version_to_codename known_codenames
-                  chroot_name chroot_sources_list
+                  chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field genesis_deb_control
-                  deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
+                  deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb
+                  build_deb_in_chroot);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -380,6 +382,152 @@ SKIP: {
         'native multi-arch pkg NOT skipped on ppc64el (it IS built there)');
     ok(!skip_arch_all_on('',   'x',             'ppc64el'), 'absent control -> not skipped (fail-safe)');
     ok(!skip_arch_all_on($ctl, 'syslinux-xcat', undef),     'undef arch -> not skipped (no crash)');
+}
+
+# ---- verify_repo_arches: the expected arch SET is a claim, never "whatever is present" ------------
+# PR #63 review concern #3: with the set inferred from presence, an entirely missing secondary
+# architecture read as "this run did not build it" and PASSED. These are the two directions that must
+# now be reported.
+{
+    my @expect = qw(amd64 ppc64el);
+
+    is_deeply([verify_repo_arches(\@expect, { amd64 => 1, ppc64el => 1 })], [],
+        'every expected arch has native packages -> no problems');
+
+    # The false-PASS: a two-arch repo whose ppc64el side is entirely absent.
+    my @m = verify_repo_arches(\@expect, { amd64 => 1, ppc64el => 0 });
+    is(scalar(@m), 1, 'an expected arch with no native package -> one problem');
+    like($m[0], qr/^MISSING-ARCH ppc64el /, '... reported as MISSING-ARCH, not silently passed');
+
+    # An arch:all-only ppc index (grub2-xcat/genesis ride into every binary-<arch>) is NOT evidence
+    # that ppc was published -- index_has_native_arch is what feeds %native, so it stays MISSING-ARCH.
+    my $allonly = "Package: grub2-xcat\nVersion: 2.12-1\nArchitecture: all\n";
+    my @m2 = verify_repo_arches(\@expect,
+        { amd64 => 1, ppc64el => (index_has_native_arch($allonly, 'ppc64el') ? 1 : 0) });
+    like($m2[0], qr/^MISSING-ARCH ppc64el /,
+        'an arch:all-only index does not satisfy an expected arch');
+
+    # The other direction: a stale arch left in a tree that is no longer built for it.
+    my @u = verify_repo_arches(['amd64'], { amd64 => 1, ppc64el => 1 });
+    is(scalar(@u), 1, 'a native arch outside the expected set -> one problem');
+    like($u[0], qr/^UNEXPECTED-ARCH ppc64el .*expected set \[amd64\]/,
+        '... reported as UNEXPECTED-ARCH naming the expected set');
+
+    # A genuine single-arch run (BUILD_PPC=false) expects only amd64 and must stay clean.
+    is_deeply([verify_repo_arches(['amd64'], { amd64 => 1, ppc64el => 0 })], [],
+        'single-arch expectation with no ppc natives -> no problems (no false MISSING/UNEXPECTED)');
+}
+
+# ---- parse_release_architectures: the repo's own claim (standalone-verify fallback) ---------------
+{
+    my $rel = "Origin: xCAT\nLabel: xcat-dep\nSuite: noble\nCodename: noble\n"
+            . "Architectures: amd64 ppc64el\nComponents: main\nDate: Thu, 21 Aug 2026 00:00:00 +0000\n";
+    is_deeply([parse_release_architectures($rel)], [qw(amd64 ppc64el)],
+        'Architectures: line parsed in file order');
+    is_deeply([parse_release_architectures("Architectures: amd64  amd64   ppc64el  \n")],
+        [qw(amd64 ppc64el)], 'duplicates collapsed, trailing whitespace ignored');
+    is_deeply([parse_release_architectures("Origin: xCAT\nComponents: main\n")], [],
+        'no Architectures: field -> empty list (no claim)');
+    is_deeply([parse_release_architectures(undef)], [], 'undef input -> empty list (no crash)');
+}
+
+# ---- chroot_is_disposable: each package must build in a THROWAWAY environment (concern #2) --------
+# A shared type=directory chroot with no union mount keeps package N's build-deps installed for
+# package N+1, so a missing Build-Depends builds green. build_deb_in_chroot hard-fails on that.
+{
+    my $overlay = "[noble-amd64-sbuild]\ntype=directory\ndirectory=/srv/chroot/noble-amd64\n"
+                . "union-type=overlay\nprofile=sbuild\n";
+    ok(chroot_is_disposable($overlay), 'union-type=overlay -> disposable (what sbuild-createchroot sets)');
+    ok(chroot_is_disposable("type=directory\nunion-type=aufs\n"), 'union-type=aufs -> disposable');
+    ok(chroot_is_disposable("type=file\nfile=/srv/chroot/noble.tar.gz\n"),
+        'type=file (tarball unpacked per session) -> disposable');
+    ok(chroot_is_disposable("type=btrfs-snapshot\n"), 'snapshot chroot -> disposable');
+
+    ok(!chroot_is_disposable("[x]\ntype=directory\ndirectory=/srv/chroot/x\nunion-type=none\n"),
+        'type=directory with union-type=none -> NOT disposable (build-deps would leak)');
+    ok(!chroot_is_disposable("[x]\ntype=directory\ndirectory=/srv/chroot/x\n"),
+        'type=directory with no union-type at all -> NOT disposable');
+    ok(!chroot_is_disposable(''),    'empty config -> not disposable (fail closed)');
+    ok(!chroot_is_disposable(undef), 'undef config -> not disposable (no crash, fail closed)');
+}
+
+# ---- chroot_build_script: the in-chroot build is FAIL-HARD (concern #2) --------------------------
+# Regression guard for the exact defects the review named: the common package installation ended in
+# `|| true`, and a failed Build-Depends installation only warned -- so a package could build without
+# its declared dependencies and ship.
+{
+    my $s = chroot_build_script();
+    like($s, qr/^set -euo pipefail$/m, 'the in-chroot script aborts on any unchecked failure');
+
+    unlike($s, qr/apt-get[^\n]*\|\|\s*true/,      'no `apt-get ... || true` (installation is fatal)');
+    unlike($s, qr/apt_retry[^\n]*\|\|\s*true/,    'no `apt_retry ... || true`');
+    unlike($s, qr/\[warn\][^\n]*build-dep/i,      'a failed build-dep install is not downgraded to a warning');
+    unlike($s, qr/^\s*BD=\$\(sed/m,               'the sed Build-Depends extraction is gone');
+
+    like($s, qr/mk-build-deps --install --remove/,
+        'Build-Depends come from mk-build-deps (honours versions/alternatives/arch qualifiers)');
+    like($s, qr/apt_retry update -q/,  'apt-get update is retried then fatal');
+    like($s, qr/apt_retry install -y/, 'the common tooling install is retried then fatal');
+    like($s, qr/\bequivs\b/,           'equivs is installed (mk-build-deps needs it)');
+
+    # the mk-build-deps dummy package must never be collected as build output
+    like($s, qr/!\s*-name\s+'\*-build-deps_\*'/, 'the *-build-deps dummy deb is excluded from collection');
+    like($s, qr/!\s*-name\s+'\*-dbgsym_\*'/,     'debug symbols are excluded from collection');
+
+    # Every apt-get in the script is either the ONE inside the fatal apt_retry helper, the helper's
+    # own diagnostics, or the resolver mk-build-deps is told to use -- never a direct, best-effort
+    # `apt-get ... || true` call.
+    my @apt = grep { /\bapt-get\b/ && !/^\s*#/ } split /\n/, $s;
+    my @unaccounted = grep { !/if apt-get "\$\@"; then return 0; fi/
+                          && !/^\s*echo /
+                          && !/--tool 'apt-get / } @apt;
+    is_deeply(\@unaccounted, [],
+        'every apt-get goes through the fatal apt_retry helper (or is mk-build-deps\' --tool)')
+        or diag("unaccounted apt-get line(s):\n" . join("\n", @unaccounted));
+}
+
+# ---- build_deb_in_chroot REFUSES a non-disposable chroot (the guard, not just the predicate) ------
+# Driven with a stub `schroot` on PATH so the guard can be exercised without a real chroot: it answers
+# `-l` (the chroot exists), `--config` (the configuration under test) and swallows the build itself.
+{
+    my $fakebin = tempdir(CLEANUP => 1);
+    open my $fh, '>', "$fakebin/schroot" or die "write stub schroot: $!";
+    print $fh <<'STUB';
+#!/bin/bash
+case "$1" in
+  -l)       echo "chroot:noble-amd64-sbuild"; exit 0 ;;
+  --config) printf '%s\n' "$FAKE_SCHROOT_CONFIG";  exit 0 ;;
+esac
+exit 0
+STUB
+    close $fh;
+    chmod 0755, "$fakebin/schroot";
+
+    my $work = tempdir(CLEANUP => 1);
+    make_path("$work/pkg", "$work/out");
+    my @args = (pkg => 'fixture', chroot => 'noble-amd64-sbuild', pkg_dir => "$work/pkg",
+                result_dir => "$work/out", build_timestamp => 1755000000, build => "true\n");
+
+    {
+        local $ENV{PATH} = "$fakebin:$ENV{PATH}";
+        local $ENV{FAKE_SCHROOT_CONFIG} =
+            "[noble-amd64-sbuild]\ntype=directory\ndirectory=/srv/chroot/noble-amd64\n";
+        my $ok = eval { quiet { build_deb_in_chroot(@args) }; 1 };
+        ok(!$ok, 'build_deb_in_chroot refuses to build in a non-disposable chroot');
+        like($@, qr/is NOT disposable/, '... with an explicit "NOT disposable" error');
+        like($@, qr/union-type=overlay/, '... telling the operator how to fix it');
+    }
+    {
+        # Same stub, now reporting an overlay: the guard passes, so the failure must be the LATER
+        # host-side "the debs did not land" check -- proving the disposability gate is not blanket-red.
+        local $ENV{PATH} = "$fakebin:$ENV{PATH}";
+        local $ENV{FAKE_SCHROOT_CONFIG} =
+            "[noble-amd64-sbuild]\ntype=directory\ndirectory=/srv/chroot/noble-amd64\nunion-type=overlay\n";
+        my $ok = eval { quiet { build_deb_in_chroot(@args) }; 1 };
+        ok(!$ok, 'a disposable chroot gets past the guard (and then fails for another reason)');
+        unlike($@, qr/is NOT disposable/, '... the failure is NOT the disposability guard');
+        like($@, qr/no \.deb is visible/, '... it is the host-side "debs did not land" check');
+    }
 }
 
 done_testing;

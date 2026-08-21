@@ -24,10 +24,11 @@ use MIME::Base64 qw(encode_base64);
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs read_manifest standard_options
-    verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
+    verify_repo_packages verify_repo_signature verify_repo_arches
+    parse_packages_index parse_release_architectures resolve_present_names
     index_has_native_arch control_binary_arch skip_arch_all_on
     codename_to_version version_to_codename known_codenames
-    chroot_name chroot_sources_list
+    chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
     control_field genesis_deb_control
     deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb
     build_deb_in_chroot
@@ -197,6 +198,58 @@ sub verify_repo_signature {
     return @problems;
 }
 
+# verify_repo_arches(\@expected, \%native) -> @problems
+#   @expected : the architecture set the published repo is REQUIRED to serve. It comes from an
+#               EXPLICIT claim -- --expect-arch, the staged arch set that was just promoted, or the
+#               repo's own Release "Architectures:" line -- NEVER from "whichever binary-<arch>
+#               directories happen to exist". That is the whole point: if the expected set were
+#               inferred from presence, an entirely missing secondary architecture would read as
+#               "this run did not build it" instead of "the repository is incomplete" (the false-PASS
+#               the PR #63 review caught).
+#   %native   : arch => boolean, "the published binary-<arch>/Packages carries at least one stanza
+#               built FOR that arch" (index_has_native_arch) -- collected by the IO layer for every
+#               arch it looked at, expected or not.
+# Returns human-readable problem strings (empty list = the arch set is exactly right):
+#   "MISSING-ARCH <a> (expected, but the published index carries no native <a> package)"
+#   "UNEXPECTED-ARCH <a> (native <a> packages published, but <a> is not in the expected set <set>)"
+# The UNEXPECTED direction matters too: it catches a stale architecture left behind in a tree that is
+# no longer built for it. Pure: no I/O, deterministic (problems in sorted arch order).
+sub verify_repo_arches {
+    my ($expected, $native) = @_;
+    my %want = map { $_ => 1 } @{ $expected || [] };
+    my @problems;
+    for my $a (sort keys %want) {
+        push @problems, "MISSING-ARCH $a (expected, but the published index carries no native $a package)"
+            unless $native->{$a};
+    }
+    for my $a (sort keys %$native) {
+        next unless $native->{$a};
+        next if $want{$a};
+        push @problems, "UNEXPECTED-ARCH $a (native $a packages published, but $a is not in the "
+                      . "expected set [" . join(' ', sort keys %want) . "])";
+    }
+    return @problems;
+}
+
+# parse_release_architectures($release_text) -> @arches
+# The architecture set an apt Release file CLAIMS to serve (its "Architectures:" line), in file order
+# and de-duplicated; an empty list when the field is absent. This is the repository's own published
+# claim, so it is the right FALLBACK expected-arch set for a standalone verification of a tree whose
+# build-time --expect-arch is not known: verifying a repo against what it advertises to apt clients
+# catches "Release says amd64 ppc64el but binary-ppc64el is empty/missing". Pure: text in, list out.
+sub parse_release_architectures {
+    my ($text) = @_;
+    return () unless defined $text;
+    my ($line) = $text =~ /^Architectures:[ \t]*(.*?)[ \t]*$/m;
+    return () unless defined $line;
+    my (@a, %seen);
+    for my $x (split /\s+/, $line) {
+        next unless length $x;
+        push @a, $x unless $seen{$x}++;
+    }
+    return @a;
+}
+
 # parse_packages_index($text) -> \%{ package_name => version }
 # Parse a Debian 'Packages' index: RFC822 stanzas separated by blank line(s); each carries a
 # 'Package:' and a 'Version:'. Returns name => version (the FULL Debian version verbatim, epoch +
@@ -313,6 +366,35 @@ sub chroot_sources_list {
         "deb $mirror $codename-updates main universe",
         "deb $mirror $codename-security main universe",
     );
+}
+
+# chroot_is_disposable($schroot_config_text): true iff a `schroot -c <name> -- ...` session against
+# this chroot gets a THROWAWAY filesystem -- i.e. everything the build installs or writes is discarded
+# when the session ends, so the NEXT package starts from the pristine base.
+#
+# This is the load-bearing precondition of the per-package build (PR #63 review concern #2): the
+# per-codename chroots are long-lived and shared by all seven packages, so without a disposable
+# session, package N's build-dependencies stay installed for package N+1 -- and a package whose
+# debian/control forgets a Build-Depends builds anyway, silently, because a sibling happened to pull
+# the dependency in. Making dependency installation fatal is only half the fix; it means nothing if a
+# stale environment can satisfy an undeclared dependency in the first place.
+#
+# Disposable configurations, per schroot(1):
+#   * union-type = overlay | overlayfs | aufs | unionfs   -- a per-session union mount over the base
+#     directory; writes go to the (discarded) overlay. This is what sbuild-createchroot sets up.
+#   * type = file                                          -- the session unpacks a fresh tarball.
+#   * type = {btrfs,lvm,zfs}-snapshot                      -- the session gets its own snapshot.
+# A plain `type=directory` with `union-type=none` is NOT disposable: the session bind-mounts the base
+# directory read-write and every build mutates it permanently.
+# Pure: `schroot --config -c <name>` text in, boolean out.
+sub chroot_is_disposable {
+    my ($config_text) = @_;
+    return 0 unless defined $config_text && $config_text ne '';
+    my ($union) = $config_text =~ /^union-type=[ \t]*(\S+)/m;
+    return 1 if defined $union && $union =~ /^(?:overlay|overlayfs|aufs|unionfs)$/;
+    my ($type) = $config_text =~ /^type=[ \t]*(\S+)/m;
+    return 1 if defined $type && $type =~ /^(?:file|btrfs-snapshot|lvm-snapshot|zfs-snapshot)$/;
+    return 0;
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -488,15 +570,84 @@ sub cross_copy_genesis_deb {
 # MockBuildUtils' helpers do for the per-package mockbuild.pl builders).
 # ---------------------------------------------------------------------------------------------------
 
+# chroot_build_script: the bash program that runs INSIDE the per-package schroot session. Returned as
+# text (pure) so t/sbuild-all.t can assert its fail-hard properties without a chroot.
+#
+# Fail-hard contract (PR #63 review concern #2) -- every step below is FATAL, none is best-effort:
+#   * `set -euo pipefail`: any unchecked command failure aborts the build.
+#   * apt-get update / the common build tooling install are retried (transient mirror hiccups) and
+#     then FATAL. They used to end in `|| true`, which let a package build with, say, no `quilt` and
+#     produce a silently-wrong .deb.
+#   * Build-Depends are installed with `mk-build-deps` (devscripts + equivs) instead of a sed
+#     extraction, and a failure is FATAL. mk-build-deps feeds the control file's relationships to apt
+#     verbatim, so version constraints `(>= 12)`, alternatives `a | b` and arch qualifiers `[!ppc64el]`
+#     are honoured -- the sed pipeline dropped all three, and, paired with the swallowed error, a
+#     too-old or missing build dependency produced a green build.
+# The build environment is disposable: the caller asserts the chroot gives each session a throwaway
+# overlay/snapshot (chroot_is_disposable), so nothing this script installs can leak into the next
+# package's build and satisfy an undeclared dependency.
+sub chroot_build_script {
+    return <<'INNER';
+set -euo pipefail
+PKGSRC="$1"; OUT="$2"; SDE="$3"; EXTRA="$4"; B64="$5"
+export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=nocheck SOURCE_DATE_EPOCH="$SDE"
+
+# apt_retry: run apt-get, retrying a few times for a transient mirror/network hiccup, then FATAL.
+apt_retry() {
+    local i
+    for i in 1 2 3; do
+        if apt-get "$@"; then return 0; fi
+        echo "[warn] 'apt-get $*' failed (attempt $i/3); retrying in 5s" >&2
+        sleep 5
+    done
+    echo "FATAL: 'apt-get $*' failed after 3 attempts" >&2
+    return 1
+}
+
+apt_retry update -q
+# Common build tooling. FATAL: a missing tool silently changes what gets built.
+# shellcheck disable=SC2086  # $EXTRA is a deliberate word-split package list
+apt_retry install -y --no-install-recommends \
+    git wget curl ca-certificates devscripts equivs quilt fakeroot build-essential $EXTRA
+
+W=$(mktemp -d)
+cp -a "$PKGSRC" "$W/pkg"
+cd "$W/pkg"
+
+# Declared Build-Depends, resolved by mk-build-deps: it hands debian/control's relationships to apt
+# verbatim, so versions/alternatives/arch-qualifiers are honoured. FATAL on failure -- an unsatisfied
+# build dependency must stop the build, never be papered over by whatever the chroot already carries.
+if [ -f debian/control ]; then
+    echo "== installing Build-Depends from debian/control (mk-build-deps) =="
+    mk-build-deps --install --remove \
+        --tool 'apt-get -y --no-install-recommends' debian/control
+fi
+
+printf '%s' "$B64" | base64 -d > "$W/pkgbuild.sh"
+( cd "$W/pkg" && bash "$W/pkgbuild.sh" )
+
+# Collect the built binaries. The mk-build-deps dummy package (<src>-build-deps_*.deb) and debug
+# symbols are not build output and must never reach the repo.
+mapfile -t found < <(find "$W" -maxdepth 3 -name '*.deb' \
+    ! -name '*-dbgsym_*' ! -name '*-build-deps_*' -print | sort)
+if [ "${#found[@]}" -eq 0 ]; then
+    echo "FATAL: the package build produced no .deb" >&2
+    exit 1
+fi
+mkdir -p "$OUT"
+for d in "${found[@]}"; do cp -v "$d" "$OUT/"; done
+INNER
+}
+
 # build_deb_in_chroot: build ONE package inside its <codename>-<arch>-sbuild chroot and collect the
-# produced .deb(s) into $result_dir. The COMMON orchestration lives here -- an ephemeral schroot
+# produced .deb(s) into $result_dir. The COMMON orchestration lives here -- a disposable schroot
 # session, apt update, install of common tools + the package's debian/control Build-Depends, an
 # OUT-OF-TREE copy of the package dir (the checkout is never mutated), SOURCE_DATE_EPOCH for
 # reproducible builds, deb collection, and a host-side check that the debs actually landed (a
 # chroot-local --result-dir would otherwise be a silent no-output). Each <dep>/sbuild.pl supplies
 # only its package-specific $build snippet (the source prep + dpkg-buildpackage that used to live in
 # make_deb.sh); $build runs with CWD = the copied package dir and must leave its .deb(s) somewhere
-# under the build work tree. Dies on any failure.
+# under the build work tree. Dies on any failure -- including a chroot that is not disposable.
 #   %args: pkg, chroot, pkg_dir, result_dir, build_timestamp, build (required); extra_tools (arrayref, optional)
 sub build_deb_in_chroot {
     my (%a) = @_;
@@ -505,33 +656,23 @@ sub build_deb_in_chroot {
     my $pkg = $a{pkg};
     die "FATAL: chroot $a{chroot} missing (run sbuild-all.pl to auto-init it)\n"
         if system("schroot -l 2>/dev/null | grep -qx chroot:$a{chroot}") != 0;
+    # HARD precondition: each package must build in a CLEAN, throwaway environment. A shared
+    # `type=directory` chroot with no union mount would carry the previous package's build-deps into
+    # this one, so an undeclared Build-Depends would build green here and fail for everyone else.
+    my $cfg = `schroot --config -c ${\ sh_quote($a{chroot}) } 2>/dev/null` // '';
+    die "FATAL: chroot $a{chroot} is NOT disposable -- a schroot session against it would mutate the\n"
+      . "  shared base filesystem, so one package's build-dependencies would leak into the next and\n"
+      . "  hide a missing Build-Depends. Add 'union-type=overlay' to its /etc/schroot/chroot.d/ entry\n"
+      . "  (or delete the chroot and let sbuild-all.pl re-create it).\n"
+        unless chroot_is_disposable($cfg);
     make_path($a{result_dir});
     my $extra = join(' ', @{ $a{extra_tools} || [] });
     my $b64   = encode_base64($a{build}, '');
 
-    # The whole per-package build runs in ONE schroot session (ephemeral overlay). schroot SANITIZES
-    # the environment, so values are passed as POSITIONAL ARGS to the inner bash; the package-specific
+    # The whole per-package build runs in ONE disposable schroot session. schroot SANITIZES the
+    # environment, so values are passed as POSITIONAL ARGS to the inner bash; the package-specific
     # build is passed base64-encoded to avoid any quoting interplay through schroot.
-    my $inner = <<'INNER';
-set -uo pipefail
-PKGSRC="$1"; OUT="$2"; SDE="$3"; EXTRA="$4"; B64="$5"
-export DEBIAN_FRONTEND=noninteractive DEB_BUILD_OPTIONS=nocheck SOURCE_DATE_EPOCH="$SDE"
-for t in 1 2 3; do apt-get update -q && break; sleep 5; done
-apt-get install -y --no-install-recommends \
-    git wget curl ca-certificates devscripts quilt fakeroot build-essential $EXTRA >/dev/null 2>&1 || true
-W=$(mktemp -d); cp -a "$PKGSRC" "$W/pkg"; cd "$W/pkg"
-if [ -f debian/control ]; then
-  BD=$(sed -n '/^Build-Depends:/,/^\S/p' debian/control | tr ',' '\n' \
-       | sed -E 's/^Build-Depends://; s/\(.*\)//; s/\[.*\]//; s/[[:space:]]//g' \
-       | grep -E '^[a-z0-9]' | grep -v '^debhelper-compat' | sort -u | tr '\n' ' ')
-  [ -n "$BD" ] && { apt-get install -y $BD >/dev/null 2>&1 || echo "[warn] some build-deps failed to install"; }
-fi
-printf '%s' "$B64" | base64 -d > "$W/pkgbuild.sh"
-( cd "$W/pkg" && bash "$W/pkgbuild.sh" ) || { echo "package build FAILED"; exit 1; }
-found=$(find "$W" -maxdepth 3 -name '*.deb' ! -name '*-dbgsym_*' -print)
-[ -n "$found" ] || { echo "build produced no .deb"; exit 1; }
-mkdir -p "$OUT"; echo "$found" | while read -r d; do cp -v "$d" "$OUT/"; done
-INNER
+    my $inner = chroot_build_script();
 
     my $cmd = 'schroot -c ' . sh_quote($a{chroot}) . ' -u root -d / -- bash -c '
             . sh_quote($inner) . ' bash '

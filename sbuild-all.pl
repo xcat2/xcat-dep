@@ -11,9 +11,12 @@
 # Design (mirrors mockbuild-all.pl + fixes the PR #63 review):
 #   1. One host = one arch (dpkg --print-architecture / --arch); a set of codenames (--dists).
 #      Each (codename,arch) is a TARGET named "<codename>-<arch>" with a section in debs-manifest.conf.
-#   2. Everything is built + validated into a FRESH per-run STAGING tree first; the published apt repo
-#      is (re)assembled from staging ONLY after the complete expected set validates -- so a partial or
-#      failed build never reaches the published repo, and stale debs never accumulate (concern #1).
+#   2. Everything is built + validated into a FRESH per-run STAGING tree first. An architecture build
+#      run STOPS THERE: publishing is a separate --publish step that takes ONE GLOBAL lock, assembles
+#      into a side tree, gates it, and swaps it onto the published path with a single rename(2). The
+#      two arches build concurrently on their two hosts, so a per-arch build that also published would
+#      interleave wipes of the same pool/dists/Release; and a partial or failed build must never reach
+#      the published repo, nor stale debs accumulate in it (concern #1).
 #   3. Per-arch package sets come from the manifest: the x86 boot components (syslinux/elilo/xnba,
 #      Architecture:all) are built once on amd64 (single producer); ppc64el builds only the genuinely
 #      arch-specific compiled deps (concern #3).
@@ -37,9 +40,11 @@ use Fcntl qw(:flock);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
-                  verify_repo_packages verify_repo_signature parse_packages_index resolve_present_names
+                  verify_repo_packages verify_repo_signature verify_repo_arches
+                  parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
                   codename_to_version known_codenames chroot_name chroot_sources_list
+                  chroot_is_disposable
                   control_field genesis_deb_control
                   deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
 
@@ -64,12 +69,24 @@ my $parallel_targets = 0;
 my ($skip_build, $skip_install, $skip_genesis, $skip_xcat_dep) = (0,0,0,0);
 my ($skip_createrepo, $skip_tarball) = (0,0);
 my $dry_run = 0;
+# --publish: run the FINALIZATION phase (assemble + sign + gate + tarball). See the "Publishing"
+# comment block below: an architecture build run stages only; publishing is a separate, singly-locked,
+# atomic step. undef = not specified -> defaulted from --skip-build.
+my $publish;
+# --expect-arch: the architecture set the PUBLISHED repo must serve, stated EXPLICITLY (repeatable,
+# and each value may be a space/comma list). This is what stops "an entirely missing secondary
+# architecture" from reading as "this run simply did not build it" -- see resolve_expect_arches().
+my @expect_arch;
 # Completeness+signature gate on the PUBLISHED apt index (what apt clients see). $verify_repo_arg set
 # (--verify-repo=<apt_dir>) runs the gate STANDALONE against that assembled apt dir and exits (no lock,
-# no build). $no_verify_repo suppresses the AUTOMATIC post-assembly gate that otherwise runs at the end
-# of assemble_apt. Default: automatic gate ON.
+# no build). $no_verify_repo suppresses the AUTOMATIC post-publish gate that otherwise runs before the
+# assembled tree is swapped into place. Default: automatic gate ON.
 my $verify_repo_arg = '';
 my $no_verify_repo  = 0;
+# Signature verification is ON by default for the standalone gate (--verify-repo): an unsigned or
+# wrongly-signed repo is a real defect, and silently skipping the check because no --gpg-home happened
+# to be passed is a false PASS. --no-verify-signature is the explicit, deliberate opt-out.
+my $no_verify_signature = 0;
 my $gpg_sign = 0;
 my $gpg_key_id = 'xcat@megware.com';
 my $gpg_home = '';
@@ -142,8 +159,11 @@ $spec{'genesis-deb=s'}         = \@genesis_debs;
 $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
 $spec{'require-ppc-genesis!'}  = \$require_ppc_genesis;
+$spec{'publish!'}              = \$publish;        # run the finalization (assemble+sign+gate+tarball)
+$spec{'expect-arch=s'}         = \@expect_arch;   # repeatable; each value may be a space/comma list
 $spec{'verify-repo=s'}         = \$verify_repo_arg;   # standalone gate: --verify-repo=<apt_dir>
-$spec{'no-verify-repo!'}       = \$no_verify_repo;    # suppress the automatic post-assembly gate
+$spec{'no-verify-repo!'}       = \$no_verify_repo;    # suppress the automatic pre-swap gate
+$spec{'no-verify-signature!'}  = \$no_verify_signature;   # explicit opt-out of the signature check
 $spec{'output=s'}              = \$output_root;   # --output alias
 $spec{'help|h'}                = sub { pod2usage(-verbose => 1, -exitval => 0); };
 $spec{'man'}                   = sub { pod2usage(-verbose => 2, -exitval => 0); };
@@ -179,6 +199,29 @@ for my $cn (@dist_list) {
     die "FATAL: unknown codename '$cn' (known: @{[known_codenames()]})\n" unless codename_to_version($cn);
 }
 
+@expect_arch = grep { length } map { split /[\s,]+/ } @expect_arch;
+for my $a (@expect_arch) {
+    die "FATAL: unsupported --expect-arch '$a' (amd64|ppc64el)\n" unless $a =~ /^(amd64|ppc64el)$/;
+}
+
+# ---------------------------------------------------------------------------------------------------
+# Publishing: an ARCH BUILD RUN STAGES ONLY; publishing is a SEPARATE, SINGLY-LOCKED, ATOMIC step.
+#
+# The two arches build CONCURRENTLY on their two hosts against the same --apt-dir on the shared tree.
+# If both were allowed to assemble, they would wipe and repopulate the same pool/, dists/, Release,
+# InRelease and tarball at the same time and interleave into a corrupt (but green) repository. The
+# per-arch run lock does NOT prevent that -- it is per-arch by design, so the two arches can build in
+# parallel (PR #63 review concern #1).
+#
+# So the phases are split by ROLE:
+#   * a run that BUILDS (no --skip-build) produces staging artifacts and stops there;
+#   * publishing happens only when asked for with --publish -- or implicitly on a run that builds
+#     nothing (--skip-build), which IS the finalization step -- and it takes ONE GLOBAL publish lock
+#     and swaps a fully-assembled, fully-verified tree into place with a single rename().
+# --skip-createrepo (the shared CLI's "do not build a repo") always wins and suppresses publishing.
+$publish = ($skip_build ? 1 : 0) unless defined $publish;
+$publish = 0 if $skip_createrepo;
+
 $output_root ||= "$repo_root/build-output/sbuild-all";
 $apt_dir     ||= "$repo_root/repos/apt";
 $run_id      ||= strftime("%Y%m%d-%H%M%S", localtime());
@@ -190,13 +233,24 @@ my %MANIFEST = read_manifest($manifest);
 
 # Standalone gate: --verify-repo=<apt_dir> checks an already-assembled apt tree (completeness +
 # Release signatures) using THIS script's manifest resolution (--manifest or the default
-# debs-manifest.conf), --dists, and --gpg-key-id/--gpg-home, then exits. It takes NO run lock and does
-# NOT build. Dispatched here (after manifest + @dist_list are resolved) so it never trips the
-# build-only per-target section check below and never reaches the lock/build phases.
+# debs-manifest.conf), --dists, --expect-arch, and --gpg-key-id/--gpg-home, then exits. It takes NO run
+# lock and does NOT build. Dispatched here (after manifest + @dist_list are resolved) so it never trips
+# the build-only per-target section check below and never reaches the lock/build phases.
+#
+# Two deliberate STRICTNESS choices here (PR #63 review concern #3), both of which used to be
+# false-PASSes:
+#   * The signature IS verified by default. It used to be skipped unless --gpg-home happened to be
+#     given, so the common `--verify-repo <dir>` invocation silently checked completeness only.
+#     --no-verify-signature is the explicit opt-out.
+#   * The expected architecture set is a CLAIM, never "whatever is present": --expect-arch if given,
+#     else the arch set each codename's own Release advertises to apt clients. An entirely missing
+#     binary-<arch> therefore reads as MISSING-ARCH, not as "that arch was not built this run".
 if (length $verify_repo_arg) {
     die "FATAL: --verify-repo apt dir not found: $verify_repo_arg\n" unless -d $verify_repo_arg;
     print_step('Standalone repo verification (no build, no lock)');
-    verify_assembled_repo(\%MANIFEST, abs_path($verify_repo_arg), \@dist_list, [$arch]);
+    my $adir = abs_path($verify_repo_arg);
+    verify_assembled_repo(\%MANIFEST, $adir, \@dist_list,
+        resolve_expect_arches('standalone', $adir), !$no_verify_signature);
     exit 0;
 }
 
@@ -238,6 +292,11 @@ print "  apt-dir:     $apt_dir\n";
 print "  staging:     $staging\n";
 print "  run-id:      $run_id   snap-ts: $snap_ts   build-number: " . (defined $build_number ? $build_number : '(none)') . "\n";
 print "  gpg-sign:    " . ($gpg_sign ? "yes (key $gpg_key_id)" : "no") . "\n";
+print "  publish:     " . ($publish
+    ? "yes (assemble + sign + gate + swap into $apt_dir, under the global publish lock)"
+    : "no (STAGING ONLY -- re-run with --publish, or run the separate finalization step)") . "\n";
+print "  expect-arch: " . (@expect_arch ? "@expect_arch" : '(derive from the staged arch set)') . "\n"
+    if $publish;
 print "  dry-run:     " . ($dry_run ? "yes" : "no") . "\n";
 
 # ---------------------------------------------------------------------------------------------------
@@ -294,6 +353,35 @@ sub have_chroot {
     my $out = `schroot -l 2>/dev/null`;
     return $out =~ /^chroot:\Q$name\E$/m ? 1 : 0;
 }
+
+# ensure_disposable_chroot($name): make sure a `schroot -c <name> -- ...` session gets a THROWAWAY
+# filesystem, so each package builds in a clean environment and one package's build-dependencies can
+# never leak into the next (PR #63 review concern #2 -- see BuildUtils::chroot_is_disposable).
+# sbuild-createchroot normally writes union-type=overlay; a chroot created before that (or by hand)
+# may not have it. Repair the chroot.d entry in place, then re-check and hard-fail if it still is not
+# disposable -- silently building in a shared, mutable chroot is exactly what must not happen.
+sub ensure_disposable_chroot {
+    my ($name) = @_;
+    return 1 if $dry_run;
+    my $cfg = `schroot --config -c ${\ sh_quote($name) } 2>/dev/null` // '';
+    return 1 if chroot_is_disposable($cfg);
+    my ($file) = grep { -f $_ && do { local $/; open my $fh, '<', $_ or 0;
+                                      my $t = <$fh>; close $fh; $t =~ /^\[\Q$name\E\]/m } }
+                 glob('/etc/schroot/chroot.d/*');
+    if ($file) {
+        print "  chroot $name: NOT disposable -> adding union-type=overlay to $file\n";
+        run("sed -i " . sh_quote("/^union-type=/d") . " " . sh_quote($file));
+        run("printf '%s\\n' 'union-type=overlay' >> " . sh_quote($file));
+        $cfg = `schroot --config -c ${\ sh_quote($name) } 2>/dev/null` // '';
+    }
+    die "FATAL: chroot $name is not disposable (no union/snapshot session): a build would mutate the\n"
+      . "  shared base filesystem and leak build-dependencies into the next package. Add\n"
+      . "  'union-type=overlay' to its /etc/schroot/chroot.d/ entry, or delete the chroot so this\n"
+      . "  script re-creates it.\n"
+        unless chroot_is_disposable($cfg);
+    return 1;
+}
+
 sub ensure_chroots {
     print_step('Ensure sbuild chroots (auto-init on first run)');
     die "FATAL: chroot init requires root (uid=$>)\n" if $> != 0 && !$dry_run;
@@ -305,7 +393,11 @@ sub ensure_chroots {
        ."echo '/opt/xcat-ci-shared  /opt/xcat-ci-shared  none  rw,bind  0  0' >> $fstab", nofail => 1);
     for my $cn (@dist_list) {
         my $name = chroot_name($cn, $arch);
-        if (have_chroot($name)) { print "  chroot $name: present\n"; next; }
+        if (have_chroot($name)) {
+            print "  chroot $name: present\n";
+            ensure_disposable_chroot($name);
+            next;
+        }
         print "  chroot $name: MISSING -> creating\n";
         # debootstrap may lack a script for a new codename -> fall back to the generic one.
         run("[ -e /usr/share/debootstrap/scripts/$cn ] || ln -sf gutsy /usr/share/debootstrap/scripts/$cn", nofail => 1);
@@ -321,6 +413,8 @@ sub ensure_chroots {
         } else { print "+ write $root/etc/apt/sources.list (main+universe)\n"; }
         run("mkdir -p $root/opt/xcat-ci-shared", nofail => 1);   # bind-mount target for the shared tree
         die "FATAL: chroot $name still absent after create\n" if !$dry_run && !have_chroot($name);
+        # Each package MUST build in a throwaway session (see ensure_disposable_chroot).
+        ensure_disposable_chroot($name);
         print "  chroot $name: created\n";
     }
 }
@@ -644,59 +738,120 @@ sub sig_observed_key {
     return $obs_fpr ne '' ? $obs_fpr : undef;
 }
 
-# verify_assembled_repo($manifest_href, $apt_dir, $dists_aref): the ONE completeness+signature gate,
-# shared by the automatic post-assembly run (end of assemble_apt) and the standalone --verify-repo mode.
-# It is the IO layer: it PARSES the repository (parse_packages_index of each published
-# binary-<arch>/Packages -> %present; gpg --verify of each dists/<cn>/InRelease -> %observed signer),
-# PARSES the manifest (-> %expected pkg pins per cell) and resolves the GPG key (--gpg-key-id -> expected
-# signer), then delegates the DECISION to the pure verify_repo_packages (per codename x arch) and
-# verify_repo_signature (per codename). Package problems are [<cn>/<arch>]-prefixed; the pure signature
-# problems already carry the codename unit. Any problem dies non-zero.
+# release_claimed_arches($adir, $cn): the architecture set dists/<cn>/Release ADVERTISES to apt
+# clients ("Architectures:"), or the empty list when there is no Release. The repo's own claim, which
+# is what the standalone gate holds it to when no --expect-arch is given.
+sub release_claimed_arches {
+    my ($adir, $cn) = @_;
+    my $rel = "$adir/dists/$cn/Release";
+    $rel = "$adir/dists/$cn/InRelease" unless -f $rel;
+    return () unless -f $rel;
+    open my $fh, '<', $rel or return ();
+    local $/; my $t = <$fh>; close $fh;
+    return parse_release_architectures($t);
+}
+
+# resolve_expect_arches($mode, $adir): the architecture set the published repo is REQUIRED to serve.
+#
+# This is the crux of PR #63 review concern #3. It must be a CLAIM someone made, never an inference
+# from "which binary-<arch> directories happen to be populated" -- because inferring it from presence
+# is precisely what turns an entirely missing secondary architecture into a silent PASS ("ppc64el is
+# absent, so this run must not have built ppc64el"). Sources, in order:
+#   1. --expect-arch          -- explicit; always wins. This is what the CD pipeline passes.
+#   2. mode 'publish'         -- the arch set actually STAGED under staging/<cn>/<arch> (every one of
+#                                which passed validate_manifest), unioned with this host's --arch.
+#                                That is the set this publish intends to ship.
+#   3. mode 'standalone'      -- the union of what each codename's own Release advertises, unioned
+#                                with --arch. Verifying a repo against its published claim is what
+#                                catches "Release says amd64 ppc64el, but binary-ppc64el is missing".
+sub resolve_expect_arches {
+    my ($mode, $adir) = @_;
+    if (@expect_arch) {
+        my %u = map { $_ => 1 } @expect_arch;
+        return [sort keys %u];
+    }
+    my %u = ($arch => 1);
+    if ($mode eq 'publish') {
+        for my $cn (@dist_list) {
+            for my $d (glob("$staging/$cn/*")) {
+                next unless -d $d;
+                my $a = basename($d);
+                $u{$a} = 1 if $a =~ /^(amd64|ppc64el)$/;
+            }
+        }
+        print "  expected arches (from the staged set): " . join(' ', sort keys %u) . "\n";
+    } else {
+        for my $cn (@dist_list) { $u{$_} = 1 for release_claimed_arches($adir, $cn); }
+        print "  expected arches (from each codename's Release 'Architectures:'): "
+            . join(' ', sort keys %u) . "\n";
+    }
+    return [sort keys %u];
+}
+
+# verify_assembled_repo($manifest_href, $apt_dir, $dists_aref, $expect_arches_aref, $sig_required):
+# the ONE completeness+signature gate, shared by the automatic pre-swap run (inside publish_repo) and
+# the standalone --verify-repo mode. It is the IO layer: it PARSES the repository (parse_packages_index
+# of each published binary-<arch>/Packages -> %present; gpg --verify of each dists/<cn>/InRelease ->
+# %observed signer), PARSES the manifest (-> %expected pkg pins per cell) and resolves the GPG key
+# (--gpg-key-id -> expected signer), then delegates the DECISION to the pure verify_repo_arches (the
+# arch set), verify_repo_packages (per codename x arch) and verify_repo_signature (per codename).
+# Package problems are [<cn>/<arch>]-prefixed; the pure arch/signature problems already carry their
+# unit. Any problem dies non-zero.
+#
+# $expect_arches_aref is the EXPECTED arch set from resolve_expect_arches -- required and non-empty.
+# Every expected arch is checked (a missing index is MISSING-INDEX, an index with no native package is
+# MISSING-ARCH), and any arch that published natives WITHOUT being expected is UNEXPECTED-ARCH. The
+# gate never derives what it should demand from what it happens to find.
 sub verify_assembled_repo {
-    my ($man, $adir, $dists, $arches, $sig_enabled) = @_;
+    my ($man, $adir, $dists, $arches, $sig_required) = @_;
     my @all;
-    # $sig_enabled: whether a valid signature is REQUIRED. The post-assembly auto-run passes $gpg_sign
-    # -- a repo assembled WITHOUT --gpg-sign is intentionally unsigned, so don't demand a signature and
-    # false-fail. Standalone --verify-repo passes undef -> fall back to "a gpg key/home is configured".
-    $sig_enabled = ($gpg_home ne '' || $gpg_sign) unless defined $sig_enabled;
-    my $expected_key = $sig_enabled ? resolve_expected_key() : undef;
+    my @expected = sort @{ $arches || [] };
+    die "FATAL: verify_assembled_repo: no expected architecture set (pass --expect-arch)\n"
+        unless @expected;
+    # $sig_required: whether a valid signature is DEMANDED. The pre-swap auto-run passes $gpg_sign --
+    # a repo assembled WITHOUT --gpg-sign is intentionally unsigned, so don't demand a signature and
+    # false-fail. Standalone --verify-repo passes !--no-verify-signature, i.e. ON unless opted out.
+    my $expected_key = $sig_required ? resolve_expected_key() : undef;
     my $expected_is_fpr = defined($expected_key) ? 1 : 0;
     print "  apt-dir: $adir\n";
-    print "  signature check: " . ($sig_enabled
+    print "  expected arches: " . join(' ', @expected) . "\n";
+    print "  signature check: " . ($sig_required
         ? "on (expected key " . ($expected_key // $gpg_key_id) . ($expected_is_fpr ? '' : ' [UNRESOLVED -> hard fail]') . ")"
-        : "SKIPPED (no --gpg-home/--gpg-sign)") . "\n";
+        : "OFF (" . ($no_verify_signature ? '--no-verify-signature'
+                                          : 'repo assembled without --gpg-sign') . ")") . "\n";
     # STRICT: if signing is expected but --gpg-key-id does not resolve to a fingerprint (not in the
     # keyring), we CANNOT confirm the signer -- that is a hard failure, never a presence-only pass.
-    push @all, "SIGKEY: cannot resolve --gpg-key-id '$gpg_key_id' to a fingerprint (in the $gpg_home keyring?)"
-        if $sig_enabled && !$expected_is_fpr;
+    push @all, "SIGKEY: cannot resolve --gpg-key-id '$gpg_key_id' to a fingerprint (in the "
+             . ($gpg_home ne '' ? $gpg_home : 'ambient GNUPGHOME') . " keyring?)"
+        if $sig_required && !$expected_is_fpr;
 
-    my (%exp_sig, %obs_sig, %checked_arch);
+    my (%exp_sig, %obs_sig);
     for my $cn (@$dists) {
-        # Arches to verify for THIS codename: the caller's --arch set (the required FLOOR -- always
-        # checked, so an explicitly-requested arch whose index is empty/missing is still caught)
-        # UNIONed with any arch that actually published a non-empty binary-<arch>/Packages. This lets
-        # the multi-arch assemble (invoked with a single --arch amd64) still verify the ppc64el debs it
-        # carries, while a genuinely single-arch run (e.g. BUILD_PPC=false, amd64 only) never
-        # false-fails demanding an arch it did not build.
-        my %want = map { $_ => 1 } @{ $arches || [] };
-        # Add an arch iff it published NATIVE debs (a Packages stanza with Architecture == that arch),
-        # NOT merely a non-empty index: every binary-<arch>/Packages carries the Architecture:all debs
-        # (grub2-xcat, genesis), so a non-empty ppc index does NOT imply ppc was built. Native-arch
-        # detection keeps a genuine single-arch run (BUILD_PPC=false) from demanding the ppc section.
-        for my $a (qw(amd64 ppc64el)) {
+        # Which arches carry NATIVE debs here (a Packages stanza with Architecture == that arch), as
+        # opposed to only the Architecture:all debs (grub2-xcat, genesis) that ride into EVERY
+        # binary-<arch> index. Collected for the EXPECTED set plus the other supported arches, so the
+        # pure verify_repo_arches can report both directions: expected-but-absent and present-but-
+        # unexpected (a stale arch left behind in the tree).
+        my %native;
+        for my $a (do { my %s = map { $_ => 1 } (@expected, qw(amd64 ppc64el)); sort keys %s }) {
             my $idx = "$adir/dists/$cn/main/binary-$a/Packages";
+            $native{$a} = 0;
             next unless -f $idx;
             open my $ifh, '<', $idx or next;
             local $/; my $body = <$ifh>; close $ifh;
-            $want{$a} = 1 if index_has_native_arch($body, $a);
+            $native{$a} = index_has_native_arch($body, $a) ? 1 : 0;
         }
+        push @all, map { "[$cn] $_" } verify_repo_arches(\@expected, \%native);
+
         # completeness: manifest (source of truth) vs the PUBLISHED index, per codename x arch.
-        for my $a (sort keys %want) {
-            $checked_arch{$a} = 1;
+        for my $a (@expected) {
             my $tgt = "$cn-$a";
             my $req = $man->{$tgt};
+            # A cell we are REQUIRED to serve but have no manifest section for cannot be verified at
+            # all -- that is a configuration error, not a reason to pass it. (It used to be silently
+            # skipped, which made an unlisted target a free PASS.)
             unless ($req && %$req) {
-                print "  [$cn/$a] no manifest section [$tgt] -- skipping (codename does not target this arch)\n";
+                push @all, "[$cn/$a] NO-MANIFEST section [$tgt] in $manifest, but $a is expected";
                 next;
             }
             my @names = required_pkgs([sort keys %$req], $skip_genesis, $skip_xcat_dep);
@@ -711,73 +866,111 @@ sub verify_assembled_repo {
         }
         # signature IO: record the expected + observed signer for this codename (compared in bulk below).
         # Only when the expected key resolved to a fingerprint (else the SIGKEY hard-fail above stands).
-        if ($sig_enabled && $expected_is_fpr) {
+        if ($sig_required && $expected_is_fpr) {
             $exp_sig{$cn} = $expected_key;
             $obs_sig{$cn} = sig_observed_key($adir, $cn);
         }
     }
-    push @all, verify_repo_signature(\%exp_sig, \%obs_sig) if $sig_enabled && $expected_is_fpr;
+    push @all, verify_repo_signature(\%exp_sig, \%obs_sig) if $sig_required && $expected_is_fpr;
 
     if (@all) {
         print "$_\n" for @all;
         die "FATAL: apt repo INCOMPLETE (" . scalar(@all) . " problem(s))\n";
     }
     print "[verify-repo] complete: all required packages present + version-pinned"
-        . ($sig_enabled ? " + Release signatures valid (key $expected_key)" : "")
-        . " for [" . join(' ', @$dists) . "] x {" . join(',', sort keys %checked_arch) . "}\n";
+        . ($sig_required ? " + Release signatures valid (key $expected_key)" : "")
+        . " for [" . join(' ', @$dists) . "] x {" . join(',', @expected) . "}\n";
     return;
 }
 
 # ---------------------------------------------------------------------------------------------------
-# Phase: assemble + sign the apt repo (absorbed build-apt-repo.sh; promote-on-success)
+# Phase: PUBLISH -- the single, locked, atomic finalization (absorbed build-apt-repo.sh).
+#
+# Concern #1 of the PR #63 review: the amd64 and ppc64el build runs execute CONCURRENTLY on their two
+# hosts against the same --apt-dir. Two publishers there would interleave their wipes and rewrites of
+# pool/, dists/, Release, InRelease and the tarball. The fix has three parts:
+#
+#   1. Build runs do not publish at all (see the $publish decision above): they only fill staging.
+#      Publishing is a separate step, run once, after every arch has staged and validated.
+#   2. That step takes ONE GLOBAL publish lock -- not the per-arch build lock -- so even a mistaken
+#      second publisher (cron racing a manual run on the same host) serializes instead of interleaving.
+#   3. It assembles into a SIDE TREE and swaps it in with rename(2) once the gate has passed. A reader
+#      (deploy.sh's rsync, an apt client on a served tree) therefore only ever sees the previous
+#      complete repo or the new complete repo -- never a half-wiped pool or an index that does not
+#      match its Release. A failed gate leaves the published tree untouched.
+#
+# The lock file lives on the shared tree; within a host flock() is authoritative, which is what
+# matters, since the pipeline's finalization step always runs on one host (the amd64 Ubuntu builder).
 # ---------------------------------------------------------------------------------------------------
-sub assemble_apt {
-    return if $skip_createrepo;
-    print_step('Assemble apt repo (promote validated staging -> published repo)');
-    run("command -v apt-ftparchive >/dev/null 2>&1 || { echo 'need apt-utils' >&2; exit 1; }", always => 1) unless $dry_run;
+my $PUBLISH_LOCK_FH;
+my $PUBLISH_LOCK_WAIT = 1800;   # seconds to wait for a concurrent publisher before giving up
+
+sub acquire_publish_lock {
+    make_path($output_root);
+    my $lockfile = "$output_root/.sbuild-all.publish.lock";
+    open($PUBLISH_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open publish lock $lockfile: $!\n";
+    unless (flock($PUBLISH_LOCK_FH, LOCK_EX | LOCK_NB)) {
+        print "  publish lock is held by another run -- waiting up to ${PUBLISH_LOCK_WAIT}s: $lockfile\n";
+        local $SIG{ALRM} = sub {
+            die "FATAL: timed out after ${PUBLISH_LOCK_WAIT}s waiting for the publish lock $lockfile\n";
+        };
+        alarm($PUBLISH_LOCK_WAIT);
+        my $ok = flock($PUBLISH_LOCK_FH, LOCK_EX);
+        alarm(0);
+        die "FATAL: cannot take the publish lock $lockfile: $!\n" unless $ok;
+    }
+    print "  publish lock acquired: $lockfile\n";
+    return $lockfile;
+}
+
+# assemble_into($dir, $expect_arches): (re)assemble every --dists codename inside $dir from the
+# validated staging tree, index it per expected binary-<arch>, write + sign Release. $dir is the SIDE
+# tree, never the published one.
+sub assemble_into {
+    my ($dir, $expect) = @_;
     for my $cn (@dist_list) {
         my $ver = codename_to_version($cn);
-        my $pool = "$apt_dir/pool/main/$cn";
-        # wipe ONLY this codename's published pool+dists, then repopulate from validated staging
-        # (both arches: staging/<cn>/{amd64,ppc64el}/*.deb). Wiping first is what removes stale debs
-        # from a prior run so the published repo never carries a mixture (concern #1).
-        wipe_tree($pool, "$apt_dir/dists/$cn", "$apt_dir/$ver") unless $dry_run;
-        make_path($pool, "$apt_dir/$ver") unless $dry_run;
-        unless ($dry_run) {
-            # Collect this codename's staged debs across both arches, deduping on binary package
-            # NAME+ARCH: if two files resolve to the same package+arch (e.g. a native ppc genesis and
-            # an amd64-host cross-converted one both claiming xcat-genesis-base-ppc64el/all) only ONE
-            # may reach the pool. Keep the highest version and warn naming both -- a safety net that
-            # holds regardless of the --skip-genesis single-producer contract (concern #4).
-            my %best;   # "name|arch" => { file => path, ver => version }
-            for my $deb (glob("$staging/$cn/*/*.deb")) {
-                my $name  = deb_field($deb, 'Package');
-                my $darch = deb_field($deb, 'Architecture');
-                my $dver  = deb_field($deb, 'Version');
-                my $key   = "$name|$darch";
-                if (my $cur = $best{$key}) {
-                    my $new_wins = deb_ver_gt($dver, $cur->{ver});
-                    my ($win, $lose) = $new_wins ? ($deb, $cur->{file}) : ($cur->{file}, $deb);
-                    warn "WARN: duplicate binary $name/$darch in staging for $cn -- keeping "
-                       . basename($win) . ", dropping " . basename($lose) . "\n";
-                    $best{$key} = { file => $deb, ver => $dver } if $new_wins;
-                    next;
-                }
-                $best{$key} = { file => $deb, ver => $dver };
+        my $pool = "$dir/pool/main/$cn";
+        # wipe ONLY this codename's pool+dists in the side tree, then repopulate from validated
+        # staging (all arches: staging/<cn>/{amd64,ppc64el}/*.deb). Wiping first is what removes stale
+        # debs from a prior run so the published repo never carries a mixture.
+        wipe_tree($pool, "$dir/dists/$cn", "$dir/$ver");
+        make_path($pool, "$dir/$ver");
+        # Collect this codename's staged debs across both arches, deduping on binary package
+        # NAME+ARCH: if two files resolve to the same package+arch (e.g. a native ppc genesis and
+        # an amd64-host cross-converted one both claiming xcat-genesis-base-ppc64el/all) only ONE
+        # may reach the pool. Keep the highest version and warn naming both -- a safety net that
+        # holds regardless of the --skip-genesis single-producer contract.
+        my %best;   # "name|arch" => { file => path, ver => version }
+        for my $deb (glob("$staging/$cn/*/*.deb")) {
+            my $name  = deb_field($deb, 'Package');
+            my $darch = deb_field($deb, 'Architecture');
+            my $dver  = deb_field($deb, 'Version');
+            my $key   = "$name|$darch";
+            if (my $cur = $best{$key}) {
+                my $new_wins = deb_ver_gt($dver, $cur->{ver});
+                my ($win, $lose) = $new_wins ? ($deb, $cur->{file}) : ($cur->{file}, $deb);
+                warn "WARN: duplicate binary $name/$darch in staging for $cn -- keeping "
+                   . basename($win) . ", dropping " . basename($lose) . "\n";
+                $best{$key} = { file => $deb, ver => $dver } if $new_wins;
+                next;
             }
-            for my $key (sort keys %best) {
-                my $deb = $best{$key}{file};
-                my $b = basename($deb);
-                link($deb, "$pool/$b") or copy($deb, "$pool/$b");
-                copy($deb, "$apt_dir/$ver/$b");
-            }
+            $best{$key} = { file => $deb, ver => $dver };
         }
-        # Packages index per binary-<arch>: an arch's index carries that arch's debs + all Architecture:all.
-        for my $a (qw(amd64 ppc64el)) {
-            my $bindir = "$apt_dir/dists/$cn/main/binary-$a";
-            make_path($bindir) unless $dry_run;
-            next if $dry_run;
-            my $all = `cd ${\ sh_quote($apt_dir)} && apt-ftparchive packages pool/main/$cn`;
+        for my $key (sort keys %best) {
+            my $deb = $best{$key}{file};
+            my $b = basename($deb);
+            link($deb, "$pool/$b") or copy($deb, "$pool/$b");
+            copy($deb, "$dir/$ver/$b");
+        }
+        # Packages index per EXPECTED binary-<arch>: an arch's index carries that arch's debs + all
+        # Architecture:all. Only the expected arches get an index -- writing a binary-ppc64el index
+        # containing nothing but the Architecture:all debs would advertise a ppc64el repo that cannot
+        # actually satisfy a ppc64el client (and would then be mistaken for "ppc was published").
+        my $all = `cd ${\ sh_quote($dir)} && apt-ftparchive packages pool/main/$cn`;
+        for my $a (@$expect) {
+            my $bindir = "$dir/dists/$cn/main/binary-$a";
+            make_path($bindir);
             open my $pf, '>', "$bindir/Packages" or die "write Packages: $!\n";
             for my $para (split /\n\n+/, $all) {
                 next unless $para =~ /\S/;
@@ -787,61 +980,130 @@ sub assemble_apt {
             close $pf;
             run("gzip -9 -kf -n " . sh_quote("$bindir/Packages"));
         }
-        next if $dry_run;
-        # Advertise ONLY the arches actually staged for this codename: an arch counts iff its
-        # binary-<arch>/Packages is non-empty. A single-arch run must not claim a missing arch in
-        # Release (apt would then error on the absent index).
-        my @staged_arches = grep { -s "$apt_dir/dists/$cn/main/binary-$_/Packages" } qw(amd64 ppc64el);
-        @staged_arches = ('amd64') unless @staged_arches;   # never emit an empty Architectures line
-        # Release + sign
+        # Release advertises EXACTLY the expected arch set -- the same claim the gate then holds the
+        # tree to, and the claim a later standalone --verify-repo falls back on.
         my @rel = ('apt-ftparchive',
             '-o', 'APT::FTPArchive::Release::Origin=xCAT',
             '-o', 'APT::FTPArchive::Release::Label=xcat-dep',
             '-o', "APT::FTPArchive::Release::Suite=$cn",
             '-o', "APT::FTPArchive::Release::Codename=$cn",
-            '-o', 'APT::FTPArchive::Release::Architectures=' . join(' ', @staged_arches),
+            '-o', 'APT::FTPArchive::Release::Architectures=' . join(' ', @$expect),
             '-o', 'APT::FTPArchive::Release::Components=main',
             '-o', "APT::FTPArchive::Release::Description=xCAT dependency packages for $ver",
-            'release', "$apt_dir/dists/$cn/");
-        run(join(' ', map { sh_quote($_) } @rel) . " > " . sh_quote("$apt_dir/dists/$cn/Release"));
+            'release', "$dir/dists/$cn/");
+        run(join(' ', map { sh_quote($_) } @rel) . " > " . sh_quote("$dir/dists/$cn/Release"));
         my $det = strftime("%a, %d %b %Y %H:%M:%S +0000", gmtime($build_timestamp));
-        run("sed -i " . sh_quote("s/^Date: .*/Date: $det/") . " " . sh_quote("$apt_dir/dists/$cn/Release"), nofail => 1);
+        run("sed -i " . sh_quote("s/^Date: .*/Date: $det/") . " " . sh_quote("$dir/dists/$cn/Release"), nofail => 1);
         if ($gpg_sign) {
             my $g = $gpg_home ? "GNUPGHOME=" . sh_quote($gpg_home) . " " : '';
-            my $rel = "$apt_dir/dists/$cn/Release";
+            my $rel = "$dir/dists/$cn/Release";
             run("${g}gpg --default-key " . sh_quote($gpg_key_id) . " --batch --yes --armor --detach-sign -o "
                . sh_quote("$rel.gpg") . " " . sh_quote($rel));
             run("${g}gpg --default-key " . sh_quote($gpg_key_id) . " --batch --yes --armor --clearsign -o "
-               . sh_quote("$apt_dir/dists/$cn/InRelease") . " " . sh_quote($rel));
+               . sh_quote("$dir/dists/$cn/InRelease") . " " . sh_quote($rel));
         }
-        print "  assembled + " . ($gpg_sign ? 'signed' : 'UNSIGNED') . " apt tree for $cn\n";
+        print "  assembled + " . ($gpg_sign ? 'signed' : 'UNSIGNED') . " apt tree for $cn ("
+            . join(' ', @$expect) . ")\n";
     }
     # export the signing pubkey for clients
-    if ($gpg_sign && !$dry_run) {
+    if ($gpg_sign) {
         my $g = $gpg_home ? "GNUPGHOME=" . sh_quote($gpg_home) . " " : '';
         my $keysrc = "$repo_root/repomd.xml.key";
-        if (-f $keysrc) { copy($keysrc, "$apt_dir/xcat-dep.asc"); }
-        else { run("${g}gpg --armor --export " . sh_quote($gpg_key_id) . " > " . sh_quote("$apt_dir/xcat-dep.asc"), nofail => 1); }
-    }
-    # Automatic post-assembly GATE on the just-published index (completeness + Release signatures).
-    # Runs once every codename's dists/<cn>/.../Packages + signed Release are written. Suppressed with
-    # --no-verify-repo (iteration/debug); skipped under --dry-run (nothing was published).
-    unless ($no_verify_repo || $dry_run) {
-        print_step('Verify published apt repo (post-assembly completeness + signature gate)');
-        # Require a valid signature iff we actually signed (--gpg-sign); a repo assembled without it is
-        # intentionally unsigned and must not false-fail. (Standalone --verify-repo omits this arg.)
-        verify_assembled_repo(\%MANIFEST, $apt_dir, \@dist_list, [$arch], $gpg_sign);
+        if (-f $keysrc) { copy($keysrc, "$dir/xcat-dep.asc"); }
+        else { run("${g}gpg --armor --export " . sh_quote($gpg_key_id) . " > " . sh_quote("$dir/xcat-dep.asc"), nofail => 1); }
     }
 }
 
+# swap_into_place($tmp, $target): publish $tmp AS $target with rename(2) -- the only moment the
+# published repo changes, and it changes all at once. Both paths are siblings, so both renames are
+# same-filesystem and atomic. If the second rename fails the previous tree is put straight back.
+sub swap_into_place {
+    my ($tmp, $target) = @_;
+    my $old = "$target.old-$run_id.$$";
+    wipe_tree($old) if -d $old;
+    my $had_old = 0;
+    if (-d $target) {
+        rename($target, $old) or die "FATAL: cannot move the published repo aside ($target -> $old): $!\n";
+        $had_old = 1;
+    }
+    unless (rename($tmp, $target)) {
+        my $err = $!;
+        rename($old, $target) if $had_old;   # put the previous repo back; nothing was lost
+        die "FATAL: cannot swap the assembled repo into place ($tmp -> $target): $err\n";
+    }
+    print "  published atomically: $target\n";
+    wipe_tree($old) if $had_old;
+}
+
+sub publish_repo {
+    unless ($publish) {
+        print_step('Publish SKIPPED -- this run produced STAGING ONLY');
+        print "  staged under $staging (arch $arch)\n";
+        print "  the apt repo at $apt_dir is untouched: publishing is a separate, singly-locked,\n"
+            . "  atomic step so two concurrent arch builds can never rewrite it at the same time.\n"
+            . "  Finalize with:  sbuild-all.pl --skip-build --skip-genesis --publish "
+            . "--expect-arch \"<arches>\" --gpg-sign ...\n";
+        return;
+    }
+    print_step('Publish apt repo (locked, assembled aside, swapped in atomically)');
+    my $expect = resolve_expect_arches('publish', $apt_dir);
+    if ($dry_run) {
+        print "  [dry-run] would lock $output_root/.sbuild-all.publish.lock, assemble @dist_list for "
+            . join(' ', @$expect) . " into $apt_dir.publish-<run-id>.<pid>, gate it, then rename it "
+            . "onto $apt_dir\n";
+        return;
+    }
+    run("command -v apt-ftparchive >/dev/null 2>&1 || { echo 'need apt-utils' >&2; exit 1; }", always => 1);
+    warn "WARN: publishing an UNSIGNED apt repo (no --gpg-sign) -- apt clients will reject it\n"
+        unless $gpg_sign;
+    acquire_publish_lock();
+
+    # Side-tree name carries the pid too: --run-id has second granularity, and two runs that start in
+    # the same second must not pick the same scratch path.
+    my $tmp = "$apt_dir.publish-$run_id.$$";
+    wipe_tree($tmp) if -e $tmp;
+    make_path(dirname($apt_dir), $tmp);
+    # Seed the side tree from the currently published one so codenames OUTSIDE --dists survive the
+    # swap (a --dists noble run must not drop focal/jammy/resolute). A hardlink copy is cheap and
+    # safe here: assemble_into only unlinks and re-creates files, it never writes through a link.
+    if (-d $apt_dir) {
+        run("cp -al " . sh_quote("$apt_dir/.") . " " . sh_quote("$tmp/") . " 2>/dev/null || "
+          . "cp -a " . sh_quote("$apt_dir/.") . " " . sh_quote("$tmp/"));
+    }
+
+    # Assemble, then GATE BEFORE PUBLISH: the completeness + signature check runs against the side
+    # tree, so an incomplete or mis-signed repo is never swapped in -- the previously published tree
+    # stays exactly as it was. The gate is suppressed with --no-verify-repo (iteration/debug).
+    # Anything that fails here takes the side tree with it and leaves $apt_dir untouched.
+    eval {
+        assemble_into($tmp, $expect);
+        unless ($no_verify_repo) {
+            print_step('Verify assembled apt repo (completeness + signature gate, before publishing)');
+            # Require a valid signature iff we actually signed (--gpg-sign); a repo assembled without
+            # it is intentionally unsigned and must not false-fail.
+            verify_assembled_repo(\%MANIFEST, $tmp, \@dist_list, $expect, $gpg_sign);
+        }
+        1;
+    } or do {
+        my $err = $@ || "unknown error\n";
+        print "  NOT publishing: $apt_dir keeps its previous contents\n";
+        wipe_tree($tmp) if -d $tmp;
+        die $err;
+    };
+
+    swap_into_place($tmp, $apt_dir);
+    make_tarball();
+}
+
 # ---------------------------------------------------------------------------------------------------
-# Phase: tarball (optional)
+# Phase: tarball (optional) -- part of PUBLISH, under the same lock. A per-arch build run must not tar
+# the shared apt tree: with both arches running it would archive a tree the other arch is rewriting.
 # ---------------------------------------------------------------------------------------------------
 sub make_tarball {
     return if $skip_tarball;
     print_step('Tarball');
     my $tb = "$output_root/$run_id/xcat-dep-$arch-$run_id.tar.gz";
-    make_path(dirname($tb)) unless $dry_run;   # the run dir may not exist yet (e.g. an assemble-only run)
+    make_path(dirname($tb));   # the run dir may not exist yet (e.g. a publish-only run)
     run("tar -C " . sh_quote(dirname($apt_dir)) . " -czf " . sh_quote($tb) . " " . sh_quote(basename($apt_dir)), nofail => 1);
     print "  $tb\n";
 }
@@ -855,9 +1117,8 @@ unless ($skip_build) {
 }
 build_genesis()    unless $skip_genesis;
 validate_manifest();
-assemble_apt();
-make_tarball();
-print_step("Completed ($arch: @dist_list)");
+publish_repo();      # no-op unless --publish (or a --skip-build finalization run); tarball is inside
+print_step("Completed ($arch: @dist_list)" . ($publish ? '' : ' -- staging only, not published'));
 
 __END__
 
@@ -869,17 +1130,26 @@ sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian ap
 
   sbuild-all.pl [options]
 
-  # build ALL supported Ubuntu versions for this host's arch, sign + assemble the apt tree:
-  sbuild-all.pl --arch amd64 --dists "focal jammy noble resolute" \
-      --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm> \
+  # STEP 1 -- per arch, on that arch's build host: build + validate into staging (does NOT publish):
+  sbuild-all.pl --arch amd64   --dists "focal jammy noble resolute" \
+      --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm>
+  sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" --skip-genesis
+
+  # STEP 2 -- ONCE, after every arch has staged: assemble, sign, gate and publish atomically:
+  sbuild-all.pl --skip-build --skip-genesis --publish --expect-arch "amd64 ppc64el" \
       --gpg-sign --gpg-key-id xcat@megware.com --gpg-home <gpg-home>
 
   # build ONE Ubuntu version only:
   sbuild-all.pl --arch amd64 --dists noble  ...
   sbuild-all.pl --target noble-amd64        ...   # equivalent single-target form
 
-  # assemble-only (re-sign/re-index from already-built staging):
-  sbuild-all.pl --skip-build --skip-genesis --gpg-sign --gpg-key-id <id> --gpg-home <dir>
+  # single host, build AND publish in one go (add --publish explicitly):
+  sbuild-all.pl --arch amd64 --dists noble --genesis-rpm <rpm> --publish --expect-arch amd64 \
+      --gpg-sign --gpg-key-id <id> --gpg-home <dir>
+
+  # verify an already-published tree out of band (signatures checked by DEFAULT):
+  sbuild-all.pl --verify-repo <apt_dir> --dists "focal jammy noble resolute" \
+      --expect-arch "amd64 ppc64el" --gpg-key-id <id> --gpg-home <dir>
 
   sbuild-all.pl --help        # option summary
   sbuild-all.pl --man         # this manual
@@ -897,10 +1167,32 @@ packaging (never re-implemented) via its per-package C<< <dep>/sbuild.pl >> buil
 One host builds one architecture (C<--arch>, default C<dpkg --print-architecture>) for a set of
 Ubuntu codenames (C<--dists>). Each C<< <codename>-<arch> >> is a B<target> with a section in
 C<debs-manifest.conf>. Everything is built and validated into a fresh, per-arch B<staging> tree
-first; the published apt repo is (re)assembled from validated staging only after the complete
-expected set validates -- so a partial or failed build never reaches the repo and stale debs never
-accumulate. Any missing chroot / package / artifact, or any version-pin mismatch, fails the whole
-run non-zero.
+first -- so a partial or failed build never reaches the repo and stale debs never accumulate. Any
+missing chroot / package / artifact, or any version-pin mismatch, fails the whole run non-zero.
+
+=head2 Build runs stage; publishing is a separate, locked, atomic step
+
+An architecture build run B<does not publish>. The two arches build concurrently on their two hosts
+against the same C<--apt-dir>, so a build run that also assembled would interleave its wipe and
+rewrite of C<pool/>, C<dists/>, C<Release>, C<InRelease> and the tarball with the other arch's.
+
+Publishing happens only with C<--publish> -- or implicitly on a run that builds nothing
+(C<--skip-build>), which B<is> the finalization step. It takes B<one global publish lock> (not the
+per-arch build lock), assembles the whole tree into a side directory, runs the completeness +
+signature gate against B<that> tree, and only then swaps it onto C<--apt-dir> with a single
+C<rename(2)>. Readers therefore see either the previous complete repo or the new complete repo, never
+a half-written one, and a failed gate leaves the published tree untouched. Codenames outside
+C<--dists> survive the swap (the side tree is seeded from the current published one).
+
+=head2 Each package builds in a clean, disposable chroot
+
+Every package is built in its own C<schroot> session, and the session must be B<throwaway> (an
+overlay/union mount or a snapshot). C<sbuild-all.pl> repairs a chroot that lacks one
+(C<union-type=overlay>) and hard-fails if it still is not disposable. That is what makes the fail-hard
+dependency handling meaningful: inside the session, C<apt-get update>, the common build tooling and
+the package's C<Build-Depends> (resolved with C<mk-build-deps>, so versions/alternatives/arch
+qualifiers are honoured) are all B<fatal> on failure -- and because nothing survives the session, a
+package whose C<debian/control> forgets a C<Build-Depends> cannot build green on a sibling's leftovers.
 
 =head1 PHASES
 
@@ -909,12 +1201,14 @@ run non-zero.
 =item Ensure chroots
 
 Auto-initializes any missing C<< <codename>-<arch>-sbuild >> chroot on first run (main + universe,
-fast mirror, shared-tree bind-mount); idempotent. Skipped with C<--skip-build>.
+fast mirror, shared-tree bind-mount) and ensures each one hands out B<disposable> sessions
+(C<union-type=overlay>); idempotent. Skipped with C<--skip-build>.
 
 =item Build
 
 Runs each manifest package's C<< <dep>/sbuild.pl >> in the matching chroot into
-C<staging/E<lt>codenameE<gt>/E<lt>archE<gt>/>.
+C<staging/E<lt>codenameE<gt>/E<lt>archE<gt>/>. Dependency installation inside the chroot is fatal on
+failure (see L</"Each package builds in a clean, disposable chroot">).
 
 =item Genesis
 
@@ -927,29 +1221,42 @@ ppc64el genesis (issue #7610) unless C<--require-ppc-genesis> gates it. Skipped 
 
 Asserts every manifest-required package is present at its pinned version (zero tolerance).
 
-=item Assemble
+=item Publish (C<--publish>; locked + atomic)
 
-Wipes+repopulates each codename's published C<pool>/C<dists> from validated staging, indexes per
-C<binary-E<lt>archE<gt>> (Architecture:all packages land in every arch index) and gpg-signs
-C<Release>/C<InRelease>. Skipped with C<--skip-createrepo>.
+Takes the global publish lock, seeds a side tree from the currently published repo, wipes+repopulates
+each C<--dists> codename's C<pool>/C<dists> there from validated staging, indexes per B<expected>
+C<binary-E<lt>archE<gt>> (Architecture:all packages land in every expected arch index), advertises
+exactly the expected arch set in C<Release>, gpg-signs C<Release>/C<InRelease>, runs the gate below
+and -- only if it passes -- swaps the side tree onto C<--apt-dir> with C<rename(2)>. Suppressed with
+C<--skip-createrepo>; not run at all on a build run without C<--publish>.
 
-=item Verify (published-repo gate)
+=item Verify (repo gate)
 
-After assembly, a manifest-driven gate asserts -- per codename E<times> arch, against the B<published>
-C<binary-E<lt>archE<gt>/Packages> index apt clients actually see (not the staging pool) -- that every
-manifest-required package is present at its pinned upstream version, and that each codename's
-C<Release> is validly gpg-signed by the expected key (C<InRelease>, or detached C<Release.gpg>). Any
-missing package, version mismatch, missing index, or unsigned/wrong-key signature fails the run. The
-pure decisions (C<BuildUtils::verify_repo_packages> for completeness, C<BuildUtils::verify_repo_signature>
-for the signer) and the index parsing (C<BuildUtils::parse_packages_index>) are unit-tested; this
-script's IO layer parses the repository + resolves the gpg key and feeds those pure deciders. This
-automatic gate is suppressed with C<--no-verify-repo>; the same check runs standalone against an
-already-assembled tree via C<--verify-repo=E<lt>apt_dirE<gt>>.
+A manifest-driven gate asserts -- per codename E<times> expected arch, against the
+C<binary-E<lt>archE<gt>/Packages> index apt clients will actually see (not the staging pool) -- that
+every manifest-required package is present at its pinned upstream version, that the repo serves
+exactly the B<expected architecture set>, and that each codename's C<Release> is validly gpg-signed by
+the expected key (C<InRelease>, or detached C<Release.gpg>). Any missing package, version mismatch,
+missing index, missing/unexpected architecture, missing manifest section, or unsigned/wrong-key
+signature fails the run. The pure decisions (C<BuildUtils::verify_repo_arches> for the arch set,
+C<verify_repo_packages> for completeness, C<verify_repo_signature> for the signer) and the parsing
+(C<parse_packages_index>, C<parse_release_architectures>) are unit-tested; this script's IO layer
+parses the repository + resolves the gpg key and feeds those pure deciders.
+
+The expected architecture set is always a B<claim>, never an inference from what happens to be
+present: C<--expect-arch> if given, else the staged arch set when publishing, else each codename's own
+C<Release> C<Architectures:> line when verifying standalone. An entirely missing secondary
+architecture is therefore reported (C<MISSING-ARCH>), not read as "this run did not build it".
+
+The gate runs automatically before the swap (suppress with C<--no-verify-repo>) and standalone against
+an already-published tree via C<--verify-repo=E<lt>apt_dirE<gt>>, where signatures are checked B<by
+default> (opt out with C<--no-verify-signature>).
 
 =item Tarball
 
-A repo tarball build artifact (the deployable offline FRS dep bundle is produced by the pipeline's
-C<deploy.sh --tarball-kind dep>). Skipped with C<--skip-tarball>.
+A repo tarball build artifact of the published tree, taken under the publish lock (the deployable
+offline FRS dep bundle is produced by the pipeline's C<deploy.sh --tarball-kind dep>). Skipped with
+C<--skip-tarball>.
 
 =back
 
@@ -1015,19 +1322,40 @@ the default gives 8 concurrent build streams for a 4-codename matrix (4 per host
 
 =item B<--skip-build> B<--skip-install> B<--skip-genesis> B<--skip-xcat-dep> B<--skip-createrepo> B<--skip-tarball>
 
-Skip the corresponding phase(s). C<--skip-build --skip-genesis> gives an assemble-only run.
+Skip the corresponding phase(s). C<--skip-build --skip-genesis> is the finalization run (it publishes
+by default; see C<--publish>). C<--skip-createrepo> forces "do not publish" and always wins.
+
+=item B<--publish>
+
+Run the finalization phase: take the global publish lock, assemble + sign into a side tree, gate it and
+swap it onto C<--apt-dir> atomically. B<A build run does not publish unless this is given>, so the two
+arches can build concurrently without racing each other on the shared repo. Defaults to on for a run
+that builds nothing (C<--skip-build>), which is the finalization step. C<--no-publish> forces it off.
+
+=item B<--expect-arch> C<< amd64|ppc64el >>
+
+The architecture set the published repo must serve, stated explicitly. Repeatable, and each value may
+be a space/comma list (C<--expect-arch "amd64 ppc64el">). Used by the gate: an expected arch with no
+native package is C<MISSING-ARCH>, an unexpected arch that published natives is C<UNEXPECTED-ARCH>,
+and C<Release> advertises exactly this set. Without it the gate falls back to the staged arch set when
+publishing, or to each codename's C<Release> C<Architectures:> when verifying standalone.
 
 =item B<--verify-repo> C<< =<apt_dir> >>
 
-Standalone mode: verify an already-assembled apt tree at C<< <apt_dir> >> (completeness + Release
-signatures) using this script's manifest resolution (C<--manifest> or the default
-C<debs-manifest.conf>), C<--dists>, and C<--gpg-key-id>/C<--gpg-home>, then exit. Takes no run lock and
-builds nothing.
+Standalone mode: verify an already-published apt tree at C<< <apt_dir> >> (architecture set +
+completeness + Release signatures) using this script's manifest resolution (C<--manifest> or the
+default C<debs-manifest.conf>), C<--dists>, C<--expect-arch>, and C<--gpg-key-id>/C<--gpg-home>, then
+exit. Signatures are verified B<by default>. Takes no run lock and builds nothing.
 
 =item B<--no-verify-repo>
 
-Suppress the B<automatic> post-assembly completeness+signature gate (for iteration/debug). The gate is
+Suppress the B<automatic> pre-swap completeness+signature gate (for iteration/debug). The gate is
 ON by default.
+
+=item B<--no-verify-signature>
+
+Explicitly skip the Release signature check in the standalone C<--verify-repo> mode (for an
+intentionally unsigned local tree). Without it, an unsigned or wrongly-signed repo fails the gate.
 
 =item B<--dry-run>
 
