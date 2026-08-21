@@ -152,7 +152,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'dpkg-deb is not installed', 8 unless command_exists('dpkg-deb');
+    skip 'dpkg-deb is not installed', 6 unless command_exists('dpkg-deb');
     exercise_packager('deb');
 }
 
@@ -190,9 +190,6 @@ sub exercise_packager {
         ok(-f "$first/$source_relative", 'source RPM exists');
         is(file_sha("$first/$source_relative"), file_sha("$second/$source_relative"),
             'source RPM is reproducible');
-    } else {
-        pass('DEB has no separate source package');
-        pass('DEB source is carried by the RPM source archive');
     }
 
     my $release_root = "$tmp/$format-release";
