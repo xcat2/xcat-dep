@@ -176,6 +176,14 @@ SPEC
     my $ok3 = eval { quiet { finalize_xcat_dep("$tmp3/x", "$tmp3/p") }; 1 };
     ok(!$ok3, 'finalize dies when an x86_64 OS has no ppc64le peer repo (no silent skip)');
     like($@, qr/no ppc64le peer repo/, 'finalize error names the missing peer');
+
+    # Symmetric (PR #62 review #2): a ppc64le-ONLY <os> (no x86_64 sibling) must ALSO be caught --
+    # the old x86_64-anchored discovery skipped it entirely and exited 0.
+    my $tmp4 = tempdir(CLEANUP => 1);
+    make_path("$tmp4/p/rh9/ppc64le");   # ppc64le OS present, but NO x86_64 peer dir at all
+    my $ok4 = eval { quiet { finalize_xcat_dep("$tmp4/x", "$tmp4/p") }; 1 };
+    ok(!$ok4, 'finalize dies when a ppc64le OS has no x86_64 peer repo (was silently skipped)');
+    like($@, qr/no x86_64 peer repo/, 'finalize error names the missing x86_64 peer');
 }
 
 # ---- restamp_release_line: CD --build-number Release stamping (PR #62 review point 1) ----------

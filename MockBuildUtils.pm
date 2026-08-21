@@ -287,15 +287,23 @@ sub finalize_xcat_dep {
     print_step('Finalize xcat-dep: cross-arch genesis-base provisioning (issue #7610)');
     print "x86_64-repo:  $x86_64_repo\n";
     print "ppc64le-repo: $ppc64le_repo\n";
-    my @osdirs = grep { -d "$_/x86_64" } glob("$x86_64_repo/*");
+    # Discover the UNION of OS dirs from BOTH arch repos. Anchoring discovery on x86_64 alone let a
+    # ppc64le-only <os> (an rh<N> that built for ppc but not x86_64) slip through unseen -- finalize
+    # then never cross-populated that cell's x86_64 genesis and still exited 0 (PR #62 review). Both
+    # arch peers are required for every discovered <os> below, so the check is now symmetric.
+    my %os;
+    $os{ basename($_) } = 1 for grep { -d "$_/x86_64"  } glob("$x86_64_repo/*");
+    $os{ basename($_) } = 1 for grep { -d "$_/ppc64le" } glob("$ppc64le_repo/*");
     my $pairs = 0;
-    for my $p (sort @osdirs) {
-        my $osdir  = basename($p);
+    for my $osdir (sort keys %os) {
         my $x86dir = "$x86_64_repo/$osdir/x86_64";
         my $ppcdir = "$ppc64le_repo/$osdir/ppc64le";
-        # Require the peer repo itself: in the CD both arches build every EL, so a missing
-        # ppc64le peer for an x86_64 OS means an incomplete input, not something to skip past
-        # (skipping would leave that OS's x86_64 repo without the ppc64 genesis and still exit 0).
+        # Both arch peers must exist: in the CD both arches build every EL, so a one-arch <os> is an
+        # incomplete input, not something to skip past (skipping would leave a cell without the
+        # foreign-arch genesis and still exit 0). Symmetric -- catches an x86_64-only AND a
+        # ppc64le-only <os>.
+        die "FATAL: [finalize] $osdir: no x86_64 peer repo at $x86dir\n"
+          . "  (both arches must build every EL before finalize)\n" if !-d $x86dir;
         die "FATAL: [finalize] $osdir: no ppc64le peer repo at $ppcdir\n"
           . "  (both arches must build every EL before finalize)\n" if !-d $ppcdir;
         # Require the expected inputs: each arch's build must have produced its OWN genesis rpm
