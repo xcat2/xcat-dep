@@ -22,7 +22,7 @@ my $version     = '0.3.3';
 my $go_repo     = 'https://github.com/xcat2/goconserver.git';
 # Immutable pin: goconserver 0.3.3 is unreleased (newest tag v0.3.2) so it lives only on master.
 # mockbuild-all.pl passes --go-ref with the canonical pin; this default keeps standalone runs
-# reproducible too. The committed vendored/ tree (go.mod/go.sum/vendor) corresponds to THIS SHA.
+# reproducible too. The committed go.mod/go.sum (no vendor tree) correspond to THIS SHA.
 my $go_ref      = '6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f';
 my $release_suffix = '';   # CD Release bump (".snap<YYYYMMDDHHMM>.<n>"); passed by mockbuild-all.pl
 my $build_timestamp;
@@ -130,7 +130,7 @@ die "pinned go.mod/go.sum missing under $gomod_dir (regenerate per gomod/README.
 copy("$gomod_dir/go.mod", "$src_dir/go.mod") or die "copy go.mod: $!\n";
 copy("$gomod_dir/go.sum", "$src_dir/go.sum") or die "copy go.sum: $!\n";
 
-# --- Assemble SRPM sources: the source tree (incl. vendor) + the xcat-authored unit + config ---
+# --- Assemble SRPM sources: the source tree (go.mod/go.sum, no vendor) + the xcat-authored unit + config ---
 print_step("Assemble SRPM sources");
 my $srctop = "goconserver-$version";
 my $staged = "$work_dir/$srctop";
@@ -173,7 +173,7 @@ console:
   log_timestamp: true
 CONF
 
-# --- Spec: the Go compile runs in %build INSIDE the chroot, offline, from the vendored tree ---
+# --- Spec: the Go compile runs in %build INSIDE the chroot; modules fetched from the proxy, pinned by go.sum ---
 print_step("Write spec");
 my $spec_file = "$work_dir/goconserver.spec";
 write_file($spec_file, <<"SPEC");
