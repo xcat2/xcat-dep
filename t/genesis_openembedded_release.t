@@ -156,6 +156,12 @@ SKIP: {
     exercise_packager('deb');
 }
 
+SKIP: {
+    skip 'git and dpkg-deb are not installed', 4
+      unless command_exists('git') && command_exists('dpkg-deb');
+    exercise_builder_tmpdir();
+}
+
 done_testing();
 
 sub exercise_packager {
@@ -202,4 +208,74 @@ sub exercise_packager {
     ok(validate_release($release_root), "$format release layout passes");
     is(system($verifier, '--format', $format, $release_root), 0,
         "$format package metadata passes");
+}
+
+sub exercise_builder_tmpdir {
+    my $source = "$tmp/tmpdir-xcat-core";
+    my $oe = "$source/xCAT-genesis-builder/oe";
+    make_path($oe);
+    write_file("$source/Version", "$version\n");
+    write_file(
+        "$oe/build",
+        <<'BUILD',
+#!/bin/sh
+set -eu
+expected=$XCAT_GENESIS_WORK_DIR/build/tmp
+[ "${TMPDIR:-}" = "$expected" ] || exit 41
+mkdir -p "$TMPDIR/deploy"
+BUILD
+    );
+    write_file(
+        "$oe/export",
+        <<'EXPORT',
+#!/bin/sh
+set -eu
+architecture=$1
+deploy=$2
+output=$3
+[ "$deploy" = "$XCAT_GENESIS_WORK_DIR/build/tmp/deploy" ] || exit 42
+mkdir -p "$output"
+printf '%s\n' kernel >"$output/kernel"
+printf '%s\n' initramfs >"$output/initramfs.cpio.gz"
+printf '%s\n' packages >"$output/image.manifest"
+printf '%s\n' '{}' >"$output/image.spdx.json"
+printf '%s\n' '{}' >"$output/image.vex.json"
+printf '%s\n' licenses >"$output/license.manifest"
+printf 'format=xcat-genesis\nversion=1\narchitecture=%s\n' "$architecture" \
+    >"$output/xcat-genesis.manifest"
+(
+    cd "$output"
+    sha256sum -- * >SHA256SUMS
+)
+EXPORT
+    );
+    chmod(0755, "$oe/build", "$oe/export") or die $!;
+    for my $command (
+        [ 'git', '-C', $source, 'init', '-q' ],
+        [ 'git', '-C', $source, 'add', '.' ],
+        [ 'git', '-C', $source, '-c', 'user.name=xCAT test',
+          '-c', 'user.email=xcat-test@example.invalid', 'commit', '-qm', 'fixture' ],
+    ) {
+        die "Cannot prepare test repository\n"
+          if run_capture("$tmp/tmpdir-git.log", @{$command});
+    }
+
+    my $ambient_tmp = "$tmp/ambient-tmp";
+    my $output = "$tmp/tmpdir-release";
+    my $log = "$tmp/tmpdir-builder.log";
+    make_path($ambient_tmp);
+    my $status;
+    {
+        local $ENV{TMPDIR} = $ambient_tmp;
+        $status = run_capture(
+            $log, $builder, '--xcat-source', $source,
+            '--output-dir', $output, '--format', 'deb',
+        );
+    }
+    is($status, 0, 'release builder isolates the OpenEmbedded tmpdir');
+    unlike(read_file($log), qr/Invalid OpenEmbedded deploy directory/,
+        'release builder finds the configured deploy directory');
+    my $built = validate_release($output);
+    is($built->{architectures}, 'x86_64', 'isolated build keeps the target architecture');
+    is($built->{formats}, 'deb', 'isolated build keeps the requested format');
 }
