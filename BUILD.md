@@ -76,6 +76,11 @@ Use these flags to skip specific operations:
   - Skips `createrepo --update`.
 - `--skip-tarball`
   - Skips tarball creation for both binary and SRPM repos.
+- `--skip-genesis`
+  - Skips the existing per-EL Genesis image build.
+- `--genesis-release <PATH>`
+  - Adds a verified OpenEmbedded Genesis RPM release and skips the existing
+    per-EL Genesis image build for that run.
 - `--scrub-all-chroots`
   - Runs `mock -r <TARGET> --scrub=all` before build and collection.
 - `--collect-dir <PATH>`
@@ -146,6 +151,27 @@ Notes:
 - Install/smoke checks run by default inside child builders.
 - Add `--skip-install` to skip those checks.
 - `<RUN_ID>` is optional; when omitted it is timestamp-based.
+
+# Add an OpenEmbedded Genesis Release
+
+Build the Genesis package release first, following
+[`genesis-openembedded/README.md`](genesis-openembedded/README.md). Then pass the
+result to the regular repository build:
+
+```bash
+cd <REPO_ROOT>
+perl ./mockbuild-all.pl \
+  --repo-root <REPO_ROOT> \
+  --xcat-source <XCAT_SOURCE> \
+  --genesis-release /path/to/xcat-genesis-release
+```
+
+The release is checked before any package is collected. Its RPMs and SRPMs are
+copied into each generated EL repository. Old Genesis packages are removed from
+those output directories so a previous run cannot satisfy the release by
+accident.
+
+Omit `--genesis-release` to keep using the existing Genesis builder.
 
 # Build Unified Repository Without xCAT (`--skip-xcat`)
 
