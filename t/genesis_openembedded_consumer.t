@@ -14,6 +14,8 @@ use XCAT::GenesisReleaseTest qw(
   command_exists
   file_sha
   make_export
+  read_file
+  run_capture
   write_checksums
   write_file
   write_release_manifest
@@ -214,21 +216,6 @@ sub make_package_release {
     return $release_root;
 }
 
-sub run_capture {
-    my ($log, @command) = @_;
-    my $pid = fork();
-    die "Cannot fork: $!\n" unless defined $pid;
-    if ($pid == 0) {
-        open(STDOUT, '>:raw', $log) or die $!;
-        open(STDERR, '>&', STDOUT) or die $!;
-        exec(@command) or die "Cannot run $command[0]: $!\n";
-    }
-    waitpid($pid, 0);
-    return 255 if $? == -1;
-    return 128 + ($? & 127) if $? & 127;
-    return $? >> 8;
-}
-
 sub capture {
     my (@command) = @_;
     open(my $fh, '-|', @command) or die $!;
@@ -236,13 +223,4 @@ sub capture {
     close($fh) or die $!;
     chomp($output);
     return $output;
-}
-
-sub read_file {
-    my ($path) = @_;
-    open(my $fh, '<:raw', $path) or die $!;
-    local $/;
-    my $content = <$fh> // '';
-    close($fh) or die $!;
-    return $content;
 }

@@ -23,6 +23,8 @@ use XCAT::GenesisReleaseTest qw(
   dies_like
   file_sha
   make_export
+  read_file
+  run_capture
   write_checksums
   write_file
   write_release_manifest
@@ -30,6 +32,7 @@ use XCAT::GenesisReleaseTest qw(
 
 my $repo_root = abs_path("$FindBin::Bin/..");
 my $packager = "$repo_root/genesis-openembedded/package";
+my $builder = "$repo_root/genesis-openembedded/build";
 my $verifier = "$repo_root/genesis-openembedded/verify-release";
 my $revision = 'a' x 40;
 my $version = '2.19.0';
@@ -111,6 +114,36 @@ unlink("$missing_release/rpm/xCAT-genesis-base-ppc64le-$version-$release.noarch.
 write_checksums($missing_release);
 dies_like(sub { validate_release($missing_release) }, qr/Genesis release is missing/,
     'incomplete architecture set fails');
+
+SKIP: {
+    skip 'git is not installed', 2 unless command_exists('git');
+    my $source = "$tmp/dirty-xcat-core";
+    make_path("$source/xCAT-genesis-builder/oe");
+    write_file("$source/Version", "$version\n");
+    write_file("$source/xCAT-genesis-builder/oe/build", "#!/bin/sh\nexit 99\n");
+    write_file("$source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 99\n");
+    for my $command (
+        [ 'git', '-C', $source, 'init', '-q' ],
+        [ 'git', '-C', $source, 'add', '.' ],
+        [ 'git', '-C', $source, '-c', 'user.name=xCAT test',
+          '-c', 'user.email=xcat-test@example.invalid', 'commit', '-qm', 'fixture' ],
+    ) {
+        die "Cannot prepare test repository\n"
+          if run_capture("$tmp/git-fixture.log", @{$command});
+    }
+    write_file("$source/untracked", "not part of the commit\n");
+    my $log = "$tmp/dirty-source.log";
+    isnt(
+        run_capture(
+            $log, $builder, '--xcat-source', $source,
+            '--output-dir', "$tmp/dirty-output",
+        ),
+        0,
+        'release builder rejects untracked source files',
+    );
+    like(read_file($log), qr/xcat-core checkout is not clean/,
+        'dirty checkout failure is explicit');
+}
 
 SKIP: {
     skip 'rpmbuild and rpm are not installed', 8
