@@ -16,6 +16,7 @@ our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs have_rpm read_manifest
     verify_repo_packages verify_repo_signature verify_rpm_signatures
+    parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     build_mock_uniqueext
@@ -72,19 +73,102 @@ sub required_pkgs {
 # Uses version_matches (same semantics as the in-line manifest pin loop), so a '*' or glob pin is
 # accepted exactly as there. No file/manifest I/O here -- the disk layer builds %present and passes
 # both hashes in, keeping this unit-testable in isolation.
+# parse_evr($s): split an EVR string "[epoch:]version[-release]" into ($epoch, $version, $release).
+# epoch defaults to '0' when absent or '(none)'; release is undef when the string carries none (so a
+# release-less constraint compares version-only). Neither version nor release may contain '-', so the
+# single '-' cleanly separates them.
+sub parse_evr {
+    my ($s) = @_;
+    $s = '' unless defined $s;
+    my ($epoch, $rest);
+    if ($s =~ /^\s*(\d+):(.*)$/) { ($epoch, $rest) = ($1, $2); }
+    else                        { ($epoch, $rest) = ('0', $s); }
+    $epoch = '0' if !defined $epoch || $epoch eq '' || lc($epoch) eq '(none)';
+    my ($ver, $rel) = split /-/, $rest, 2;
+    return ($epoch, $ver, $rel);   # $rel undef when no release given
+}
+
+# evr_cmp($got, $want, $vercmp): compare two EVRs with rpm's labelCompare semantics -- epoch first
+# (numeric), then version, then release -- returning -1/0/1 (got vs want). $vercmp->($a,$b) is an
+# injected rpm-native segment comparator (rpm's rpmvercmp) returning -1/0/1, so this stays pure and
+# unit-testable. Release is compared only when the CONSTRAINT specifies one (rpm's EVR semantics: a
+# version-only requirement ignores the built release).
+sub evr_cmp {
+    my ($got, $want, $vercmp) = @_;
+    my ($ge, $gv, $gr) = parse_evr($got);
+    my ($we, $wv, $wr) = parse_evr($want);
+    return (($ge <=> $we) <=> 0) if ($ge <=> $we) != 0;   # epoch: numeric
+    my $c = $vercmp->($gv, $wv);
+    return $c if $c;
+    return 0 unless defined $wr && $wr ne '';             # constraint release-agnostic
+    $gr = '' unless defined $gr;
+    return $vercmp->($gr, $wr);
+}
+
+# evr_constraint_ok($got, $op, $want, $vercmp): does the observed EVR satisfy "<op> <want>"?
+sub evr_constraint_ok {
+    my ($got, $op, $want, $vercmp) = @_;
+    my $c = evr_cmp($got, $want, $vercmp);
+    return $c >= 0 if $op eq '>=';
+    return $c >  0 if $op eq '>';
+    return $c <= 0 if $op eq '<=';
+    return $c <  0 if $op eq '<';
+    return $c == 0 if $op eq '=' || $op eq '==';
+    return undef;   # unknown operator
+}
+
+# parse_pin($pin): classify a manifest version pin.
+#   '*'                         -> ('any')
+#   '<op> <evr>' (>=,>,<=,<,=)  -> ('evr', $op, $evr)  full EPOCH:VERSION-RELEASE constraint
+#   glob or exact version       -> ('version')         %{VERSION}-only match (version_matches)
+sub parse_pin {
+    my ($pin) = @_;
+    return ('any') if !defined($pin) || $pin eq '*';
+    return ('evr', $1, $2) if $pin =~ /^\s*(>=|<=|==|=|>|<)\s*(\S+)\s*$/;
+    return ('version');
+}
+
 sub verify_repo_packages {
-    my ($expected, $present) = @_;
+    my ($expected, $present_ver, $present_evr, $vercmp) = @_;
+    $present_evr //= $present_ver;
     my @problems;
     for my $pkg (sort keys %$expected) {
         my $pin = $expected->{$pkg};
-        my $got = $present->{$pkg};
-        if (!defined $got) {
+        my $got_ver = $present_ver->{$pkg};
+        if (!defined $got_ver) {
             push @problems, "MISSING $pkg (manifest requires " . (defined($pin) ? $pin : '*') . ")";
-        } elsif (!version_matches($got, $pin)) {
-            push @problems, "VERSION $pkg: repo has $got, manifest pins $pin";
+            next;
         }
+        my ($kind, $op, $want) = parse_pin($pin);
+        if ($kind eq 'evr') {
+            my $got_evr = $present_evr->{$pkg} // $got_ver;
+            if (!$vercmp) {
+                push @problems, "EVR $pkg: no EVR comparator available to check '$op $want'";
+            } elsif (!evr_constraint_ok($got_evr, $op, $want, $vercmp)) {
+                push @problems, "EVR $pkg: repo has $got_evr, manifest requires $op $want";
+            }
+        } elsif ($kind eq 'version') {   # VERSION glob/exact (unchanged)
+            push @problems, "VERSION $pkg: repo has $got_ver, manifest pins $pin"
+                if !version_matches($got_ver, $pin);
+        }
+        # 'any' -> accept
     }
     return @problems;
+}
+
+# rpmkeys_checksig_problem($name, $rc, $out): pure verdict for one `rpmkeys --checksig -v` run against
+# an isolated keyring holding only the signing key. A clean rpm exits 0 and every digest/signature
+# line reads OK; a tampered digest reads NOT OK; an rpm signed by another key (or unsigned) reads
+# NOKEY. Return a problem string (or empty list) so the gate is testable without rpm.
+sub rpmkeys_checksig_problem {
+    my ($name, $rc, $out) = @_;
+    $out = '' unless defined $out;
+    return () if ($rc // 0) == 0 && $out !~ /NOT OK|NOKEY|MISSING KEYS/i;
+    my $why = $out =~ /NOT OK/i        ? 'digest/signature NOT OK'
+            : $out =~ /NOKEY/i         ? 'NOKEY (unsigned or signed by an unaccepted key)'
+            : $out =~ /MISSING KEYS/i  ? 'MISSING KEYS'
+            :                            "rpmkeys --checksig failed (rc=" . ($rc // '?') . ")";
+    return "BADSIG rpm $name: $why";
 }
 
 # verify_repo_signature: the PURE signature-decision layer of the repo gate. Given %expected

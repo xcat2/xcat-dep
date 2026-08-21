@@ -8,6 +8,7 @@ use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Find qw(find);
 use File::Path qw(make_path remove_tree);
+use File::Temp qw(tempdir);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
@@ -17,7 +18,7 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-                      build_mock_uniqueext);
+                      build_mock_uniqueext rpmkeys_checksig_problem);
 
 # --- Mount-namespace isolation: guard the host cgroup against mock teardown propagation ----------
 # mock mounts /sys/fs/cgroup into every build chroot. On these systemd build hosts every mount is
@@ -889,6 +890,9 @@ sub write_dep_repo_metadata {
     my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$arch";
     my $gpgcheck = $gpg_sign ? 1 : 0;
     my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
+    # repo_gpgcheck=1 makes clients verify the DETACHED repomd.xml signature (repomd.xml.asc) against
+    # gpgkey before trusting the metadata -- sign_and_index_repo produces both, so enforce it. Mirrors
+    # gpgcheck: off when the repo is unsigned.
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
@@ -896,6 +900,7 @@ name=xCAT 2 dependencies (rh$rel $arch)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
+repo_gpgcheck=$gpgcheck
 $gpgkey_line
 EOF
     close $r;
@@ -1265,6 +1270,74 @@ sub rpm_signer_keyid {
     return undef;
 }
 
+# rpm_evr: the single distinct EPOCH:VERSION-RELEASE of package $name's binary rpm(s) in $dir (epoch
+# defaults to 0 when the header carries none), or undef if none match. Mirrors rpm_version's dedup:
+# more than one distinct EVR means a stale artifact was not cleaned before the build (a version pin
+# could then pass against the wrong rpm). genesis's x86_64 + ppc64 rpms share one EVR, so a normal
+# pair is a single entry.
+sub rpm_evr {
+    my ($dir, $name) = @_;
+    my $glob = ($name eq 'xCAT-genesis-base')
+        ? "$dir/xCAT-genesis-base-*.rpm"
+        : "$dir/${name}-*.rpm";
+    my %evrs;
+    for my $f (sort glob($glob)) {
+        next if $f =~ /\.src\.rpm$/ || $f =~ /-debug(?:info|source)-/;
+        my $n = `rpm -qp --qf '%{name}' ${\ sh_quote($f)} 2>/dev/null`;
+        my $match = ($name eq 'xCAT-genesis-base')
+            ? ($n =~ /^xCAT-genesis-base-/) : ($n eq $name);
+        next unless $match;
+        my $evr = `rpm -qp --qf '%{epochnum}:%{version}-%{release}' ${\ sh_quote($f)} 2>/dev/null`;
+        chomp $evr;
+        $evrs{$evr} = 1 if $evr ne '';
+    }
+    return undef unless %evrs;
+    die "Multiple EVRs of $name present in $dir: " . join(', ', sort keys %evrs)
+      . " (stale artifact not cleaned before the build)\n" if keys(%evrs) > 1;
+    my ($evr) = keys %evrs;
+    return $evr;
+}
+
+# rpm_vercmp_segment: ONE rpmvercmp segment comparison via rpm's own lua binding, returning -1/0/1.
+# Used as the injected comparator for MockBuildUtils::evr_cmp so the EVR gate uses rpm's canonical
+# version algorithm (epoch/release composition is done in evr_cmp). Long-bracket the args so any
+# version char (. _ ~ ^ +) passes through literally; rpm versions never contain the ]==] sequence.
+sub rpm_vercmp_segment {
+    my ($a, $b) = @_;
+    $a = '' unless defined $a;
+    $b = '' unless defined $b;
+    my $out = `rpm --eval '%{lua:print(rpm.vercmp([==[$a]==],[==[$b]==]))}' 2>/dev/null`;
+    chomp $out;
+    die "FATAL: rpm.vercmp gave no result for '$a' vs '$b'\n" unless $out =~ /^-?\d+$/;
+    return $out <=> 0;
+}
+
+# verify_rpms_checksig: cryptographically verify EVERY binary rpm in $dir with `rpmkeys --checksig`
+# against an ISOLATED keyring holding only the signing key. This is the RPM-native integrity + origin
+# check: it verifies each rpm's header/payload digests AND that the signature is by this key (NOKEY /
+# NOT OK => a real failure, since the key IS imported). Returns @problems.
+sub verify_rpms_checksig {
+    my ($dir, $keyname, $home) = @_;
+    my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+    return () unless @rpms;
+    require_command('rpmkeys');
+    require_command('gpg');
+    my $tmpdb = tempdir('rpmkeys-XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $keyfile = "$tmpdb/pubkey.asc";
+    system("gpg$h --batch --yes -a --export " . sh_quote($keyname) . ' > ' . sh_quote($keyfile) . ' 2>/dev/null');
+    return ("SIGKEY: cannot export public key '$keyname' for rpmkeys --checksig") if !-s $keyfile;
+    my $dbopt = '--dbpath ' . sh_quote($tmpdb);
+    system("rpmkeys $dbopt --import " . sh_quote($keyfile) . ' >/dev/null 2>&1') == 0
+        or return ("SIGKEY: rpmkeys --import of '$keyname' into the temp keyring failed");
+    my @problems;
+    for my $rpm (@rpms) {
+        my $out = `rpmkeys $dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
+        push @problems, rpmkeys_checksig_problem(basename($rpm), $? >> 8, $out);
+    }
+    return @problems;
+}
+
 # repomd_observed_signer: run gpg --verify on the detached repomd signature and extract the identity
 # of the key that actually signed it, as a primary-key fingerprint (the last field of the VALIDSIG
 # status line). Returns '' when the .asc is absent or verification fails (both read as "unsigned").
@@ -1302,9 +1375,14 @@ sub verify_target_repo {
     die "FATAL: no manifest section for target '$tgt' in $manifest\n" if !%req;
     # Skip flags default 0 -> the full required set. A package whose builder was skipped is not required.
     my @names   = required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep);
-    my %present = repo_present_versions($dir, \@names);
+    my %present     = repo_present_versions($dir, \@names);
+    # Full EPOCH:VERSION-RELEASE per package, so a manifest EVR constraint (e.g. genesis-base
+    # '>= 2:2.18.0', which %{VERSION}-only matching cannot enforce -- 2.* would accept a pre-2.18
+    # genesis) is checked with rpm's own version algorithm (PR #62 review). rpm_vercmp_segment is
+    # rpm's rpmvercmp; evr_cmp composes epoch/version/release around it.
+    my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
     my %expected = map { $_ => $req{$_} } @names;
-    my @problems = verify_repo_packages(\%expected, \%present);
+    my @problems = verify_repo_packages(\%expected, \%present, \%present_evr, \&rpm_vercmp_segment);
 
     # Signature gate: the IO (gpg) lives here; the decision is the pure verify_repo_signature. The
     # pipeline always signs, so a signed repo's repomd MUST be signed by --gpg-key-name. We resolve
@@ -1330,6 +1408,11 @@ sub verify_target_repo {
             # metadata -- is signed by this key (rpm reports the signing subkey id; accept any id of
             # the key). Closes the "approves a repo DNF later rejects" gap (PR #62 review #4).
             require_command('rpm');
+            # (a) RPM-native crypto verification: rpmkeys --checksig against an isolated keyring
+            # holding only this key verifies every rpm's digests AND that the signature is by the key.
+            push @problems, verify_rpms_checksig($dir, $gpg_key_name, $gpg_home);
+            # (b) Explicit signer-id origin check kept alongside: assert each rpm's header signature
+            # key id is one of this key's ids (primary/subkey).
             my $accept = gpg_key_ids($gpg_key_name, $gpg_home);
             if (!%$accept) {
                 push @problems, "SIGKEY: cannot list key ids for '$gpg_key_name' to verify per-rpm signatures";
@@ -1352,7 +1435,7 @@ sub verify_target_repo {
         die "FATAL: repo INCOMPLETE for $tgt at $dir (" . scalar(@problems) . " problem(s))\n";
     }
     print "[verify-repo] $tgt complete: " . scalar(@names)
-        . " required packages present + version-pinned, every rpm signed, in $dir\n";
+        . " required packages present + EVR-satisfied, repomd + every rpm checksig-verified, in $dir\n";
     return 1;
 }
 

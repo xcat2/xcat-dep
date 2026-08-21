@@ -13,6 +13,7 @@ use File::Basename qw(basename);
 use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
+                      parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
                       bump_dep_release_suffix build_mock_uniqueext);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
@@ -355,6 +356,64 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is(scalar(@wrong), 1, 'verify_rpm_signatures: a foreign-signed rpm yields one problem');
     like($wrong[0], qr/^WRONGKEY rpm e-5\.0\.rpm: signed by deadbeef, expected one of\b/,
         'verify_rpm_signatures: wrong key reported as WRONGKEY rpm <name>: signed by <obs>, expected one of ...');
+}
+
+# ---- EVR constraints: full EPOCH:VERSION-RELEASE validation (PR #62 review) -------------------
+# rpm's own version algorithm, via its lua rpm.vercmp binding, is the injected segment comparator --
+# the same primitive mockbuild-all passes in production, so these assert the real rpm semantics.
+my $vercmp = sub {
+    my ($a, $b) = @_;
+    my $o = `rpm --eval '%{lua:print(rpm.vercmp([==[$a]==],[==[$b]==]))}' 2>/dev/null`;
+    chomp $o; return $o <=> 0;
+};
+{
+    is_deeply([parse_evr('2:2.18.0-5')], ['2','2.18.0','5'], 'parse_evr: epoch:version-release');
+    is_deeply([parse_evr('2.18.0')],     ['0','2.18.0',undef], 'parse_evr: bare version -> epoch 0, no release');
+    is_deeply([parse_evr('0.04-5.el8')], ['0','0.04','5.el8'], 'parse_evr: release kept whole');
+
+    is_deeply([parse_pin('>= 2:2.18.0')], ['evr','>=','2:2.18.0'], 'parse_pin: EVR operator constraint');
+    is_deeply([parse_pin('2.*')],         ['version'],            'parse_pin: glob stays a version pin');
+    is_deeply([parse_pin('*')],           ['any'],                'parse_pin: * is any');
+
+    # the reviewer's cases: genesis-base >= 2:2.18.0 rejects a pre-2.18 (Epoch 2) genesis...
+    ok( evr_constraint_ok('2:2.19.0-snap202607211907', '>=', '2:2.18.0', $vercmp),
+        'EVR: 2:2.19.0 satisfies >= 2:2.18.0');
+    ok(!evr_constraint_ok('2:2.17.9-snap',             '>=', '2:2.18.0', $vercmp),
+        'EVR: 2:2.17.9 REJECTED by >= 2:2.18.0 (2.* would have wrongly accepted it)');
+    ok(!evr_constraint_ok('0:2.18.0-1',                '>=', '2:2.18.0', $vercmp),
+        'EVR: epoch enforced -- 0:2.18.0 rejected by >= 2:2.18.0');
+    # ...and a release floor perl-IO-Stty >= 0.04-5.
+    ok( evr_constraint_ok('0.04-5.el8.snap202607221225.13', '>=', '0.04-5', $vercmp),
+        'EVR: 0.04-5.el8.snap... satisfies release floor >= 0.04-5');
+    ok(!evr_constraint_ok('0.04-4.el8',                     '>=', '0.04-5', $vercmp),
+        'EVR: 0.04-4 REJECTED by release floor >= 0.04-5 (VERSION-only match would have passed)');
+
+    # end-to-end through the gate: EVR pin honored, with the got EVR supplied separately from %{VERSION}.
+    my @okp = verify_repo_packages(
+        { 'xCAT-genesis-base' => '>= 2:2.18.0' },
+        { 'xCAT-genesis-base' => '2.19.0' },
+        { 'xCAT-genesis-base' => '2:2.19.0-snap202607211907' }, $vercmp);
+    is_deeply(\@okp, [], 'gate: EVR-satisfying genesis passes');
+    my @badp = verify_repo_packages(
+        { 'xCAT-genesis-base' => '>= 2:2.18.0' },
+        { 'xCAT-genesis-base' => '2.17.0' },
+        { 'xCAT-genesis-base' => '2:2.17.0-snap' }, $vercmp);
+    is(scalar(@badp), 1, 'gate: pre-2.18 genesis yields exactly one problem');
+    like($badp[0], qr/^EVR xCAT-genesis-base: repo has 2:2\.17\.0-snap, manifest requires >= 2:2\.18\.0$/,
+        'gate: EVR failure names the observed EVR and the requirement');
+}
+
+# ---- rpmkeys --checksig verdict (pure) -------------------------------------------------------
+{
+    is_deeply([rpmkeys_checksig_problem('a.rpm', 0,
+        "Header V4 RSA/SHA256 Signature, key ID cb60ad43: OK\nPayload SHA256 digest: OK\n")], [],
+        'checksig: all-OK rpm -> no problem');
+    my @nok = rpmkeys_checksig_problem('b.rpm', 1, "Header SHA256 digest: NOT OK\n");
+    like($nok[0], qr/^BADSIG rpm b\.rpm: digest\/signature NOT OK$/, 'checksig: NOT OK flagged');
+    my @nokey = rpmkeys_checksig_problem('c.rpm', 1, "Header V4 RSA/SHA256 Signature, key ID deadbeef: NOKEY\n");
+    like($nokey[0], qr/^BADSIG rpm c\.rpm: NOKEY/, 'checksig: NOKEY (unaccepted/unsigned) flagged');
+    my @rc = rpmkeys_checksig_problem('d.rpm', 2, "");
+    like($rc[0], qr/rc=2/, 'checksig: non-zero exit with no marker still flagged');
 }
 
 # ---- build_mock_uniqueext: distinct per target so concurrent mock roots never collide ---------
