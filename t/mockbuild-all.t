@@ -39,6 +39,24 @@ is_deeply([required_pkgs(\@all, 0, 0, 1)], [qw(perl-IO-Stty perl-Sys-Virt xCAT-g
 is_deeply([required_pkgs(\@all, 1, 1, 1)], [],
     'all skips -> nothing required (a clean skip run validates nothing)');
 
+# ---- gate composition: a clean --skip-* run does not flag the skipped package as MISSING ------
+# (PR #62 R3.3) verify_target_repo derives its expected set with required_pkgs(...skip flags), so a
+# package a skip mode intentionally did not build must NOT be reported missing by the completeness
+# gate. This tests the composition (required_pkgs -> verify_repo_packages), not either half alone.
+{
+    my %pins    = ('elilo-xcat' => '3.14', 'perl-IO-Stty' => '0.04', 'xCAT-genesis-base' => '2.*');
+    my $present = { 'elilo-xcat' => '3.14', 'perl-IO-Stty' => '0.04' };   # --skip-genesis: no genesis rpm built
+    my @keep    = required_pkgs([sort keys %pins], 1, 0, 0);              # skip_genesis
+    my %expected = map { $_ => $pins{$_} } @keep;
+    is_deeply([verify_repo_packages(\%expected, $present)], [],
+        'gate: --skip-genesis run with genesis absent reports no MISSING (skipped pkg not required)');
+
+    # Sanity: WITHOUT the skip filter that same absent genesis IS flagged -- proving the filter is load-bearing.
+    my @unfiltered = verify_repo_packages(\%pins, $present);
+    is(scalar(@unfiltered), 1, 'gate: unfiltered, the absent genesis is flagged MISSING');
+    like($unfiltered[0], qr/^MISSING xCAT-genesis-base\b/, 'gate: the flag names the absent genesis');
+}
+
 # ---- version_matches: exact + shell-glob pins ------------------------------------------------
 ok( version_matches('2.19.0', '2.*'),    '2.* matches 2.19.0');
 ok( version_matches('2.18.2', '2.*'),    '2.* matches 2.18.2 (walks with xcat-core)');
