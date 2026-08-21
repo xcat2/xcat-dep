@@ -44,17 +44,22 @@ sub _verify_rpm {
     my ($directory, $manifest, $architecture) = @_;
     _require_command('rpm');
     my $name = rpm_package_name($architecture);
+    my $source_name = "$name-$manifest->{xcat_version}-$manifest->{xcat_release}.src.rpm";
     my @packages = (
-        [ "$directory/rpm/$name-$manifest->{xcat_version}-$manifest->{xcat_release}.noarch.rpm", 'noarch' ],
-        [ "$directory/srpm/$name-$manifest->{xcat_version}-$manifest->{xcat_release}.src.rpm", 'src' ],
+        [ "$directory/rpm/$name-$manifest->{xcat_version}-$manifest->{xcat_release}.noarch.rpm",
+          'noarch', $source_name ],
+        [ "$directory/srpm/$source_name", 'noarch', '(none)' ],
     );
     for my $package (@packages) {
-        my ($path, $expected_arch) = @{$package};
+        my ($path, $expected_arch, $expected_source) = @{$package};
         my $metadata = _capture(
-            'rpm', '-qp', '--qf', "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{EPOCHNUM}\n", $path,
+            'rpm', '-qp', '--qf',
+            "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n",
+            $path,
         );
         my $expected = join(
-            "\t", $name, $manifest->{xcat_version}, $manifest->{xcat_release}, $expected_arch, '2',
+            "\t", $name, $manifest->{xcat_version}, $manifest->{xcat_release},
+            $expected_arch, '2', $expected_source,
         );
         die "Unexpected RPM identity for $path: $metadata\n" unless $metadata eq $expected;
     }
