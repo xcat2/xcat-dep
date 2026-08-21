@@ -158,7 +158,8 @@ step "Populating pool"
 
 copy_deb() {
     local source="$1"
-    local destination="$2/$(basename "$source")"
+    local destination
+    destination="$2/$(basename "$source")"
     if [[ -e "$destination" ]]; then
         cmp -s "$source" "$destination" \
             || die "Package collision with different content: $destination"
