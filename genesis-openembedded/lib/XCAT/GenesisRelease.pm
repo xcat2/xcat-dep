@@ -84,7 +84,8 @@ sub _regular_files {
         },
         $root,
     );
-    return sort @files;
+    my @sorted = sort @files;
+    return @sorted;
 }
 
 sub _read_checksums {
