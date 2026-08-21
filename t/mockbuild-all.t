@@ -12,8 +12,8 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
-                      verify_repo_packages verify_repo_signature bump_dep_release_suffix
-                      build_mock_uniqueext);
+                      verify_repo_packages verify_repo_signature verify_rpm_signatures
+                      bump_dep_release_suffix build_mock_uniqueext);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -184,6 +184,11 @@ SPEC
     my $ok4 = eval { quiet { finalize_xcat_dep("$tmp4/x", "$tmp4/p") }; 1 };
     ok(!$ok4, 'finalize dies when a ppc64le OS has no x86_64 peer repo (was silently skipped)');
     like($@, qr/no x86_64 peer repo/, 'finalize error names the missing x86_64 peer');
+
+    # @GENESIS_ARCHES is the single source of truth for the cross-arch matrix (add arches there).
+    my %tarch = map { $_->{arch} => $_->{tarch} } @MockBuildUtils::GENESIS_ARCHES;
+    is($tarch{x86_64},  'x86_64', 'GENESIS_ARCHES: x86_64 maps to tarch x86_64');
+    is($tarch{ppc64le}, 'ppc64',  'GENESIS_ARCHES: ppc64le maps to xCAT tarch ppc64');
 }
 
 # ---- restamp_release_line: CD --build-number Release stamping (PR #62 review point 1) ----------
@@ -332,6 +337,24 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is(scalar(@wk), 1, 'verify_repo_signature: a mismatched signer yields exactly one problem');
     like($wk[0], qr/^WRONGKEY repomd: signed by EVILFPR, expected GOODFPR$/,
         'verify_repo_signature: mismatch reported as WRONGKEY <unit>: signed by <obs>, expected <exp>');
+}
+
+# ---- verify_rpm_signatures: EVERY rpm must be signed by an accepted key (PR #62 review #4) -----
+{
+    my %accept = ( '4123c420cb60ad43' => 1, 'cb60ad43' => 1 );   # signing key's long + short id
+
+    my @ok = verify_rpm_signatures(
+        [ ['a-1.0.rpm', 'cb60ad43'], ['b-2.0.rpm', '4123C420CB60AD43'] ], \%accept);
+    is_deeply(\@ok, [], 'verify_rpm_signatures: all rpms signed by an accepted key -> no problems (case-insensitive)');
+
+    my @uns = verify_rpm_signatures([ ['c-3.0.rpm', undef], ['d-4.0.rpm', ''] ], \%accept);
+    is(scalar(@uns), 2, 'verify_rpm_signatures: undef and empty key id both flagged');
+    like($uns[0], qr/^UNSIGNED rpm c-3\.0\.rpm$/, 'verify_rpm_signatures: unsigned rpm reported by name');
+
+    my @wrong = verify_rpm_signatures([ ['e-5.0.rpm', 'deadbeef'] ], \%accept);
+    is(scalar(@wrong), 1, 'verify_rpm_signatures: a foreign-signed rpm yields one problem');
+    like($wrong[0], qr/^WRONGKEY rpm e-5\.0\.rpm: signed by deadbeef, expected one of\b/,
+        'verify_rpm_signatures: wrong key reported as WRONGKEY rpm <name>: signed by <obs>, expected one of ...');
 }
 
 # ---- build_mock_uniqueext: distinct per target so concurrent mock roots never collide ---------

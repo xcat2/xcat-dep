@@ -14,7 +14,7 @@ use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin;
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
-                      read_manifest verify_repo_packages verify_repo_signature
+                      read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
                       build_mock_uniqueext);
@@ -1196,6 +1196,37 @@ sub gpg_key_fingerprint {
     return $fprs[0];
 }
 
+# gpg_key_ids: all acceptable key ids (lowercased) for a signing key NAME -- the primary key id AND
+# every subkey id, in both 16-hex (long) and 8-hex (short) forms. rpm header signatures report the
+# signing SUBKEY id, so the per-rpm gate accepts any id belonging to the key rather than one exact
+# fingerprint. Returns a hashref set (empty if the key can't be listed).
+sub gpg_key_ids {
+    my ($keyname, $home) = @_;
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $out = `gpg$h --with-colons --list-keys ${\ sh_quote($keyname)} 2>/dev/null` // '';
+    my %ids;
+    for my $line (split /\n/, $out) {
+        my @f = split /:/, $line;
+        next unless ($f[0] // '') =~ /^(?:pub|sub)$/ && defined $f[4] && $f[4] ne '';
+        my $id = $f[4];
+        $ids{ lc $id } = 1;
+        $ids{ lc substr($id, -16) } = 1 if length($id) > 16;
+        $ids{ lc substr($id, -8)  } = 1 if length($id) > 8;
+    }
+    return \%ids;
+}
+
+# rpm_signer_keyid: the signing key id (lowercased hex) of a built rpm's header signature, or undef
+# when the rpm is not signed. Reads the RSA (or DSA) header pgpsig and pulls the "Key ID <hex>" field.
+sub rpm_signer_keyid {
+    my ($rpm) = @_;
+    for my $tag (qw(RSAHEADER DSAHEADER)) {
+        my $out = `rpm -qp --qf '%{$tag:pgpsig}' ${\ sh_quote($rpm)} 2>/dev/null` // '';
+        return lc($1) if $out =~ /Key ID\s+([0-9A-Fa-f]+)/i;
+    }
+    return undef;
+}
+
 # repomd_observed_signer: run gpg --verify on the detached repomd signature and extract the identity
 # of the key that actually signed it, as a primary-key fingerprint (the last field of the VALIDSIG
 # status line). Returns '' when the .asc is absent or verification fails (both read as "unsigned").
@@ -1255,6 +1286,20 @@ sub verify_target_repo {
             my %exp_sig = ('repomd' => $exp_fpr);
             my %obs_sig = ('repomd' => repomd_observed_signer($asc, $repomd, $gpg_home));
             push @problems, verify_repo_signature(\%exp_sig, \%obs_sig);
+
+            # Per-rpm signature gate: a signed repomd over an unsigned or foreign-signed rpm still
+            # makes DNF reject that package at install time, so verify EVERY binary rpm -- not just the
+            # metadata -- is signed by this key (rpm reports the signing subkey id; accept any id of
+            # the key). Closes the "approves a repo DNF later rejects" gap (PR #62 review #4).
+            require_command('rpm');
+            my $accept = gpg_key_ids($gpg_key_name, $gpg_home);
+            if (!%$accept) {
+                push @problems, "SIGKEY: cannot list key ids for '$gpg_key_name' to verify per-rpm signatures";
+            } else {
+                my @rpm_sigs = map { [ basename($_), rpm_signer_keyid($_) ] }
+                               grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+                push @problems, verify_rpm_signatures(\@rpm_sigs, $accept);
+            }
         }
     } elsif ($sig_required) {
         # Standalone --verify-repo advertises a signature check; with no keyring we cannot resolve the
@@ -1269,7 +1314,7 @@ sub verify_target_repo {
         die "FATAL: repo INCOMPLETE for $tgt at $dir (" . scalar(@problems) . " problem(s))\n";
     }
     print "[verify-repo] $tgt complete: " . scalar(@names)
-        . " required packages present + version-pinned in $dir\n";
+        . " required packages present + version-pinned, every rpm signed, in $dir\n";
     return 1;
 }
 

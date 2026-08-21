@@ -15,7 +15,7 @@ use Digest::MD5 qw(md5_hex);
 our @EXPORT_OK = qw(
     sh_quote print_step
     version_matches required_pkgs have_rpm read_manifest
-    verify_repo_packages verify_repo_signature
+    verify_repo_packages verify_repo_signature verify_rpm_signatures
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     build_mock_uniqueext
@@ -105,6 +105,26 @@ sub verify_repo_signature {
             push @problems, "UNSIGNED $unit (expected " . (defined($exp) ? $exp : '') . ")";
         } elsif (defined($exp) && $obs ne $exp) {
             push @problems, "WRONGKEY $unit: signed by $obs, expected $exp";
+        }
+    }
+    return @problems;
+}
+
+# verify_rpm_signatures: pure decision for the per-rpm signature gate. $rpm_sigs is an arrayref of
+# [rpm_basename, observed_keyid|undef] (rpm reports the signing SUBKEY id); $accept is a hashref set
+# of acceptable key ids (the signing key's primary + subkey ids, lowercased). Returns one problem per
+# rpm that is unsigned or signed by a key not in the set. A signed repomd over unsigned/foreign-signed
+# rpms still makes DNF reject the install, so the packages must be checked, not just the metadata.
+sub verify_rpm_signatures {
+    my ($rpm_sigs, $accept) = @_;
+    my @problems;
+    for my $rs (@$rpm_sigs) {
+        my ($name, $kid) = @$rs;
+        if (!defined($kid) || $kid eq '') {
+            push @problems, "UNSIGNED rpm $name";
+        } elsif (!$accept->{ lc $kid }) {
+            push @problems, "WRONGKEY rpm $name: signed by $kid, expected one of "
+                . join('/', sort keys %$accept);
         }
     }
     return @problems;
@@ -280,6 +300,17 @@ sub cross_copy_genesis {
 # a repo whose rpm set changed (or undef). Both injected so this stays free of gpg/createrepo
 # state and is unit-testable. Requires each arch's own genesis rpm to be present (a pair with no
 # genesis is a hard error, never a silent no-op) and fails if no repo pair is found at all.
+# Architectures whose xCAT-genesis-base is cross-provisioned into every peer repo, so a management
+# node can netboot nodes of any arch (issue #7610). Each entry maps the repo/subdir arch name to the
+# genesis rpm's xCAT "tarch" (xCAT collapses ppc/ppc64le into tarch ppc64; x86_64 stays x86_64). This
+# is the SINGLE SOURCE OF TRUTH for the cross-arch matrix -- to add an arch later (e.g. aarch64,
+# riscv64) add an entry here AND wire its repo root into finalize_xcat_dep's %repo (the caller passes
+# it). Discovery, the per-arch input gate, and the N-way cross-copy all iterate this list.
+our @GENESIS_ARCHES = (
+    { arch => 'x86_64',  tarch => 'x86_64' },
+    { arch => 'ppc64le', tarch => 'ppc64'  },
+);
+
 sub finalize_xcat_dep {
     my ($x86_64_repo, $ppc64le_repo, %opt) = @_;
     my $sign    = $opt{sign};
@@ -287,47 +318,59 @@ sub finalize_xcat_dep {
     print_step('Finalize xcat-dep: cross-arch genesis-base provisioning (issue #7610)');
     print "x86_64-repo:  $x86_64_repo\n";
     print "ppc64le-repo: $ppc64le_repo\n";
-    # Discover the UNION of OS dirs from BOTH arch repos. Anchoring discovery on x86_64 alone let a
-    # ppc64le-only <os> (an rh<N> that built for ppc but not x86_64) slip through unseen -- finalize
-    # then never cross-populated that cell's x86_64 genesis and still exited 0 (PR #62 review). Both
-    # arch peers are required for every discovered <os> below, so the check is now symmetric.
+
+    # Per-arch repo root, keyed by the @GENESIS_ARCHES arch name. A new arch added to that list must
+    # also get its root wired here (today both roots are the same CD tree); a missing one fails loudly
+    # below rather than silently skipping.
+    my %repo = ( x86_64 => $x86_64_repo, ppc64le => $ppc64le_repo );
+
+    # Discover the UNION of OS dirs across ALL arch repos. Anchoring discovery on one arch let an
+    # <os> built for only the OTHER arch slip through unseen -- finalize then never cross-populated
+    # that cell and still exited 0 (PR #62 review). Every discovered <os> must carry every arch below.
     my %os;
-    $os{ basename($_) } = 1 for grep { -d "$_/x86_64"  } glob("$x86_64_repo/*");
-    $os{ basename($_) } = 1 for grep { -d "$_/ppc64le" } glob("$ppc64le_repo/*");
+    for my $a (@GENESIS_ARCHES) {
+        my $root = $repo{ $a->{arch} }
+            // die "FATAL: [finalize] no repo root configured for arch '$a->{arch}' (wire it in %repo)\n";
+        $os{ basename($_) } = 1 for grep { -d "$_/$a->{arch}" } glob("$root/*");
+    }
+
     my $pairs = 0;
     for my $osdir (sort keys %os) {
-        my $x86dir = "$x86_64_repo/$osdir/x86_64";
-        my $ppcdir = "$ppc64le_repo/$osdir/ppc64le";
-        # Both arch peers must exist: in the CD both arches build every EL, so a one-arch <os> is an
-        # incomplete input, not something to skip past (skipping would leave a cell without the
-        # foreign-arch genesis and still exit 0). Symmetric -- catches an x86_64-only AND a
-        # ppc64le-only <os>.
-        die "FATAL: [finalize] $osdir: no x86_64 peer repo at $x86dir\n"
-          . "  (both arches must build every EL before finalize)\n" if !-d $x86dir;
-        die "FATAL: [finalize] $osdir: no ppc64le peer repo at $ppcdir\n"
-          . "  (both arches must build every EL before finalize)\n" if !-d $ppcdir;
-        # Require the expected inputs: each arch's build must have produced its OWN genesis rpm
-        # before finalize cross-populates them. Without this, a pair whose builds produced no
-        # genesis rpms would make finalize a silent no-op that still exits 0 (the bug this guards).
-        die "FATAL: [finalize] $osdir: no x86_64 xCAT-genesis-base rpm in $x86dir\n"
-            if !grep { !/\.src\.rpm$/ } glob("$x86dir/xCAT-genesis-base-x86_64-*.rpm");
-        die "FATAL: [finalize] $osdir: no ppc64 xCAT-genesis-base rpm in $ppcdir\n"
-            if !grep { !/\.src\.rpm$/ } glob("$ppcdir/xCAT-genesis-base-ppc64-*.rpm");
-        # xCAT collapses ppc/ppc64/ppc64le into tarch=ppc64, so the ppc genesis rpm is
-        # named xCAT-genesis-base-ppc64-*. Cross-copy both directions.
-        my $to_x86 = cross_copy_genesis($ppcdir, $x86dir, 'ppc64',  $sign);
-        my $to_ppc = cross_copy_genesis($x86dir, $ppcdir, 'x86_64', $sign);
-        # Re-index+sign BOTH repos of the pair every finalize, not only when an rpm was copied this
-        # run. A crash after a prior run's copy+sign but before its createrepo leaves the genesis rpm
-        # on disk (so cross_copy_genesis now returns 0) yet ABSENT from repomd.xml -- which no
-        # signature gate catches. Re-indexing is cheap (these are tiny repos) and idempotent, and it
-        # heals that partial state; skipped only when no signer/indexer was injected.
-        if ($reindex) { $reindex->($x86dir); $reindex->($ppcdir); }
-        printf "[finalize] %s: %d ppc64 genesis -> x86_64, %d x86_64 genesis -> ppc64le\n",
-            $osdir, $to_x86, $to_ppc;
+        my %adir = map { $_->{arch} => "$repo{$_->{arch}}/$osdir/$_->{arch}" } @GENESIS_ARCHES;
+        # Pass 1 -- every arch peer repo dir must exist: a one-arch <os> is an incomplete input, not
+        # something to skip past (skipping would leave a cell without a foreign-arch genesis and still
+        # exit 0). Checked before the rpm pass so a missing peer is reported as such. Symmetric across
+        # all arches (catches an x86_64-only AND a ppc64le-only <os>).
+        for my $a (@GENESIS_ARCHES) {
+            die "FATAL: [finalize] $osdir: no $a->{arch} peer repo at $adir{$a->{arch}}\n"
+              . "  (every arch must build every EL before finalize)\n" if !-d $adir{ $a->{arch} };
+        }
+        # Pass 2 -- every arch must have produced its OWN genesis rpm before finalize cross-populates
+        # them; otherwise a pair with no genesis rpms would make finalize a silent no-op that still
+        # exits 0. xCAT collapses ppc/ppc64le into tarch=ppc64, so match on each arch's tarch.
+        for my $a (@GENESIS_ARCHES) {
+            die "FATAL: [finalize] $osdir: no $a->{arch} xCAT-genesis-base rpm (tarch $a->{tarch}) in $adir{$a->{arch}}\n"
+                if !grep { !/\.src\.rpm$/ } glob("$adir{$a->{arch}}/xCAT-genesis-base-$a->{tarch}-*.rpm");
+        }
+        # N-way cross-copy: put each arch's genesis into EVERY other arch's repo dir.
+        my @summary;
+        for my $src (@GENESIS_ARCHES) {
+            for my $dst (@GENESIS_ARCHES) {
+                next if $src->{arch} eq $dst->{arch};
+                my $n = cross_copy_genesis($adir{$src->{arch}}, $adir{$dst->{arch}}, $src->{tarch}, $sign);
+                push @summary, "$n $src->{tarch} -> $dst->{arch}";
+            }
+        }
+        # Re-index+sign EVERY arch repo of this <os> each finalize, not only when an rpm was copied
+        # this run: a crash after a prior run's copy+sign but before its createrepo leaves the genesis
+        # rpm on disk (so cross_copy_genesis now returns 0) yet ABSENT from repomd.xml -- which no
+        # signature gate catches. Re-indexing is cheap (tiny repos) and idempotent, and heals that
+        # partial state; skipped only when no signer/indexer was injected.
+        if ($reindex) { $reindex->($adir{$_->{arch}}) for @GENESIS_ARCHES; }
+        print "[finalize] $osdir: " . join(', ', @summary) . "\n";
         $pairs++;
     }
-    die "FATAL: --finalize-xcat-dep found no <os>/x86_64 + <os>/ppc64le repo pair under\n"
+    die "FATAL: --finalize-xcat-dep found no <os> repo dir under any arch root\n"
       . "  --x86_64-repo '$x86_64_repo'\n  --ppc64le-repo '$ppc64le_repo'\n" if $pairs == 0;
     print_step('Finalize complete');
 }
