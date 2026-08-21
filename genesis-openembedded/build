@@ -84,9 +84,14 @@ die "Output already exists: $output_dir\n" if -e $output_dir || -l $output_dir;
 my $work = tempdir('xcat-genesis-release.XXXXXX', TMPDIR => 1, CLEANUP => 1);
 my $staging = tempdir('.xcat-genesis-release.XXXXXX', DIR => $output_parent, CLEANUP => 1);
 my $oe_work = "$work/openembedded";
+my $oe_tmp = "$oe_work/build/tmp";
 local $ENV{XCAT_GENESIS_WORK_DIR} = $oe_work;
-_run("$xcat_source/xCAT-genesis-builder/oe/build", @requested_architectures);
-my $effective_deploy = "$oe_work/build/tmp/deploy";
+{
+    local $ENV{TMPDIR} = $oe_tmp;
+    make_path($oe_tmp);
+    _run("$xcat_source/xCAT-genesis-builder/oe/build", @requested_architectures);
+}
+my $effective_deploy = "$oe_tmp/deploy";
 die "Invalid OpenEmbedded deploy directory: $effective_deploy\n"
   unless -d $effective_deploy && !-l $effective_deploy;
 
