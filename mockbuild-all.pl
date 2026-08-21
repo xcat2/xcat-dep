@@ -36,6 +36,7 @@ my $skip_xcat = 0;
 my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
+my $genesis_release = '';
 my $scrub_all_chroots = 0;
 my $dry_run = 0;
 my @extra_collect_dirs;
@@ -72,6 +73,7 @@ GetOptions(
     'skip-genesis!'     => \$skip_genesis,
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
+    'genesis-release=s' => \$genesis_release,
     'scrub-all-chroots!' => \$scrub_all_chroots,
     'collect-dir=s@'    => \@extra_collect_dirs,
     'dry-run!'          => \$dry_run,
@@ -135,6 +137,18 @@ require_command('mock') if $scrub_all_chroots;
 require_command('rpmsign') if $gpg_sign;
 require_command('gpg')     if $gpg_sign;
 
+if ($genesis_release ne '') {
+    require_command('cmp');
+    $genesis_release = abs_path($genesis_release)
+        or die "Cannot resolve --genesis-release directory\n";
+    die "Genesis release directory not found: $genesis_release\n"
+        unless -d $genesis_release;
+    my $verifier = "$repo_root/genesis-openembedded/verify-release";
+    die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    run_argv($^X, $verifier, '--format', 'rpm', $genesis_release);
+    $skip_genesis = 1;
+}
+
 # An explicit --target builds just that target; otherwise build the current host
 # arch across rh8/rh9/rh10 into a deployable per-EL xcat-dep repo. This script builds
 # ONLY the host arch (uname -m) -- the other arch is produced on its own build host.
@@ -154,6 +168,7 @@ print "lock:             $output_base/.lock (held)\n";
 print "gpg_sign:         $gpg_sign\n";
 print "gpg_key_name:     $gpg_key_name\n" if $gpg_sign;
 print "gpg_home:         " . ($gpg_home ne '' ? $gpg_home : '(default keyring)') . "\n" if $gpg_sign;
+print "genesis_release:  " . ($genesis_release || '(legacy builder)') . "\n";
 
 # Build (and deploy) EL targets concurrently. Each target is fully isolated -- distinct run_id
 # (target-folded), mock --uniqueext, /tmp work dir, xcat_src/dist/<target>, and deploy dir
@@ -262,6 +277,7 @@ print "skip_xcat_dep:    $skip_xcat_dep\n";
 print "skip_perl:        $skip_perl\n";
 print "skip_xcat:        $skip_xcat\n";
 print "skip_genesis:     $skip_genesis\n";
+print "genesis_release:  " . ($genesis_release || '(none)') . "\n";
 print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
 print "skip_tarball:     $skip_tarball\n";
@@ -273,6 +289,7 @@ print "srpm_repo_dir:    $srpm_repo_dir\n";
 print "srpm_tarball:     $srpm_tarball\n";
 
 my @collect_roots;
+push @collect_roots, "$genesis_release/rpm" if $genesis_release;
 
 if ($scrub_all_chroots) {
     run_step(
@@ -439,6 +456,13 @@ push @collect_roots, @extra_collect_dirs;
 my @srpm_collect_roots = (!$skip_xcat)
     ? uniq(@collect_roots, $xcat_srpms_dir)
     : uniq(@collect_roots);
+push @srpm_collect_roots, "$genesis_release/srpm" if $genesis_release;
+@srpm_collect_roots = uniq(@srpm_collect_roots);
+
+if ($genesis_release && !$dry_run) {
+    remove_genesis_packages($repo_dir, 0);
+    remove_genesis_packages($srpm_repo_dir, 1);
+}
 
 print_step('Collect RPM artifacts');
 print "collection roots:\n";
@@ -474,6 +498,9 @@ my ($copied_srpms, $skipped_non_src, $missing_srpm_roots) = collect_srpms(
     dest_dir => $srpm_repo_dir,
     dry_run  => $dry_run,
 );
+
+assert_genesis_release_copied($repo_dir, $srpm_repo_dir)
+    if $genesis_release && !$dry_run;
 
 if (!$dry_run && $copied_srpms == 0) {
     print "WARN: No source RPMs were collected. SRPM repo and tarball may be empty.\n";
@@ -567,6 +594,7 @@ sub deploy_target {
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
     make_path($dest);
+    remove_genesis_packages($dest, 0) if $genesis_release;
     for my $rpm (glob("$src/*.rpm")) {
         next if $rpm =~ /\.src\.rpm$/;
         copy($rpm, "$dest/" . basename($rpm))
@@ -698,6 +726,8 @@ Options:
   --skip-xcat             Skip xCAT buildrpms.pl step
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
+  --genesis-release PATH  Consume a verified OpenEmbedded Genesis RPM release and skip the
+                          legacy per-EL Genesis build
   --scrub-all-chroots     Run mock -r <target> --scrub=all before build/collect
   --collect-dir PATH      Additional directory to scan recursively for RPMs (repeatable)
   --dry-run               Print planned commands without executing
@@ -730,6 +760,15 @@ sub run_simple {
     if ($rc != 0) {
         my $exit = $rc == -1 ? 255 : ($rc >> 8);
         die "Command failed (rc=$exit): $cmd\n";
+    }
+}
+
+sub run_argv {
+    my (@command) = @_;
+    my $rc = system(@command);
+    if ($rc != 0) {
+        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+        die "Command failed (rc=$exit): @command\n";
     }
 }
 
@@ -877,6 +916,38 @@ sub assert_required_deps {
     my @missing = grep { !have_rpm($dir, $_) } @req;
     die "FATAL: required deps missing from $dir: @missing\n" if @missing;
     print "[deps] required set present in $dir: @req\n";
+}
+
+sub remove_genesis_packages {
+    my ($directory, $source) = @_;
+    return unless -d $directory;
+    for my $path (glob("$directory/xCAT-genesis-base-*.rpm")) {
+        next if $source && $path !~ /\.src\.rpm\z/;
+        next if !$source && $path =~ /\.src\.rpm\z/;
+        unlink($path) or die "Cannot remove stale Genesis package $path: $!\n";
+    }
+}
+
+sub assert_genesis_release_copied {
+    my ($binary_directory, $source_directory) = @_;
+    for my $entry (
+        [ "$genesis_release/rpm", $binary_directory ],
+        [ "$genesis_release/srpm", $source_directory ],
+    ) {
+        my ($source_root, $destination_root) = @{$entry};
+        for my $source (glob("$source_root/*.rpm")) {
+            my $destination = "$destination_root/" . basename($source);
+            die "Genesis package was not collected: $destination\n" unless -f $destination;
+            die "Collected Genesis package differs from release: $destination\n"
+                unless files_match($source, $destination);
+        }
+    }
+}
+
+sub files_match {
+    my ($left, $right) = @_;
+    return 0 unless -f $left && -f $right;
+    return system('cmp', '-s', $left, $right) == 0;
 }
 
 sub collect_rpms {

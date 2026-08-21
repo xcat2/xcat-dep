@@ -12,6 +12,7 @@ APT_DIR=""
 GPG_KEY_ID="xcat@megware.com"
 SKIP_SIGN=0
 DRY_RUN=0
+GENESIS_RELEASE=""
 
 declare -A CODENAME_MAP=(
     [ubuntu22.04]=jammy
@@ -44,6 +45,7 @@ Options:
   --apt-dir PATH         APT output directory (default: <repo-root>/repos/apt)
   --gpg-key-id ID        GPG key ID for signing (default: xcat@megware.com)
   --skip-sign            Skip GPG signing (for testing)
+  --genesis-release PATH Add a verified OpenEmbedded Genesis DEB release to each selected suite
   --dry-run              Print planned actions without executing
   -h, --help             Show this help
 
@@ -70,6 +72,7 @@ while [[ $# -gt 0 ]]; do
         --apt-dir)     APT_DIR="$2"; shift 2 ;;
         --gpg-key-id)  GPG_KEY_ID="$2"; shift 2 ;;
         --skip-sign)   SKIP_SIGN=1; shift ;;
+        --genesis-release) GENESIS_RELEASE="$2"; shift 2 ;;
         --dry-run)     DRY_RUN=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         -*)            die "Unknown option: $1" ;;
@@ -79,6 +82,15 @@ done
 
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 APT_DIR="${APT_DIR:-$REPO_ROOT/repos/apt}"
+
+if [[ -n "$GENESIS_RELEASE" ]]; then
+    [[ -d "$GENESIS_RELEASE" ]] || die "Genesis release directory not found: $GENESIS_RELEASE"
+    GENESIS_RELEASE="$(cd "$GENESIS_RELEASE" && pwd)"
+    verifier="$SCRIPT_DIR/genesis-openembedded/verify-release"
+    [[ -x "$verifier" ]] || die "Genesis release verifier not found: $verifier"
+    "$verifier" --format deb "$GENESIS_RELEASE"
+    echo "Genesis release: $GENESIS_RELEASE"
+fi
 
 # Default to all known versions when no DIST arg was given; otherwise validate
 # each requested version against CODENAME_MAP.
@@ -144,6 +156,17 @@ done
 
 step "Populating pool"
 
+copy_deb() {
+    local source="$1"
+    local destination="$2/$(basename "$source")"
+    if [[ -e "$destination" ]]; then
+        cmp -s "$source" "$destination" \
+            || die "Package collision with different content: $destination"
+        return
+    fi
+    ln "$source" "$destination" 2>/dev/null || cp "$source" "$destination"
+}
+
 for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
     src="$APT_DIR/$ver"
@@ -151,8 +174,13 @@ for ver in "${SELECTED_VERS[@]}"; do
     echo "$ver -> pool/main/$codename/"
     if [[ $DRY_RUN -eq 0 ]]; then
         for deb in "$src"/*.deb; do
-            ln "$deb" "$dst/" 2>/dev/null || cp "$deb" "$dst/"
+            copy_deb "$deb" "$dst"
         done
+        if [[ -n "$GENESIS_RELEASE" ]]; then
+            for deb in "$GENESIS_RELEASE"/deb/*.deb; do
+                copy_deb "$deb" "$dst"
+            done
+        fi
     fi
 done
 
