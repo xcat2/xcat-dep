@@ -75,12 +75,16 @@ the whole run.
 1. Optional chroot cleanup (`--scrub-all-chroots`)
 2. Parallel build execution — only the target's manifest packages; any failure fails the run
 3. Post-build chroot scrub — reclaims each build step's mock chroot (unless `--keep-buildroots`)
-4. Optional install/smoke checks inside child builders (disabled with `--skip-install`)
-5. Binary RPM collection into `repo/<ARCH>/`
-6. Source RPM collection into `repo-src/`
-7. `createrepo --update` on both repo trees
-8. Tarball creation for both repo trees
-9. Summary generation (`summary.txt`)
+4. Binary RPM collection into `repo/<ARCH>/`
+5. Source RPM collection into `repo-src/`
+6. `createrepo --update` on both repo trees
+7. Tarball creation for both repo trees
+8. Summary generation (`summary.txt`)
+
+The build process does **not** install any built RPM onto the build host. Installing an EL8/EL9
+package on the (single, possibly EL10) build host corrupts the host RPM database; the real
+install-and-run verification happens in the CI's separate Test phase (`cluster-test.pl` boots a
+matching MN and installs xCAT + the freshly built xcat-dep there).
 
 # Packages notes
 
@@ -96,8 +100,6 @@ the whole run.
 
 Use these flags to skip specific operations:
 
-- `--skip-install`
-  - Skips install/smoke checks performed by child builder scripts after RPM build.
 - `--skip-genesis`
   - Skips the `xCAT-genesis-base` build (`<XCAT_SOURCE>/buildrpms.pl --package xCAT-genesis-base`).
 - `--skip-xcat-dep`
@@ -194,15 +196,15 @@ perl ./mockbuild-all.pl \
 
 Notes:
 
-- Install/smoke checks run by default inside child builders.
-- Add `--skip-install` to skip those checks.
+- The build never installs a built RPM onto the build host (see above); install-and-run
+  verification is the CI Test phase's job.
 - Add `--skip-genesis` to skip the `xCAT-genesis-base` build (the only step that invokes
   `<XCAT_SOURCE>/buildrpms.pl`).
 - `<RUN_ID>` is optional; when omitted it is timestamp-based.
 
 # Common Build Modes
 
-xcat-dep repo (with install/smoke checks):
+xcat-dep repo:
 
 ```bash
 cd <REPO_ROOT>
@@ -210,17 +212,6 @@ perl ./mockbuild-all.pl \
   --repo-root <REPO_ROOT> \
   --xcat-source <XCAT_SOURCE> \
   --scrub-all-chroots
-```
-
-xcat-dep repo (skip install/smoke checks):
-
-```bash
-cd <REPO_ROOT>
-perl ./mockbuild-all.pl \
-  --repo-root <REPO_ROOT> \
-  --xcat-source <XCAT_SOURCE> \
-  --scrub-all-chroots \
-  --skip-install
 ```
 
 Dependency repo without the `xCAT-genesis-base` build:
@@ -231,8 +222,7 @@ perl ./mockbuild-all.pl \
   --repo-root <REPO_ROOT> \
   --xcat-source <XCAT_SOURCE> \
   --scrub-all-chroots \
-  --skip-genesis \
-  --skip-install
+  --skip-genesis
 ```
 
 Collection-only pass from existing build artifacts:

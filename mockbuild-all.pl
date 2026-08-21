@@ -16,7 +16,8 @@ use lib $RealBin;
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
                       read_manifest verify_repo_packages verify_repo_signature
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
-                      cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix);
+                      cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
+                      build_mock_uniqueext);
 
 # --- Mount-namespace isolation: guard the host cgroup against mock teardown propagation ----------
 # mock mounts /sys/fs/cgroup into every build chroot. On these systemd build hosts every mount is
@@ -80,7 +81,6 @@ my $build_number;
 # newest tag is v0.3.2), so it exists only on master -- pin an immutable SHA instead of the moving
 # branch so the build is reproducible. Bump this deliberately when uptaking a new goconserver.
 my $GOCONSERVER_REF = '6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f';
-my $skip_install = 0;
 my $skip_build = 0;
 my $skip_xcat_dep = 0;
 my $skip_perl = 0;
@@ -134,7 +134,6 @@ GetOptions(
     'run-id=s'          => \$run_id,
     'build-timestamp=i' => \$build_timestamp,
     'build-number=i'    => \$build_number,
-    'skip-install!'     => \$skip_install,
     'skip-build!'       => \$skip_build,
     'skip-xcat-dep!'    => \$skip_xcat_dep,
     'skip-perl!'        => \$skip_perl,
@@ -443,7 +442,6 @@ print "skip_build:       $skip_build\n";
 print "skip_xcat_dep:    $skip_xcat_dep\n";
 print "skip_perl:        $skip_perl\n";
 print "skip_genesis:     $skip_genesis\n";
-print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
 print "skip_tarball:     $skip_tarball\n";
 print "scrub_all_chroots:$scrub_all_chroots\n";
@@ -485,7 +483,6 @@ if (!$skip_build) {
                 # host-local, run-scoped work dir so /tmp doesn't collide between runs
                 '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
-                ($skip_install ? '--skip-install' : ()),
                 # goconserver generates its spec at build time (from an upstream clone), so the
                 # in-tree spec Release bump above cannot reach it. Hand the CD suffix down so its
                 # NVR advances per run too, and pin the clone to an immutable commit (not the moving
@@ -529,7 +526,6 @@ if (!$skip_build) {
             # packages; the srpm-mode ones (HTML-Form, IO-Stty, Net-Telnet) build from a
             # committed .src.rpm, so hand the suffix down for the builder to re-stamp them.
             ($RELEASE_BUMP ne '' ? ('--release-suffix', sh_quote($RELEASE_BUMP)) : ()),
-            ($skip_install ? '--skip-install' : ()),
             ($keep_buildroots ? '--keep-buildroots' : ()),
         );
         push @build_steps, {
@@ -972,7 +968,6 @@ Options:
                           0/auto = host nproc (default: auto)
   --run-id ID             Run identifier suffix (default: derived from build timestamp)
   --build-timestamp EPOCH Unix epoch for deterministic builds (default: Gitepoch or git log)
-  --skip-install          Skip install/smoke tests in child builder scripts
   --skip-build            Skip all build steps and only collect/create repo/tarballs
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
   --skip-perl             Skip perl package build step
@@ -1406,27 +1401,6 @@ sub resolve_mock_cfg {
     my $short = $short_forms{$os_id} // $os_id;
     die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
       . "(tried /etc/mock/${os_id}+epel-${rel}-${arch}.cfg and /etc/mock/${short}+epel-${rel}-${arch}.cfg)\n";
-}
-
-sub build_mock_uniqueext {
-    my ($run, $seq, $label) = @_;
-
-    my $run_part = defined($run) ? $run : 'run';
-    $run_part =~ s/[^A-Za-z0-9_.-]+/-/g;
-    $run_part =~ s/^-+|-+$//g;
-    $run_part = 'run' if $run_part eq '';
-    $run_part = substr($run_part, -24) if length($run_part) > 24;
-
-    my $label_part = defined($label) ? $label : 'step';
-    $label_part =~ s/[^A-Za-z0-9_.-]+/-/g;
-    $label_part =~ s/^-+|-+$//g;
-    $label_part = 'step' if $label_part eq '';
-    $label_part = substr($label_part, 0, 20) if length($label_part) > 20;
-
-    my $idx = defined($seq) ? int($seq) : 0;
-    $idx = 0 if $idx < 0;
-
-    return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
 }
 
 sub resolve_xcat_source {

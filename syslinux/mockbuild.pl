@@ -19,7 +19,6 @@ my $mock_cfg     = '';
 my $mock_uniqueext = '';
 my $result_dir   = "$repo_root/build-output/list3/syslinux-xcat";
 my $log_dir      = "$repo_root/build-logs/list3/syslinux-xcat";
-my $skip_install = 0;
 my $build_timestamp;
 
 GetOptions(
@@ -29,7 +28,6 @@ GetOptions(
     'mock-uniqueext=s'        => \$mock_uniqueext,
     'result-dir=s'            => \$result_dir,
     'log-dir=s'               => \$log_dir,
-    'skip-install!'           => \$skip_install,
     'build-timestamp=i'       => \$build_timestamp,
 ) or die usage();
 
@@ -87,7 +85,6 @@ print "version:    $version\n";
 print "mock_cfg:   $mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
 print "source_file:$source_file\n";
-print "skip_install: $skip_install\n";
 
 make_path($result_dir);
 make_path($log_dir);
@@ -226,48 +223,6 @@ for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
         or die "Failed to copy $src to $log_dir: $!\n";
 }
 
-if (!$skip_install) {
-    print_step("Install RPM(s) and run smoke tests");
-    run("dnf -y install " . sh_quote($xcat_rpm));
-
-    my $pxe_file = '/opt/xcat/share/xcat/netboot/syslinux/pxelinux.0';
-    die "Missing installed PXE file: $pxe_file\n" if !-f $pxe_file;
-
-    my $file_log = "$log_dir/smoke-file.log";
-    my $qf_log   = "$log_dir/smoke-rpm-qf.log";
-    my $rc_file = run_capture_rc("file $pxe_file", $file_log);
-    my $rc_qf   = run_capture_rc("rpm -qf $pxe_file", $qf_log);
-
-    die "Smoke check failed: file returned $rc_file\n" if $rc_file != 0;
-    die "Smoke check failed: rpm -qf returned $rc_qf\n" if $rc_qf != 0;
-
-    my $qf_out = slurp($qf_log);
-    die "Installed file is not owned by syslinux-xcat:\n$qf_out\n"
-        if $qf_out !~ /^syslinux-xcat-/m;
-
-    # EL10 hosts may already carry syslinux-nonlinux, which conflicts with
-    # directly installing the rebuilt syslinux payload. The xcat subpackage
-    # is the artifact we need to smoke-test on the host; repository-level
-    # dependency validation happens later in the full install phase.
-    my $syslinux_help_log = "$log_dir/smoke-syslinux-help.log";
-    if (-x '/usr/bin/syslinux') {
-        my $rc_help = run_capture_rc("/usr/bin/syslinux --help", $syslinux_help_log);
-        my $help_out = slurp($syslinux_help_log);
-        die "syslinux --help returned unexpected rc=$rc_help\n"
-            if $rc_help != 0 && $rc_help != 1;
-        die "syslinux --help output missing expected usage text\n"
-            if $help_out !~ /usage|syslinux/i;
-    }
-
-    my $summary = "$log_dir/smoke-summary.txt";
-    open my $sfh, '>', $summary or die "Cannot write $summary: $!\n";
-    print {$sfh} "pxe_file=$pxe_file\n";
-    print {$sfh} "rc_file=$rc_file\n";
-    print {$sfh} "rc_qf=$rc_qf\n";
-    print {$sfh} "main_rpm_available=" . ($main_rpm ? 1 : 0) . "\n";
-    close $sfh;
-}
-
 print_step("Completed");
 print "syslinux-xcat RPM: $xcat_rpm\n";
 print "Artifacts: $result_dir\n";
@@ -284,7 +239,6 @@ Usage: $0 [options]
   --result-dir PATH     Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH        Log directory (default: $log_dir)
   --build-timestamp EPOCH   SOURCE_DATE_EPOCH for deterministic builds
-  --skip-install        Skip dnf install + smoke tests
 USAGE
 }
 

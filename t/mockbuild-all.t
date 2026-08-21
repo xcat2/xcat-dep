@@ -12,7 +12,8 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
-                      verify_repo_packages verify_repo_signature bump_dep_release_suffix);
+                      verify_repo_packages verify_repo_signature bump_dep_release_suffix
+                      build_mock_uniqueext);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
 sub quiet(&) {
@@ -323,6 +324,35 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is(scalar(@wk), 1, 'verify_repo_signature: a mismatched signer yields exactly one problem');
     like($wk[0], qr/^WRONGKEY repomd: signed by EVILFPR, expected GOODFPR$/,
         'verify_repo_signature: mismatch reported as WRONGKEY <unit>: signed by <obs>, expected <exp>');
+}
+
+# ---- build_mock_uniqueext: distinct per target so concurrent mock roots never collide ---------
+# (PR #62 review) A long (timestamp) run id must not tail-truncate away the leading EL/arch token:
+# for the 7-char "ppc64le" arch that dropped the EL digit, so alma+epel-{8,9,10}-ppc64le collapsed to
+# one uniqueext -- and goconserver builds all three ELs in the SAME el10 chroot, so the roots raced.
+{
+    my $seq = 6; my $label = 'goconserver';
+    # The reproducing case: the default timestamp run id (long), folded with the per-target prefix.
+    my @ppc = map { build_mock_uniqueext("alma+epel-$_-ppc64le-20260821-210716", $seq, $label) } (8, 9, 10);
+    my %seen; $seen{$_}++ for @ppc;
+    is(scalar(keys %seen), 3,
+        'build_mock_uniqueext: el8/el9/el10 ppc64le get DISTINCT uniqueext on a long run id (no collision)');
+    like($ppc[0], qr/^mba-06-alma-epel-8-/,  'uniqueext keeps a readable leading EL/arch token');
+
+    # x86_64 (6-char arch) was never broken -- assert it stays distinct too.
+    my @x86 = map { build_mock_uniqueext("alma+epel-$_-x86_64-20260821-210716", $seq, $label) } (8, 9, 10);
+    my %sx; $sx{$_}++ for @x86;
+    is(scalar(keys %sx), 3, 'build_mock_uniqueext: el8/el9/el10 x86_64 also distinct');
+
+    # Short run ids (e.g. the CD "$BUILD_NUMBER") are unchanged and already distinct per target.
+    isnt(build_mock_uniqueext('alma+epel-8-ppc64le-104', $seq, $label),
+         build_mock_uniqueext('alma+epel-9-ppc64le-104', $seq, $label),
+        'build_mock_uniqueext: short (build-number) run ids distinct per target');
+
+    # Same run id + same step -> stable (deterministic; a re-run reuses/scrubs the same root).
+    is(build_mock_uniqueext('alma+epel-8-ppc64le-20260821-210716', $seq, $label),
+       build_mock_uniqueext('alma+epel-8-ppc64le-20260821-210716', $seq, $label),
+        'build_mock_uniqueext: deterministic for a given (run, seq, label)');
 }
 
 done_testing;

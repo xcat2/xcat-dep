@@ -19,7 +19,6 @@ my $mock_cfg = '';
 my $mock_uniqueext = '';
 my $result_dir = "$repo_root/build-output/list3/ipmitool-xcat";
 my $log_dir = "$repo_root/build-logs/list3/ipmitool-xcat";
-my $skip_install = 0;
 my $build_timestamp;
 
 GetOptions(
@@ -29,7 +28,6 @@ GetOptions(
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'   => \$result_dir,
     'log-dir=s'      => \$log_dir,
-    'skip-install!'  => \$skip_install,
     'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
@@ -79,7 +77,6 @@ print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
 print "source_file:$source_file\n";
-print "skip_install: $skip_install\n";
 print "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH\n";
 
 make_path($result_dir);
@@ -206,60 +203,6 @@ for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
         or die "Failed to copy $src to $log_dir: $!\n";
 }
 
-if (!$skip_install) {
-    print_step("Install RPM and run smoke tests");
-    run("dnf -y install " . sh_quote($main_rpm));
-
-    my $bin = '/opt/xcat/bin/ipmitool-xcat';
-    die "Missing installed binary: $bin\n" if !-x $bin;
-
-    my $help_short_log = "$log_dir/smoke-help-short.log";
-    my $help_long_log  = "$log_dir/smoke-help-long.log";
-    my $version_log    = "$log_dir/smoke-version.log";
-    my $open_log       = "$log_dir/smoke-open-mc-info.log";
-    my $ldd_log        = "$log_dir/smoke-ldd.log";
-
-    my $rc_help_short = run_capture_rc("$bin -h", $help_short_log);
-    my $rc_help_long  = run_capture_rc("$bin --help", $help_long_log);
-    my $rc_version    = run_capture_rc("$bin -V", $version_log);
-    my $rc_open       = run_capture_rc("$bin -I open mc info", $open_log);
-    my $rc_ldd        = run_capture_rc("ldd $bin", $ldd_log);
-
-    die "Smoke check failed: -h returned $rc_help_short\n" if $rc_help_short != 0;
-    die "Smoke check failed: -V returned $rc_version\n" if $rc_version != 0;
-    die "Smoke check failed: ldd returned $rc_ldd\n" if $rc_ldd != 0;
-
-    my $help_short_out = slurp($help_short_log);
-    my $help_long_out  = slurp($help_long_log);
-    my $version_out    = slurp($version_log);
-    my $open_out       = slurp($open_log);
-    my $ldd_out        = slurp($ldd_log);
-
-    die "Short help output does not contain usage text\n"
-        if $help_short_out !~ /usage:/i;
-    die "Long help output does not contain usage text\n"
-        if $help_long_out !~ /usage:/i;
-    die "Long help returned unexpected rc=$rc_help_long (expected 0 or 1)\n"
-        if $rc_help_long != 0 && $rc_help_long != 1;
-    die "Version output missing expected version string\n"
-        if $version_out !~ /ipmitool-xcat version \Q$version\E/i;
-    die "ldd output missing libcrypto dependency\n"
-        if $ldd_out !~ /libcrypto/;
-    if ($rc_open != 0 && $open_out !~ m{Could not open device|/dev/ipmi}) {
-        die "IPMI probe failed with unexpected output:\n$open_out\n";
-    }
-
-    my $summary = "$log_dir/smoke-summary.txt";
-    open my $sfh, '>', $summary or die "Cannot write $summary: $!\n";
-    print {$sfh} "binary=$bin\n";
-    print {$sfh} "rc_help_short=$rc_help_short\n";
-    print {$sfh} "rc_help_long=$rc_help_long\n";
-    print {$sfh} "rc_version=$rc_version\n";
-    print {$sfh} "rc_open=$rc_open\n";
-    print {$sfh} "rc_ldd=$rc_ldd\n";
-    close $sfh;
-}
-
 print_step("Completed");
 print "Main RPM: $main_rpm\n";
 print "Artifacts: $result_dir\n";
@@ -275,7 +218,6 @@ Usage: $0 [options]
   --mock-uniqueext TXT  Optional mock --uniqueext suffix to isolate concurrent builds
   --result-dir PATH     Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH        Log directory (default: $log_dir)
-  --skip-install        Skip dnf install + smoke tests
   --build-timestamp N   Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
 USAGE
 }

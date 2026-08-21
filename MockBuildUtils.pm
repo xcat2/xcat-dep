@@ -10,6 +10,7 @@ use File::Basename qw(basename);
 use File::Copy qw(copy);
 use File::Find;
 use Sys::Hostname;
+use Digest::MD5 qw(md5_hex);
 
 our @EXPORT_OK = qw(
     sh_quote print_step
@@ -17,6 +18,7 @@ our @EXPORT_OK = qw(
     verify_repo_packages verify_repo_signature
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
+    build_mock_uniqueext
 );
 
 # sh_quote: single-quote a string for safe use in a shell command.
@@ -375,6 +377,43 @@ sub bump_dep_release_suffix {
     die "FATAL: --build-number given but NO spec carried a Release: line under $repo_root (wrong tree?)\n"
         if $with_release == 0;
     return $bumped;
+}
+
+# build_mock_uniqueext: a mock --uniqueext UNIQUE per (run, build-step) so concurrent mock builds
+# never share a chroot root (/var/lib/mock/<cfg>-<uniqueext>). $run is the per-target run id
+# (e.g. "alma+epel-8-ppc64le-<n>"), $seq orders the step, $label names the package.
+#
+# The run id must NOT be blindly tail-truncated. The per-target id leads with the EL/arch token, and
+# for the 7-char "ppc64le" arch the EL digit is exactly what falls off the front of a keep-the-last-24
+# truncation -- so alma+epel-{8,9,10}-ppc64le all collapse to the same run part. That is catastrophic
+# for goconserver, which compiles EVERY EL in the el10 chroot (build_cfg rewritten to -10-): the
+# chroot NAME is then identical across the three ELs, and the uniqueext is the ONLY thing keeping
+# their roots apart, so three concurrent el8/el9/el10 ppc64le goconserver builds race in one root.
+# When the id is too long, keep a readable leading token AND append a short digest of the FULL id, so
+# distinct ids always yield distinct uniqueext regardless of where in the string they differ.
+sub build_mock_uniqueext {
+    my ($run, $seq, $label) = @_;
+
+    my $run_part = defined($run) ? $run : 'run';
+    $run_part =~ s/[^A-Za-z0-9_.-]+/-/g;
+    $run_part =~ s/^-+|-+$//g;
+    $run_part = 'run' if $run_part eq '';
+    if (length($run_part) > 24) {
+        my $digest = substr(md5_hex($run_part), 0, 8);
+        (my $head = substr($run_part, 0, 15)) =~ s/-+$//;
+        $run_part = "$head-$digest";
+    }
+
+    my $label_part = defined($label) ? $label : 'step';
+    $label_part =~ s/[^A-Za-z0-9_.-]+/-/g;
+    $label_part =~ s/^-+|-+$//g;
+    $label_part = 'step' if $label_part eq '';
+    $label_part = substr($label_part, 0, 20) if length($label_part) > 20;
+
+    my $idx = defined($seq) ? int($seq) : 0;
+    $idx = 0 if $idx < 0;
+
+    return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
 }
 
 1;

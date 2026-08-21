@@ -18,8 +18,6 @@ my $result_dir = '';
 my $log_dir    = '';
 my $packages_csv = '';
 my $jobs = 0;
-my $skip_install = 0;
-my $allow_erasing = 0;
 my $build_timestamp;
 # CD version bump: appended to the Release of the srpm-mode packages (HTML-Form, IO-Stty,
 # Net-Telnet), which build from a committed .src.rpm and so are NOT covered by mockbuild-all's
@@ -35,8 +33,6 @@ GetOptions(
     'log-dir=s'       => \$log_dir,
     'packages=s'      => \$packages_csv,
     'jobs=i'          => \$jobs,
-    'skip-install!'   => \$skip_install,
-    'allow-erasing!'  => \$allow_erasing,
     'build-timestamp=i' => \$build_timestamp,
     'release-suffix=s'  => \$release_suffix,
 ) or die usage();
@@ -170,10 +166,6 @@ $jobs = 1 if $jobs < 1;
 if (@packages && $jobs > scalar(@packages)) {
     $jobs = scalar(@packages);
 }
-if (!$skip_install && $jobs > 1) {
-    print "INFO: --skip-install is disabled; forcing --jobs 1 to avoid host dnf lock contention\n";
-    $jobs = 1;
-}
 
 make_path($result_dir);
 make_path($log_dir);
@@ -189,8 +181,6 @@ print "mock_cfg:    $mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
 print "packages:    " . join(', ', @packages) . "\n";
 print "jobs:        $jobs\n";
-print "skip_install:$skip_install\n";
-print "allow_erasing:$allow_erasing\n";
 print "release_suffix:" . ($release_suffix ne '' ? $release_suffix : '(none)') . "\n";
 
 print_step("Mock config check");
@@ -230,8 +220,6 @@ for my $idx (0 .. $#packages) {
         mock_cfg      => $mock_cfg,
         mock_uniqueext => $pkg_uniqueext,
         arch          => $arch,
-        skip_install  => $skip_install,
-        allow_erasing => $allow_erasing,
         release_suffix => $release_suffix,
     );
     unless ($keep_buildroots) {
@@ -328,8 +316,6 @@ sub build_package {
     my $mock_cfg       = $args{mock_cfg};
     my $mock_uniqueext = $args{mock_uniqueext};
     my $arch           = $args{arch};
-    my $skip_install   = $args{skip_install};
-    my $allow_erasing  = $args{allow_erasing};
     my $release_suffix = $args{release_suffix};
 
     my $pkg_run_dir = "$work_dir/$pkg";
@@ -506,15 +492,6 @@ sub build_package {
             }
         }
 
-        if (!$skip_install) {
-            my $install_cmd = "dnf -y install ";
-            $install_cmd .= "--allowerasing " if $allow_erasing;
-            run($install_cmd . sh_quote($main_rpm));
-            my $module = $cfg->{module};
-            my $rc_mod = run_capture_rc("perl -M$module -e 1", "$pkg_log/smoke-perl-module.log");
-            die "Perl module import failed for $pkg ($module), rc=$rc_mod\n" if $rc_mod != 0;
-        }
-
         $summary = "$pkg PASS main_rpm=" . basename($main_rpm);
         $ok = 1;
     };
@@ -561,8 +538,6 @@ Usage: $0 [options]
   --build-timestamp EPOCH  Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
   --release-suffix STR CD bump appended to the Release of the srpm-mode packages that build
                        from a committed .src.rpm (HTML-Form, IO-Stty, Net-Telnet)
-  --skip-install       Skip dnf install + perl module import checks
-  --allow-erasing      Allow dnf to erase conflicting packages during install smoke tests
 USAGE
 }
 

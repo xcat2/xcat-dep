@@ -17,7 +17,6 @@ my $mock_cfg    = '';
 my $mock_uniqueext = '';
 my $result_dir  = "$repo_root/build-output/list5/goconserver";
 my $log_dir     = "$repo_root/build-logs/list5/goconserver";
-my $skip_install = 0;
 my $version     = '0.3.3';
 my $go_repo     = 'https://github.com/xcat2/goconserver.git';
 # Immutable pin: goconserver 0.3.3 is unreleased (newest tag v0.3.2) so it lives only on master.
@@ -33,7 +32,6 @@ GetOptions(
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'     => \$result_dir,
     'log-dir=s'        => \$log_dir,
-    'skip-install!'    => \$skip_install,
     'version=s'        => \$version,
     'go-repo=s'        => \$go_repo,
     'go-ref=s'         => \$go_ref,
@@ -95,7 +93,6 @@ print "arch:         $arch\n";
 print "version:      $version\n";
 print "go_ref:       $go_ref\n";
 print "release_suffix: " . ($release_suffix ne '' ? $release_suffix : '(none)') . "\n";
-print "skip_install: $skip_install\n";
 
 make_path($result_dir);
 make_path($log_dir);
@@ -288,19 +285,6 @@ for my $log (qw(build.log root.log state.log)) {
 system("mock -r " . sh_quote($build_cfg) . $mock_uniqueext_opt .
        " --scrub=chroot --scrub=bootstrap >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
 
-if (!$skip_install) {
-    print_step("Install and smoke test");
-    my $main_rpm = $arch_rpms[0];
-    run("dnf -y install " . sh_quote($main_rpm) . " >" . sh_quote("$log_dir/dnf-install.log") . " 2>&1");
-    die "Missing /usr/bin/goconserver\n" if !-x '/usr/bin/goconserver';
-    die "Missing /usr/bin/congo\n"       if !-x '/usr/bin/congo';
-    my $rc_help = run_rc("goconserver -h >" . sh_quote("$log_dir/smoke-help.log") . " 2>&1");
-    die "goconserver -h failed (rc=$rc_help)\n" if $rc_help > 1;
-    my $rc_congo = run_rc("congo -h >" . sh_quote("$log_dir/smoke-congo.log") . " 2>&1");
-    die "congo -h failed (rc=$rc_congo)\n" if $rc_congo > 1;
-    print "Smoke tests passed.\n";
-}
-
 print_step("Completed");
 print "Results in: $result_dir\n";
 exit 0;
@@ -321,7 +305,6 @@ Options:
   --mock-uniqueext STR  Mock uniqueext (for concurrency isolation under mockbuild-all.pl)
   --result-dir PATH     Output directory for RPMs
   --log-dir PATH        Output directory for logs
-  --skip-install        Skip dnf install + smoke tests
   --version VER         Version string (default: 0.3.3)
   --go-repo URL         Git repo URL (default: github.com/xcat2/goconserver)
   --go-ref REF          Git ref/SHA to build (default: the pinned commit)
@@ -350,13 +333,6 @@ sub run {
         my $exit = $rc == -1 ? 255 : ($rc >> 8);
         die "Command failed (rc=$exit): $cmd\n";
     }
-}
-
-sub run_rc {
-    my ($cmd) = @_;
-    print "+ $cmd\n";
-    my $rc = system($cmd);
-    return $rc == -1 ? 255 : ($rc >> 8);
 }
 
 sub capture {

@@ -19,7 +19,6 @@ my $mock_cfg    = '';
 my $mock_uniqueext = '';
 my $result_dir  = "$repo_root/build-output/list3/xnba-undi";
 my $log_dir     = "$repo_root/build-logs/list3/xnba-undi";
-my $skip_install = 0;
 my $build_timestamp;
 
 GetOptions(
@@ -28,7 +27,6 @@ GetOptions(
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'   => \$result_dir,
     'log-dir=s'      => \$log_dir,
-    'skip-install!'  => \$skip_install,
     'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
@@ -73,7 +71,6 @@ print "work_dir:   $work_dir\n";
 print "result_dir: $result_dir\n";
 print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
-print "skip_install: $skip_install\n";
 
 make_path($result_dir);
 make_path($log_dir);
@@ -176,7 +173,6 @@ Options:
   --mock-uniqueext STR  Mock uniqueext value
   --result-dir PATH     Output directory for RPMs
   --log-dir PATH        Output directory for logs
-  --skip-install        Skip install verification
   --build-timestamp EPOCH  Unix timestamp for reproducible builds
 USAGE
 }
