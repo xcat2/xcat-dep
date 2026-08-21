@@ -801,19 +801,57 @@ sub deploy_target {
     my $dest = "$repo_dep/rh$rel/$arch";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
-    make_path($dest);
-    for my $rpm (glob("$src/*.rpm")) {
-        next if $rpm =~ /\.src\.rpm$/;
-        copy($rpm, "$dest/" . basename($rpm))
-            or die "Failed to copy $rpm -> $dest: $!\n";
+
+    # Stage the cell in a sibling temp dir, sign+index+verify it THERE, then atomically swap it into
+    # place. This makes the deploy self-cleaning and atomic (PR #62 review #3):
+    #   - self-cleaning: the cell is rebuilt from scratch each run, so stale snap-NVR rpms from an
+    #     earlier build never accumulate. Previously deploy copied ADDITIVELY into an existing $dest
+    #     and relied on the pipeline pre-wiping rh<N>/<arch> -- a standalone run accumulated versions.
+    #   - atomic + verify-before-replace: a failed sign/index/verify leaves the previously-published
+    #     cell untouched, and no reader ever sees a half-written cell.
+    # The staging dir is a sibling of $dest, so the rename is a same-filesystem (atomic) move. The
+    # cross-arch genesis (--finalize-xcat-dep) runs later and re-populates the foreign-arch genesis,
+    # so rebuilding this single-arch cell from $src is correct.
+    make_path(dirname($dest));
+    my $stage = "$dest.stage.$$";
+    remove_tree($stage) if -d $stage;
+    make_path($stage);
+    my $ok = eval {
+        for my $rpm (glob("$src/*.rpm")) {
+            next if $rpm =~ /\.src\.rpm$/;
+            copy($rpm, "$stage/" . basename($rpm))
+                or die "Failed to copy $rpm -> $stage: $!\n";
+        }
+        sign_and_index_repo($stage);
+        write_dep_repo_metadata($stage, $rel);
+        # Automatic completeness + signature gate on the freshly signed cell -- the single
+        # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
+        # manifest-required package is present at its pinned version, the repomd signature verifies,
+        # AND every rpm is signed by the key. Runs on the STAGE so a failure never lands in $dest.
+        # Suppressible with --no-verify-repo for iteration/debug.
+        verify_target_repo($stage, $tgt) unless $no_verify_repo;
+        1;
+    };
+    if (!$ok) {
+        my $err = $@;
+        remove_tree($stage);   # leave the previously-published cell exactly as it was
+        die $err;
     }
-    sign_and_index_repo($dest);
-    write_dep_repo_metadata($dest, $rel);
-    # Automatic completeness + signature gate on the finalized, signed repo -- the single
-    # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
-    # manifest-required package is present at its pinned version AND that the repomd signature
-    # verifies. Suppressible with --no-verify-repo for iteration/debug.
-    verify_target_repo($dest, $tgt) unless $no_verify_repo;
+
+    # Atomic replace: rename cannot overwrite a populated dir, so move the old cell aside, swap the
+    # staged cell in, then drop the old one. On a failed final rename, restore the old cell.
+    my $old = "$dest.old.$$";
+    remove_tree($old) if -d $old;
+    if (-d $dest) {
+        rename($dest, $old) or die "Failed to move old cell $dest aside: $!\n";
+    }
+    unless (rename($stage, $dest)) {
+        my $err = $!;
+        rename($old, $dest) if -d $old && !-d $dest;   # best-effort restore
+        die "Failed to swap staged cell into $dest: $err\n";
+    }
+    remove_tree($old) if -d $old;
+
     my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
     print "Deployed rh$rel/$arch: $n rpms\n";
 }
