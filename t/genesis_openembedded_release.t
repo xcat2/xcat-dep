@@ -2,17 +2,13 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path);
-use Digest::SHA ();
-use File::Basename qw(dirname);
-use File::Copy qw(copy);
-use File::Find qw(find);
 use File::Path qw(make_path);
-use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin;
 use Test::More;
 
 use lib "$FindBin::Bin/../genesis-openembedded/lib";
+use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
@@ -20,6 +16,16 @@ use XCAT::GenesisRelease qw(
   validate_architecture
   validate_export
   validate_release
+);
+use XCAT::GenesisReleaseTest qw(
+  command_exists
+  copy_tree
+  dies_like
+  file_sha
+  make_export
+  write_checksums
+  write_file
+  write_release_manifest
 );
 
 my $repo_root = abs_path("$FindBin::Bin/..");
@@ -84,7 +90,10 @@ for my $architecture (qw(x86_64 ppc64le)) {
     write_file("$release_dir/srpm/$rpm-$version-$release.src.rpm", "srpm $architecture");
     write_file("$release_dir/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
 }
-write_release_manifest($release_dir, 'x86_64,ppc64le', 'deb,rpm');
+write_release_manifest(
+    $release_dir, $version, $release, $revision, $epoch,
+    'x86_64,ppc64le', 'deb,rpm',
+);
 write_checksums($release_dir);
 my $manifest = validate_release($release_dir);
 is($manifest->{xcat_revision}, $revision, 'release records xcat-core revision');
@@ -156,114 +165,11 @@ sub exercise_packager {
     my $release_root = "$tmp/$format-release";
     make_path($release_root);
     copy_tree($first, $release_root);
-    write_release_manifest($release_root, 'x86_64', $format);
+    write_release_manifest(
+        $release_root, $version, $release, $revision, $epoch, 'x86_64', $format,
+    );
     write_checksums($release_root);
     ok(validate_release($release_root), "$format release layout passes");
     is(system($verifier, '--format', $format, $release_root), 0,
         "$format package metadata passes");
-}
-
-sub make_export {
-    my ($directory, $architecture) = @_;
-    make_path($directory);
-    my %content = (
-        'kernel'                => 'kernel',
-        'initramfs.cpio.gz'     => 'initramfs',
-        'image.manifest'        => 'packages',
-        'image.spdx.json'       => '{}',
-        'image.vex.json'        => '{}',
-        'license.manifest'      => 'licenses',
-        'xcat-genesis.manifest' => "format=xcat-genesis\nversion=1\narchitecture=$architecture\n",
-    );
-    $content{'fw_jump.elf'} = 'firmware' if $architecture eq 'riscv64';
-    write_file("$directory/$_", $content{$_}) for sort keys %content;
-    write_checksums($directory);
-    return $directory;
-}
-
-sub write_release_manifest {
-    my ($directory, $architectures, $formats) = @_;
-    write_file(
-        "$directory/release.manifest",
-        "format=xcat-genesis-packages\n"
-          . "version=1\n"
-          . "xcat_version=$version\n"
-          . "xcat_release=$release\n"
-          . "xcat_revision=$revision\n"
-          . "source_date_epoch=$epoch\n"
-          . "architectures=$architectures\n"
-          . "formats=$formats\n",
-    );
-}
-
-sub write_checksums {
-    my ($directory) = @_;
-    unlink("$directory/SHA256SUMS") if -e "$directory/SHA256SUMS";
-    my @files;
-    find(
-        {
-            no_chdir => 1,
-            wanted   => sub {
-                return unless -f $_ && !-l $_;
-                my $relative = File::Spec->abs2rel($File::Find::name, $directory);
-                $relative =~ tr{\\}{/};
-                push(@files, $relative);
-            },
-        },
-        $directory,
-    );
-    my $content = join('', map { file_sha("$directory/$_") . "  $_\n" } sort @files);
-    write_file("$directory/SHA256SUMS", $content);
-}
-
-sub file_sha {
-    my ($path) = @_;
-    open(my $fh, '<:raw', $path) or die $!;
-    my $digest = Digest::SHA->new(256)->addfile($fh)->hexdigest;
-    close($fh) or die $!;
-    return $digest;
-}
-
-sub copy_tree {
-    my ($source, $destination) = @_;
-    make_path($destination);
-    find(
-        {
-            no_chdir => 1,
-            wanted   => sub {
-                return if $File::Find::name eq $source;
-                my $relative = File::Spec->abs2rel($File::Find::name, $source);
-                my $target = "$destination/$relative";
-                if (-d $File::Find::name) {
-                    make_path($target);
-                } elsif (-f $File::Find::name) {
-                    make_path(dirname($target));
-                    copy($File::Find::name, $target) or die $!;
-                }
-            },
-        },
-        $source,
-    );
-}
-
-sub write_file {
-    my ($path, $content) = @_;
-    open(my $fh, '>:raw', $path) or die $!;
-    print {$fh} $content or die $!;
-    close($fh) or die $!;
-}
-
-sub command_exists {
-    my ($command) = @_;
-    for my $directory (File::Spec->path()) {
-        return 1 if -x "$directory/$command";
-    }
-    return 0;
-}
-
-sub dies_like {
-    my ($code, $pattern, $name) = @_;
-    my $error = '';
-    eval { $code->(); 1 } or $error = $@;
-    like($error, $pattern, $name);
 }
