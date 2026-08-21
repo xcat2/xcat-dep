@@ -53,7 +53,9 @@ The RPM builder skips its old per-EL Genesis build when a release is supplied.
 The APT builder adds the DEB packages to every selected suite. Both consumers
 verify package identities and checksums before collecting packages.
 
-Without `--genesis-release`, both builders keep their existing behavior. This
-allows the package publishing change to land before xcat-core starts depending
-on the new architecture-specific package names. Generated images and packages
-belong in release storage, not in Git.
+Without `--genesis-release`, both builders keep their existing behavior. The
+option remains opt-in until xcat-core uses the exact package names on every
+platform. The current RPM naming already matches `x86_64`, but older mappings
+still use `ppc64` for `ppc64le`, and the DEB packages use `amd64`. Those mappings
+belong in a separate xcat-core change. Generated images and packages belong in
+release storage, not in Git.
