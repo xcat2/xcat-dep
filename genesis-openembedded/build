@@ -54,8 +54,8 @@ $xcat_source = abs_path($xcat_source) or die "Cannot resolve xcat-core source\n"
 for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/export)) {
     die "xcat-core source is missing $path\n" unless -f "$xcat_source/$path";
 }
-die "xcat-core has tracked changes\n"
-  if _capture('git', '-C', $xcat_source, 'status', '--porcelain', '--untracked-files=no') ne '';
+die "xcat-core checkout is not clean\n"
+  if _capture('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
 
 my $revision = _capture('git', '-C', $xcat_source, 'rev-parse', 'HEAD');
 die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}$/;
