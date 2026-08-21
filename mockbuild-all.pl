@@ -724,6 +724,7 @@ Options:
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
   --skip-perl             Skip perl package build step
   --skip-xcat             Skip xCAT buildrpms.pl step
+  --skip-genesis          Skip the existing per-EL Genesis image build
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
   --genesis-release PATH  Consume a verified OpenEmbedded Genesis RPM release and skip the
