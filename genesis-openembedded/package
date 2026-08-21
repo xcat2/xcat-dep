@@ -1,0 +1,297 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Cwd qw(abs_path);
+use Digest::MD5 ();
+use File::Basename qw(basename dirname);
+use File::Copy qw(copy);
+use File::Path qw(make_path remove_tree);
+use File::Spec;
+use File::Temp qw(tempdir);
+use FindBin;
+use Getopt::Long qw(GetOptions);
+use lib "$FindBin::Bin/lib";
+use XCAT::GenesisRelease qw(
+  deb_package_name
+  rpm_package_name
+  validate_architecture
+  validate_export
+);
+
+my ($architecture, $export_dir, $output_dir, $version, $release, $revision);
+my $source_date_epoch;
+my $format = 'all';
+my $rpm_top;
+
+END {
+    remove_tree($rpm_top) if defined($rpm_top) && -d $rpm_top && !-l $rpm_top;
+}
+
+GetOptions(
+    'architecture=s'      => \$architecture,
+    'export-dir=s'        => \$export_dir,
+    'output-dir=s'        => \$output_dir,
+    'version=s'           => \$version,
+    'release=s'           => \$release,
+    'revision=s'          => \$revision,
+    'source-date-epoch=i' => \$source_date_epoch,
+    'format=s'            => \$format,
+) or die usage();
+
+for my $required (
+    [ architecture      => $architecture ],
+    [ 'export-dir'      => $export_dir ],
+    [ 'output-dir'      => $output_dir ],
+    [ version           => $version ],
+    [ release           => $release ],
+    [ revision          => $revision ],
+    [ 'source-date-epoch' => $source_date_epoch ],
+  )
+{
+    die "Missing --$required->[0]\n" unless defined($required->[1]) && $required->[1] ne '';
+}
+
+validate_architecture($architecture);
+die "Invalid version: $version\n" unless $version =~ /^\d+(?:\.\d+){1,3}$/;
+die "Invalid release: $release\n" unless $release =~ /^[A-Za-z0-9][A-Za-z0-9.+~]*$/;
+die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}$/;
+die "Invalid source date epoch\n" unless $source_date_epoch =~ /^\d+$/;
+die "Unsupported package format: $format\n"
+  unless $format eq 'all' || $format eq 'rpm' || $format eq 'deb';
+
+$export_dir = abs_path($export_dir) or die "Cannot resolve export directory\n";
+validate_export($export_dir, $architecture);
+
+my $output_parent = dirname($output_dir);
+make_path($output_parent) unless -d $output_parent;
+$output_parent = abs_path($output_parent) or die "Cannot resolve output parent\n";
+$output_dir = "$output_parent/" . basename($output_dir);
+die "Output already exists: $output_dir\n" if -e $output_dir || -l $output_dir;
+
+my $work = tempdir('xcat-genesis-package.XXXXXX', TMPDIR => 1, CLEANUP => 1);
+my $staging = tempdir('.xcat-genesis-output.XXXXXX', DIR => $output_parent, CLEANUP => 1);
+my $rpm_name = rpm_package_name($architecture);
+my $deb_name = deb_package_name($architecture);
+my $source_name = "$rpm_name-$version";
+my $source_root = "$work/$source_name";
+make_path("$source_root/image");
+
+for my $entry (_flat_files($export_dir)) {
+    copy("$export_dir/$entry", "$source_root/image/$entry")
+      or die "Cannot copy export file $entry: $!\n";
+}
+_write_file("$source_root/xcat-core-revision", "$revision\n");
+
+local $ENV{SOURCE_DATE_EPOCH} = $source_date_epoch;
+
+if ($format eq 'all' || $format eq 'rpm') {
+    _require_command('rpmbuild');
+    _build_rpm($work, $staging, $source_root, $source_name, $rpm_name);
+}
+if ($format eq 'all' || $format eq 'deb') {
+    _require_command('dpkg-deb');
+    _build_deb($work, $staging, $source_root, $deb_name);
+}
+
+rename($staging, $output_dir) or die "Cannot publish $output_dir: $!\n";
+print "Packaged Genesis $architecture in $output_dir\n";
+
+sub _build_rpm {
+    my ($work, $staging, $source_root, $source_name, $package_name) = @_;
+    my $candidate = "/var/tmp/xcat-genesis-rpmbuild-$revision-$architecture-$version-$release";
+    die "RPM work directory already exists: $candidate\n" if -e $candidate || -l $candidate;
+    mkdir($candidate, 0700) or die "Cannot create RPM work directory $candidate: $!\n";
+    $rpm_top = $candidate;
+    make_path(map { "$rpm_top/$_" } qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS));
+    make_path("$staging/rpm", "$staging/srpm");
+
+    my $archive = "$rpm_top/SOURCES/$source_name.tar.gz";
+    _run(
+        'tar', '--sort=name', '--owner=0', '--group=0',
+        "--mtime=\@$source_date_epoch", '--use-compress-program=gzip -n',
+        '-cf', $archive, '-C', dirname($source_root), basename($source_root),
+    );
+    my $spec = "$FindBin::Bin/rpm/xCAT-genesis-base.spec";
+    copy($spec, "$rpm_top/SPECS/xCAT-genesis-base.spec")
+      or die "Cannot stage RPM spec: $!\n";
+    _run(
+        'rpmbuild', '-ba',
+        '--define', "_topdir $rpm_top",
+        '--define', "genesis_arch $architecture",
+        '--define', "version $version",
+        '--define', "release $release",
+        '--define', "_buildtime $source_date_epoch",
+        '--define', '_buildhost xcat-release',
+        '--define', 'use_source_date_epoch_as_buildtime 1',
+        '--define', 'clamp_mtime_to_source_date_epoch 1',
+        '--define', '_binary_payload w9.gzdio',
+        '--define', '_source_payload w9.gzdio',
+        "$rpm_top/SPECS/xCAT-genesis-base.spec",
+    );
+
+    my $binary = "$rpm_top/RPMS/noarch/$package_name-$version-$release.noarch.rpm";
+    my $source = "$rpm_top/SRPMS/$package_name-$version-$release.src.rpm";
+    die "RPM build did not produce $binary\n" unless -f $binary;
+    die "RPM build did not produce $source\n" unless -f $source;
+    copy($binary, "$staging/rpm/" . basename($binary)) or die "Cannot collect RPM: $!\n";
+    copy($source, "$staging/srpm/" . basename($source)) or die "Cannot collect SRPM: $!\n";
+    remove_tree($rpm_top);
+    undef($rpm_top);
+}
+
+sub _build_deb {
+    my ($work, $staging, $source_root, $package_name) = @_;
+    my $root = "$work/deb-root";
+    my $image = "$root/opt/xcat/share/xcat/netboot/genesis/$architecture";
+    my $doc = "$root/usr/share/doc/$package_name";
+    make_path("$root/DEBIAN", $image, $doc, "$staging/deb");
+
+    for my $entry (_flat_files("$source_root/image")) {
+        copy("$source_root/image/$entry", "$image/$entry")
+          or die "Cannot stage DEB image file $entry: $!\n";
+        chmod(0644, "$image/$entry") or die "Cannot set mode on $entry: $!\n";
+    }
+    copy("$source_root/xcat-core-revision", "$doc/xcat-core-revision")
+      or die "Cannot stage DEB revision: $!\n";
+    chmod(0644, "$doc/xcat-core-revision") or die "Cannot set revision mode: $!\n";
+
+    my $installed_kib = _tree_bytes($root);
+    $installed_kib = int(($installed_kib + 1023) / 1024);
+    _write_file(
+        "$root/DEBIAN/control",
+        "Package: $package_name\n"
+          . "Version: $version-$release\n"
+          . "Section: admin\nPriority: optional\nArchitecture: all\n"
+          . "Installed-Size: $installed_kib\n"
+          . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
+          . "Description: xCAT Genesis netboot image\n"
+          . " The OpenEmbedded Genesis image used for node discovery, inventory,\n"
+          . " and service actions.\n",
+    );
+    _write_file(
+        "$root/DEBIAN/postinst",
+        "#!/bin/sh\nset -e\n"
+          . "if [ \"\${1:-}\" = configure ]; then\n"
+          . "    mkdir -p /etc/xcat\n"
+          . "    touch /etc/xcat/genesis-base-updated\n"
+          . "    if [ -x /opt/xcat/sbin/mknb ] && [ -r /proc/cmdline ] && \\\n"
+          . "       [ \"\$(stat -c '%i %d' / 2>/dev/null)\" = \"\$(stat -c '%i %d' /proc/1/root/. 2>/dev/null)\" ]; then\n"
+          . "        if /opt/xcat/sbin/mknb '$architecture'; then\n"
+          . "            rm -f /etc/xcat/genesis-base-updated\n"
+          . "        else\n"
+          . "            echo 'mknb $architecture was deferred; run it after xcatd is ready' >&2\n"
+          . "        fi\n"
+          . "    fi\nfi\nexit 0\n",
+    );
+    chmod(0755, "$root/DEBIAN/postinst") or die "Cannot make postinst executable: $!\n";
+    _write_deb_md5sums($root);
+    _normalize_mtime($root, $source_date_epoch);
+
+    my $deb = "$staging/deb/${package_name}_${version}-${release}_all.deb";
+    _run('dpkg-deb', '--root-owner-group', '-Zgzip', '-z9', '--build', $root, $deb);
+    die "DEB build did not produce $deb\n" unless -f $deb;
+}
+
+sub _write_deb_md5sums {
+    my ($root) = @_;
+    my @files;
+    require File::Find;
+    File::Find::find(
+        {
+            no_chdir => 1,
+            wanted   => sub {
+                return unless -f $_ && !-l $_;
+                return if $File::Find::name =~ m{\Q$root/DEBIAN/\E};
+                my $relative = File::Spec->abs2rel($File::Find::name, $root);
+                $relative =~ tr{\\}{/};
+                push(@files, $relative);
+            },
+        },
+        $root,
+    );
+    my $content = '';
+    for my $relative (sort @files) {
+        open(my $fh, '<:raw', "$root/$relative")
+          or die "Cannot read $root/$relative: $!\n";
+        my $digest = Digest::MD5->new->addfile($fh)->hexdigest;
+        close($fh) or die "Cannot close $root/$relative: $!\n";
+        $content .= "$digest  $relative\n";
+    }
+    _write_file("$root/DEBIAN/md5sums", $content);
+}
+
+sub _normalize_mtime {
+    my ($root, $epoch) = @_;
+    require File::Find;
+    File::Find::find(
+        {
+            no_chdir => 1,
+            wanted   => sub {
+                utime($epoch, $epoch, $File::Find::name)
+                  or die "Cannot set timestamp on $File::Find::name: $!\n";
+            },
+        },
+        $root,
+    );
+}
+
+sub _flat_files {
+    my ($directory) = @_;
+    opendir(my $dh, $directory) or die "Cannot read $directory: $!\n";
+    my @entries = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
+    closedir($dh) or die "Cannot close $directory: $!\n";
+    for my $entry (@entries) {
+        my $path = "$directory/$entry";
+        die "Expected a regular file: $path\n" unless -f $path && !-l $path;
+    }
+    return @entries;
+}
+
+sub _tree_bytes {
+    my ($directory) = @_;
+    my $bytes = 0;
+    require File::Find;
+    File::Find::find(
+        { no_chdir => 1, wanted => sub { $bytes += -s $_ if -f $_ && !-l $_ } },
+        $directory,
+    );
+    return $bytes;
+}
+
+sub _require_command {
+    my ($command) = @_;
+    for my $directory (File::Spec->path()) {
+        return if -x "$directory/$command";
+    }
+    die "Required command not found: $command\n";
+}
+
+sub _run {
+    my (@command) = @_;
+    print '+ ', join(' ', map { _display_quote($_) } @command), "\n";
+    system(@command) == 0 or die "Command failed: $command[0]\n";
+}
+
+sub _display_quote {
+    my ($value) = @_;
+    return $value if $value =~ /^[A-Za-z0-9_.,+\/:=@~-]+$/;
+    $value =~ s/'/'\\''/g;
+    return "'$value'";
+}
+
+sub _write_file {
+    my ($path, $content) = @_;
+    open(my $fh, '>:raw', $path) or die "Cannot write $path: $!\n";
+    print {$fh} $content or die "Cannot write $path: $!\n";
+    close($fh) or die "Cannot close $path: $!\n";
+}
+
+sub usage {
+    return <<'USAGE';
+Usage: package --architecture ARCH --export-dir DIR --output-dir DIR
+               --version VERSION --release RELEASE --revision COMMIT
+               --source-date-epoch EPOCH [--format all|rpm|deb]
+USAGE
+}

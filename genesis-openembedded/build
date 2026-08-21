@@ -1,0 +1,238 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Cwd qw(abs_path);
+use Digest::SHA ();
+use File::Basename qw(basename dirname);
+use File::Copy qw(copy);
+use File::Find qw(find);
+use File::Path qw(make_path);
+use File::Spec;
+use File::Temp qw(tempdir);
+use FindBin;
+use Getopt::Long qw(GetOptions);
+use POSIX qw(strftime);
+use lib "$FindBin::Bin/lib";
+use XCAT::GenesisRelease qw(
+  architectures
+  deb_package_name
+  rpm_package_name
+  validate_architecture
+  validate_release
+);
+
+my $repo_root = abs_path("$FindBin::Bin/..");
+my $xcat_source = "$repo_root/../xcat-core";
+my $xcat_ref = '';
+my $output_dir = '';
+my $format = 'all';
+my $all = 0;
+my @requested_architectures;
+
+GetOptions(
+    'xcat-source=s'      => \$xcat_source,
+    'xcat-ref=s'         => \$xcat_ref,
+    'output-dir=s'       => \$output_dir,
+    'format=s'           => \$format,
+    'architecture=s@'    => \@requested_architectures,
+    'all!'               => \$all,
+) or die usage();
+
+die "Unsupported package format: $format\n"
+  unless $format eq 'all' || $format eq 'rpm' || $format eq 'deb';
+die "Use either --all or --architecture\n" if $all && @requested_architectures;
+@requested_architectures = architectures() if $all;
+@requested_architectures = ('x86_64') unless @requested_architectures;
+
+my %seen;
+@requested_architectures = grep { !$seen{$_}++ } @requested_architectures;
+validate_architecture($_) for @requested_architectures;
+
+$xcat_source = abs_path($xcat_source) or die "Cannot resolve xcat-core source\n";
+for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/export)) {
+    die "xcat-core source is missing $path\n" unless -f "$xcat_source/$path";
+}
+die "xcat-core has tracked changes\n"
+  if _capture('git', '-C', $xcat_source, 'status', '--porcelain', '--untracked-files=no') ne '';
+
+my $revision = _capture('git', '-C', $xcat_source, 'rev-parse', 'HEAD');
+die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}$/;
+if ($xcat_ref ne '') {
+    die "Invalid xcat-core ref: $xcat_ref\n" unless $xcat_ref =~ /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
+    my $expected = _capture('git', '-C', $xcat_source, 'rev-parse', '--verify', "$xcat_ref^{commit}");
+    die "xcat-core HEAD $revision does not match $xcat_ref ($expected)\n"
+      unless $revision eq $expected;
+}
+
+my $version = _read_line("$xcat_source/Version");
+die "Invalid xCAT version: $version\n" unless $version =~ /^\d+(?:\.\d+){1,3}$/;
+my $source_date_epoch = _capture('git', '-C', $xcat_source, 'show', '-s', '--format=%ct', 'HEAD');
+die "Invalid xcat-core commit time\n" unless $source_date_epoch =~ /^\d+$/;
+my $release = strftime('snap%Y%m%d%H%M', gmtime($source_date_epoch));
+
+if ($output_dir eq '') {
+    $output_dir = "$repo_root/build-output/genesis-openembedded/$version-$release";
+}
+my $output_parent = dirname($output_dir);
+make_path($output_parent) unless -d $output_parent;
+$output_parent = abs_path($output_parent) or die "Cannot resolve output parent\n";
+$output_dir = "$output_parent/" . basename($output_dir);
+die "Output already exists: $output_dir\n" if -e $output_dir || -l $output_dir;
+
+my $work = tempdir('xcat-genesis-release.XXXXXX', TMPDIR => 1, CLEANUP => 1);
+my $staging = tempdir('.xcat-genesis-release.XXXXXX', DIR => $output_parent, CLEANUP => 1);
+my $oe_work = "$work/openembedded";
+local $ENV{XCAT_GENESIS_WORK_DIR} = $oe_work;
+_run("$xcat_source/xCAT-genesis-builder/oe/build", @requested_architectures);
+my $effective_deploy = "$oe_work/build/tmp/deploy";
+die "Invalid OpenEmbedded deploy directory: $effective_deploy\n"
+  unless -d $effective_deploy && !-l $effective_deploy;
+
+for my $architecture (@requested_architectures) {
+    my $export = "$work/exports/$architecture";
+    make_path(dirname($export));
+    _run(
+        "$xcat_source/xCAT-genesis-builder/oe/export",
+        $architecture, $effective_deploy, $export,
+    );
+
+    my $packages = "$work/packages/$architecture";
+    _run(
+        "$FindBin::Bin/package",
+        '--architecture', $architecture,
+        '--export-dir', $export,
+        '--output-dir', $packages,
+        '--version', $version,
+        '--release', $release,
+        '--revision', $revision,
+        '--source-date-epoch', $source_date_epoch,
+        '--format', $format,
+    );
+    _collect_packages($packages, $staging, $architecture);
+}
+
+my @formats = $format eq 'all' ? qw(deb rpm) : ($format);
+_write_file(
+    "$staging/release.manifest",
+    "format=xcat-genesis-packages\n"
+      . "version=1\n"
+      . "xcat_version=$version\n"
+      . "xcat_release=$release\n"
+      . "xcat_revision=$revision\n"
+      . "source_date_epoch=$source_date_epoch\n"
+      . "architectures=" . join(',', @requested_architectures) . "\n"
+      . "formats=" . join(',', @formats) . "\n",
+);
+_write_checksums($staging);
+validate_release($staging);
+_run("$FindBin::Bin/verify-release", '--format', $format, $staging);
+
+rename($staging, $output_dir) or die "Cannot publish $output_dir: $!\n";
+print "Built Genesis package release in $output_dir\n";
+
+sub _collect_packages {
+    my ($source, $destination, $architecture) = @_;
+    if ($format eq 'all' || $format eq 'rpm') {
+        my $name = rpm_package_name($architecture);
+        _collect_one(
+            "$source/rpm/$name-$version-$release.noarch.rpm",
+            "$destination/rpm",
+        );
+        _collect_one(
+            "$source/srpm/$name-$version-$release.src.rpm",
+            "$destination/srpm",
+        );
+    }
+    if ($format eq 'all' || $format eq 'deb') {
+        my $name = deb_package_name($architecture);
+        _collect_one(
+            "$source/deb/${name}_${version}-${release}_all.deb",
+            "$destination/deb",
+        );
+    }
+}
+
+sub _collect_one {
+    my ($source, $directory) = @_;
+    die "Missing package artifact: $source\n" unless -f $source && !-l $source;
+    make_path($directory) unless -d $directory;
+    my $destination = "$directory/" . basename($source);
+    die "Duplicate package artifact: $destination\n" if -e $destination || -l $destination;
+    copy($source, $destination) or die "Cannot collect $source: $!\n";
+}
+
+sub _write_checksums {
+    my ($directory) = @_;
+    my @files;
+    find(
+        {
+            no_chdir => 1,
+            wanted   => sub {
+                return unless -f $_ && !-l $_;
+                my $relative = File::Spec->abs2rel($File::Find::name, $directory);
+                $relative =~ tr{\\}{/};
+                push(@files, $relative) unless $relative eq 'SHA256SUMS';
+            },
+        },
+        $directory,
+    );
+    my $content = '';
+    for my $relative (sort @files) {
+        open(my $fh, '<:raw', "$directory/$relative")
+          or die "Cannot read $directory/$relative: $!\n";
+        my $digest = Digest::SHA->new(256)->addfile($fh)->hexdigest;
+        close($fh) or die "Cannot close $directory/$relative: $!\n";
+        $content .= "$digest  $relative\n";
+    }
+    _write_file("$directory/SHA256SUMS", $content);
+}
+
+sub _read_line {
+    my ($path) = @_;
+    open(my $fh, '<:raw', $path) or die "Cannot read $path: $!\n";
+    my $line = <$fh>;
+    close($fh) or die "Cannot close $path: $!\n";
+    die "Empty file: $path\n" unless defined($line);
+    chomp($line);
+    $line =~ s/\r\z//;
+    return $line;
+}
+
+sub _capture {
+    my (@command) = @_;
+    open(my $fh, '-|', @command) or die "Cannot run $command[0]: $!\n";
+    local $/;
+    my $output = <$fh> // '';
+    close($fh) or die "Command failed: $command[0]\n";
+    $output =~ s/\s+\z//;
+    return $output;
+}
+
+sub _run {
+    my (@command) = @_;
+    print '+ ', join(' ', map { _display_quote($_) } @command), "\n";
+    system(@command) == 0 or die "Command failed: $command[0]\n";
+}
+
+sub _display_quote {
+    my ($value) = @_;
+    return $value if $value =~ /^[A-Za-z0-9_.,+\/:=@~-]+$/;
+    $value =~ s/'/'\\''/g;
+    return "'$value'";
+}
+
+sub _write_file {
+    my ($path, $content) = @_;
+    open(my $fh, '>:raw', $path) or die "Cannot write $path: $!\n";
+    print {$fh} $content or die "Cannot write $path: $!\n";
+    close($fh) or die "Cannot close $path: $!\n";
+}
+
+sub usage {
+    return <<'USAGE';
+Usage: build [--xcat-source DIR] [--xcat-ref REF] [--output-dir DIR]
+             [--format all|rpm|deb] [--architecture ARCH ... | --all]
+USAGE
+}

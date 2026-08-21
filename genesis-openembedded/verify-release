@@ -1,0 +1,96 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Cwd qw(abs_path);
+use File::Spec;
+use FindBin;
+use Getopt::Long qw(GetOptions);
+use lib "$FindBin::Bin/lib";
+use XCAT::GenesisRelease qw(
+  deb_package_name
+  rpm_package_name
+  validate_release
+);
+
+my $format = 'all';
+GetOptions('format=s' => \$format) or die usage();
+die usage() unless @ARGV == 1;
+die "Unsupported verification format: $format\n"
+  unless $format eq 'all' || $format eq 'rpm' || $format eq 'deb';
+
+my $directory = abs_path($ARGV[0]) or die "Cannot resolve release directory\n";
+my $manifest = validate_release($directory);
+my %available = map { $_ => 1 } split(/,/, $manifest->{formats});
+my @formats = $format eq 'all' ? sort keys %available : ($format);
+for my $required (@formats) {
+    die "Release does not contain $required packages\n" unless $available{$required};
+}
+
+my @architectures = split(/,/, $manifest->{architectures});
+for my $architecture (@architectures) {
+    if (grep { $_ eq 'rpm' } @formats) {
+        _verify_rpm($directory, $manifest, $architecture);
+    }
+    if (grep { $_ eq 'deb' } @formats) {
+        _verify_deb($directory, $manifest, $architecture);
+    }
+}
+
+print "Verified Genesis package release: $directory\n";
+
+sub _verify_rpm {
+    my ($directory, $manifest, $architecture) = @_;
+    _require_command('rpm');
+    my $name = rpm_package_name($architecture);
+    my @packages = (
+        [ "$directory/rpm/$name-$manifest->{xcat_version}-$manifest->{xcat_release}.noarch.rpm", 'noarch' ],
+        [ "$directory/srpm/$name-$manifest->{xcat_version}-$manifest->{xcat_release}.src.rpm", 'src' ],
+    );
+    for my $package (@packages) {
+        my ($path, $expected_arch) = @{$package};
+        my $metadata = _capture(
+            'rpm', '-qp', '--qf', "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{EPOCHNUM}\n", $path,
+        );
+        my $expected = join(
+            "\t", $name, $manifest->{xcat_version}, $manifest->{xcat_release}, $expected_arch, '2',
+        );
+        die "Unexpected RPM identity for $path: $metadata\n" unless $metadata eq $expected;
+    }
+}
+
+sub _verify_deb {
+    my ($directory, $manifest, $architecture) = @_;
+    _require_command('dpkg-deb');
+    my $name = deb_package_name($architecture);
+    my $path = "$directory/deb/${name}_$manifest->{xcat_version}-$manifest->{xcat_release}_all.deb";
+    my $metadata = join(
+        "\n",
+        map { _capture('dpkg-deb', '-f', $path, $_) } qw(Package Version Architecture),
+    );
+    my $expected = join("\n", $name, "$manifest->{xcat_version}-$manifest->{xcat_release}", 'all');
+    die "Unexpected DEB identity for $path: $metadata\n" unless $metadata eq $expected;
+}
+
+sub _require_command {
+    my ($command) = @_;
+    for my $directory (File::Spec->path()) {
+        return if -x "$directory/$command";
+    }
+    die "Required command not found: $command\n";
+}
+
+sub _capture {
+    my (@command) = @_;
+    open(my $fh, '-|', @command) or die "Cannot run $command[0]: $!\n";
+    local $/;
+    my $output = <$fh> // '';
+    close($fh) or die "Command failed: $command[0]\n";
+    $output =~ s/\s+\z//;
+    return $output;
+}
+
+sub usage {
+    return "Usage: verify-release [--format all|rpm|deb] RELEASE_DIRECTORY\n";
+}
