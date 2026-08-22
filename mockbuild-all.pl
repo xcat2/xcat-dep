@@ -9,9 +9,15 @@ use File::Copy qw(copy);
 use File::Find qw(find);
 use File::Glob qw(bsd_glob);
 use File::Path qw(make_path);
+use FindBin;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
+use lib "$FindBin::Bin/genesis-openembedded/lib";
+use XCAT::GenesisRelease qw(
+  validated_release_checksums
+  verify_release_file
+);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
@@ -38,6 +44,7 @@ my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
 my $genesis_release = '';
+my $genesis_release_checksums;
 my $scrub_all_chroots = 0;
 my $dry_run = 0;
 my @extra_collect_dirs;
@@ -139,14 +146,18 @@ require_command('rpmsign') if $gpg_sign;
 require_command('gpg')     if $gpg_sign;
 
 if ($genesis_release ne '') {
-    require_command('cmp');
     $genesis_release = abs_path($genesis_release)
         or die "Cannot resolve --genesis-release directory\n";
     die "Genesis release directory not found: $genesis_release\n"
         unless -d $genesis_release;
     my $verifier = "$repo_root/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    my $checksums_before = validated_release_checksums($genesis_release);
     run_argv($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
+    my $checksums_after = validated_release_checksums($genesis_release);
+    die "Genesis release changed during verification\n"
+      unless checksum_sets_match($checksums_before, $checksums_after);
+    $genesis_release_checksums = $checksums_before;
     $skip_genesis = 1;
 }
 
@@ -933,23 +944,27 @@ sub remove_genesis_packages {
 sub assert_genesis_release_copied {
     my ($binary_directory, $source_directory) = @_;
     for my $entry (
-        [ "$genesis_release/rpm", $binary_directory ],
-        [ "$genesis_release/srpm", $source_directory ],
+        [ 'rpm', $binary_directory ],
+        [ 'srpm', $source_directory ],
     ) {
-        my ($source_root, $destination_root) = @{$entry};
-        for my $source (bsd_glob("$source_root/*.rpm")) {
-            my $destination = "$destination_root/" . basename($source);
-            die "Genesis package was not collected: $destination\n" unless -f $destination;
-            die "Collected Genesis package differs from release: $destination\n"
-                unless files_match($source, $destination);
+        my ($prefix, $destination_root) = @{$entry};
+        for my $relative (
+            sort grep { /^\Q$prefix\E\/[^\/]+\.rpm\z/ } keys %{$genesis_release_checksums}
+          )
+        {
+            my $destination = "$destination_root/" . basename($relative);
+            verify_release_file($genesis_release_checksums, $relative, $destination);
         }
     }
 }
 
-sub files_match {
+sub checksum_sets_match {
     my ($left, $right) = @_;
-    return 0 unless -f $left && -f $right;
-    return system('cmp', '-s', $left, $right) == 0;
+    return 0 unless keys(%{$left}) == keys(%{$right});
+    for my $name (keys %{$left}) {
+        return 0 unless exists($right->{$name}) && $left->{$name} eq $right->{$name};
+    }
+    return 1;
 }
 
 sub collect_rpms {

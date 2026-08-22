@@ -13,6 +13,15 @@ GPG_KEY_ID="xcat@megware.com"
 SKIP_SIGN=0
 DRY_RUN=0
 GENESIS_RELEASE=""
+GENESIS_CHECKSUMS=""
+GENESIS_VERIFIER=""
+
+cleanup() {
+    if [[ -n "$GENESIS_CHECKSUMS" ]]; then
+        rm -f -- "$GENESIS_CHECKSUMS"
+    fi
+}
+trap cleanup EXIT
 
 declare -A CODENAME_MAP=(
     [ubuntu22.04]=jammy
@@ -86,10 +95,8 @@ APT_DIR="${APT_DIR:-$REPO_ROOT/repos/apt}"
 if [[ -n "$GENESIS_RELEASE" ]]; then
     [[ -d "$GENESIS_RELEASE" ]] || die "Genesis release directory not found: $GENESIS_RELEASE"
     GENESIS_RELEASE="$(cd "$GENESIS_RELEASE" && pwd)"
-    verifier="$SCRIPT_DIR/genesis-openembedded/verify-release"
-    [[ -x "$verifier" ]] || die "Genesis release verifier not found: $verifier"
-    "$verifier" --complete --format deb "$GENESIS_RELEASE"
-    echo "Genesis release: $GENESIS_RELEASE"
+    GENESIS_VERIFIER="$SCRIPT_DIR/genesis-openembedded/verify-release"
+    [[ -x "$GENESIS_VERIFIER" ]] || die "Genesis release verifier not found: $GENESIS_VERIFIER"
 fi
 
 # Default to all known versions when no DIST arg was given; otherwise validate
@@ -110,6 +117,21 @@ command -v apt-ftparchive >/dev/null 2>&1 \
     || die "apt-ftparchive not found. Install: sudo apt-get install apt-utils"
 command -v gpg >/dev/null 2>&1 \
     || die "gpg not found. Install: sudo apt-get install gnupg"
+command -v cmp >/dev/null 2>&1 \
+    || die "cmp not found. Install: sudo apt-get install diffutils"
+command -v dpkg-deb >/dev/null 2>&1 \
+    || die "dpkg-deb not found. Install: sudo apt-get install dpkg"
+command -v sha256sum >/dev/null 2>&1 \
+    || die "sha256sum not found. Install: sudo apt-get install coreutils"
+
+if [[ -n "$GENESIS_RELEASE" ]]; then
+    GENESIS_CHECKSUMS=$(mktemp "${TMPDIR:-/tmp}/xcat-genesis-checksums.XXXXXX")
+    cp -- "$GENESIS_RELEASE/SHA256SUMS" "$GENESIS_CHECKSUMS"
+    "$GENESIS_VERIFIER" --complete --format deb "$GENESIS_RELEASE"
+    cmp -s "$GENESIS_CHECKSUMS" "$GENESIS_RELEASE/SHA256SUMS" \
+        || die "Genesis release changed during verification"
+    echo "Genesis release: $GENESIS_RELEASE"
+fi
 
 if [[ $SKIP_SIGN -eq 0 ]]; then
     if ! gpg --list-secret-keys "$GPG_KEY_ID" >/dev/null 2>&1; then
@@ -168,6 +190,27 @@ copy_deb() {
     ln "$source" "$destination" 2>/dev/null || cp "$source" "$destination"
 }
 
+copy_genesis_deb() {
+    local source="$1"
+    local directory="$2"
+    local name destination relative expected actual
+    name=$(basename "$source")
+    destination="$directory/$name"
+    relative="deb/$name"
+    if [[ -e "$destination" ]]; then
+        cmp -s "$source" "$destination" \
+            || die "Package collision with different content: $destination"
+    else
+        cp -- "$source" "$destination"
+    fi
+    expected=$(awk -v path="$relative" '$2 == path { print $1 }' "$GENESIS_CHECKSUMS")
+    [[ -n "$expected" ]] || die "Missing verified checksum for $relative"
+    actual=$(sha256sum "$destination")
+    actual=${actual%% *}
+    [[ "$actual" = "$expected" ]] \
+        || die "Collected Genesis package checksum mismatch: $destination"
+}
+
 for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
     src="$APT_DIR/$ver"
@@ -179,7 +222,7 @@ for ver in "${SELECTED_VERS[@]}"; do
         done
         if [[ -n "$GENESIS_RELEASE" ]]; then
             for deb in "$GENESIS_RELEASE"/deb/*.deb; do
-                copy_deb "$deb" "$dst"
+                copy_genesis_deb "$deb" "$dst"
             done
         fi
     fi

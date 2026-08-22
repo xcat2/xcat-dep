@@ -13,10 +13,12 @@ our @EXPORT_OK = qw(
   deb_package_name
   read_release_manifest
   rpm_package_name
+  validated_release_checksums
   validate_architecture
   validate_complete_release
   validate_export
   validate_release
+  verify_release_file
 );
 
 my @ARCHITECTURES = qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64);
@@ -126,7 +128,7 @@ sub _verify_checksums {
     for my $name (keys %{$checksums}) {
         die "Checksum names a missing file: $name\n" unless $files{$name};
     }
-    return 1;
+    return $checksums;
 }
 
 sub validate_export {
@@ -254,6 +256,25 @@ sub validate_complete_release {
     my @missing = grep { !$present{$_} } @ARCHITECTURES;
     die "Genesis release is missing supported architectures: @missing\n" if @missing;
     return $manifest;
+}
+
+sub validated_release_checksums {
+    my ($directory) = @_;
+    validate_release($directory);
+    return _read_checksums($directory);
+}
+
+sub verify_release_file {
+    my ($checksums, $relative, $path) = @_;
+    die "Missing verified checksum for $relative\n"
+      unless ref($checksums) eq 'HASH' && exists($checksums->{$relative});
+    die "Invalid collected release file: $path\n" unless -f $path && !-l $path;
+    open(my $fh, '<:raw', $path) or die "Cannot read $path: $!\n";
+    my $digest = Digest::SHA->new(256)->addfile($fh)->hexdigest;
+    close($fh) or die "Cannot close $path: $!\n";
+    die "Collected release file checksum mismatch: $path\n"
+      unless $digest eq $checksums->{$relative};
+    return 1;
 }
 
 1;
