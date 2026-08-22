@@ -84,7 +84,8 @@ sub test_rpm_consumer {
     write_file("$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
 
     my $dependencies = "$tmp/rpm-dependencies";
-    make_path($dependencies);
+    my $scratch_repo_root = "$tmp/rpm-repo-root";
+    make_path($dependencies, $scratch_repo_root);
     for my $name (qw(
       ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
       perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB
@@ -123,7 +124,7 @@ sub test_rpm_consumer {
     my $status = run_capture(
         $log,
         $^X, $rpm_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $scratch_repo_root,
         '--output', $output,
         '--target', $target,
         '--run-id', 'consumer',

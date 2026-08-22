@@ -303,8 +303,7 @@ sub exercise_packager {
             'RPM uses the OpenEmbedded staging namespace');
         is(run_capture($contents_log, 'rpm', '-qp', '--scripts', "$first/$relative"), 0,
             'RPM script metadata can be read');
-        unlike(read_file($contents_log), qr/postinstall/i,
-            'RPM does not activate the staged image');
+        is(read_file($contents_log), '', 'RPM has no package scripts');
     } else {
         is(run_capture($contents_log, 'dpkg-deb', '-c', "$first/$relative"), 0,
             'DEB payload can be listed');
@@ -315,7 +314,11 @@ sub exercise_packager {
         make_path($control);
         is(run_capture($contents_log, 'dpkg-deb', '-e', "$first/$relative", $control), 0,
             'DEB control files can be extracted');
-        ok(!-e "$control/postinst", 'DEB does not activate the staged image');
+        opendir(my $control_dh, $control) or die $!;
+        my @control_files = sort grep { $_ ne '.' && $_ ne '..' } readdir($control_dh);
+        closedir($control_dh) or die $!;
+        is_deeply(\@control_files, [ qw(control md5sums) ],
+            'DEB has no maintainer scripts or triggers');
     }
 }
 
