@@ -9,7 +9,13 @@ use File::Temp qw(tempdir);
 use FindBin;
 use Test::More;
 
+use lib "$FindBin::Bin/../genesis-openembedded/lib";
 use lib "$FindBin::Bin/lib";
+use XCAT::GenesisRelease qw(
+  architectures
+  deb_package_name
+  rpm_package_name
+);
 use XCAT::GenesisReleaseTest qw(
   command_exists
   file_sha
@@ -124,7 +130,7 @@ sub test_rpm_consumer {
         file_sha("$release_root/srpm/$source_package"),
         'source RPM matches the release');
     ok(-f "$deploy_repo/repodata/repomd.xml", 'RPM repository metadata is generated');
-    like(read_file("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=8$/m,
+    like(read_file("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=14$/m,
         'release RPM is counted with required dependencies');
 }
 
@@ -194,23 +200,47 @@ sub test_deb_consumer {
 
 sub make_package_release {
     my ($root, $format) = @_;
-    my $export = make_export("$root/export", 'x86_64');
     my $release_root = "$root/release";
-    die "Cannot package test release\n"
-      if run_capture(
-        "$root/package.log",
-        $packager,
-        '--architecture', 'x86_64',
-        '--export-dir', $export,
-        '--output-dir', $release_root,
-        '--version', $version,
-        '--release', $release,
-        '--revision', $revision,
-        '--source-date-epoch', $epoch,
-        '--format', $format,
-      );
+    make_path($release_root);
+    for my $architecture (architectures()) {
+        my $export = make_export("$root/exports/$architecture", $architecture);
+        my $packages = "$root/packages/$architecture";
+        die "Cannot package test release for $architecture\n"
+          if run_capture(
+            "$root/package-$architecture.log",
+            $packager,
+            '--architecture', $architecture,
+            '--export-dir', $export,
+            '--output-dir', $packages,
+            '--version', $version,
+            '--release', $release,
+            '--revision', $revision,
+            '--source-date-epoch', $epoch,
+            '--format', $format,
+          );
+        if ($format eq 'rpm') {
+            my $name = rpm_package_name($architecture);
+            make_path("$release_root/rpm", "$release_root/srpm");
+            copy(
+                "$packages/rpm/$name-$version-$release.noarch.rpm",
+                "$release_root/rpm/$name-$version-$release.noarch.rpm",
+            ) or die $!;
+            copy(
+                "$packages/srpm/$name-$version-$release.src.rpm",
+                "$release_root/srpm/$name-$version-$release.src.rpm",
+            ) or die $!;
+        } else {
+            my $name = deb_package_name($architecture);
+            make_path("$release_root/deb");
+            copy(
+                "$packages/deb/${name}_${version}-${release}_all.deb",
+                "$release_root/deb/${name}_${version}-${release}_all.deb",
+            ) or die $!;
+        }
+    }
     write_release_manifest(
-        $release_root, $version, $release, $revision, $epoch, 'x86_64', $format,
+        $release_root, $version, $release, $revision, $epoch,
+        join(',', architectures()), $format,
     );
     write_checksums($release_root);
     return $release_root;
