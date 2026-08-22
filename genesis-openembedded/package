@@ -60,6 +60,7 @@ die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}
 die "Invalid source date epoch\n" unless $source_date_epoch =~ /^\d+$/;
 die "Unsupported package format: $format\n"
   unless $format eq 'all' || $format eq 'rpm' || $format eq 'deb';
+umask(0022);
 
 $export_dir = abs_path($export_dir) or die "Cannot resolve export directory\n";
 validate_export($export_dir, $architecture);
