@@ -9,6 +9,7 @@ use XCAT::BuildUtils qw(digest_file read_lines relative_files);
 our @EXPORT_OK = qw(
   architectures
   deb_package_name
+  read_checksum_manifest
   read_release_manifest
   rpm_package_name
   validated_release_checksums
@@ -60,9 +61,8 @@ sub _read_key_values {
     return \%values;
 }
 
-sub _read_checksums {
-    my ($root) = @_;
-    my $path = "$root/SHA256SUMS";
+sub read_checksum_manifest {
+    my ($path) = @_;
     my %checksums;
     for my $line (read_lines($path)) {
         die "Invalid checksum entry in $path: $line\n"
@@ -80,7 +80,7 @@ sub _read_checksums {
 sub _verify_checksums {
     my ($root) = @_;
     my @files = grep { $_ ne 'SHA256SUMS' } relative_files($root);
-    my $checksums = _read_checksums($root);
+    my $checksums = read_checksum_manifest("$root/SHA256SUMS");
 
     my %files = map { $_ => 1 } @files;
     for my $name (@files) {
@@ -224,7 +224,7 @@ sub validate_complete_release {
 sub validated_release_checksums {
     my ($directory) = @_;
     validate_release($directory);
-    return _read_checksums($directory);
+    return read_checksum_manifest("$directory/SHA256SUMS");
 }
 
 sub verify_release_file {

@@ -123,8 +123,6 @@ command -v cmp >/dev/null 2>&1 \
 if [[ -n "$GENESIS_RELEASE" ]]; then
     command -v dpkg-deb >/dev/null 2>&1 \
         || die "dpkg-deb not found. Install: sudo apt-get install dpkg"
-    command -v sha256sum >/dev/null 2>&1 \
-        || die "sha256sum not found. Install: sudo apt-get install coreutils"
     GENESIS_CHECKSUMS=$(mktemp "${TMPDIR:-/tmp}/xcat-genesis-checksums.XXXXXX")
     cp -- "$GENESIS_RELEASE/SHA256SUMS" "$GENESIS_CHECKSUMS"
     "$GENESIS_VERIFIER" --complete --format deb "$GENESIS_RELEASE"
@@ -193,17 +191,15 @@ copy_deb() {
 copy_genesis_deb() {
     local source="$1"
     local directory="$2"
-    local name destination relative expected actual
+    local name destination relative
     name=$(basename "$source")
     destination="$directory/$name"
     relative="deb/$name"
     cp -- "$source" "$destination"
-    expected=$(awk -v path="$relative" '$2 == path { print $1 }' "$GENESIS_CHECKSUMS")
-    [[ -n "$expected" ]] || die "Missing verified checksum for $relative"
-    actual=$(sha256sum "$destination")
-    actual=${actual%% *}
-    [[ "$actual" = "$expected" ]] \
-        || die "Collected Genesis package checksum mismatch: $destination"
+    "$GENESIS_VERIFIER" \
+        --checksum-file "$GENESIS_CHECKSUMS" \
+        --relative-file "$relative" \
+        --copied-file "$destination"
 }
 
 for ver in "${SELECTED_VERS[@]}"; do

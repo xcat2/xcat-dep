@@ -10,17 +10,44 @@ use lib "$FindBin::Bin/../lib";
 use XCAT::BuildUtils qw(capture_command require_command);
 use XCAT::GenesisRelease qw(
   deb_package_name
+  read_checksum_manifest
   rpm_package_name
   validate_complete_release
   validate_release
+  verify_release_file
 );
 
 my $format = 'all';
 my $complete = 0;
+my ($checksum_file, $relative_file, $copied_file);
 GetOptions(
-    'format=s' => \$format,
-    'complete!' => \$complete,
+    'format=s'        => \$format,
+    'complete!'       => \$complete,
+    'checksum-file=s' => \$checksum_file,
+    'relative-file=s' => \$relative_file,
+    'copied-file=s'   => \$copied_file,
 ) or die usage();
+
+my $copy_mode = grep { defined($_) }
+  ($checksum_file, $relative_file, $copied_file);
+if ($copy_mode) {
+    die usage()
+      unless defined($checksum_file)
+      && defined($relative_file)
+      && defined($copied_file)
+      && !$complete
+      && $format eq 'all'
+      && !@ARGV;
+    $checksum_file = abs_path($checksum_file)
+      or die "Cannot resolve checksum file\n";
+    $copied_file = abs_path($copied_file)
+      or die "Cannot resolve copied file\n";
+    my $checksums = read_checksum_manifest($checksum_file);
+    verify_release_file($checksums, $relative_file, $copied_file);
+    print "Verified copied Genesis package: $copied_file\n";
+    exit(0);
+}
+
 die usage() unless @ARGV == 1;
 die "Unsupported verification format: $format\n"
   unless $format eq 'all' || $format eq 'rpm' || $format eq 'deb';
@@ -103,5 +130,9 @@ sub _verify_deb {
 }
 
 sub usage {
-    return "Usage: verify-release [--format all|rpm|deb] [--complete] RELEASE_DIRECTORY\n";
+    return <<'USAGE';
+Usage: verify-release [--format all|rpm|deb] [--complete] RELEASE_DIRECTORY
+       verify-release --checksum-file SHA256SUMS --relative-file PATH
+                      --copied-file FILE
+USAGE
 }
