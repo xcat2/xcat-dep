@@ -14,6 +14,7 @@ use XCAT::GenesisRelease qw(
   deb_package_name
   rpm_package_name
   validate_architecture
+  validate_complete_release
   validate_export
   validate_release
 );
@@ -100,6 +101,44 @@ write_release_manifest(
 write_checksums($release_dir);
 my $manifest = validate_release($release_dir);
 is($manifest->{xcat_revision}, $revision, 'release records xcat-core revision');
+dies_like(
+    sub { validate_complete_release($release_dir) },
+    qr/Genesis release is missing supported architectures/,
+    'partial release cannot be published',
+);
+
+my $complete_release = "$tmp/complete-release";
+make_path("$complete_release/rpm", "$complete_release/srpm", "$complete_release/deb");
+for my $architecture (architectures()) {
+    my $rpm = rpm_package_name($architecture);
+    my $deb = deb_package_name($architecture);
+    write_file("$complete_release/rpm/$rpm-$version-$release.noarch.rpm", "rpm $architecture");
+    write_file("$complete_release/srpm/$rpm-$version-$release.src.rpm", "srpm $architecture");
+    write_file("$complete_release/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
+}
+write_release_manifest(
+    $complete_release, $version, $release, $revision, $epoch,
+    join(',', architectures()), 'deb,rpm',
+);
+write_checksums($complete_release);
+ok(validate_complete_release($complete_release), 'complete release can be published');
+
+my $deb_only_release = "$tmp/deb-only-release";
+make_path("$deb_only_release/deb");
+for my $architecture (architectures()) {
+    my $deb = deb_package_name($architecture);
+    write_file("$deb_only_release/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
+}
+write_release_manifest(
+    $deb_only_release, $version, $release, $revision, $epoch,
+    join(',', architectures()), 'deb',
+);
+write_checksums($deb_only_release);
+my $verify_all_log = "$tmp/verify-all.log";
+isnt(run_capture($verify_all_log, $verifier, $deb_only_release), 0,
+    'all-format verification rejects a single-format release');
+like(read_file($verify_all_log), qr/Release does not contain rpm packages/,
+    'all-format failure names the missing format');
 
 my $bad_release = "$tmp/bad-release";
 copy_tree($release_dir, $bad_release);
