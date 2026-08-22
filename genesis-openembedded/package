@@ -69,6 +69,7 @@ make_path($output_parent) unless -d $output_parent;
 $output_parent = abs_path($output_parent) or die "Cannot resolve output parent\n";
 $output_dir = "$output_parent/" . basename($output_dir);
 die "Output already exists: $output_dir\n" if -e $output_dir || -l $output_dir;
+chdir($output_parent) or die "Cannot use output parent $output_parent: $!\n";
 
 my $work = tempdir('xcat-genesis-package.XXXXXX', TMPDIR => 1, CLEANUP => 1);
 my $staging = tempdir('.xcat-genesis-output.XXXXXX', DIR => $output_parent, CLEANUP => 1);
