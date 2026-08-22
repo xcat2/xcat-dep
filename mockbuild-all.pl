@@ -978,9 +978,10 @@ sub install_genesis_release_packages {
 
 sub genesis_release_files {
     my ($prefix) = @_;
-    return sort grep {
+    my @files = sort grep {
         /^\Q$prefix\E\/xCAT-genesis-openembedded-[^\/]+\.rpm\z/
     } keys %{$genesis_release_checksums};
+    return @files;
 }
 
 sub verify_genesis_release_packages {
