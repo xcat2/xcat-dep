@@ -100,7 +100,7 @@ sub _read_checksums {
         chomp($line);
         $line =~ s/\r\z//;
         die "Invalid checksum entry in $path: $line\n"
-          unless $line =~ /^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._\/-]*)$/;
+          unless $line =~ /^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._\/+~-]*)$/;
         my ($digest, $name) = ($1, $2);
         die "Unsafe checksum path in $path: $name\n"
           if $name =~ m{(?:\A|/)\.\.(?:/|\z)} || $name =~ m{//};
