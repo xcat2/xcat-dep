@@ -104,6 +104,20 @@ write_release_manifest(
 write_checksums($release_dir);
 my $manifest = validate_release($release_dir);
 is($manifest->{xcat_revision}, $revision, 'release records xcat-core revision');
+my $qualified_release = "$tmp/qualified-release";
+my $qualified_release_name = '1+deb~1';
+my $qualified_deb = deb_package_name('x86_64');
+make_path("$qualified_release/deb");
+write_file(
+    "$qualified_release/deb/${qualified_deb}_${version}-${qualified_release_name}_all.deb",
+    'deb x86_64',
+);
+write_release_manifest(
+    $qualified_release, $version, $qualified_release_name, $revision, $epoch,
+    'x86_64', 'deb',
+);
+write_checksums($qualified_release);
+ok(validate_release($qualified_release), 'package filenames accept valid release qualifiers');
 my $verified_checksums = validated_release_checksums($release_dir);
 my $verified_relative = "rpm/xCAT-genesis-base-x86_64-$version-$release.noarch.rpm";
 my $verified_copy = "$tmp/verified-copy.rpm";
