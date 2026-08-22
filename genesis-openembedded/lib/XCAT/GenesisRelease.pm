@@ -14,6 +14,7 @@ our @EXPORT_OK = qw(
   read_release_manifest
   rpm_package_name
   validate_architecture
+  validate_complete_release
   validate_export
   validate_release
 );
@@ -243,6 +244,15 @@ sub validate_release {
     }
     die "Genesis release is missing: " . join(', ', sort keys %expected) . "\n"
       if %expected;
+    return $manifest;
+}
+
+sub validate_complete_release {
+    my ($directory) = @_;
+    my $manifest = validate_release($directory);
+    my %present = map { $_ => 1 } split(/,/, $manifest->{architectures});
+    my @missing = grep { !$present{$_} } @ARCHITECTURES;
+    die "Genesis release is missing supported architectures: @missing\n" if @missing;
     return $manifest;
 }
 

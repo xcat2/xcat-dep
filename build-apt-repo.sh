@@ -88,7 +88,7 @@ if [[ -n "$GENESIS_RELEASE" ]]; then
     GENESIS_RELEASE="$(cd "$GENESIS_RELEASE" && pwd)"
     verifier="$SCRIPT_DIR/genesis-openembedded/verify-release"
     [[ -x "$verifier" ]] || die "Genesis release verifier not found: $verifier"
-    "$verifier" --format deb "$GENESIS_RELEASE"
+    "$verifier" --complete --format deb "$GENESIS_RELEASE"
     echo "Genesis release: $GENESIS_RELEASE"
 fi
 

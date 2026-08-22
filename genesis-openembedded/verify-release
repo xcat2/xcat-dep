@@ -11,19 +11,26 @@ use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   deb_package_name
   rpm_package_name
+  validate_complete_release
   validate_release
 );
 
 my $format = 'all';
-GetOptions('format=s' => \$format) or die usage();
+my $complete = 0;
+GetOptions(
+    'format=s' => \$format,
+    'complete!' => \$complete,
+) or die usage();
 die usage() unless @ARGV == 1;
 die "Unsupported verification format: $format\n"
   unless $format eq 'all' || $format eq 'rpm' || $format eq 'deb';
 
 my $directory = abs_path($ARGV[0]) or die "Cannot resolve release directory\n";
-my $manifest = validate_release($directory);
+my $manifest = $complete
+    ? validate_complete_release($directory)
+    : validate_release($directory);
 my %available = map { $_ => 1 } split(/,/, $manifest->{formats});
-my @formats = $format eq 'all' ? sort keys %available : ($format);
+my @formats = $format eq 'all' ? qw(rpm deb) : ($format);
 for my $required (@formats) {
     die "Release does not contain $required packages\n" unless $available{$required};
 }
@@ -97,5 +104,5 @@ sub _capture {
 }
 
 sub usage {
-    return "Usage: verify-release [--format all|rpm|deb] RELEASE_DIRECTORY\n";
+    return "Usage: verify-release [--format all|rpm|deb] [--complete] RELEASE_DIRECTORY\n";
 }

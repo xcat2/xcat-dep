@@ -145,7 +145,7 @@ if ($genesis_release ne '') {
         unless -d $genesis_release;
     my $verifier = "$repo_root/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
-    run_argv($^X, $verifier, '--format', 'rpm', $genesis_release);
+    run_argv($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
     $skip_genesis = 1;
 }
 
