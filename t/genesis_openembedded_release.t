@@ -126,7 +126,18 @@ write_release_manifest(
 );
 write_checksums($qualified_release);
 ok(validate_release($qualified_release), 'package filenames accept valid release qualifiers');
-my $verified_checksums = validated_release_checksums($release_dir);
+my $checksum_reads = 0;
+my $verified_checksums;
+{
+    no warnings 'redefine';
+    my $reader = \&XCAT::GenesisRelease::read_checksum_manifest;
+    local *XCAT::GenesisRelease::read_checksum_manifest = sub {
+        $checksum_reads++;
+        return $reader->(@_);
+    };
+    $verified_checksums = validated_release_checksums($release_dir);
+}
+is($checksum_reads, 1, 'validated checksums use the verified manifest read');
 my $verified_relative = "rpm/xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
 my $verified_copy = "$tmp/verified-copy.rpm";
 copy("$release_dir/$verified_relative", $verified_copy) or die $!;
