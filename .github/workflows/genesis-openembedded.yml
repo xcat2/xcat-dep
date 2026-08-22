@@ -12,6 +12,8 @@ permissions:
 jobs:
   package-tests:
     runs-on: ubuntu-24.04
+    env:
+      XCAT_GENESIS_CI: 1
     steps:
       - uses: actions/checkout@v4
 
@@ -29,6 +31,11 @@ jobs:
           perl -c genesis-openembedded/verify-release
           perl -c genesis-openembedded/lib/XCAT/GenesisRelease.pm
           perl -c mockbuild-all.pl
+          rpmspec -P \
+            -D 'genesis_arch x86_64' \
+            -D 'version 2.19.0' \
+            -D 'release snap202608210726' \
+            genesis-openembedded/rpm/xCAT-genesis-openembedded.spec >/dev/null
           perlcritic \
             genesis-openembedded/build \
             genesis-openembedded/package \
