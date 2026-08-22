@@ -30,8 +30,10 @@ install -m 0644 xcat-core-revision %{buildroot}%{_docdir}/%{name}/
 %post
 mkdir -p /etc/xcat
 touch /etc/xcat/genesis-base-updated
+root_stat=$(stat -c '%%i %%d' / 2>/dev/null || :)
+init_stat=$(stat -c '%%i %%d' /proc/1/root/. 2>/dev/null || :)
 if [ -x /opt/xcat/sbin/mknb ] && [ -r /proc/cmdline ] && \
-   [ "$(stat -c '%%i %%d' / 2>/dev/null)" = "$(stat -c '%%i %%d' /proc/1/root/. 2>/dev/null)" ]; then
+   [ -n "$root_stat" ] && [ "$root_stat" = "$init_stat" ]; then
     if /opt/xcat/sbin/mknb %{genesis_arch}; then
         rm -f /etc/xcat/genesis-base-updated
     else
