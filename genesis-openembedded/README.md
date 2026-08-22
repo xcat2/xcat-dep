@@ -7,6 +7,10 @@ Run the release builder on a host that can build the OpenEmbedded layer. The
 xcat-core checkout must be clean. `--xcat-ref` checks that the checkout points
 to the intended commit; it does not change the checkout for you.
 
+The packaging scripts use `File::Slurper` and `IPC::Cmd`. Install
+`libfile-slurper-perl` on Ubuntu. On EL, install `perl-File-Slurper` and
+`perl-IPC-Cmd` from EPEL and AppStream.
+
 ```bash
 ./genesis-openembedded/build \
   --xcat-source /path/to/xcat-core \
@@ -74,6 +78,7 @@ belong in release storage, not in Git.
 Run the package tests on a Linux builder with RPM, DEB, and repository tools:
 
 ```bash
+prove t/build_utils.t
 prove -It/lib t/genesis_openembedded_release.t
 sudo -E prove -It/lib t/genesis_openembedded_consumer.t
 ```

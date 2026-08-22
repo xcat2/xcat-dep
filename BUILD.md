@@ -97,7 +97,9 @@ Use these flags to skip specific operations:
 Install baseline tooling:
 
 ```bash
-dnf -y install perl perl-Parallel-ForkManager mock createrepo tar rpm-build rpmdevtools dnf-plugins-core wget git
+dnf -y install perl perl-File-Slurper perl-IPC-Cmd \
+  perl-Parallel-ForkManager mock createrepo tar rpm-build rpmdevtools \
+  dnf-plugins-core wget git
 ```
 
 If you will build xCAT packages (that is, you will **not** use `--skip-xcat`), install xCAT build dependencies:
