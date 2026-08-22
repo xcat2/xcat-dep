@@ -152,7 +152,7 @@ sub read_release_manifest {
     return $values;
 }
 
-sub validate_release {
+sub _validate_release {
     my ($directory) = @_;
     die "Invalid Genesis package release: $directory\n"
       unless -d $directory && !-l $directory;
@@ -187,7 +187,7 @@ sub validate_release {
     }
     die "Release manifest has no package formats\n" unless @formats;
 
-    _verify_checksums($directory);
+    my $checksums = _verify_checksums($directory);
 
     my %expected = (
         'release.manifest' => 1,
@@ -209,6 +209,12 @@ sub validate_release {
     }
     die "Genesis release is missing: " . join(', ', sort keys %expected) . "\n"
       if %expected;
+    return ($manifest, $checksums);
+}
+
+sub validate_release {
+    my ($directory) = @_;
+    my ($manifest) = _validate_release($directory);
     return $manifest;
 }
 
@@ -223,8 +229,8 @@ sub validate_complete_release {
 
 sub validated_release_checksums {
     my ($directory) = @_;
-    validate_release($directory);
-    return read_checksum_manifest("$directory/SHA256SUMS");
+    my (undef, $checksums) = _validate_release($directory);
+    return $checksums;
 }
 
 sub verify_release_file {
