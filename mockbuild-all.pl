@@ -7,6 +7,7 @@ use Cwd qw(abs_path cwd);
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Find qw(find);
+use File::Glob qw(bsd_glob);
 use File::Path qw(make_path);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
@@ -481,7 +482,7 @@ if (!$dry_run && $copied == 0) {
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
 # lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
 if (!$skip_genesis && !$dry_run) {
-    for my $g (glob("$xcat_rpms_dir/xCAT-genesis-base-*.rpm")) {
+    for my $g (bsd_glob("$xcat_rpms_dir/xCAT-genesis-base-*.rpm")) {
         next if $g =~ /\.src\.rpm$/;
         copy($g, "$repo_dir/" . basename($g))
             or die "Failed to copy genesis-base $g -> $repo_dir: $!\n";
@@ -595,7 +596,7 @@ sub deploy_target {
     return if $dry_run;
     make_path($dest);
     remove_genesis_packages($dest, 0) if $genesis_release;
-    for my $rpm (glob("$src/*.rpm")) {
+    for my $rpm (bsd_glob("$src/*.rpm")) {
         next if $rpm =~ /\.src\.rpm$/;
         copy($rpm, "$dest/" . basename($rpm))
             or die "Failed to copy $rpm -> $dest: $!\n";
@@ -603,7 +604,7 @@ sub deploy_target {
     assert_required_deps($dest);
     sign_and_index_repo($dest);
     write_dep_repo_metadata($dest, $rel);
-    my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
+    my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
     print "Deployed rh$rel/$arch: $n rpms\n";
 }
 
@@ -619,7 +620,7 @@ sub createrepo_c_cmd {
 
 sub sign_and_index_repo {
     my ($dir) = @_;
-    my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+    my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
@@ -899,7 +900,7 @@ sub run_build_steps_parallel {
 # have_rpm: is there a non-src rpm named <name>-... under $dir?
 sub have_rpm {
     my ($dir, $name) = @_;
-    my @m = grep { !/\.src\.rpm$/ } glob("$dir/${name}-*.rpm");
+    my @m = grep { !/\.src\.rpm$/ } bsd_glob("$dir/${name}-*.rpm");
     return scalar(@m) > 0;
 }
 
@@ -922,7 +923,7 @@ sub assert_required_deps {
 sub remove_genesis_packages {
     my ($directory, $source) = @_;
     return unless -d $directory;
-    for my $path (glob("$directory/xCAT-genesis-base-*.rpm")) {
+    for my $path (bsd_glob("$directory/xCAT-genesis-base-*.rpm")) {
         next if $source && $path !~ /\.src\.rpm\z/;
         next if !$source && $path =~ /\.src\.rpm\z/;
         unlink($path) or die "Cannot remove stale Genesis package $path: $!\n";
@@ -936,7 +937,7 @@ sub assert_genesis_release_copied {
         [ "$genesis_release/srpm", $source_directory ],
     ) {
         my ($source_root, $destination_root) = @{$entry};
-        for my $source (glob("$source_root/*.rpm")) {
+        for my $source (bsd_glob("$source_root/*.rpm")) {
             my $destination = "$destination_root/" . basename($source);
             die "Genesis package was not collected: $destination\n" unless -f $destination;
             die "Collected Genesis package differs from release: $destination\n"
