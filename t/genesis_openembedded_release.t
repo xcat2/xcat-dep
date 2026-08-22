@@ -138,6 +138,36 @@ dies_like(
     qr/Collected release file checksum mismatch/,
     'release changes after verification are rejected',
 );
+copy("$release_dir/$verified_relative", $verified_copy) or die $!;
+my $copied_file_log = "$tmp/copied-file.log";
+is(
+    run_capture(
+        $copied_file_log,
+        $verifier,
+        '--checksum-file', "$release_dir/SHA256SUMS",
+        '--relative-file', $verified_relative,
+        '--copied-file', $verified_copy,
+    ),
+    0,
+    'verifier accepts a copied release file',
+);
+write_binary($verified_copy, 'changed after verification');
+isnt(
+    run_capture(
+        $copied_file_log,
+        $verifier,
+        '--checksum-file', "$release_dir/SHA256SUMS",
+        '--relative-file', $verified_relative,
+        '--copied-file', $verified_copy,
+    ),
+    0,
+    'verifier rejects a changed copied file',
+);
+like(
+    read_binary($copied_file_log),
+    qr/Collected release file checksum mismatch/,
+    'copied-file failure names the checksum mismatch',
+);
 dies_like(
     sub { validate_complete_release($release_dir) },
     qr/Genesis release is missing supported architectures/,

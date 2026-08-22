@@ -59,7 +59,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 12
+    skip 'APT repository tools are not installed', 13
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -198,6 +198,8 @@ sub test_deb_consumer {
     my $ppc64el = "$apt_root/dists/noble/main/binary-ppc64el/Packages";
 
     is($status, 0, 'APT repository accepts a verified Genesis release');
+    like(read_binary($log), qr/Verified copied Genesis package:/,
+        'APT repository uses the shared copied-package verifier');
     is(digest_file($pool_package), digest_file("$release_root/deb/$package"),
         'pooled DEB matches the release');
     ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb",
