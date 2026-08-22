@@ -152,6 +152,13 @@ SKIP: {
 }
 
 SKIP: {
+    skip 'rpmbuild and rpm are not installed', 2
+      unless command_exists('rpmbuild') && command_exists('rpm');
+    skip 'root can traverse an unsearchable working directory', 2 if $> == 0;
+    exercise_packager_from_unsearchable_cwd();
+}
+
+SKIP: {
     skip 'dpkg-deb is not installed', 6 unless command_exists('dpkg-deb');
     exercise_packager('deb');
 }
@@ -208,6 +215,42 @@ sub exercise_packager {
     ok(validate_release($release_root), "$format release layout passes");
     is(system($verifier, '--format', $format, $release_root), 0,
         "$format package metadata passes");
+}
+
+sub exercise_packager_from_unsearchable_cwd {
+    my $cwd = "$tmp/unsearchable-cwd";
+    my $output = "$tmp/cwd-independent-rpm";
+    my $log = "$tmp/cwd-independent-rpm.log";
+    make_path($cwd);
+
+    my $pid = fork();
+    die "Cannot fork: $!\n" unless defined($pid);
+    if ($pid == 0) {
+        chdir($cwd) or die "Cannot enter test directory: $!\n";
+        chmod(0000, $cwd) or die "Cannot restrict test directory: $!\n";
+        open(STDOUT, '>:raw', $log) or die $!;
+        open(STDERR, '>&', STDOUT) or die $!;
+        exec(
+            $packager,
+            '--architecture', 'x86_64',
+            '--export-dir', $export,
+            '--output-dir', $output,
+            '--version', $version,
+            '--release', $release,
+            '--revision', $revision,
+            '--source-date-epoch', $epoch,
+            '--format', 'rpm',
+        ) or die "Cannot run packager: $!\n";
+    }
+    waitpid($pid, 0);
+    my $status = $? >> 8;
+    chmod(0700, $cwd) or die "Cannot restore test directory: $!\n";
+
+    is($status, 0, 'RPM package ignores an inaccessible inherited working directory');
+    ok(
+        -f "$output/rpm/xCAT-genesis-base-x86_64-$version-$release.noarch.rpm",
+        'RPM package is published from an inaccessible inherited working directory',
+    );
 }
 
 sub exercise_builder_tmpdir {
