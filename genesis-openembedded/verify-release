@@ -61,14 +61,23 @@ sub _verify_rpm {
         my ($path, $expected_arch, $expected_source) = @{$package};
         my $metadata = _capture(
             'rpm', '-qp', '--qf',
-            "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}\n",
+            "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}"
+              . "\t%{BUILDHOST}\t%{BUILDTIME}\n",
             $path,
         );
         my $expected = join(
             "\t", $name, $manifest->{xcat_version}, $manifest->{xcat_release},
-            $expected_arch, '1', $expected_source,
+            $expected_arch, '0', $expected_source, 'xcat-release',
+            $manifest->{source_date_epoch},
         );
         die "Unexpected RPM identity for $path: $metadata\n" unless $metadata eq $expected;
+        for my $relationship (qw(conflicts obsoletes)) {
+            my $value = _capture('rpm', '-qp', "--$relationship", $path);
+            die "Unexpected RPM $relationship for $path: $value\n" if $value ne '';
+        }
+        my $provides = _capture('rpm', '-qp', '--provides', $path);
+        die "Legacy RPM relationship in $path: $provides\n"
+          if $provides =~ /xCAT-genesis-base/;
     }
 }
 
@@ -87,7 +96,7 @@ sub _verify_deb {
         'all',
     );
     die "Unexpected DEB identity for $path: $metadata\n" unless $metadata eq $expected;
-    for my $field (qw(Conflicts Replaces)) {
+    for my $field (qw(Breaks Conflicts Provides Replaces)) {
         my $value = _capture('dpkg-deb', '-f', $path, $field);
         die "Unexpected DEB $field for $path: $value\n" if $value ne '';
     }

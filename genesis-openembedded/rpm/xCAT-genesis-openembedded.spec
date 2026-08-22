@@ -3,7 +3,6 @@
 Name: xCAT-genesis-openembedded-%{genesis_arch}
 Version: %{?version}%{!?version:0}
 Release: %{?release}%{!?release:1}
-Epoch: 1
 Summary: xCAT OpenEmbedded Genesis netboot image
 License: Various
 URL: https://xcat.org/
@@ -24,6 +23,7 @@ service actions before a node boots its installed operating system.
 rm -rf %{buildroot}
 install -d -m 0755 %{buildroot}/opt/xcat/share/xcat/netboot/genesis-openembedded/%{genesis_arch}
 install -m 0644 image/* %{buildroot}/opt/xcat/share/xcat/netboot/genesis-openembedded/%{genesis_arch}/
+# Keep this path stable across RPM build hosts. %%{_docdir} differs on SUSE.
 install -d -m 0755 %{buildroot}/usr/share/doc/%{name}
 install -m 0644 xcat-core-revision %{buildroot}/usr/share/doc/%{name}/
 

@@ -120,12 +120,11 @@ command -v gpg >/dev/null 2>&1 \
     || die "gpg not found. Install: sudo apt-get install gnupg"
 command -v cmp >/dev/null 2>&1 \
     || die "cmp not found. Install: sudo apt-get install diffutils"
-command -v dpkg-deb >/dev/null 2>&1 \
-    || die "dpkg-deb not found. Install: sudo apt-get install dpkg"
-command -v sha256sum >/dev/null 2>&1 \
-    || die "sha256sum not found. Install: sudo apt-get install coreutils"
-
 if [[ -n "$GENESIS_RELEASE" ]]; then
+    command -v dpkg-deb >/dev/null 2>&1 \
+        || die "dpkg-deb not found. Install: sudo apt-get install dpkg"
+    command -v sha256sum >/dev/null 2>&1 \
+        || die "sha256sum not found. Install: sudo apt-get install coreutils"
     GENESIS_CHECKSUMS=$(mktemp "${TMPDIR:-/tmp}/xcat-genesis-checksums.XXXXXX")
     cp -- "$GENESIS_RELEASE/SHA256SUMS" "$GENESIS_CHECKSUMS"
     "$GENESIS_VERIFIER" --complete --format deb "$GENESIS_RELEASE"
@@ -198,12 +197,7 @@ copy_genesis_deb() {
     name=$(basename "$source")
     destination="$directory/$name"
     relative="deb/$name"
-    if [[ -e "$destination" ]]; then
-        cmp -s "$source" "$destination" \
-            || die "Package collision with different content: $destination"
-    else
-        cp -- "$source" "$destination"
-    fi
+    cp -- "$source" "$destination"
     expected=$(awk -v path="$relative" '$2 == path { print $1 }' "$GENESIS_CHECKSUMS")
     [[ -n "$expected" ]] || die "Missing verified checksum for $relative"
     actual=$(sha256sum "$destination")
@@ -225,7 +219,6 @@ for ver in "${SELECTED_VERS[@]}"; do
             copy_deb "$deb" "$dst"
         done
         if [[ -n "$GENESIS_RELEASE" ]]; then
-            rm -f -- "$dst"/xcat-genesis-openembedded-*.deb
             for deb in "$GENESIS_RELEASE"/deb/*.deb; do
                 copy_genesis_deb "$deb" "$dst"
             done

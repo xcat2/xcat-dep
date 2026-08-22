@@ -112,7 +112,7 @@ sub _build_rpm {
 
     my $archive = "$rpm_top/SOURCES/$source_name.tar.gz";
     _run(
-        'tar', '--sort=name', '--owner=0', '--group=0',
+        'tar', '--sort=name', '--owner=0', '--group=0', '--numeric-owner',
         "--mtime=\@$source_date_epoch", '--use-compress-program=gzip -n',
         '-cf', $archive, '-C', dirname($source_root), basename($source_root),
     );

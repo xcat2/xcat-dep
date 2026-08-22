@@ -466,7 +466,6 @@ push @collect_roots, @extra_collect_dirs;
 my @srpm_collect_roots = (!$skip_xcat)
     ? uniq(@collect_roots, $xcat_srpms_dir)
     : uniq(@collect_roots);
-@srpm_collect_roots = uniq(@srpm_collect_roots);
 
 if ($genesis_release && !$dry_run) {
     remove_genesis_packages($repo_dir, 0);
@@ -609,11 +608,21 @@ sub deploy_target {
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
     make_path($dest);
-    remove_genesis_packages($dest, 0) if $genesis_release;
     for my $rpm (bsd_glob("$src/*.rpm")) {
         next if $rpm =~ /\.src\.rpm$/;
-        copy($rpm, "$dest/" . basename($rpm))
-            or die "Failed to copy $rpm -> $dest: $!\n";
+        my $destination = "$dest/" . basename($rpm);
+        my $temporary = "$destination.$$.new";
+        die "Deployment staging file already exists: $temporary\n"
+          if -e $temporary || -l $temporary;
+        copy($rpm, $temporary)
+            or die "Failed to stage $rpm -> $temporary: $!\n";
+        rename($temporary, $destination)
+            or die "Failed to publish $temporary -> $destination: $!\n";
+    }
+    if ($genesis_release) {
+        my @keep = map { basename($_) } genesis_release_files('rpm');
+        remove_genesis_packages($dest, 0, \@keep);
+        verify_genesis_release_packages('rpm', $dest);
     }
     assert_required_deps($dest);
     sign_and_index_repo($dest);
@@ -935,12 +944,14 @@ sub assert_required_deps {
 }
 
 sub remove_genesis_packages {
-    my ($directory, $source) = @_;
+    my ($directory, $source, $keep_names) = @_;
     return unless -d $directory;
+    my %keep = map { $_ => 1 } @{ $keep_names // [] };
     opendir(my $dh, $directory) or die "Cannot read $directory: $!\n";
     my @names = grep { /^xCAT-genesis-openembedded-.*\.rpm\z/ } readdir($dh);
     closedir($dh) or die "Cannot close $directory: $!\n";
     for my $name (@names) {
+        next if $keep{$name};
         my $path = "$directory/$name";
         next if $source && $path !~ /\.src\.rpm\z/;
         next if !$source && $path =~ /\.src\.rpm\z/;
@@ -953,11 +964,7 @@ sub install_genesis_release_packages {
     remove_genesis_packages($destination_root, $prefix eq 'srpm');
 
     my $copied = 0;
-    for my $relative (
-        sort grep { /^\Q$prefix\E\/xCAT-genesis-openembedded-[^\/]+\.rpm\z/ }
-          keys %{$genesis_release_checksums}
-      )
-    {
+    for my $relative (genesis_release_files($prefix)) {
         my $source = "$genesis_release/$relative";
         my $destination = "$destination_root/" . basename($relative);
         copy($source, $destination)
@@ -969,6 +976,24 @@ sub install_genesis_release_packages {
     return $copied;
 }
 
+sub genesis_release_files {
+    my ($prefix) = @_;
+    return sort grep {
+        /^\Q$prefix\E\/xCAT-genesis-openembedded-[^\/]+\.rpm\z/
+    } keys %{$genesis_release_checksums};
+}
+
+sub verify_genesis_release_packages {
+    my ($prefix, $destination_root) = @_;
+    my @files = genesis_release_files($prefix);
+    die "Genesis release has no $prefix packages\n" unless @files;
+    for my $relative (@files) {
+        my $destination = "$destination_root/" . basename($relative);
+        verify_release_file($genesis_release_checksums, $relative, $destination);
+    }
+    return scalar(@files);
+}
+
 sub assert_genesis_release_copied {
     my ($binary_directory, $source_directory) = @_;
     for my $entry (
@@ -976,13 +1001,7 @@ sub assert_genesis_release_copied {
         [ 'srpm', $source_directory ],
     ) {
         my ($prefix, $destination_root) = @{$entry};
-        for my $relative (
-            sort grep { /^\Q$prefix\E\/[^\/]+\.rpm\z/ } keys %{$genesis_release_checksums}
-          )
-        {
-            my $destination = "$destination_root/" . basename($relative);
-            verify_release_file($genesis_release_checksums, $relative, $destination);
-        }
+        verify_genesis_release_packages($prefix, $destination_root);
     }
 }
 
