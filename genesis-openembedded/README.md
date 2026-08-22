@@ -74,5 +74,6 @@ belong in release storage, not in Git.
 Run the package tests on a Linux builder with RPM, DEB, and repository tools:
 
 ```bash
-sudo prove -It/lib t
+prove -It/lib t/genesis_openembedded_release.t
+sudo -E prove -It/lib t/genesis_openembedded_consumer.t
 ```

@@ -49,4 +49,6 @@ jobs:
           shellcheck build-apt-repo.sh
 
       - name: Run package tests
-        run: sudo -E prove -v -It/lib t
+        run: |
+          prove -v -It/lib t/genesis_openembedded_release.t
+          sudo -E prove -v -It/lib t/genesis_openembedded_consumer.t
