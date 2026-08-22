@@ -13,6 +13,7 @@ use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
+  replaced_deb_package_names
   rpm_package_name
   validated_release_checksums
   validate_architecture
@@ -52,6 +53,21 @@ is(rpm_package_name('ppc64le'), 'xCAT-genesis-base-ppc64le',
     'RPM package keeps ppc64le distinct');
 is(deb_package_name('x86_64'), 'xcat-genesis-base-x86-64',
     'DEB package uses a legal spelling of x86_64');
+is_deeply(
+    [ replaced_deb_package_names('x86_64') ],
+    [ 'xcat-genesis-base-amd64' ],
+    'x86_64 DEB replaces the old host-spelled package',
+);
+is_deeply(
+    [ replaced_deb_package_names('ppc64le') ],
+    [ 'xcat-genesis-base-ppc64el' ],
+    'ppc64le DEB replaces the old host-spelled package',
+);
+is_deeply(
+    [ replaced_deb_package_names('ppc64') ],
+    [],
+    'ppc64 and ppc64le packages can be installed together',
+);
 dies_like(sub { validate_architecture('ppc') }, qr/Unsupported Genesis architecture/,
     'legacy ppc alias is rejected');
 
