@@ -427,7 +427,8 @@ EXPORT
         'release builder finds the configured deploy directory');
     ok(-d "$persistent_work/openembedded/build/tmp",
         'release builder preserves the requested work directory');
-    is((stat($output))[2] & 07777, 0755, 'release directory is readable by other users');
+    is((stat($output))[2] & oct('07777'), oct('0755'),
+        'release directory is readable by other users');
     my $built = validate_release($output);
     is($built->{architectures}, 'x86_64', 'isolated build keeps the target architecture');
     is($built->{formats}, 'deb', 'isolated build keeps the requested format');
