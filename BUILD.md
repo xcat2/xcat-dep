@@ -171,6 +171,13 @@ copied into each generated EL repository. Old Genesis packages are removed from
 those output directories so a previous run cannot satisfy the release by
 accident.
 
+Repository publication requires a release containing every supported Genesis
+architecture. The packages are `noarch`, and every management-node repository
+receives the full set of target images.
+
+The release checksums cover the unsigned input packages. If repository signing
+is enabled, `rpmsign` changes the deployed RPM bytes after collection.
+
 Omit `--genesis-release` to keep using the existing Genesis builder.
 
 # Build Unified Repository Without xCAT (`--skip-xcat`)
