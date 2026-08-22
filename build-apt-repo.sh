@@ -4,7 +4,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 if [ -z "${SOURCE_DATE_EPOCH:-}" ] && [ -f "$SCRIPT_DIR/Gitepoch" ]; then
-    export SOURCE_DATE_EPOCH=$(cat "$SCRIPT_DIR/Gitepoch")
+    SOURCE_DATE_EPOCH=$(cat "$SCRIPT_DIR/Gitepoch")
+    export SOURCE_DATE_EPOCH
 fi
 
 REPO_ROOT="$SCRIPT_DIR"
