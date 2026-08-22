@@ -214,7 +214,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'rpmbuild and rpm are not installed', 8
+    skip 'rpmbuild and rpm are not installed', 10
       unless command_exists('rpmbuild') && command_exists('rpm');
     exercise_packager('rpm');
 }
@@ -227,7 +227,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'dpkg-deb is not installed', 6 unless command_exists('dpkg-deb');
+    skip 'dpkg-deb is not installed', 8 unless command_exists('dpkg-deb');
     exercise_packager('deb');
 }
 
@@ -288,6 +288,20 @@ sub exercise_packager {
     ok(validate_release($release_root), "$format release layout passes");
     is(system($verifier, '--format', $format, $release_root), 0,
         "$format package metadata passes");
+    my $hook_log = "$tmp/$format-install-hook.log";
+    if ($format eq 'rpm') {
+        is(run_capture($hook_log, 'rpm', '-qp', '--scripts', "$first/$relative"), 0,
+            'RPM install hook can be read');
+        like(read_file($hook_log), qr/root_stat=.*\[ -n \"\$root_stat\" \]/s,
+            'RPM install hook rejects an empty container identity');
+    } else {
+        my $control = "$tmp/deb-control";
+        make_path($control);
+        is(run_capture($hook_log, 'dpkg-deb', '-e', "$first/$relative", $control), 0,
+            'DEB install hook can be extracted');
+        like(read_file("$control/postinst"), qr/root_stat=.*\[ -n \"\$root_stat\" \]/s,
+            'DEB install hook rejects an empty container identity');
+    }
 }
 
 sub exercise_packager_from_unsearchable_cwd {
