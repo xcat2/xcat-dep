@@ -102,6 +102,7 @@ print "Packaged Genesis $architecture in $output_dir\n";
 
 sub _build_rpm {
     my ($work, $staging, $source_root, $source_name, $package_name) = @_;
+    _require_gnu_tar();
     my $candidate = "/var/tmp/xcat-genesis-rpmbuild-$revision-$architecture-$version-$release";
     die "RPM work directory already exists: $candidate\n" if -e $candidate || -l $candidate;
     mkdir($candidate, 0700) or die "Cannot create RPM work directory $candidate: $!\n";
@@ -268,6 +269,15 @@ sub _require_command {
         return if -x "$directory/$command";
     }
     die "Required command not found: $command\n";
+}
+
+sub _require_gnu_tar {
+    _require_command('tar');
+    open(my $fh, '-|', 'tar', '--version') or die "Cannot run tar: $!\n";
+    my $version_line = <$fh> // '';
+    close($fh) or die "Cannot query tar version\n";
+    die "GNU tar is required to build Genesis source packages\n"
+      unless $version_line =~ /^tar \(GNU tar\)/;
 }
 
 sub _run {
