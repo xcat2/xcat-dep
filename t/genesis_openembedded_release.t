@@ -220,7 +220,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'rpmbuild and rpm are not installed', 10
+    skip 'rpmbuild and rpm are not installed', 12
       unless command_exists('rpmbuild') && command_exists('rpm');
     exercise_packager('rpm');
 }
@@ -233,12 +233,12 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'dpkg-deb is not installed', 8 unless command_exists('dpkg-deb');
+    skip 'dpkg-deb is not installed', 10 unless command_exists('dpkg-deb');
     exercise_packager('deb');
 }
 
 SKIP: {
-    skip 'git and dpkg-deb are not installed', 4
+    skip 'git and dpkg-deb are not installed', 6
       unless command_exists('git') && command_exists('dpkg-deb');
     exercise_builder_tmpdir();
 }
@@ -301,12 +301,21 @@ sub exercise_packager {
         like(read_file($contents_log),
             qr{/opt/xcat/share/xcat/netboot/genesis-openembedded/x86_64/kernel},
             'RPM uses the OpenEmbedded staging namespace');
+        is(run_capture($contents_log, 'rpm', '-qp', '--scripts', "$first/$relative"), 0,
+            'RPM script metadata can be read');
+        unlike(read_file($contents_log), qr/postinstall/i,
+            'RPM does not activate the staged image');
     } else {
         is(run_capture($contents_log, 'dpkg-deb', '-c', "$first/$relative"), 0,
             'DEB payload can be listed');
         like(read_file($contents_log),
             qr{/opt/xcat/share/xcat/netboot/genesis-openembedded/x86_64/kernel},
             'DEB uses the OpenEmbedded staging namespace');
+        my $control = "$tmp/deb-control";
+        make_path($control);
+        is(run_capture($contents_log, 'dpkg-deb', '-e', "$first/$relative", $control), 0,
+            'DEB control files can be extracted');
+        ok(!-e "$control/postinst", 'DEB does not activate the staged image');
     }
 }
 
@@ -397,6 +406,7 @@ EXPORT
     }
 
     my $ambient_tmp = "$tmp/ambient-tmp";
+    my $persistent_work = "$tmp/persistent-work";
     my $output = "$tmp/tmpdir-release";
     my $log = "$tmp/tmpdir-builder.log";
     make_path($ambient_tmp);
@@ -405,12 +415,16 @@ EXPORT
         local $ENV{TMPDIR} = $ambient_tmp;
         $status = run_capture(
             $log, $builder, '--xcat-source', $source,
-            '--output-dir', $output, '--format', 'deb',
+            '--output-dir', $output, '--work-dir', $persistent_work,
+            '--format', 'deb',
         );
     }
     is($status, 0, 'release builder isolates the OpenEmbedded tmpdir');
     unlike(read_file($log), qr/Invalid OpenEmbedded deploy directory/,
         'release builder finds the configured deploy directory');
+    ok(-d "$persistent_work/openembedded/build/tmp",
+        'release builder preserves the requested work directory');
+    is((stat($output))[2] & 07777, 0755, 'release directory is readable by other users');
     my $built = validate_release($output);
     is($built->{architectures}, 'x86_64', 'isolated build keeps the target architecture');
     is($built->{formats}, 'deb', 'isolated build keeps the requested format');
