@@ -13,7 +13,6 @@ use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
-  replaced_deb_package_names
   rpm_package_name
   validated_release_checksums
   validate_architecture
@@ -44,30 +43,21 @@ my $version = '2.19.0';
 my $release = 'snap202608210726';
 my $epoch = 1787293573;
 
+if ($ENV{XCAT_GENESIS_CI}) {
+    for my $command (qw(git dpkg-deb rpm rpmbuild tar)) {
+        BAIL_OUT("CI requires $command") unless command_exists($command);
+    }
+}
+
 is_deeply(
     [ architectures() ],
     [ qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64) ],
     'supported architectures keep their exact xCAT names',
 );
-is(rpm_package_name('ppc64le'), 'xCAT-genesis-base-ppc64le',
+is(rpm_package_name('ppc64le'), 'xCAT-genesis-openembedded-ppc64le',
     'RPM package keeps ppc64le distinct');
-is(deb_package_name('x86_64'), 'xcat-genesis-base-x86-64',
+is(deb_package_name('x86_64'), 'xcat-genesis-openembedded-x86-64',
     'DEB package uses a legal spelling of x86_64');
-is_deeply(
-    [ replaced_deb_package_names('x86_64') ],
-    [ 'xcat-genesis-base-amd64' ],
-    'x86_64 DEB replaces the old host-spelled package',
-);
-is_deeply(
-    [ replaced_deb_package_names('ppc64le') ],
-    [ 'xcat-genesis-base-ppc64el' ],
-    'ppc64le DEB replaces the old host-spelled package',
-);
-is_deeply(
-    [ replaced_deb_package_names('ppc64') ],
-    [],
-    'ppc64 and ppc64le packages can be installed together',
-);
 dies_like(sub { validate_architecture('ppc') }, qr/Unsupported Genesis architecture/,
     'legacy ppc alias is rejected');
 
@@ -135,7 +125,7 @@ write_release_manifest(
 write_checksums($qualified_release);
 ok(validate_release($qualified_release), 'package filenames accept valid release qualifiers');
 my $verified_checksums = validated_release_checksums($release_dir);
-my $verified_relative = "rpm/xCAT-genesis-base-x86_64-$version-$release.noarch.rpm";
+my $verified_relative = "rpm/xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
 my $verified_copy = "$tmp/verified-copy.rpm";
 copy("$release_dir/$verified_relative", $verified_copy) or die $!;
 ok(verify_release_file($verified_checksums, $verified_relative, $verified_copy),
@@ -194,7 +184,7 @@ dies_like(sub { validate_release($bad_release) }, qr/Unexpected Genesis release 
 
 my $missing_release = "$tmp/missing-release";
 copy_tree($release_dir, $missing_release);
-unlink("$missing_release/rpm/xCAT-genesis-base-ppc64le-$version-$release.noarch.rpm") or die $!;
+unlink("$missing_release/rpm/xCAT-genesis-openembedded-ppc64le-$version-$release.noarch.rpm") or die $!;
 write_checksums($missing_release);
 dies_like(sub { validate_release($missing_release) }, qr/Genesis release is missing/,
     'incomplete architecture set fails');
@@ -280,10 +270,10 @@ sub exercise_packager {
 
     my ($relative, $source_relative);
     if ($format eq 'rpm') {
-        $relative = "rpm/xCAT-genesis-base-x86_64-$version-$release.noarch.rpm";
-        $source_relative = "srpm/xCAT-genesis-base-x86_64-$version-$release.src.rpm";
+        $relative = "rpm/xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
+        $source_relative = "srpm/xCAT-genesis-openembedded-x86_64-$version-$release.src.rpm";
     } else {
-        $relative = "deb/xcat-genesis-base-x86-64_${version}-${release}_all.deb";
+        $relative = "deb/xcat-genesis-openembedded-x86-64_${version}-${release}_all.deb";
     }
     ok(-f "$first/$relative", "$format binary exists");
     is(file_sha("$first/$relative"), file_sha("$second/$relative"),
@@ -304,19 +294,19 @@ sub exercise_packager {
     ok(validate_release($release_root), "$format release layout passes");
     is(system($verifier, '--format', $format, $release_root), 0,
         "$format package metadata passes");
-    my $hook_log = "$tmp/$format-install-hook.log";
+    my $contents_log = "$tmp/$format-contents.log";
     if ($format eq 'rpm') {
-        is(run_capture($hook_log, 'rpm', '-qp', '--scripts', "$first/$relative"), 0,
-            'RPM install hook can be read');
-        like(read_file($hook_log), qr/root_stat=.*\[ -n \"\$root_stat\" \]/s,
-            'RPM install hook rejects an empty container identity');
+        is(run_capture($contents_log, 'rpm', '-qpl', "$first/$relative"), 0,
+            'RPM payload can be listed');
+        like(read_file($contents_log),
+            qr{/opt/xcat/share/xcat/netboot/genesis-openembedded/x86_64/kernel},
+            'RPM uses the OpenEmbedded staging namespace');
     } else {
-        my $control = "$tmp/deb-control";
-        make_path($control);
-        is(run_capture($hook_log, 'dpkg-deb', '-e', "$first/$relative", $control), 0,
-            'DEB install hook can be extracted');
-        like(read_file("$control/postinst"), qr/root_stat=.*\[ -n \"\$root_stat\" \]/s,
-            'DEB install hook rejects an empty container identity');
+        is(run_capture($contents_log, 'dpkg-deb', '-c', "$first/$relative"), 0,
+            'DEB payload can be listed');
+        like(read_file($contents_log),
+            qr{/opt/xcat/share/xcat/netboot/genesis-openembedded/x86_64/kernel},
+            'DEB uses the OpenEmbedded staging namespace');
     }
 }
 
@@ -351,7 +341,7 @@ sub exercise_packager_from_unsearchable_cwd {
 
     is($status, 0, 'RPM package ignores an inaccessible inherited working directory');
     ok(
-        -f "$output/rpm/xCAT-genesis-base-x86_64-$version-$release.noarch.rpm",
+        -f "$output/rpm/xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm",
         'RPM package is published from an inaccessible inherited working directory',
     );
 }

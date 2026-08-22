@@ -37,8 +37,15 @@ my $release = 'snap202608210726';
 my $epoch = 1787293573;
 my $tmp = tempdir(CLEANUP => 1);
 
+if ($ENV{XCAT_GENESIS_CI}) {
+    BAIL_OUT('CI requires Linux root') unless $^O eq 'linux' && $> == 0;
+    for my $command (qw(apt-ftparchive bash createrepo_c dpkg-deb gpg rpm rpmbuild)) {
+        BAIL_OUT("CI requires $command") unless command_exists($command);
+    }
+}
+
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 10
+    skip 'RPM repository tools require a root Linux builder', 13
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -49,7 +56,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 10
+    skip 'APT repository tools are not installed', 12
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -63,8 +70,8 @@ done_testing();
 
 sub test_rpm_consumer {
     my $release_root = make_package_release("$tmp/rpm", 'rpm');
-    my $package = "xCAT-genesis-base-x86_64-$version-$release.noarch.rpm";
-    my $source_package = "xCAT-genesis-base-x86_64-$version-$release.src.rpm";
+    my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
+    my $source_package = "xCAT-genesis-openembedded-x86_64-$version-$release.src.rpm";
     my $output = "$tmp/rpm output";
     my $target = 'test+epel-10-' . capture('uname', '-m');
     my $run = "$target-consumer";
@@ -72,19 +79,28 @@ sub test_rpm_consumer {
     my $source_repo = "$output/mockbuild-all/$run/repo-src";
     my $deploy_repo = "$output/xcat-dep/rh10/" . capture('uname', '-m');
     make_path($run_repo, $source_repo, $deploy_repo);
-    write_file("$run_repo/xCAT-genesis-base-stale.noarch.rpm", 'stale');
-    write_file("$source_repo/xCAT-genesis-base-stale.src.rpm", 'stale');
-    write_file("$deploy_repo/xCAT-genesis-base-stale.noarch.rpm", 'stale');
+    write_file("$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
+    write_file("$source_repo/xCAT-genesis-openembedded-stale.src.rpm", 'stale');
+    write_file("$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
 
     my $dependencies = "$tmp/rpm-dependencies";
     make_path($dependencies);
     for my $name (qw(
       ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
       perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB
+      xCAT-genesis-base-x86_64
     )) {
         copy("$release_root/rpm/$package", "$dependencies/$name-1.noarch.rpm")
           or die $!;
     }
+    write_file(
+        "$dependencies/xCAT-genesis-openembedded-x86_64-$version-old.noarch.rpm",
+        'stale OpenEmbedded RPM',
+    );
+    write_file(
+        "$dependencies/xCAT-genesis-openembedded-x86_64-$version-old.src.rpm",
+        'stale OpenEmbedded SRPM',
+    );
 
     my $stub = "$tmp/perl-stub/Parallel/ForkManager.pm";
     make_path("$tmp/perl-stub/Parallel");
@@ -121,39 +137,46 @@ sub test_rpm_consumer {
     is($status, 0, 'RPM repository accepts a verified Genesis release');
     is(file_sha("$deploy_repo/$package"), file_sha("$release_root/rpm/$package"),
         'deployed RPM matches the release');
-    ok(!-e "$run_repo/xCAT-genesis-base-stale.noarch.rpm",
+    ok(!-e "$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm",
         'stale run RPM is removed');
-    ok(!-e "$source_repo/xCAT-genesis-base-stale.src.rpm",
+    ok(!-e "$source_repo/xCAT-genesis-openembedded-stale.src.rpm",
         'stale source RPM is removed');
-    ok(!-e "$deploy_repo/xCAT-genesis-base-stale.noarch.rpm",
+    ok(!-e "$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm",
         'stale deployed RPM is removed');
     is(file_sha("$source_repo/$source_package"),
         file_sha("$release_root/srpm/$source_package"),
         'source RPM matches the release');
     ok(-f "$deploy_repo/repodata/repomd.xml", 'RPM repository metadata is generated');
-    like(read_file("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=14$/m,
-        'release RPM is counted with required dependencies');
+    ok(-f "$deploy_repo/xCAT-genesis-base-x86_64-1.noarch.rpm",
+        'legacy Genesis package remains available');
+    ok(!-e "$run_repo/xCAT-genesis-openembedded-x86_64-$version-old.noarch.rpm",
+        'stale OpenEmbedded RPM is not collected');
+    ok(!-e "$source_repo/xCAT-genesis-openembedded-x86_64-$version-old.src.rpm",
+        'stale OpenEmbedded SRPM is not collected');
+    like(read_file("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=15$/m,
+        'release RPM is counted alongside required dependencies');
 }
 
 sub test_deb_consumer {
     my $release_root = make_package_release("$tmp/deb", 'deb');
-    my $package = "xcat-genesis-base-x86-64_${version}-${release}_all.deb";
+    my $package = "xcat-genesis-openembedded-x86-64_${version}-${release}_all.deb";
     my $apt_root = "$tmp/apt";
     my $input = "$apt_root/ubuntu24.04";
     my $dummy = "$tmp/dummy-deb";
     make_path("$dummy/DEBIAN", $input, "$apt_root/pool/main/noble");
     write_file(
         "$dummy/DEBIAN/control",
-        "Package: xcat-dep-test\nVersion: 1\nArchitecture: all\n"
+        "Package: xcat-genesis-base-amd64\nVersion: 1\nArchitecture: all\n"
           . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
           . "Description: repository test package\n",
     );
     die "Cannot build test DEB\n"
       if run_capture(
         "$tmp/dummy-deb.log", 'dpkg-deb', '--root-owner-group', '--build',
-        $dummy, "$input/xcat-dep-test_1_all.deb",
+        $dummy, "$input/xcat-genesis-base-amd64_1_all.deb",
       );
-    write_file("$apt_root/pool/main/noble/xcat-genesis-base-stale.deb", 'stale');
+    write_file("$input/xcat-genesis-openembedded-stale.deb", 'stale');
+    write_file("$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb", 'stale');
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
     my $log = "$tmp/deb-consumer.log";
@@ -173,13 +196,17 @@ sub test_deb_consumer {
     is($status, 0, 'APT repository accepts a verified Genesis release');
     is(file_sha($pool_package), file_sha("$release_root/deb/$package"),
         'pooled DEB matches the release');
-    ok(!-e "$apt_root/pool/main/noble/xcat-genesis-base-stale.deb",
+    ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb",
         'stale pooled DEB is removed');
-    like(read_file($amd64), qr/^Package: xcat-genesis-base-x86-64$/m,
+    like(read_file($amd64), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
         'all-architecture DEB is indexed for amd64');
-    like(read_file($ppc64el), qr/^Package: xcat-genesis-base-x86-64$/m,
+    like(read_file($ppc64el), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
         'all-architecture DEB is indexed for ppc64el');
     ok(-f "$apt_root/dists/noble/Release", 'APT Release metadata is generated');
+    like(read_file($amd64), qr/^Package: xcat-genesis-base-amd64$/m,
+        'legacy Genesis DEB remains available');
+    ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-stale.deb",
+        'stale OpenEmbedded DEB is not collected');
 
     my $collision = "$tmp/apt-collision";
     make_path("$collision/ubuntu24.04");
@@ -194,9 +221,10 @@ sub test_deb_consumer {
         '--genesis-release', $release_root,
         'ubuntu24.04',
     );
-    isnt($collision_status, 0, 'APT repository rejects a package collision');
-    like(read_file($collision_log), qr/Package collision with different content/,
-        'collision failure identifies the package');
+    is($collision_status, 0, 'verified release replaces a stale source package');
+    is(file_sha("$collision/pool/main/noble/$package"),
+        file_sha("$release_root/deb/$package"),
+        'pooled package still matches the verified release');
 }
 
 sub test_partial_rpm_release {
