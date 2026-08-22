@@ -46,7 +46,7 @@ use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifes
                   codename_to_version known_codenames chroot_name chroot_sources_list
                   chroot_is_disposable
                   control_field genesis_deb_control
-                  deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb);
+                  deb_field deb_version deb_hash cross_copy_genesis_deb);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = $script_dir;
@@ -640,7 +640,10 @@ sub validate_manifest {
             # presence on this arch is verified later against the PUBLISHED index (verify_assembled_repo).
             next if pkg_skip_on_arch($pkg, $arch);
             my $want = $MANIFEST{$tgt}{$pkg};
-            my $got  = deb_version($dir, $pkg);
+            # $arch disambiguates the logical 'xcat-genesis-base': both arch-suffixed genesis debs are
+            # staged on the amd64 host (the cross-arch ppc one for #7610) and they carry DIFFERENT
+            # revisions, so only this target's arch may be considered.
+            my $got  = deb_version($dir, $pkg, $arch);
             if (!defined $got) { push @fail, "[$tgt] MISSING $pkg"; next; }
             push @fail, "[$tgt] $pkg: built $got, manifest pins $want"
                 unless version_matches($got, $want);
@@ -661,13 +664,14 @@ sub validate_manifest {
 # ---------------------------------------------------------------------------------------------------
 
 # repo_present_from_index($idx, @names): parse the PUBLISHED $idx (a binary-<arch>/Packages file) and
-# resolve each required manifest @names against it, returning %present = (reqname => upstream-version |
+# resolve each required manifest @names against it, returning %present = (reqname => FULL version |
 # undef). Name-resolution mirrors deb_version/validate_manifest: try an EXACT index key first (most
 # packages -- ipmitool-xcat, goconserver, grub2-xcat, the Architecture:all boot bits keep their plain
 # names), else exactly <name>-<arch> for THIS cell's arch (the arch-suffixed xcat-genesis-base ->
-# xcat-genesis-base-<arch>, never a different arch's). The published Version carries epoch+revision, so
-# it is reduced to the UPSTREAM part (what the manifest pins) via deb_upstream_version before the pure
-# comparator. (Resolution itself lives in the pure BuildUtils::resolve_present_names.)
+# xcat-genesis-base-<arch>, never a different arch's). The version is passed to the comparator WHOLE --
+# [epoch:]upstream[-revision] -- because the manifest pins the whole thing, so a stale packaging
+# revision or a wrong epoch is caught. (Resolution itself lives in the pure
+# BuildUtils::resolve_present_names.)
 sub repo_present_from_index {
     my ($idx, $arch, @names) = @_;
     my $text = do { local $/; open my $fh, '<', $idx or die "FATAL: cannot read $idx: $!\n"; <$fh> };

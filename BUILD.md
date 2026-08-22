@@ -438,8 +438,21 @@ parsing/resolution), separate from the disk/gpg I/O.
 - **Duplicate = hard error:** a package appearing in the index with **two distinct versions** (a stale
   `.deb` not cleaned from the pool) makes `parse_packages_index` **die loudly** rather than keep one —
   identical behaviour to the EL `rpm_version` gate.
-- **Version pins** are the manifest's *upstream* version; the published Debian version's epoch/revision
-  is stripped (`deb_upstream_version`) before the pin compare.
+- **Version pins** match the **full** Debian version — `[epoch:]upstream[-revision]` — exactly as it
+  appears in the built `.deb` and in the published index. The revision is the *packaging* revision
+  (`elilo-xcat` 3.14-5 and 3.14-6 are different builds of the same upstream 3.14) and the epoch
+  overrides version comparison outright, so an upstream-only pin would accept a deb that the gate
+  calls good and `apt install xCAT` then refuses — xCAT's own `debian/control` declares versioned
+  dependencies (`goconserver (>= 0.3.3-snap…)`, `ipmitool-xcat (>= 1.8.17-1)`, `grub2-xcat (>= 2.02-…)`).
+  Two pins stay globbed on purpose: `goconserver=0.3.3-snap*` (upstream exact; the revision is the CD
+  stamp, which changes every run — the glob still *requires* a snap stamp) and `xcat-genesis-base=2.*`
+  (its version is not owned by xcat-dep, and each arch is converted from its own genesis rpm).
+- **Only build output is collected.** Some package directories carry prebuilt `.deb` files in the
+  checkout — `elilo/` ships `elilo-xcat_3.14-5_all.deb` and `gnu-efi_3.0v-5_amd64.deb`. Those arrive
+  with the copied source tree and are **not** output of the build, so the collector snapshots the
+  `.deb`s present before the build and subtracts them afterwards (a file the build overwrites changes
+  size/mtime and still counts). Without this, a stale checked-in artifact is republished under the
+  current run's name — and with full-version pins it also collides with the freshly built one.
 
 # Packages notes
 

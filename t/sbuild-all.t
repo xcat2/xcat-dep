@@ -19,7 +19,7 @@ use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field genesis_deb_control
-                  deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb
+                  deb_field deb_version deb_hash cross_copy_genesis_deb
                   build_deb_in_chroot);
 
 # Run a printing sub with STDOUT muted so its progress lines do not pollute TAP.
@@ -215,10 +215,28 @@ PKG
     is(($m2 && $m2->{a}), '1-1', 'an identical repeated version is kept, not an error');
 }
 
-# ---- deb_upstream_version: strip epoch + debian revision ----------------------------------------
-is(deb_upstream_version('1.8.18-4'), '1.8.18', 'strip -revision');
-is(deb_upstream_version('2:0.3.3-snap202608101400.57'), '0.3.3', 'strip epoch and -revision');
-is(deb_upstream_version('3.86'), '3.86', 'native-ish version returned as-is');
+# ---- pins bite on the FULL version: revision and epoch are part of the comparison -----------------
+# A package can carry the right upstream version and still be wrong for xCAT -- the debian_revision is
+# the packaging revision (elilo-xcat 3.14-5 vs 3.14-6) and the epoch overrides version comparison
+# outright. These assert version_matches over WHOLE Debian versions, which is what the manifest pins.
+{
+    ok( version_matches('3.14-6', '3.14-6'), 'exact full pin matches the same revision');
+    ok(!version_matches('3.14-5', '3.14-6'),
+        'a STALE packaging revision is rejected (3.14-5 vs pin 3.14-6) -- upstream-only would pass');
+    ok(!version_matches('1.8.18-3', '1.8.18-4'), 'an older ipmitool revision is rejected');
+    ok(!version_matches('2:2.18.0-1', '2.18.0-1'),
+        'an EPOCH that the pin does not name is rejected (2:2.18.0-1 vs pin 2.18.0-1)');
+    ok( version_matches('2:2.18.0-1', '2:2.18.0-1'), 'an epoch IS accepted when the pin names it');
+
+    # the two pins that must stay globbed, and what they still enforce
+    ok( version_matches('0.3.3-snap202608212338', '0.3.3-snap*'), 'goconserver CD stamp matches 0.3.3-snap*');
+    ok(!version_matches('0.3.3-1', '0.3.3-snap*'),
+        '... but an UNSTAMPED goconserver revision is rejected (the glob still demands a snap stamp)');
+    ok(!version_matches('0.3.4-snap202608212338', '0.3.3-snap*'),
+        '... and upstream is still pinned exactly under the glob');
+    ok( version_matches('2.19.0-snap202607261133', '2.*'), 'genesis 2.* walks with xcat-core');
+    ok(!version_matches('1.9.0-snap202607261133', '2.*'), '... but not below 2');
+}
 
 # ---- .deb inspection + cross-arch genesis provisioning (needs dpkg-deb for real debs) -----------
 SKIP: {
@@ -248,15 +266,38 @@ SKIP: {
     {
         my $dir = "$tmp/vdir1"; make_path($dir);
         system("cp '$ipmi' '$dir/'");
-        is(deb_version($dir, 'ipmitool-xcat'), '1.8.18', 'deb_version returns UPSTREAM version');
+        is(deb_version($dir, 'ipmitool-xcat'), '1.8.18-4',
+            'deb_version returns the FULL version, revision included');
     }
-    # deb_version dies when a dir holds two DIFFERENT upstream versions of the same package.
+    # deb_version dies when a dir holds two DIFFERENT versions of the same package -- now including two
+    # revisions of the SAME upstream version, which upstream-only comparison used to collapse into one.
     {
         my $dir = "$tmp/vdir2"; make_path($dir);
         system("cp '" . $mk->('ipmitool-xcat', '1.8.18-4', 'amd64') . "' '$dir/'");
         system("cp '" . $mk->('ipmitool-xcat', '1.8.19-1', 'amd64') . "' '$dir/'");
         my $died = !eval { deb_version($dir, 'ipmitool-xcat'); 1 };
-        ok($died, 'deb_version dies on multiple distinct upstream versions (stale artifact)');
+        ok($died, 'deb_version dies on multiple distinct versions (stale artifact)');
+    }
+    {
+        my $dir = "$tmp/vdir3"; make_path($dir);
+        system("cp '" . $mk->('elilo-xcat', '3.14-5', 'all') . "' '$dir/'");
+        system("cp '" . $mk->('elilo-xcat', '3.14-6', 'all') . "' '$dir/'");
+        my $died = !eval { deb_version($dir, 'elilo-xcat'); 1 };
+        ok($died, 'deb_version dies on two REVISIONS of one upstream version (the elilo 3.14-5/-6 case)');
+    }
+    # The logical 'xcat-genesis-base' spans two arch-suffixed packages that legitimately carry
+    # different revisions (each converted from its own genesis rpm) and are both staged on the amd64
+    # host. $arch selects one; without it the pair would look like a version conflict.
+    {
+        my $dir = "$tmp/gdir"; make_path($dir);
+        system("cp '" . $mk->('xcat-genesis-base-amd64',   '2.19.0-snap202607261133', 'all') . "' '$dir/'");
+        system("cp '" . $mk->('xcat-genesis-base-ppc64el', '2.19.0-snap202607271832', 'all') . "' '$dir/'");
+        is(deb_version($dir, 'xcat-genesis-base', 'amd64'), '2.19.0-snap202607261133',
+            'deb_version picks THIS arch genesis when both are staged');
+        is(deb_version($dir, 'xcat-genesis-base', 'ppc64el'), '2.19.0-snap202607271832',
+            '... and the other arch resolves to its own');
+        my $died = !eval { deb_version($dir, 'xcat-genesis-base'); 1 };
+        ok($died, 'without an arch the two genesis revisions are a conflict (so callers must pass it)');
     }
 
     # genesis cross-copy: content identity by deb_hash, refresh-stale + idempotent + sign callback.
@@ -316,11 +357,20 @@ SKIP: {
     my @names = ('ipmitool-xcat', 'xcat-genesis-base');
 
     my $amd = resolve_present_names(\%parsed, 'amd64', \@names);
-    is($amd->{'ipmitool-xcat'}, '1.8.18', 'resolve: exact name reduced to upstream');
-    is($amd->{'xcat-genesis-base'}, '2.19.0', 'resolve: genesis -> amd64-suffixed for the amd64 cell');
+    is($amd->{'ipmitool-xcat'}, '1.8.18-snap202601010000',
+        'resolve: exact name, FULL version handed to the comparator (revision kept)');
+    is($amd->{'xcat-genesis-base'}, '2.19.0-snap202601010000',
+        'resolve: genesis -> amd64-suffixed for the amd64 cell');
 
     my $ppc = resolve_present_names(\%parsed, 'ppc64el', \@names);
-    is($ppc->{'xcat-genesis-base'}, '2.19.0', 'resolve: genesis -> ppc64el-suffixed for the ppc64el cell');
+    is($ppc->{'xcat-genesis-base'}, '2.19.0-snap202601010000',
+        'resolve: genesis -> ppc64el-suffixed for the ppc64el cell');
+
+    # The point of keeping the revision: a stale packaging revision in the published index is now a
+    # VERSION problem, where upstream-only comparison reported the repo as complete.
+    my @stale = verify_repo_packages({ 'elilo-xcat' => '3.14-6' }, { 'elilo-xcat' => '3.14-5' });
+    like($stale[0], qr/^VERSION elilo-xcat: repo has 3\.14-5, manifest pins 3\.14-6$/,
+        'a stale REVISION in the published index is caught (was a false PASS on upstream 3.14)');
 
     # The false-PASS the reviewer caught: only the amd64 genesis is published. The ppc64el cell MUST
     # NOT resolve to it (that would mask a missing native ppc genesis, #7610) -> undef -> later MISSING.

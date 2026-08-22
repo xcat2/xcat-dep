@@ -30,7 +30,7 @@ our @EXPORT_OK = qw(
     codename_to_version version_to_codename known_codenames
     chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
     control_field genesis_deb_control
-    deb_field deb_version deb_upstream_version deb_hash cross_copy_genesis_deb
+    deb_field deb_version deb_hash cross_copy_genesis_deb
     build_deb_in_chroot
 );
 
@@ -253,7 +253,7 @@ sub parse_release_architectures {
 # parse_packages_index($text) -> \%{ package_name => version }
 # Parse a Debian 'Packages' index: RFC822 stanzas separated by blank line(s); each carries a
 # 'Package:' and a 'Version:'. Returns name => version (the FULL Debian version verbatim, epoch +
-# revision included -- the caller strips to the upstream part with deb_upstream_version). A stanza
+# revision included -- which is exactly what the manifest pin is compared against). A stanza
 # lacking either field is skipped; malformed/empty input yields an empty hash.
 # DUPLICATE = LOUD ERROR: apt-ftparchive emits one stanza per package, so a name appearing twice with
 # DISTINCT versions means a stale .deb was not cleaned from the pool before assemble -- a version pin
@@ -322,10 +322,13 @@ sub skip_arch_all_on {
     return ((control_binary_arch($control_text, $binpkg) // '') eq 'all') ? 1 : 0;
 }
 
-# resolve_present_names(\%parsed, $arch, \@names) -> \%present  (name => upstream version | undef)
+# resolve_present_names(\%parsed, $arch, \@names) -> \%present  (name => FULL version | undef)
 # PURE. Resolves each manifest package NAME to the version actually in the parsed index (\%parsed from
-# parse_packages_index), reducing to the upstream version so it compares against the manifest's
-# upstream pins. Resolution order:
+# parse_packages_index), returning the FULL Debian version -- [epoch:]upstream[-revision], verbatim --
+# because that is what the manifest pins. Comparing only the upstream part would accept a package with
+# the right upstream version but the wrong epoch or a stale packaging revision, which is exactly what
+# xCAT's own versioned Depends (goconserver >= 0.3.3-snap..., ipmitool-xcat >= 1.8.17-1) care about.
+# Resolution order:
 #   - exact index key (e.g. ipmitool-xcat), else
 #   - the arch-suffixed key for THIS cell's arch (e.g. xcat-genesis-base -> xcat-genesis-base-<arch>).
 # It deliberately does NOT fall back to a DIFFERENT-arch suffix: the xcat-genesis-base-<arch> debs are
@@ -338,7 +341,7 @@ sub resolve_present_names {
         my $full;
         if    (exists $parsed->{$name})            { $full = $parsed->{$name}; }
         elsif (exists $parsed->{"$name-$arch"})    { $full = $parsed->{"$name-$arch"}; }
-        $present{$name} = defined $full ? deb_upstream_version($full) : undef;
+        $present{$name} = $full;
     }
     return \%present;
 }
@@ -479,36 +482,38 @@ sub deb_field {
     return defined $v ? $v : '';
 }
 
-# deb_upstream_version: the UPSTREAM part of a Debian version — strip a leading "epoch:" and the
-# trailing "-<debian_revision>" (dpkg splits the revision at the LAST dash). So '1.8.18-4' -> '1.8.18',
-# '2:0.3.3-snap202608101400.57' -> '0.3.3'. This is what the manifest pins (the Release/revision
-# carries the codename/snap stamp and is intentionally NOT pinned), mirroring EL rpm_version's %{version}.
-sub deb_upstream_version {
-    my ($v) = @_;
-    return $v unless defined $v;
-    $v =~ s/^\d+://;        # drop epoch
-    $v =~ s/-[^-]*$//;      # drop the last -revision segment
-    return $v;
-}
-
-# deb_version: the UPSTREAM Version of the built binary .deb named <pkg>_*.deb under $dir (undef if
-# absent). $pkg is the binary package name (e.g. 'ipmitool-xcat', 'goconserver', or the logical
-# 'xcat-genesis-base' which matches the arch-suffixed xcat-genesis-base-amd64/-ppc64el). Dies if the
-# dir holds more than one DISTINCT upstream version of the package (a stale artifact not cleaned
-# before the build — a version pin could otherwise pass against the wrong deb and both could ship).
+# deb_version: the FULL Version ([epoch:]upstream[-revision]) of the built binary .deb named
+# <pkg>_*.deb under $dir (undef if absent) -- the same string the published index carries, so
+# build-time validation and publish-time verification compare like with like against the manifest pin.
+# $pkg is the binary package name (e.g. 'ipmitool-xcat', 'goconserver') or the logical
+# 'xcat-genesis-base'.
+#
+# $arch (optional) disambiguates that logical name: the genesis debs are arch-SUFFIXED
+# (xcat-genesis-base-amd64 / -ppc64el) and are legitimately built from two DIFFERENT genesis rpms, so
+# their revisions differ (2.19.0-snap202607261133 vs ...271832). On the amd64 host both are staged
+# (the cross-arch ppc one for #7610), so without $arch the two would look like a version conflict.
+# Pass the target arch and only that arch's genesis is considered -- matching resolve_present_names,
+# which likewise never borrows another arch's genesis.
+#
+# Dies if the dir holds more than one DISTINCT version of the package (a stale artifact not cleaned
+# before the build -- a version pin could otherwise pass against the wrong deb and both could ship).
 # Mirrors MockBuildUtils::rpm_version.
 sub deb_version {
-    my ($dir, $pkg) = @_;
-    my $glob = ($pkg eq 'xcat-genesis-base')
-        ? "$dir/xcat-genesis-base-*_*.deb"
+    my ($dir, $pkg, $arch) = @_;
+    my $is_genesis = ($pkg eq 'xcat-genesis-base');
+    my $glob = $is_genesis
+        ? ((defined $arch && $arch ne '') ? "$dir/xcat-genesis-base-$arch\_*.deb"
+                                          : "$dir/xcat-genesis-base-*_*.deb")
         : "$dir/${pkg}_*.deb";
     my %vers;
     for my $f (sort glob($glob)) {
         my $n = deb_field($f, 'Package');
-        my $match = ($pkg eq 'xcat-genesis-base')
-            ? ($n =~ /^xcat-genesis-base-/) : ($n eq $pkg);
+        my $match = $is_genesis
+            ? ($n =~ /^xcat-genesis-base-/
+               && (!defined $arch || $arch eq '' || $n eq "xcat-genesis-base-$arch"))
+            : ($n eq $pkg);
         next unless $match;
-        my $v = deb_upstream_version(deb_field($f, 'Version'));
+        my $v = deb_field($f, 'Version');
         $vers{$v} = 1 if defined $v && $v ne '';
     }
     return undef unless %vers;
@@ -614,6 +619,13 @@ W=$(mktemp -d)
 cp -a "$PKGSRC" "$W/pkg"
 cd "$W/pkg"
 
+# Some package directories carry PREBUILT .deb files in the checkout (elilo/ ships
+# elilo-xcat_3.14-5_all.deb and gnu-efi_3.0v-5_amd64.deb). Those arrive with the copied source tree
+# and are NOT output of this build -- collecting them republishes a stale, unrelated artifact under
+# this run's name. Record what is already present so the collector can subtract it. A file the build
+# OVERWRITES (elilo-xcat_3.14-6_all.deb) changes size/mtime, so it still counts as build output.
+find "$W" -maxdepth 3 -name '*.deb' -printf '%s %T@ %p\n' | sort > "$W/.debs-before"
+
 # Declared Build-Depends, resolved by mk-build-deps: it hands debian/control's relationships to apt
 # verbatim, so versions/alternatives/arch-qualifiers are honoured. FATAL on failure -- an unsatisfied
 # build dependency must stop the build, never be papered over by whatever the chroot already carries.
@@ -626,14 +638,19 @@ fi
 printf '%s' "$B64" | base64 -d > "$W/pkgbuild.sh"
 ( cd "$W/pkg" && bash "$W/pkgbuild.sh" )
 
-# Collect the built binaries. The mk-build-deps dummy package (<src>-build-deps_*.deb) and debug
-# symbols are not build output and must never reach the repo.
-mapfile -t found < <(find "$W" -maxdepth 3 -name '*.deb' \
-    ! -name '*-dbgsym_*' ! -name '*-build-deps_*' -print | sort)
+# Collect ONLY what this build produced: everything that is new or changed since the snapshot taken
+# before the build. Prebuilt debs that came in with the checkout are subtracted, and the mk-build-deps
+# dummy package (<src>-build-deps_*.deb) and debug symbols are excluded outright -- none of the three
+# is build output, and none may reach the repo.
+find "$W" -maxdepth 3 -name '*.deb' ! -name '*-dbgsym_*' ! -name '*-build-deps_*' \
+    -printf '%s %T@ %p\n' | sort > "$W/.debs-after"
+mapfile -t found < <(comm -13 "$W/.debs-before" "$W/.debs-after" | sed 's/^[^ ]* [^ ]* //')
 if [ "${#found[@]}" -eq 0 ]; then
-    echo "FATAL: the package build produced no .deb" >&2
+    echo "FATAL: the package build produced no .deb (only prebuilt artifacts from the checkout)" >&2
     exit 1
 fi
+comm -12 "$W/.debs-before" "$W/.debs-after" | sed 's/^[^ ]* [^ ]* //' \
+    | while read -r f; do echo "prebuilt in the checkout, NOT collected: $f"; done
 mkdir -p "$OUT"
 for d in "${found[@]}"; do cp -v "$d" "$OUT/"; done
 INNER

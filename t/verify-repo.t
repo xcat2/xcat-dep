@@ -53,9 +53,9 @@ sub arch_all_stanzas {
 }
 
 sub native_stanzas {
-    my ($a) = @_;
-    return stanza('ipmitool-xcat', "1.8.18-snap202608211200", $a)
-         . stanza('goconserver',   "0.3.3-snap202608211200",  $a);
+    my ($a, %o) = @_;
+    return stanza('ipmitool-xcat', $o{ipmi_version} // '1.8.18-snap202608211200', $a)
+         . stanza('goconserver',   '0.3.3-snap202608211200',  $a);
 }
 
 # make_repo(%opt): a fixture apt tree for codename 'noble'.
@@ -70,7 +70,8 @@ sub make_repo {
     my %native  = map { $_ => 1 } @{ $o{native} // [@arches] };
     my $dir = "$tmp/repo" . (++$repo_seq);
     for my $a (@arches) {
-        my $body = ($native{$a} ? native_stanzas($a) : '') . arch_all_stanzas($a);
+        my $body = ($native{$a} ? native_stanzas($a, ipmi_version => $o{ipmi_version}) : '')
+                 . arch_all_stanzas($a);
         write_file("$dir/dists/noble/main/binary-$a/Packages", $body);
     }
     write_file("$dir/dists/noble/Release",
@@ -82,16 +83,17 @@ sub make_repo {
 
 # The manifest is the source of truth for what each codename x arch must carry.
 my $manifest = "$tmp/debs-manifest.conf";
+# Pins are matched against the FULL Debian version, so the fixtures pin revisions too.
 write_file($manifest, <<'MAN');
 [noble-amd64]
-ipmitool-xcat=1.8.18
-goconserver=0.3.3
+ipmitool-xcat=1.8.18-snap202608211200
+goconserver=0.3.3-snap*
 grub2-xcat=*
 xcat-genesis-base=2.*
 
 [noble-ppc64el]
-ipmitool-xcat=1.8.18
-goconserver=0.3.3
+ipmitool-xcat=1.8.18-snap202608211200
+goconserver=0.3.3-snap*
 grub2-xcat=*
 xcat-genesis-base=2.*
 MAN
@@ -192,6 +194,27 @@ sub run_gate {
     is($rc, 0, '--no-verify-signature is the deliberate opt-out') or diag($out);
     like($out, qr/signature check: OFF \(--no-verify-signature\)/,
         '... and the log names the flag that turned it off');
+}
+
+# ---- a stale PACKAGING REVISION is caught, not just a wrong upstream version ----------------------
+# The manifest pin is matched against the FULL [epoch:]upstream[-revision]. An upstream-only gate
+# reported this repo as complete: upstream 1.8.18 is what the pin used to say, and it matches -- while
+# the published deb is an older packaging revision than xCAT's own Depends require.
+{
+    my $repo = make_repo(ipmi_version => '1.8.18-snap202501010000');   # older revision, same upstream
+    my ($rc, $out) = run_gate($repo, '--no-verify-signature');
+    isnt($rc, 0, 'a stale packaging revision FAILS the gate') or diag($out);
+    like($out, qr/VERSION ipmitool-xcat: repo has 1\.8\.18-snap202501010000, manifest pins 1\.8\.18-snap202608211200/,
+        '... reported as a VERSION problem naming both revisions');
+}
+
+# An EPOCH the pin does not name is likewise a mismatch -- the epoch outranks the version entirely,
+# so silently accepting it would let an un-pinned epoch bump through.
+{
+    my $repo = make_repo(ipmi_version => '2:1.8.18-snap202608211200');
+    my ($rc, $out) = run_gate($repo, '--no-verify-signature');
+    isnt($rc, 0, 'an epoch the pin does not name FAILS the gate') or diag($out);
+    like($out, qr/VERSION ipmitool-xcat: repo has 2:1\.8\.18-snap202608211200/, '... naming the epoch');
 }
 
 # ---- a cell with no manifest section is a configuration error, not a free pass --------------------
