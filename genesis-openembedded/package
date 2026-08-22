@@ -15,6 +15,7 @@ use Getopt::Long qw(GetOptions);
 use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   deb_package_name
+  replaced_deb_package_names
   rpm_package_name
   validate_architecture
   validate_export
@@ -162,11 +163,17 @@ sub _build_deb {
 
     my $installed_kib = _tree_bytes($root);
     $installed_kib = int(($installed_kib + 1023) / 1024);
+    my @replaced = replaced_deb_package_names($architecture);
+    my $transition = @replaced
+      ? "Conflicts: " . join(', ', @replaced) . "\n"
+          . "Replaces: " . join(', ', @replaced) . "\n"
+      : '';
     _write_file(
         "$root/DEBIAN/control",
         "Package: $package_name\n"
           . "Version: $version-$release\n"
           . "Section: admin\nPriority: optional\nArchitecture: all\n"
+          . $transition
           . "Installed-Size: $installed_kib\n"
           . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
           . "Description: xCAT Genesis netboot image\n"

@@ -10,6 +10,7 @@ use Getopt::Long qw(GetOptions);
 use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   deb_package_name
+  replaced_deb_package_names
   rpm_package_name
   validate_complete_release
   validate_release
@@ -79,9 +80,14 @@ sub _verify_deb {
     my $path = "$directory/deb/${name}_$manifest->{xcat_version}-$manifest->{xcat_release}_all.deb";
     my $metadata = join(
         "\n",
-        map { _capture('dpkg-deb', '-f', $path, $_) } qw(Package Version Architecture),
+        map { _capture('dpkg-deb', '-f', $path, $_) }
+          qw(Package Version Architecture Conflicts Replaces),
     );
-    my $expected = join("\n", $name, "$manifest->{xcat_version}-$manifest->{xcat_release}", 'all');
+    my $replaced = join(', ', replaced_deb_package_names($architecture));
+    my $expected = join(
+        "\n", $name, "$manifest->{xcat_version}-$manifest->{xcat_release}",
+        'all', $replaced, $replaced,
+    );
     die "Unexpected DEB identity for $path: $metadata\n" unless $metadata eq $expected;
 }
 
