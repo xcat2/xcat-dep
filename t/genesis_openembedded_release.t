@@ -186,8 +186,13 @@ sub exercise_packager {
         '--format', $format,
     );
 
-    is(system(@command, '--output-dir', $first), 0, "$format package builds");
-    is(system(@command, '--output-dir', $second), 0, "$format package rebuilds");
+    my $original_umask = umask(0022);
+    is(system(@command, '--output-dir', $first), 0,
+        "$format package builds with umask 0022");
+    umask(0002);
+    is(system(@command, '--output-dir', $second), 0,
+        "$format package rebuilds with umask 0002");
+    umask($original_umask);
 
     my ($relative, $source_relative);
     if ($format eq 'rpm') {
@@ -198,11 +203,11 @@ sub exercise_packager {
     }
     ok(-f "$first/$relative", "$format binary exists");
     is(file_sha("$first/$relative"), file_sha("$second/$relative"),
-        "$format binary is reproducible");
+        "$format binary is reproducible across umasks");
     if ($format eq 'rpm') {
         ok(-f "$first/$source_relative", 'source RPM exists');
         is(file_sha("$first/$source_relative"), file_sha("$second/$source_relative"),
-            'source RPM is reproducible');
+            'source RPM is reproducible across umasks');
     }
 
     my $release_root = "$tmp/$format-release";
