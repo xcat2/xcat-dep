@@ -30,7 +30,8 @@ jobs:
           perl -c genesis-openembedded/build
           perl -c genesis-openembedded/package
           perl -c genesis-openembedded/verify-release
-          perl -c genesis-openembedded/lib/XCAT/GenesisRelease.pm
+          perl -Ilib -c lib/XCAT/BuildUtils.pm
+          perl -Ilib -c lib/XCAT/GenesisRelease.pm
           perl -c mockbuild-all.pl
           rpmspec -P \
             -D 'genesis_arch x86_64' \
@@ -41,7 +42,8 @@ jobs:
             genesis-openembedded/build \
             genesis-openembedded/package \
             genesis-openembedded/verify-release \
-            genesis-openembedded/lib/XCAT/GenesisRelease.pm \
+            lib/XCAT/BuildUtils.pm \
+            lib/XCAT/GenesisRelease.pm \
             mockbuild-all.pl \
             t/genesis_openembedded_release.t \
             t/genesis_openembedded_consumer.t \
