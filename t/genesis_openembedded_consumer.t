@@ -64,7 +64,7 @@ sub test_rpm_consumer {
     my $release_root = make_package_release("$tmp/rpm", 'rpm');
     my $package = "xCAT-genesis-base-x86_64-$version-$release.noarch.rpm";
     my $source_package = "xCAT-genesis-base-x86_64-$version-$release.src.rpm";
-    my $output = "$tmp/rpm-output";
+    my $output = "$tmp/rpm output";
     my $target = 'test+epel-10-' . capture('uname', '-m');
     my $run = "$target-consumer";
     my $run_repo = "$output/mockbuild-all/$run/repo/" . capture('uname', '-m');
