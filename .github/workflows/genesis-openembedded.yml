@@ -22,6 +22,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             apt-utils createrepo-c dpkg-dev gnupg \
+            libfile-slurper-perl \
             libparallel-forkmanager-perl libperl-critic-perl rpm shellcheck
 
       - name: Run static checks
