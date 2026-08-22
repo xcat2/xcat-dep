@@ -3,25 +3,23 @@ package XCAT::GenesisReleaseTest;
 use strict;
 use warnings;
 
-use Digest::SHA ();
 use Exporter qw(import);
 use File::Basename qw(dirname);
 use File::Copy qw(copy);
-use File::Find qw(find);
 use File::Path qw(make_path);
-use File::Spec;
 use Test::More ();
+use XCAT::BuildUtils qw(
+  digest_manifest
+  relative_files
+  write_binary
+);
 
 our @EXPORT_OK = qw(
-  command_exists
   copy_tree
   dies_like
-  file_sha
   make_export
-  read_file
   run_capture
   write_checksums
-  write_file
   write_release_manifest
 );
 
@@ -39,7 +37,7 @@ sub make_export {
           "format=xcat-genesis\nversion=1\narchitecture=$architecture\n",
     );
     $content{'fw_jump.elf'} = 'firmware' if $architecture eq 'riscv64';
-    write_file("$directory/$_", $content{$_}) for sort keys %content;
+    write_binary("$directory/$_", $content{$_}) for sort keys %content;
     write_checksums($directory);
     return $directory;
 }
@@ -47,7 +45,7 @@ sub make_export {
 sub write_release_manifest {
     my ($directory, $xcat_version, $xcat_release, $revision, $epoch,
         $architectures, $formats) = @_;
-    write_file(
+    write_binary(
         "$directory/release.manifest",
         "format=xcat-genesis-packages\n"
           . "version=1\n"
@@ -63,66 +61,21 @@ sub write_release_manifest {
 sub write_checksums {
     my ($directory) = @_;
     unlink("$directory/SHA256SUMS") if -e "$directory/SHA256SUMS";
-    my @files;
-    find(
-        {
-            no_chdir => 1,
-            wanted   => sub {
-                return unless -f $_ && !-l $_;
-                my $relative = File::Spec->abs2rel($File::Find::name, $directory);
-                $relative =~ tr{\\}{/};
-                push(@files, $relative);
-            },
-        },
-        $directory,
+    my @files = relative_files($directory);
+    write_binary(
+        "$directory/SHA256SUMS",
+        digest_manifest($directory, 'sha256', @files),
     );
-    my $content = join('', map { file_sha("$directory/$_") . "  $_\n" } sort @files);
-    write_file("$directory/SHA256SUMS", $content);
-}
-
-sub file_sha {
-    my ($path) = @_;
-    open(my $fh, '<:raw', $path) or die $!;
-    my $digest = Digest::SHA->new(256)->addfile($fh)->hexdigest;
-    close($fh) or die $!;
-    return $digest;
 }
 
 sub copy_tree {
     my ($source, $destination) = @_;
     make_path($destination);
-    find(
-        {
-            no_chdir => 1,
-            wanted   => sub {
-                return if $File::Find::name eq $source;
-                my $relative = File::Spec->abs2rel($File::Find::name, $source);
-                my $target = "$destination/$relative";
-                if (-d $File::Find::name) {
-                    make_path($target);
-                } elsif (-f $File::Find::name) {
-                    make_path(dirname($target));
-                    copy($File::Find::name, $target) or die $!;
-                }
-            },
-        },
-        $source,
-    );
-}
-
-sub write_file {
-    my ($path, $content) = @_;
-    open(my $fh, '>:raw', $path) or die $!;
-    print {$fh} $content or die $!;
-    close($fh) or die $!;
-}
-
-sub command_exists {
-    my ($command) = @_;
-    for my $directory (File::Spec->path()) {
-        return 1 if -x "$directory/$command";
+    for my $relative (relative_files($source)) {
+        my $target = "$destination/$relative";
+        make_path(dirname($target));
+        copy("$source/$relative", $target) or die $!;
     }
-    return 0;
 }
 
 sub run_capture {
@@ -138,15 +91,6 @@ sub run_capture {
     return 255 if $? == -1;
     return 128 + ($? & 127) if $? & 127;
     return $? >> 8;
-}
-
-sub read_file {
-    my ($path) = @_;
-    open(my $fh, '<:raw', $path) or die $!;
-    local $/;
-    my $content = <$fh> // '';
-    close($fh) or die $!;
-    return $content;
 }
 
 sub dies_like {

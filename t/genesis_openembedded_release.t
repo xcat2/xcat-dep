@@ -9,8 +9,13 @@ use FindBin;
 use Test::More;
 
 use lib "$FindBin::Bin/../lib";
-use lib "$FindBin::Bin/../genesis-openembedded/lib";
 use lib "$FindBin::Bin/lib";
+use XCAT::BuildUtils qw(
+  command_exists
+  digest_file
+  read_binary
+  write_binary
+);
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
@@ -23,15 +28,11 @@ use XCAT::GenesisRelease qw(
   verify_release_file
 );
 use XCAT::GenesisReleaseTest qw(
-  command_exists
   copy_tree
   dies_like
-  file_sha
   make_export
-  read_file
   run_capture
   write_checksums
-  write_file
   write_release_manifest
 );
 
@@ -75,12 +76,12 @@ dies_like(sub { validate_export($missing, 'x86_64') }, qr/missing image\.vex\.js
     'missing release evidence fails');
 
 my $corrupt = make_export("$tmp/corrupt", 'x86_64');
-write_file("$corrupt/kernel", 'changed');
+write_binary("$corrupt/kernel", 'changed');
 dies_like(sub { validate_export($corrupt, 'x86_64') }, qr/Checksum mismatch for kernel/,
     'corrupt payload fails');
 
 my $unexpected = make_export("$tmp/unexpected", 'x86_64');
-write_file("$unexpected/extra", 'not part of the export');
+write_binary("$unexpected/extra", 'not part of the export');
 write_checksums($unexpected);
 dies_like(sub { validate_export($unexpected, 'x86_64') }, qr/Unexpected Genesis export file/,
     'unlisted export files fail');
@@ -100,9 +101,9 @@ make_path("$release_dir/rpm", "$release_dir/srpm", "$release_dir/deb");
 for my $architecture (qw(x86_64 ppc64le)) {
     my $rpm = rpm_package_name($architecture);
     my $deb = deb_package_name($architecture);
-    write_file("$release_dir/rpm/$rpm-$version-$release.noarch.rpm", "rpm $architecture");
-    write_file("$release_dir/srpm/$rpm-$version-$release.src.rpm", "srpm $architecture");
-    write_file("$release_dir/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
+    write_binary("$release_dir/rpm/$rpm-$version-$release.noarch.rpm", "rpm $architecture");
+    write_binary("$release_dir/srpm/$rpm-$version-$release.src.rpm", "srpm $architecture");
+    write_binary("$release_dir/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
 }
 write_release_manifest(
     $release_dir, $version, $release, $revision, $epoch,
@@ -115,7 +116,7 @@ my $qualified_release = "$tmp/qualified-release";
 my $qualified_release_name = '1+deb~1';
 my $qualified_deb = deb_package_name('x86_64');
 make_path("$qualified_release/deb");
-write_file(
+write_binary(
     "$qualified_release/deb/${qualified_deb}_${version}-${qualified_release_name}_all.deb",
     'deb x86_64',
 );
@@ -131,7 +132,7 @@ my $verified_copy = "$tmp/verified-copy.rpm";
 copy("$release_dir/$verified_relative", $verified_copy) or die $!;
 ok(verify_release_file($verified_checksums, $verified_relative, $verified_copy),
     'collected package matches the verified release');
-write_file($verified_copy, 'changed after verification');
+write_binary($verified_copy, 'changed after verification');
 dies_like(
     sub { verify_release_file($verified_checksums, $verified_relative, $verified_copy) },
     qr/Collected release file checksum mismatch/,
@@ -148,9 +149,9 @@ make_path("$complete_release/rpm", "$complete_release/srpm", "$complete_release/
 for my $architecture (architectures()) {
     my $rpm = rpm_package_name($architecture);
     my $deb = deb_package_name($architecture);
-    write_file("$complete_release/rpm/$rpm-$version-$release.noarch.rpm", "rpm $architecture");
-    write_file("$complete_release/srpm/$rpm-$version-$release.src.rpm", "srpm $architecture");
-    write_file("$complete_release/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
+    write_binary("$complete_release/rpm/$rpm-$version-$release.noarch.rpm", "rpm $architecture");
+    write_binary("$complete_release/srpm/$rpm-$version-$release.src.rpm", "srpm $architecture");
+    write_binary("$complete_release/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
 }
 write_release_manifest(
     $complete_release, $version, $release, $revision, $epoch,
@@ -163,7 +164,7 @@ my $deb_only_release = "$tmp/deb-only-release";
 make_path("$deb_only_release/deb");
 for my $architecture (architectures()) {
     my $deb = deb_package_name($architecture);
-    write_file("$deb_only_release/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
+    write_binary("$deb_only_release/deb/${deb}_${version}-${release}_all.deb", "deb $architecture");
 }
 write_release_manifest(
     $deb_only_release, $version, $release, $revision, $epoch,
@@ -173,12 +174,12 @@ write_checksums($deb_only_release);
 my $verify_all_log = "$tmp/verify-all.log";
 isnt(run_capture($verify_all_log, $verifier, $deb_only_release), 0,
     'all-format verification rejects a single-format release');
-like(read_file($verify_all_log), qr/Release does not contain rpm packages/,
+like(read_binary($verify_all_log), qr/Release does not contain rpm packages/,
     'all-format failure names the missing format');
 
 my $bad_release = "$tmp/bad-release";
 copy_tree($release_dir, $bad_release);
-write_file("$bad_release/rpm/stale.rpm", 'stale');
+write_binary("$bad_release/rpm/stale.rpm", 'stale');
 write_checksums($bad_release);
 dies_like(sub { validate_release($bad_release) }, qr/Unexpected Genesis release artifact/,
     'stale package fails');
@@ -194,9 +195,9 @@ SKIP: {
     skip 'git is not installed', 2 unless command_exists('git');
     my $source = "$tmp/dirty-xcat-core";
     make_path("$source/xCAT-genesis-builder/oe");
-    write_file("$source/Version", "$version\n");
-    write_file("$source/xCAT-genesis-builder/oe/build", "#!/bin/sh\nexit 99\n");
-    write_file("$source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 99\n");
+    write_binary("$source/Version", "$version\n");
+    write_binary("$source/xCAT-genesis-builder/oe/build", "#!/bin/sh\nexit 99\n");
+    write_binary("$source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 99\n");
     for my $command (
         [ 'git', '-C', $source, 'init', '-q' ],
         [ 'git', '-C', $source, 'add', '.' ],
@@ -206,7 +207,7 @@ SKIP: {
         die "Cannot prepare test repository\n"
           if run_capture("$tmp/git-fixture.log", @{$command});
     }
-    write_file("$source/untracked", "not part of the commit\n");
+    write_binary("$source/untracked", "not part of the commit\n");
     my $log = "$tmp/dirty-source.log";
     isnt(
         run_capture(
@@ -216,7 +217,7 @@ SKIP: {
         0,
         'release builder rejects untracked source files',
     );
-    like(read_file($log), qr/xcat-core checkout is not clean/,
+    like(read_binary($log), qr/xcat-core checkout is not clean/,
         'dirty checkout failure is explicit');
 }
 
@@ -277,11 +278,11 @@ sub exercise_packager {
         $relative = "deb/xcat-genesis-openembedded-x86-64_${version}-${release}_all.deb";
     }
     ok(-f "$first/$relative", "$format binary exists");
-    is(file_sha("$first/$relative"), file_sha("$second/$relative"),
+    is(digest_file("$first/$relative"), digest_file("$second/$relative"),
         "$format binary is reproducible across umasks");
     if ($format eq 'rpm') {
         ok(-f "$first/$source_relative", 'source RPM exists');
-        is(file_sha("$first/$source_relative"), file_sha("$second/$source_relative"),
+        is(digest_file("$first/$source_relative"), digest_file("$second/$source_relative"),
             'source RPM is reproducible across umasks');
     }
 
@@ -299,16 +300,16 @@ sub exercise_packager {
     if ($format eq 'rpm') {
         is(run_capture($contents_log, 'rpm', '-qpl', "$first/$relative"), 0,
             'RPM payload can be listed');
-        like(read_file($contents_log),
+        like(read_binary($contents_log),
             qr{/opt/xcat/share/xcat/netboot/genesis-openembedded/x86_64/kernel},
             'RPM uses the OpenEmbedded staging namespace');
         is(run_capture($contents_log, 'rpm', '-qp', '--scripts', "$first/$relative"), 0,
             'RPM script metadata can be read');
-        is(read_file($contents_log), '', 'RPM has no package scripts');
+        is(read_binary($contents_log), '', 'RPM has no package scripts');
     } else {
         is(run_capture($contents_log, 'dpkg-deb', '-c', "$first/$relative"), 0,
             'DEB payload can be listed');
-        like(read_file($contents_log),
+        like(read_binary($contents_log),
             qr{/opt/xcat/share/xcat/netboot/genesis-openembedded/x86_64/kernel},
             'DEB uses the OpenEmbedded staging namespace');
         my $control = "$tmp/deb-control";
@@ -363,8 +364,8 @@ sub exercise_builder_tmpdir {
     my $source = "$tmp/tmpdir-xcat-core";
     my $oe = "$source/xCAT-genesis-builder/oe";
     make_path($oe);
-    write_file("$source/Version", "$version\n");
-    write_file(
+    write_binary("$source/Version", "$version\n");
+    write_binary(
         "$oe/build",
         <<'BUILD',
 #!/bin/sh
@@ -374,7 +375,7 @@ expected=$XCAT_GENESIS_WORK_DIR/build/tmp
 mkdir -p "$TMPDIR/deploy"
 BUILD
     );
-    write_file(
+    write_binary(
         "$oe/export",
         <<'EXPORT',
 #!/bin/sh
@@ -424,7 +425,7 @@ EXPORT
         );
     }
     is($status, 0, 'release builder isolates the OpenEmbedded tmpdir');
-    unlike(read_file($log), qr/Invalid OpenEmbedded deploy directory/,
+    unlike(read_binary($log), qr/Invalid OpenEmbedded deploy directory/,
         'release builder finds the configured deploy directory');
     ok(-d "$persistent_work/openembedded/build/tmp",
         'release builder preserves the requested work directory');

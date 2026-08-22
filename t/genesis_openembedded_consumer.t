@@ -10,21 +10,23 @@ use FindBin;
 use Test::More;
 
 use lib "$FindBin::Bin/../lib";
-use lib "$FindBin::Bin/../genesis-openembedded/lib";
 use lib "$FindBin::Bin/lib";
+use XCAT::BuildUtils qw(
+  capture_command
+  command_exists
+  digest_file
+  read_binary
+  write_binary
+);
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
   rpm_package_name
 );
 use XCAT::GenesisReleaseTest qw(
-  command_exists
-  file_sha
   make_export
-  read_file
   run_capture
   write_checksums
-  write_file
   write_release_manifest
 );
 
@@ -74,15 +76,15 @@ sub test_rpm_consumer {
     my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
     my $source_package = "xCAT-genesis-openembedded-x86_64-$version-$release.src.rpm";
     my $output = "$tmp/rpm output";
-    my $target = 'test+epel-10-' . capture('uname', '-m');
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
     my $run = "$target-consumer";
-    my $run_repo = "$output/mockbuild-all/$run/repo/" . capture('uname', '-m');
+    my $run_repo = "$output/mockbuild-all/$run/repo/" . capture_command('uname', '-m');
     my $source_repo = "$output/mockbuild-all/$run/repo-src";
-    my $deploy_repo = "$output/xcat-dep/rh10/" . capture('uname', '-m');
+    my $deploy_repo = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
     make_path($run_repo, $source_repo, $deploy_repo);
-    write_file("$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
-    write_file("$source_repo/xCAT-genesis-openembedded-stale.src.rpm", 'stale');
-    write_file("$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
+    write_binary("$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
+    write_binary("$source_repo/xCAT-genesis-openembedded-stale.src.rpm", 'stale');
+    write_binary("$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
 
     my $dependencies = "$tmp/rpm-dependencies";
     my $scratch_repo_root = "$tmp/rpm-repo-root";
@@ -95,18 +97,18 @@ sub test_rpm_consumer {
         copy("$release_root/rpm/$package", "$dependencies/$name-1.noarch.rpm")
           or die $!;
     }
-    write_file(
+    write_binary(
         "$dependencies/xCAT-genesis-openembedded-x86_64-$version-old.noarch.rpm",
         'stale OpenEmbedded RPM',
     );
-    write_file(
+    write_binary(
         "$dependencies/xCAT-genesis-openembedded-x86_64-$version-old.src.rpm",
         'stale OpenEmbedded SRPM',
     );
 
     my $stub = "$tmp/perl-stub/Parallel/ForkManager.pm";
     make_path("$tmp/perl-stub/Parallel");
-    write_file(
+    write_binary(
         $stub,
         "package Parallel::ForkManager;\n"
           . "sub new { bless {}, shift }\n"
@@ -137,7 +139,7 @@ sub test_rpm_consumer {
     );
 
     is($status, 0, 'RPM repository accepts a verified Genesis release');
-    is(file_sha("$deploy_repo/$package"), file_sha("$release_root/rpm/$package"),
+    is(digest_file("$deploy_repo/$package"), digest_file("$release_root/rpm/$package"),
         'deployed RPM matches the release');
     ok(!-e "$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm",
         'stale run RPM is removed');
@@ -145,8 +147,8 @@ sub test_rpm_consumer {
         'stale source RPM is removed');
     ok(!-e "$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm",
         'stale deployed RPM is removed');
-    is(file_sha("$source_repo/$source_package"),
-        file_sha("$release_root/srpm/$source_package"),
+    is(digest_file("$source_repo/$source_package"),
+        digest_file("$release_root/srpm/$source_package"),
         'source RPM matches the release');
     ok(-f "$deploy_repo/repodata/repomd.xml", 'RPM repository metadata is generated');
     ok(-f "$deploy_repo/xCAT-genesis-base-x86_64-1.noarch.rpm",
@@ -155,7 +157,7 @@ sub test_rpm_consumer {
         'stale OpenEmbedded RPM is not collected');
     ok(!-e "$source_repo/xCAT-genesis-openembedded-x86_64-$version-old.src.rpm",
         'stale OpenEmbedded SRPM is not collected');
-    like(read_file("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=15$/m,
+    like(read_binary("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=15$/m,
         'release RPM is counted alongside required dependencies');
 }
 
@@ -166,7 +168,7 @@ sub test_deb_consumer {
     my $input = "$apt_root/ubuntu24.04";
     my $dummy = "$tmp/dummy-deb";
     make_path("$dummy/DEBIAN", $input, "$apt_root/pool/main/noble");
-    write_file(
+    write_binary(
         "$dummy/DEBIAN/control",
         "Package: xcat-genesis-base-amd64\nVersion: 1\nArchitecture: all\n"
           . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
@@ -177,8 +179,8 @@ sub test_deb_consumer {
         "$tmp/dummy-deb.log", 'dpkg-deb', '--root-owner-group', '--build',
         $dummy, "$input/xcat-genesis-base-amd64_1_all.deb",
       );
-    write_file("$input/xcat-genesis-openembedded-stale.deb", 'stale');
-    write_file("$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb", 'stale');
+    write_binary("$input/xcat-genesis-openembedded-stale.deb", 'stale');
+    write_binary("$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb", 'stale');
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
     my $log = "$tmp/deb-consumer.log";
@@ -196,23 +198,23 @@ sub test_deb_consumer {
     my $ppc64el = "$apt_root/dists/noble/main/binary-ppc64el/Packages";
 
     is($status, 0, 'APT repository accepts a verified Genesis release');
-    is(file_sha($pool_package), file_sha("$release_root/deb/$package"),
+    is(digest_file($pool_package), digest_file("$release_root/deb/$package"),
         'pooled DEB matches the release');
     ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb",
         'stale pooled DEB is removed');
-    like(read_file($amd64), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
+    like(read_binary($amd64), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
         'all-architecture DEB is indexed for amd64');
-    like(read_file($ppc64el), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
+    like(read_binary($ppc64el), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
         'all-architecture DEB is indexed for ppc64el');
     ok(-f "$apt_root/dists/noble/Release", 'APT Release metadata is generated');
-    like(read_file($amd64), qr/^Package: xcat-genesis-base-amd64$/m,
+    like(read_binary($amd64), qr/^Package: xcat-genesis-base-amd64$/m,
         'legacy Genesis DEB remains available');
     ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-stale.deb",
         'stale OpenEmbedded DEB is not collected');
 
     my $collision = "$tmp/apt-collision";
     make_path("$collision/ubuntu24.04");
-    write_file("$collision/ubuntu24.04/$package", 'different');
+    write_binary("$collision/ubuntu24.04/$package", 'different');
     my $collision_log = "$tmp/deb-collision.log";
     my $collision_status = run_capture(
         $collision_log,
@@ -224,19 +226,19 @@ sub test_deb_consumer {
         'ubuntu24.04',
     );
     is($collision_status, 0, 'verified release replaces a stale source package');
-    is(file_sha("$collision/pool/main/noble/$package"),
-        file_sha("$release_root/deb/$package"),
+    is(digest_file("$collision/pool/main/noble/$package"),
+        digest_file("$release_root/deb/$package"),
         'pooled package still matches the verified release');
 }
 
 sub test_partial_rpm_release {
     my $release_root = make_package_release("$tmp/rpm-partial", 'rpm', 'x86_64');
     my $output = "$tmp/partial-output";
-    my $target = 'test+epel-10-' . capture('uname', '-m');
-    my $deployed = "$output/xcat-dep/rh10/" . capture('uname', '-m');
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
     my $existing = "$deployed/xCAT-genesis-base-existing.noarch.rpm";
     make_path($deployed);
-    write_file($existing, 'existing release');
+    write_binary($existing, 'existing release');
 
     my $log = "$tmp/rpm-partial.log";
     my $status = run_capture(
@@ -262,7 +264,7 @@ sub test_partial_deb_release {
     my $pool = "$apt_root/pool/main/noble";
     my $existing = "$pool/xcat-genesis-base-existing.deb";
     make_path($pool);
-    write_file($existing, 'existing release');
+    write_binary($existing, 'existing release');
 
     my $log = "$tmp/deb-partial.log";
     my $status = run_capture(
@@ -326,13 +328,4 @@ sub make_package_release {
     );
     write_checksums($release_root);
     return $release_root;
-}
-
-sub capture {
-    my (@command) = @_;
-    open(my $fh, '-|', @command) or die $!;
-    my $output = <$fh>;
-    close($fh) or die $!;
-    chomp($output);
-    return $output;
 }
