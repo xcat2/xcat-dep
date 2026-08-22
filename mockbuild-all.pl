@@ -13,7 +13,16 @@ use FindBin;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
-use lib "$FindBin::Bin/genesis-openembedded/lib";
+use lib "$FindBin::Bin/lib";
+use XCAT::BuildUtils qw(
+  capture_command
+  hashes_equal
+  print_step
+  read_first_line
+  require_command
+  run_command
+  shell_quote
+);
 use XCAT::GenesisRelease qw(
   validated_release_checksums
   verify_release_file
@@ -96,7 +105,7 @@ $repo_root = abs_path($repo_root);
 my $SOURCE_DATE_EPOCH;
 $SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
 if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
-    $SOURCE_DATE_EPOCH = slurp_chomp("$repo_root/Gitepoch");
+    $SOURCE_DATE_EPOCH = read_first_line("$repo_root/Gitepoch");
 }
 unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
     $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
@@ -128,7 +137,7 @@ acquire_output_lock($output_base, $force_unlock);
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
-my $arch = capture('uname -m');
+my $arch = capture_command('uname', '-m');
 my %os = read_os_release('/etc/os-release');
 my $os_id = $os{ID} // '';
 my $version_id = $os{VERSION_ID} // '';
@@ -153,10 +162,10 @@ if ($genesis_release ne '') {
     my $verifier = "$script_dir/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
     my $checksums_before = validated_release_checksums($genesis_release);
-    run_argv($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
+    run_command($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
     my $checksums_after = validated_release_checksums($genesis_release);
     die "Genesis release changed during verification\n"
-      unless checksum_sets_match($checksums_before, $checksums_after);
+      unless hashes_equal($checksums_before, $checksums_after);
     $genesis_release_checksums = $checksums_before;
 }
 
@@ -190,7 +199,7 @@ $tgt_workers = scalar(@build_targets) if $tgt_workers > scalar(@build_targets);
 # mock build already gets a unique --uniqueext (separate chroot), so the only limit needed is
 # hardware: total concurrent builds across all targets stays <= $cap (default host nproc). The
 # per-target build-step concurrency is therefore the cap divided across the active targets.
-my $cap = $max_parallel > 0 ? $max_parallel : (capture('nproc') || 4);
+my $cap = $max_parallel > 0 ? $max_parallel : (capture_command('nproc') || 4);
 my $per_target_builds = defined($parallel_builds) ? $parallel_builds : int($cap / $tgt_workers);
 $per_target_builds = 1 if $per_target_builds < 1;
 print "parallel_targets: " . ($parallel_targets > 0 ? $parallel_targets : "auto($tgt_workers)") . "\n";
@@ -304,7 +313,7 @@ my @collect_roots;
 if ($scrub_all_chroots) {
     run_step(
         step => "Scrub all chroots for target $target",
-        cmd  => "mock -r " . sh_quote($target) . " --scrub=all",
+        cmd  => "mock -r " . shell_quote($target) . " --scrub=all",
         log  => "$log_root/scrub-all-chroots.log",
     );
 }
@@ -321,13 +330,13 @@ if (!$skip_build) {
             my $step_log    = "$log_root/$name";
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
             my $cmd = join(' ',
-                'perl', sh_quote($script),
-                '--mock-cfg', sh_quote($target),
-                '--mock-uniqueext', sh_quote($step_uniqueext),
-                '--result-dir', sh_quote($step_result),
-                '--log-dir', sh_quote($step_log),
+                'perl', shell_quote($script),
+                '--mock-cfg', shell_quote($target),
+                '--mock-uniqueext', shell_quote($step_uniqueext),
+                '--result-dir', shell_quote($step_result),
+                '--log-dir', shell_quote($step_log),
                 # host-local, run-scoped work dir so /tmp doesn't collide between runs
-                '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/$name"),
+                '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
                 ($skip_install ? '--skip-install' : ()),
             );
@@ -349,12 +358,12 @@ if (!$skip_build) {
         # forks one mock build per perl package (~7), which -- multiplied by parallel EL targets --
         # oversubscribes the host.
         my $cmd = join(' ',
-            'perl', sh_quote($perl_builder),
-            '--mock-cfg', sh_quote($target),
-            '--mock-uniqueext', sh_quote($perl_uniqueext),
-            '--result-dir', sh_quote($perl_result),
-            '--log-dir', sh_quote($perl_log),
-            '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
+            'perl', shell_quote($perl_builder),
+            '--mock-cfg', shell_quote($target),
+            '--mock-uniqueext', shell_quote($perl_uniqueext),
+            '--result-dir', shell_quote($perl_result),
+            '--log-dir', shell_quote($perl_log),
+            '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
             (($max_build_workers && $max_build_workers >= 1) ? ('--jobs', $max_build_workers) : ()),
             '--build-timestamp', $SOURCE_DATE_EPOCH,
             ($skip_install ? '--skip-install' : ()),
@@ -371,14 +380,14 @@ if (!$skip_build) {
     if (!$skip_xcat) {
         # Own HOME per target (buildrpms.pl uses $HOME/rpmbuild) so parallel targets don't race.
         my $xcat_home = "/tmp/mockbuild-all-$run_id/xcat-home";
-        my $mktree = join(' ', map { sh_quote("$xcat_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($xcat_home) . ' ' . join(' ',
-            'perl', sh_quote("$xcat_src/buildrpms.pl"),
-            '--target', sh_quote($target),
+        my $mktree = join(' ', map { shell_quote("$xcat_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
+        my $cmd = "mkdir -p $mktree && HOME=" . shell_quote($xcat_home) . ' ' . join(' ',
+            'perl', shell_quote("$xcat_src/buildrpms.pl"),
+            '--target', shell_quote($target),
             '--nproc', int($nproc),
             '--force',
             '--verbose',
-            '--xcat_dep_path', sh_quote($repo_root),
+            '--xcat_dep_path', shell_quote($repo_root),
         );
         push @build_steps, {
             id   => 'xcat',
@@ -402,15 +411,15 @@ if (!$skip_build) {
         my $genesis_home = "/tmp/mockbuild-all-$run_id/genesis-home";
         # buildrpms.pl's rpmdev-setuptree only runs during env setup, not per build, so create the
         # rpmbuild tree ourselves for this per-target HOME (else $HOME/rpmbuild/SOURCES is missing).
-        my $mktree = join(' ', map { sh_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
-            'perl', sh_quote("$xcat_src/buildrpms.pl"),
+        my $mktree = join(' ', map { shell_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
+        my $cmd = "mkdir -p $mktree && HOME=" . shell_quote($genesis_home) . ' ' . join(' ',
+            'perl', shell_quote("$xcat_src/buildrpms.pl"),
             '--package', 'xCAT-genesis-base',
-            '--target', sh_quote($target),
+            '--target', shell_quote($target),
             '--nproc', int($nproc),
             '--force',
             '--verbose',
-            '--xcat_dep_path', sh_quote($repo_root),
+            '--xcat_dep_path', shell_quote($repo_root),
         );
         push @build_steps, {
             id   => 'genesis',
@@ -537,8 +546,8 @@ if (!$skip_tarball) {
     my $cmd = join(' ',
         'tar', '--sort=name', '--owner=0', '--group=0',
         "--mtime=\@$SOURCE_DATE_EPOCH",
-        '-C', sh_quote($run_root),
-        '-czf', sh_quote($tarball),
+        '-C', shell_quote($run_root),
+        '-czf', shell_quote($tarball),
         'repo'
     );
     run_step(
@@ -549,8 +558,8 @@ if (!$skip_tarball) {
     my $srpm_cmd = join(' ',
         'tar', '--sort=name', '--owner=0', '--group=0',
         "--mtime=\@$SOURCE_DATE_EPOCH",
-        '-C', sh_quote($run_root),
-        '-czf', sh_quote($srpm_tarball),
+        '-C', shell_quote($run_root),
+        '-czf', shell_quote($srpm_tarball),
         'repo-src'
     );
     run_step(
@@ -637,8 +646,8 @@ sub deploy_target {
 sub createrepo_c_cmd {
     my ($dir) = @_;
     return 'createrepo_c --update --database '
-        . '--revision ' . sh_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
-        . sh_quote($dir);
+        . '--revision ' . shell_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
+        . shell_quote($dir);
 }
 
 sub sign_and_index_repo {
@@ -647,15 +656,15 @@ sub sign_and_index_repo {
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
-            . join(' ', map { sh_quote($_) } @rpms));
+            . join(' ', map { shell_quote($_) } @rpms));
     }
     run_simple(createrepo_c_cmd($dir));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
         unlink "$repomd.asc" if -f "$repomd.asc";
-        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . sh_quote($repomd));
-        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . sh_quote("$repomd.key"));
+        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . shell_quote($repomd));
+        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . shell_quote("$repomd.key"));
     }
 }
 
@@ -769,16 +778,6 @@ Notes:
 USAGE
 }
 
-sub print_step {
-    my ($msg) = @_;
-    print "\n== $msg ==\n";
-}
-
-sub require_command {
-    my ($cmd) = @_;
-    run_simple("command -v " . sh_quote($cmd) . " >/dev/null 2>&1");
-}
-
 sub run_simple {
     my ($cmd) = @_;
     my $rc = system($cmd);
@@ -786,27 +785,6 @@ sub run_simple {
         my $exit = $rc == -1 ? 255 : ($rc >> 8);
         die "Command failed (rc=$exit): $cmd\n";
     }
-}
-
-sub run_argv {
-    my (@command) = @_;
-    my $rc = system(@command);
-    if ($rc != 0) {
-        my $exit = $rc == -1 ? 255 : ($rc >> 8);
-        die "Command failed (rc=$exit): @command\n";
-    }
-}
-
-sub capture {
-    my ($cmd) = @_;
-    my $out = `$cmd`;
-    my $rc = $?;
-    if ($rc != 0) {
-        my $exit = $rc == -1 ? 255 : ($rc >> 8);
-        die "Command failed (rc=$exit): $cmd\n$out\n";
-    }
-    chomp $out;
-    return $out;
 }
 
 sub run_step {
@@ -829,12 +807,12 @@ sub run_step {
 
     my $full_cmd = $cmd;
     if ($cwd) {
-        $full_cmd = "cd " . sh_quote($cwd) . " && $cmd";
+        $full_cmd = "cd " . shell_quote($cwd) . " && $cmd";
     }
     if ($log) {
         my $log_dir = dirname($log);
         make_path($log_dir) if !-d $log_dir;
-        $full_cmd .= " > " . sh_quote($log) . " 2>&1";
+        $full_cmd .= " > " . shell_quote($log) . " 2>&1";
     }
 
     my $rc = system($full_cmd);
@@ -1006,15 +984,6 @@ sub assert_genesis_release_copied {
     }
 }
 
-sub checksum_sets_match {
-    my ($left, $right) = @_;
-    return 0 unless keys(%{$left}) == keys(%{$right});
-    for my $name (keys %{$left}) {
-        return 0 unless exists($right->{$name}) && $left->{$name} eq $right->{$name};
-    }
-    return 1;
-}
-
 sub collect_rpms {
     my (%args) = @_;
     my $roots = $args{roots} // [];
@@ -1125,14 +1094,14 @@ sub resolve_mock_cfg {
         rocky          => 'rocky',
     );
     my $candidate = "${os_id}+epel-${rel}-${arch}";
-    my $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+    my $rc = system("mock -r " . shell_quote($candidate) . " --print-root-path >/dev/null 2>&1");
     if ($rc == 0) {
         return $candidate;
     }
     if (exists $short_forms{$os_id}) {
         my $short = $short_forms{$os_id};
         $candidate = "${short}+epel-${rel}-${arch}";
-        $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+        $rc = system("mock -r " . shell_quote($candidate) . " --print-root-path >/dev/null 2>&1");
         if ($rc == 0) {
             print "Mock config resolved (short form): $candidate\n";
             return $candidate;
@@ -1193,7 +1162,7 @@ sub acquire_output_lock {
     if (mkdir $lock) {
         $HELD_LOCK = $lock;
         $LOCK_OWNER_PID = $$;
-        my $host = capture('uname -n') || 'unknown';
+        my $host = capture_command('uname', '-n') || 'unknown';
         if (open my $fh, '>', "$lock/owner") {
             print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
             close $fh;
@@ -1249,20 +1218,4 @@ sub read_os_release {
 sub uniq {
     my %seen;
     return grep { defined($_) && !$seen{$_}++ } @_;
-}
-
-sub slurp_chomp {
-    my ($path) = @_;
-    open my $fh, '<', $path or die "Cannot read $path: $!\n";
-    my $line = <$fh>;
-    close $fh;
-    chomp $line if defined $line;
-    return $line // '';
-}
-
-sub sh_quote {
-    my ($s) = @_;
-    $s = '' if !defined $s;
-    $s =~ s/'/'"'"'/g;
-    return "'$s'";
 }

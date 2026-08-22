@@ -4,10 +4,10 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path);
-use File::Spec;
 use FindBin;
 use Getopt::Long qw(GetOptions);
-use lib "$FindBin::Bin/lib";
+use lib "$FindBin::Bin/../lib";
+use XCAT::BuildUtils qw(capture_command require_command);
 use XCAT::GenesisRelease qw(
   deb_package_name
   rpm_package_name
@@ -49,7 +49,7 @@ print "Verified Genesis package release: $directory\n";
 
 sub _verify_rpm {
     my ($directory, $manifest, $architecture) = @_;
-    _require_command('rpm');
+    require_command('rpm');
     my $name = rpm_package_name($architecture);
     my $source_name = "$name-$manifest->{xcat_version}-$manifest->{xcat_release}.src.rpm";
     my @packages = (
@@ -59,7 +59,7 @@ sub _verify_rpm {
     );
     for my $package (@packages) {
         my ($path, $expected_arch, $expected_source) = @{$package};
-        my $metadata = _capture(
+        my $metadata = capture_command(
             'rpm', '-qp', '--qf',
             "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}"
               . "\t%{BUILDHOST}\t%{BUILDTIME}\n",
@@ -72,10 +72,10 @@ sub _verify_rpm {
         );
         die "Unexpected RPM identity for $path: $metadata\n" unless $metadata eq $expected;
         for my $relationship (qw(conflicts obsoletes)) {
-            my $value = _capture('rpm', '-qp', "--$relationship", $path);
+            my $value = capture_command('rpm', '-qp', "--$relationship", $path);
             die "Unexpected RPM $relationship for $path: $value\n" if $value ne '';
         }
-        my $provides = _capture('rpm', '-qp', '--provides', $path);
+        my $provides = capture_command('rpm', '-qp', '--provides', $path);
         die "Legacy RPM relationship in $path: $provides\n"
           if $provides =~ /xCAT-genesis-base/;
     }
@@ -83,12 +83,12 @@ sub _verify_rpm {
 
 sub _verify_deb {
     my ($directory, $manifest, $architecture) = @_;
-    _require_command('dpkg-deb');
+    require_command('dpkg-deb');
     my $name = deb_package_name($architecture);
     my $path = "$directory/deb/${name}_$manifest->{xcat_version}-$manifest->{xcat_release}_all.deb";
     my $metadata = join(
         "\n",
-        map { _capture('dpkg-deb', '-f', $path, $_) }
+        map { capture_command('dpkg-deb', '-f', $path, $_) }
           qw(Package Version Architecture),
     );
     my $expected = join(
@@ -97,27 +97,9 @@ sub _verify_deb {
     );
     die "Unexpected DEB identity for $path: $metadata\n" unless $metadata eq $expected;
     for my $field (qw(Breaks Conflicts Provides Replaces)) {
-        my $value = _capture('dpkg-deb', '-f', $path, $field);
+        my $value = capture_command('dpkg-deb', '-f', $path, $field);
         die "Unexpected DEB $field for $path: $value\n" if $value ne '';
     }
-}
-
-sub _require_command {
-    my ($command) = @_;
-    for my $directory (File::Spec->path()) {
-        return if -x "$directory/$command";
-    }
-    die "Required command not found: $command\n";
-}
-
-sub _capture {
-    my (@command) = @_;
-    open(my $fh, '-|', @command) or die "Cannot run $command[0]: $!\n";
-    local $/;
-    my $output = <$fh> // '';
-    close($fh) or die "Command failed: $command[0]\n";
-    $output =~ s/\s+\z//;
-    return $output;
 }
 
 sub usage {

@@ -3,10 +3,8 @@ package XCAT::GenesisRelease;
 use strict;
 use warnings;
 
-use Digest::SHA ();
 use Exporter qw(import);
-use File::Find qw(find);
-use File::Spec;
+use XCAT::BuildUtils qw(digest_file read_lines relative_files);
 
 our @EXPORT_OK = qw(
   architectures
@@ -50,11 +48,8 @@ sub deb_package_name {
 
 sub _read_key_values {
     my ($path, $allowed) = @_;
-    open(my $fh, '<:raw', $path) or die "Cannot read $path: $!\n";
     my %values;
-    while (my $line = <$fh>) {
-        chomp($line);
-        $line =~ s/\r\z//;
+    for my $line (read_lines($path)) {
         die "Invalid manifest entry in $path: $line\n"
           unless $line =~ /^([a-z][a-z0-9_]*)=([A-Za-z0-9][A-Za-z0-9.,_+~-]*)$/;
         my ($key, $value) = ($1, $2);
@@ -62,43 +57,14 @@ sub _read_key_values {
         die "Duplicate manifest key in $path: $key\n" if exists($values{$key});
         $values{$key} = $value;
     }
-    close($fh) or die "Cannot close $path: $!\n";
     return \%values;
-}
-
-sub _regular_files {
-    my ($root) = @_;
-    die "Invalid directory: $root\n" unless -d $root && !-l $root;
-
-    my @files;
-    find(
-        {
-            no_chdir => 1,
-            wanted   => sub {
-                my $path = $File::Find::name;
-                return if $path eq $root;
-                die "Symbolic links are not allowed: $path\n" if -l $path;
-                return if -d $path;
-                die "Non-regular release entry: $path\n" unless -f $path;
-                my $relative = File::Spec->abs2rel($path, $root);
-                $relative =~ tr{\\}{/};
-                push(@files, $relative);
-            },
-        },
-        $root,
-    );
-    my @sorted = sort @files;
-    return @sorted;
 }
 
 sub _read_checksums {
     my ($root) = @_;
     my $path = "$root/SHA256SUMS";
-    open(my $fh, '<:raw', $path) or die "Cannot read $path: $!\n";
     my %checksums;
-    while (my $line = <$fh>) {
-        chomp($line);
-        $line =~ s/\r\z//;
+    for my $line (read_lines($path)) {
         die "Invalid checksum entry in $path: $line\n"
           unless $line =~ /^([0-9a-f]{64})  ([A-Za-z0-9][A-Za-z0-9._\/+~-]*)$/;
         my ($digest, $name) = ($1, $2);
@@ -108,21 +74,18 @@ sub _read_checksums {
           if exists($checksums{$name});
         $checksums{$name} = $digest;
     }
-    close($fh) or die "Cannot close $path: $!\n";
     return \%checksums;
 }
 
 sub _verify_checksums {
     my ($root) = @_;
-    my @files = grep { $_ ne 'SHA256SUMS' } _regular_files($root);
+    my @files = grep { $_ ne 'SHA256SUMS' } relative_files($root);
     my $checksums = _read_checksums($root);
 
     my %files = map { $_ => 1 } @files;
     for my $name (@files) {
         die "Missing checksum for $name\n" unless exists($checksums->{$name});
-        open(my $fh, '<:raw', "$root/$name") or die "Cannot read $root/$name: $!\n";
-        my $digest = Digest::SHA->new(256)->addfile($fh)->hexdigest;
-        close($fh) or die "Cannot close $root/$name: $!\n";
+        my $digest = digest_file("$root/$name", 'sha256');
         die "Checksum mismatch for $name\n" unless $digest eq $checksums->{$name};
     }
     for my $name (keys %{$checksums}) {
@@ -148,7 +111,7 @@ sub validate_export {
     );
     $required{'fw_jump.elf'} = 1 if $architecture eq 'riscv64';
 
-    my @files = _regular_files($directory);
+    my @files = relative_files($directory);
     my %files = map { $_ => 1 } @files;
     for my $name (sort keys %required) {
         die "Genesis export is missing $name\n" unless $files{$name};
@@ -240,7 +203,7 @@ sub validate_release {
             $expected{"deb/${deb}_$manifest->{xcat_version}-$manifest->{xcat_release}_all.deb"} = 1;
         }
     }
-    for my $file (grep { $_ ne 'SHA256SUMS' } _regular_files($directory)) {
+    for my $file (grep { $_ ne 'SHA256SUMS' } relative_files($directory)) {
         die "Unexpected Genesis release artifact: $file\n" unless $expected{$file};
         delete($expected{$file});
     }
@@ -269,9 +232,7 @@ sub verify_release_file {
     die "Missing verified checksum for $relative\n"
       unless ref($checksums) eq 'HASH' && exists($checksums->{$relative});
     die "Invalid collected release file: $path\n" unless -f $path && !-l $path;
-    open(my $fh, '<:raw', $path) or die "Cannot read $path: $!\n";
-    my $digest = Digest::SHA->new(256)->addfile($fh)->hexdigest;
-    close($fh) or die "Cannot close $path: $!\n";
+    my $digest = digest_file($path, 'sha256');
     die "Collected release file checksum mismatch: $path\n"
       unless $digest eq $checksums->{$relative};
     return 1;

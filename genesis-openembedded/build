@@ -4,17 +4,22 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path);
-use Digest::SHA ();
 use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
-use File::Find qw(find);
 use File::Path qw(make_path);
-use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin;
 use Getopt::Long qw(GetOptions);
 use POSIX qw(strftime);
-use lib "$FindBin::Bin/lib";
+use lib "$FindBin::Bin/../lib";
+use XCAT::BuildUtils qw(
+  capture_command
+  digest_manifest
+  read_first_line
+  relative_files
+  run_command
+  write_binary
+);
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
@@ -60,20 +65,24 @@ for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/e
     die "xcat-core source is missing $path\n" unless -f "$xcat_source/$path";
 }
 die "xcat-core checkout is not clean\n"
-  if _capture('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
+  if capture_command('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
 
-my $revision = _capture('git', '-C', $xcat_source, 'rev-parse', 'HEAD');
+my $revision = capture_command('git', '-C', $xcat_source, 'rev-parse', 'HEAD');
 die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}$/;
 if ($xcat_ref ne '') {
     die "Invalid xcat-core ref: $xcat_ref\n" unless $xcat_ref =~ /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
-    my $expected = _capture('git', '-C', $xcat_source, 'rev-parse', '--verify', "$xcat_ref^{commit}");
+    my $expected = capture_command(
+        'git', '-C', $xcat_source, 'rev-parse', '--verify', "$xcat_ref^{commit}",
+    );
     die "xcat-core HEAD $revision does not match $xcat_ref ($expected)\n"
       unless $revision eq $expected;
 }
 
-my $version = _read_line("$xcat_source/Version");
+my $version = read_first_line("$xcat_source/Version");
 die "Invalid xCAT version: $version\n" unless $version =~ /^\d+(?:\.\d+){1,3}$/;
-my $source_date_epoch = _capture('git', '-C', $xcat_source, 'show', '-s', '--format=%ct', 'HEAD');
+my $source_date_epoch = capture_command(
+    'git', '-C', $xcat_source, 'show', '-s', '--format=%ct', 'HEAD',
+);
 die "Invalid xcat-core commit time\n" unless $source_date_epoch =~ /^\d+$/;
 my $release = strftime('snap%Y%m%d%H%M', gmtime($source_date_epoch));
 
@@ -101,7 +110,7 @@ local $ENV{XCAT_GENESIS_WORK_DIR} = $oe_work;
 {
     local $ENV{TMPDIR} = $oe_tmp;
     make_path($oe_tmp);
-    _run("$xcat_source/xCAT-genesis-builder/oe/build", @requested_architectures);
+    run_command("$xcat_source/xCAT-genesis-builder/oe/build", @requested_architectures);
 }
 my $effective_deploy = "$oe_tmp/deploy";
 die "Invalid OpenEmbedded deploy directory: $effective_deploy\n"
@@ -110,13 +119,13 @@ die "Invalid OpenEmbedded deploy directory: $effective_deploy\n"
 for my $architecture (@requested_architectures) {
     my $export = "$work/exports/$architecture";
     make_path(dirname($export));
-    _run(
+    run_command(
         "$xcat_source/xCAT-genesis-builder/oe/export",
         $architecture, $effective_deploy, $export,
     );
 
     my $packages = "$work/packages/$architecture";
-    _run(
+    run_command(
         "$FindBin::Bin/package",
         '--architecture', $architecture,
         '--export-dir', $export,
@@ -131,7 +140,7 @@ for my $architecture (@requested_architectures) {
 }
 
 my @formats = $format eq 'all' ? qw(deb rpm) : ($format);
-_write_file(
+write_binary(
     "$staging/release.manifest",
     "format=xcat-genesis-packages\n"
       . "version=1\n"
@@ -142,11 +151,15 @@ _write_file(
       . "architectures=" . join(',', @requested_architectures) . "\n"
       . "formats=" . join(',', @formats) . "\n",
 );
-_write_checksums($staging);
+my @release_files = grep { $_ ne 'SHA256SUMS' } relative_files($staging);
+write_binary(
+    "$staging/SHA256SUMS",
+    digest_manifest($staging, 'sha256', @release_files),
+);
 validate_release($staging);
 my @verify_args = ('--format', $format);
 push(@verify_args, '--complete') if $all;
-_run("$FindBin::Bin/verify-release", @verify_args, $staging);
+run_command("$FindBin::Bin/verify-release", @verify_args, $staging);
 
 chmod(0755, $staging) or die "Cannot make release directory readable: $!\n";
 rename($staging, $output_dir) or die "Cannot publish $output_dir: $!\n";
@@ -181,73 +194,6 @@ sub _collect_one {
     my $destination = "$directory/" . basename($source);
     die "Duplicate package artifact: $destination\n" if -e $destination || -l $destination;
     copy($source, $destination) or die "Cannot collect $source: $!\n";
-}
-
-sub _write_checksums {
-    my ($directory) = @_;
-    my @files;
-    find(
-        {
-            no_chdir => 1,
-            wanted   => sub {
-                return unless -f $_ && !-l $_;
-                my $relative = File::Spec->abs2rel($File::Find::name, $directory);
-                $relative =~ tr{\\}{/};
-                push(@files, $relative) unless $relative eq 'SHA256SUMS';
-            },
-        },
-        $directory,
-    );
-    my $content = '';
-    for my $relative (sort @files) {
-        open(my $fh, '<:raw', "$directory/$relative")
-          or die "Cannot read $directory/$relative: $!\n";
-        my $digest = Digest::SHA->new(256)->addfile($fh)->hexdigest;
-        close($fh) or die "Cannot close $directory/$relative: $!\n";
-        $content .= "$digest  $relative\n";
-    }
-    _write_file("$directory/SHA256SUMS", $content);
-}
-
-sub _read_line {
-    my ($path) = @_;
-    open(my $fh, '<:raw', $path) or die "Cannot read $path: $!\n";
-    my $line = <$fh>;
-    close($fh) or die "Cannot close $path: $!\n";
-    die "Empty file: $path\n" unless defined($line);
-    chomp($line);
-    $line =~ s/\r\z//;
-    return $line;
-}
-
-sub _capture {
-    my (@command) = @_;
-    open(my $fh, '-|', @command) or die "Cannot run $command[0]: $!\n";
-    local $/;
-    my $output = <$fh> // '';
-    close($fh) or die "Command failed: $command[0]\n";
-    $output =~ s/\s+\z//;
-    return $output;
-}
-
-sub _run {
-    my (@command) = @_;
-    print '+ ', join(' ', map { _display_quote($_) } @command), "\n";
-    system(@command) == 0 or die "Command failed: $command[0]\n";
-}
-
-sub _display_quote {
-    my ($value) = @_;
-    return $value if $value =~ /^[A-Za-z0-9_.,+\/:=@~-]+$/;
-    $value =~ s/'/'\\''/g;
-    return "'$value'";
-}
-
-sub _write_file {
-    my ($path, $content) = @_;
-    open(my $fh, '>:raw', $path) or die "Cannot write $path: $!\n";
-    print {$fh} $content or die "Cannot write $path: $!\n";
-    close($fh) or die "Cannot close $path: $!\n";
 }
 
 sub usage {

@@ -4,15 +4,21 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path);
-use Digest::MD5 ();
 use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
-use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin;
 use Getopt::Long qw(GetOptions);
-use lib "$FindBin::Bin/lib";
+use lib "$FindBin::Bin/../lib";
+use XCAT::BuildUtils qw(
+  capture_command
+  digest_manifest
+  relative_files
+  require_command
+  run_command
+  write_binary
+);
 use XCAT::GenesisRelease qw(
   deb_package_name
   rpm_package_name
@@ -84,16 +90,16 @@ for my $entry (_flat_files($export_dir)) {
     copy("$export_dir/$entry", "$source_root/image/$entry")
       or die "Cannot copy export file $entry: $!\n";
 }
-_write_file("$source_root/xcat-core-revision", "$revision\n");
+write_binary("$source_root/xcat-core-revision", "$revision\n");
 
 local $ENV{SOURCE_DATE_EPOCH} = $source_date_epoch;
 
 if ($format eq 'all' || $format eq 'rpm') {
-    _require_command('rpmbuild');
+    require_command('rpmbuild');
     _build_rpm($work, $staging, $source_root, $source_name, $rpm_name);
 }
 if ($format eq 'all' || $format eq 'deb') {
-    _require_command('dpkg-deb');
+    require_command('dpkg-deb');
     _build_deb($work, $staging, $source_root, $deb_name);
 }
 
@@ -111,7 +117,7 @@ sub _build_rpm {
     make_path("$staging/rpm", "$staging/srpm");
 
     my $archive = "$rpm_top/SOURCES/$source_name.tar.gz";
-    _run(
+    run_command(
         'tar', '--sort=name', '--owner=0', '--group=0', '--numeric-owner',
         "--mtime=\@$source_date_epoch", '--use-compress-program=gzip -n',
         '-cf', $archive, '-C', dirname($source_root), basename($source_root),
@@ -119,7 +125,7 @@ sub _build_rpm {
     my $spec = "$FindBin::Bin/rpm/xCAT-genesis-openembedded.spec";
     copy($spec, "$rpm_top/SPECS/xCAT-genesis-openembedded.spec")
       or die "Cannot stage RPM spec: $!\n";
-    _run(
+    run_command(
         'rpmbuild', '-ba',
         '--define', "_topdir $rpm_top",
         '--define', "genesis_arch $architecture",
@@ -162,7 +168,7 @@ sub _build_deb {
 
     my $installed_kib = _tree_bytes($root);
     $installed_kib = int(($installed_kib + 1023) / 1024);
-    _write_file(
+    write_binary(
         "$root/DEBIAN/control",
         "Package: $package_name\n"
           . "Version: $version-$release\n"
@@ -177,36 +183,17 @@ sub _build_deb {
     _normalize_mtime($root, $source_date_epoch);
 
     my $deb = "$staging/deb/${package_name}_${version}-${release}_all.deb";
-    _run('dpkg-deb', '--root-owner-group', '-Zgzip', '-z9', '--build', $root, $deb);
+    run_command('dpkg-deb', '--root-owner-group', '-Zgzip', '-z9', '--build', $root, $deb);
     die "DEB build did not produce $deb\n" unless -f $deb;
 }
 
 sub _write_deb_md5sums {
     my ($root) = @_;
-    my @files;
-    require File::Find;
-    File::Find::find(
-        {
-            no_chdir => 1,
-            wanted   => sub {
-                return unless -f $_ && !-l $_;
-                return if $File::Find::name =~ m{\Q$root/DEBIAN/\E};
-                my $relative = File::Spec->abs2rel($File::Find::name, $root);
-                $relative =~ tr{\\}{/};
-                push(@files, $relative);
-            },
-        },
-        $root,
+    my @files = grep { $_ !~ m{\ADEBIAN/} } relative_files($root);
+    write_binary(
+        "$root/DEBIAN/md5sums",
+        digest_manifest($root, 'md5', @files),
     );
-    my $content = '';
-    for my $relative (sort @files) {
-        open(my $fh, '<:raw', "$root/$relative")
-          or die "Cannot read $root/$relative: $!\n";
-        my $digest = Digest::MD5->new->addfile($fh)->hexdigest;
-        close($fh) or die "Cannot close $root/$relative: $!\n";
-        $content .= "$digest  $relative\n";
-    }
-    _write_file("$root/DEBIAN/md5sums", $content);
 }
 
 sub _normalize_mtime {
@@ -226,12 +213,9 @@ sub _normalize_mtime {
 
 sub _flat_files {
     my ($directory) = @_;
-    opendir(my $dh, $directory) or die "Cannot read $directory: $!\n";
-    my @entries = sort grep { $_ ne '.' && $_ ne '..' } readdir($dh);
-    closedir($dh) or die "Cannot close $directory: $!\n";
+    my @entries = relative_files($directory);
     for my $entry (@entries) {
-        my $path = "$directory/$entry";
-        die "Expected a regular file: $path\n" unless -f $path && !-l $path;
+        die "Expected a flat directory: $directory\n" if $entry =~ m{/};
     }
     return @entries;
 }
@@ -239,49 +223,15 @@ sub _flat_files {
 sub _tree_bytes {
     my ($directory) = @_;
     my $bytes = 0;
-    require File::Find;
-    File::Find::find(
-        { no_chdir => 1, wanted => sub { $bytes += -s $_ if -f $_ && !-l $_ } },
-        $directory,
-    );
+    $bytes += -s "$directory/$_" for relative_files($directory);
     return $bytes;
 }
 
-sub _require_command {
-    my ($command) = @_;
-    for my $directory (File::Spec->path()) {
-        return if -x "$directory/$command";
-    }
-    die "Required command not found: $command\n";
-}
-
 sub _require_gnu_tar {
-    _require_command('tar');
-    open(my $fh, '-|', 'tar', '--version') or die "Cannot run tar: $!\n";
-    my $version_line = <$fh> // '';
-    close($fh) or die "Cannot query tar version\n";
+    require_command('tar');
+    my $version_line = capture_command('tar', '--version');
     die "GNU tar is required to build Genesis source packages\n"
       unless $version_line =~ /^tar \(GNU tar\)/;
-}
-
-sub _run {
-    my (@command) = @_;
-    print '+ ', join(' ', map { _display_quote($_) } @command), "\n";
-    system(@command) == 0 or die "Command failed: $command[0]\n";
-}
-
-sub _display_quote {
-    my ($value) = @_;
-    return $value if $value =~ /^[A-Za-z0-9_.,+\/:=@~-]+$/;
-    $value =~ s/'/'\\''/g;
-    return "'$value'";
-}
-
-sub _write_file {
-    my ($path, $content) = @_;
-    open(my $fh, '>:raw', $path) or die "Cannot write $path: $!\n";
-    print {$fh} $content or die "Cannot write $path: $!\n";
-    close($fh) or die "Cannot close $path: $!\n";
 }
 
 sub usage {
