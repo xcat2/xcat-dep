@@ -12,6 +12,7 @@ to the intended commit; it does not change the checkout for you.
   --xcat-source /path/to/xcat-core \
   --xcat-ref <tag-or-commit> \
   --all \
+  --work-dir /path/to/oe-work \
   --output-dir /path/to/xcat-genesis-release
 ```
 
@@ -24,10 +25,15 @@ Use `--architecture` for development builds. Repository publication requires a
 complete release built with `--all`.
 
 Each package installs one exact-architecture export under
-`/opt/xcat/share/xcat/netboot/genesis/<architecture>/`. This includes the kernel,
-initramfs, manifests, checksums, and license evidence. The packages are `noarch`
-or `all` because they are installed on the management node, not run on the
-target node.
+`/opt/xcat/share/xcat/netboot/genesis-openembedded/<architecture>/`. The package
+and install namespaces are separate from the old Genesis packages, so both
+generations can be published and installed without replacing one another. The
+packages are `noarch` or `all` because they are installed on the management
+node, not run on the target node.
+
+`--work-dir` keeps the OpenEmbedded downloads and build state between release
+builds. Without it, the builder uses a temporary directory and removes it when
+the command finishes.
 
 The release directory contains:
 
@@ -38,7 +44,7 @@ The release directory contains:
 Validate the directory before publishing it:
 
 ```bash
-./genesis-openembedded/verify-release /path/to/xcat-genesis-release
+./genesis-openembedded/verify-release --complete /path/to/xcat-genesis-release
 ```
 
 Pass that same directory to the repository builders:
@@ -53,23 +59,17 @@ perl ./mockbuild-all.pl \
   [DIST ...]
 ```
 
-The RPM builder skips its old per-EL Genesis build when a release is supplied.
-The APT builder adds the DEB packages to every selected suite. Both consumers
-require all seven architectures and verify package identities and checksums
-before collecting packages. Every management-node repository receives every
-target image so it can provision nodes of another architecture.
+The RPM builder keeps its old per-EL Genesis build and adds the new packages.
+The APT builder does the same for each selected suite. Both consumers require
+all seven architectures and verify package identities and checksums before
+collecting packages. Every management-node repository receives every target
+image so it can provision nodes of another architecture.
 
 Without `--genesis-release`, both builders keep their existing behavior. The
-option remains opt-in until xcat-core uses the exact package names on every
-platform. The current RPM naming already matches `x86_64`, but older mappings
-still use `ppc64` for `ppc64le`, and the DEB packages use `amd64`. Those mappings
-belong in a separate xcat-core change. Generated images and packages belong in
-release storage, not in Git.
-
-The DEB packages replace the old `amd64` and `ppc64el` package spellings during
-an upgrade. They do not provide aliases for those names. This keeps the old
-workflow unchanged until the xcat-core package dependencies move to the exact
-architecture names.
+new packages do not provide, replace, or obsolete the old package names. A
+separate xcat-core change will select the OpenEmbedded package and install
+namespace after the repositories carry it. Generated images and packages
+belong in release storage, not in Git.
 
 Run the package tests on a Linux builder with RPM, DEB, and repository tools:
 

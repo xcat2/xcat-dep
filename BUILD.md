@@ -79,8 +79,8 @@ Use these flags to skip specific operations:
 - `--skip-genesis`
   - Skips the existing per-EL Genesis image build.
 - `--genesis-release <PATH>`
-  - Adds a verified OpenEmbedded Genesis RPM release and skips the existing
-    per-EL Genesis image build for that run.
+  - Adds a verified OpenEmbedded Genesis RPM release alongside the existing
+    per-EL Genesis packages.
 - `--scrub-all-chroots`
   - Runs `mock -r <TARGET> --scrub=all` before build and collection.
 - `--collect-dir <PATH>`
@@ -167,9 +167,9 @@ perl ./mockbuild-all.pl \
 ```
 
 The release is checked before any package is collected. Its RPMs and SRPMs are
-copied into each generated EL repository. Old Genesis packages are removed from
-those output directories so a previous run cannot satisfy the release by
-accident.
+copied into each generated EL repository. Stale OpenEmbedded Genesis packages
+are removed from the output first, while the existing per-EL Genesis package
+remains available.
 
 Repository publication requires a release containing every supported Genesis
 architecture. The packages are `noarch`, and every management-node repository
@@ -177,6 +177,11 @@ receives the full set of target images.
 
 The release checksums cover the unsigned input packages. If repository signing
 is enabled, `rpmsign` changes the deployed RPM bytes after collection.
+
+The OpenEmbedded packages use their own names and install under
+`/opt/xcat/share/xcat/netboot/genesis-openembedded/`. Publishing them does not
+replace the Genesis packages used by current xcat-core releases. Activation is
+a separate xcat-core change.
 
 Omit `--genesis-release` to keep using the existing Genesis builder.
 
