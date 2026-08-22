@@ -38,24 +38,25 @@ my $epoch = 1787293573;
 my $tmp = tempdir(CLEANUP => 1);
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 8
+    skip 'RPM repository tools require a root Linux builder', 10
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
       && command_exists('rpm')
-      && command_exists('createrepo_c')
-      && command_exists('cmp');
+      && command_exists('createrepo_c');
     test_rpm_consumer();
+    test_partial_rpm_release();
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 8
+    skip 'APT repository tools are not installed', 10
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive')
       && command_exists('gpg');
     test_deb_consumer();
+    test_partial_deb_release();
 }
 
 done_testing();
@@ -198,11 +199,62 @@ sub test_deb_consumer {
         'collision failure identifies the package');
 }
 
+sub test_partial_rpm_release {
+    my $release_root = make_package_release("$tmp/rpm-partial", 'rpm', 'x86_64');
+    my $output = "$tmp/partial-output";
+    my $target = 'test+epel-10-' . capture('uname', '-m');
+    my $deployed = "$output/xcat-dep/rh10/" . capture('uname', '-m');
+    my $existing = "$deployed/xCAT-genesis-base-existing.noarch.rpm";
+    make_path($deployed);
+    write_file($existing, 'existing release');
+
+    my $log = "$tmp/rpm-partial.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $repo_root,
+        '--output', $output,
+        '--target', $target,
+        '--run-id', 'partial',
+        '--build-timestamp', $epoch,
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-createrepo', '--skip-tarball',
+        '--genesis-release', $release_root,
+    );
+
+    isnt($status, 0, 'RPM repository rejects a partial Genesis release');
+    ok(-f $existing, 'partial release does not remove the deployed package');
+}
+
+sub test_partial_deb_release {
+    my $release_root = make_package_release("$tmp/deb-partial", 'deb', 'x86_64');
+    my $apt_root = "$tmp/partial-apt";
+    my $pool = "$apt_root/pool/main/noble";
+    my $existing = "$pool/xcat-genesis-base-existing.deb";
+    make_path($pool);
+    write_file($existing, 'existing release');
+
+    my $log = "$tmp/deb-partial.log";
+    my $status = run_capture(
+        $log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        '--genesis-release', $release_root,
+        'ubuntu24.04',
+    );
+
+    isnt($status, 0, 'APT repository rejects a partial Genesis release');
+    ok(-f $existing, 'partial DEB release does not remove the deployed package');
+}
+
 sub make_package_release {
-    my ($root, $format) = @_;
+    my ($root, $format, @requested_architectures) = @_;
+    @requested_architectures = architectures() unless @requested_architectures;
     my $release_root = "$root/release";
     make_path($release_root);
-    for my $architecture (architectures()) {
+    for my $architecture (@requested_architectures) {
         my $export = make_export("$root/exports/$architecture", $architecture);
         my $packages = "$root/packages/$architecture";
         die "Cannot package test release for $architecture\n"
@@ -240,7 +292,7 @@ sub make_package_release {
     }
     write_release_manifest(
         $release_root, $version, $release, $revision, $epoch,
-        join(',', architectures()), $format,
+        join(',', @requested_architectures), $format,
     );
     write_checksums($release_root);
     return $release_root;
