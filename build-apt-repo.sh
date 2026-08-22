@@ -219,9 +219,13 @@ for ver in "${SELECTED_VERS[@]}"; do
     echo "$ver -> pool/main/$codename/"
     if [[ $DRY_RUN -eq 0 ]]; then
         for deb in "$src"/*.deb; do
+            if [[ -n "$GENESIS_RELEASE" && ${deb##*/} == xcat-genesis-openembedded-*.deb ]]; then
+                continue
+            fi
             copy_deb "$deb" "$dst"
         done
         if [[ -n "$GENESIS_RELEASE" ]]; then
+            rm -f -- "$dst"/xcat-genesis-openembedded-*.deb
             for deb in "$GENESIS_RELEASE"/deb/*.deb; do
                 copy_genesis_deb "$deb" "$dst"
             done

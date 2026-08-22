@@ -10,7 +10,6 @@ use Getopt::Long qw(GetOptions);
 use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   deb_package_name
-  replaced_deb_package_names
   rpm_package_name
   validate_complete_release
   validate_release
@@ -67,7 +66,7 @@ sub _verify_rpm {
         );
         my $expected = join(
             "\t", $name, $manifest->{xcat_version}, $manifest->{xcat_release},
-            $expected_arch, '2', $expected_source,
+            $expected_arch, '1', $expected_source,
         );
         die "Unexpected RPM identity for $path: $metadata\n" unless $metadata eq $expected;
     }
@@ -81,14 +80,17 @@ sub _verify_deb {
     my $metadata = join(
         "\n",
         map { _capture('dpkg-deb', '-f', $path, $_) }
-          qw(Package Version Architecture Conflicts Replaces),
+          qw(Package Version Architecture),
     );
-    my $replaced = join(', ', replaced_deb_package_names($architecture));
     my $expected = join(
         "\n", $name, "$manifest->{xcat_version}-$manifest->{xcat_release}",
-        'all', $replaced, $replaced,
+        'all',
     );
     die "Unexpected DEB identity for $path: $metadata\n" unless $metadata eq $expected;
+    for my $field (qw(Conflicts Replaces)) {
+        my $value = _capture('dpkg-deb', '-f', $path, $field);
+        die "Unexpected DEB $field for $path: $value\n" if $value ne '';
+    }
 }
 
 sub _require_command {

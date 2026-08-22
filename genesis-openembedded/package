@@ -15,7 +15,6 @@ use Getopt::Long qw(GetOptions);
 use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
   deb_package_name
-  replaced_deb_package_names
   rpm_package_name
   validate_architecture
   validate_export
@@ -117,8 +116,8 @@ sub _build_rpm {
         "--mtime=\@$source_date_epoch", '--use-compress-program=gzip -n',
         '-cf', $archive, '-C', dirname($source_root), basename($source_root),
     );
-    my $spec = "$FindBin::Bin/rpm/xCAT-genesis-base.spec";
-    copy($spec, "$rpm_top/SPECS/xCAT-genesis-base.spec")
+    my $spec = "$FindBin::Bin/rpm/xCAT-genesis-openembedded.spec";
+    copy($spec, "$rpm_top/SPECS/xCAT-genesis-openembedded.spec")
       or die "Cannot stage RPM spec: $!\n";
     _run(
         'rpmbuild', '-ba',
@@ -132,7 +131,7 @@ sub _build_rpm {
         '--define', 'clamp_mtime_to_source_date_epoch 1',
         '--define', '_binary_payload w9.gzdio',
         '--define', '_source_payload w9.gzdio',
-        "$rpm_top/SPECS/xCAT-genesis-base.spec",
+        "$rpm_top/SPECS/xCAT-genesis-openembedded.spec",
     );
 
     my $binary = "$rpm_top/RPMS/noarch/$package_name-$version-$release.noarch.rpm";
@@ -148,7 +147,7 @@ sub _build_rpm {
 sub _build_deb {
     my ($work, $staging, $source_root, $package_name) = @_;
     my $root = "$work/deb-root";
-    my $image = "$root/opt/xcat/share/xcat/netboot/genesis/$architecture";
+    my $image = "$root/opt/xcat/share/xcat/netboot/genesis-openembedded/$architecture";
     my $doc = "$root/usr/share/doc/$package_name";
     make_path("$root/DEBIAN", $image, $doc, "$staging/deb");
 
@@ -163,41 +162,17 @@ sub _build_deb {
 
     my $installed_kib = _tree_bytes($root);
     $installed_kib = int(($installed_kib + 1023) / 1024);
-    my @replaced = replaced_deb_package_names($architecture);
-    my $transition = @replaced
-      ? "Conflicts: " . join(', ', @replaced) . "\n"
-          . "Replaces: " . join(', ', @replaced) . "\n"
-      : '';
     _write_file(
         "$root/DEBIAN/control",
         "Package: $package_name\n"
           . "Version: $version-$release\n"
           . "Section: admin\nPriority: optional\nArchitecture: all\n"
-          . $transition
           . "Installed-Size: $installed_kib\n"
           . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
           . "Description: xCAT Genesis netboot image\n"
           . " The OpenEmbedded Genesis image used for node discovery, inventory,\n"
           . " and service actions.\n",
     );
-    _write_file(
-        "$root/DEBIAN/postinst",
-        "#!/bin/sh\nset -e\n"
-          . "if [ \"\${1:-}\" = configure ]; then\n"
-          . "    mkdir -p /etc/xcat\n"
-          . "    touch /etc/xcat/genesis-base-updated\n"
-          . "    root_stat=\$(stat -c '%i %d' / 2>/dev/null || :)\n"
-          . "    init_stat=\$(stat -c '%i %d' /proc/1/root/. 2>/dev/null || :)\n"
-          . "    if [ -x /opt/xcat/sbin/mknb ] && [ -r /proc/cmdline ] && \\\n"
-          . "       [ -n \"\$root_stat\" ] && [ \"\$root_stat\" = \"\$init_stat\" ]; then\n"
-          . "        if /opt/xcat/sbin/mknb '$architecture'; then\n"
-          . "            rm -f /etc/xcat/genesis-base-updated\n"
-          . "        else\n"
-          . "            echo 'mknb $architecture was deferred; run it after xcatd is ready' >&2\n"
-          . "        fi\n"
-          . "    fi\nfi\nexit 0\n",
-    );
-    chmod(0755, "$root/DEBIAN/postinst") or die "Cannot make postinst executable: $!\n";
     _write_deb_md5sums($root);
     _normalize_mtime($root, $source_date_epoch);
 

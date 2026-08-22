@@ -150,7 +150,7 @@ if ($genesis_release ne '') {
         or die "Cannot resolve --genesis-release directory\n";
     die "Genesis release directory not found: $genesis_release\n"
         unless -d $genesis_release;
-    my $verifier = "$repo_root/genesis-openembedded/verify-release";
+    my $verifier = "$script_dir/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
     my $checksums_before = validated_release_checksums($genesis_release);
     run_argv($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
@@ -158,7 +158,6 @@ if ($genesis_release ne '') {
     die "Genesis release changed during verification\n"
       unless checksum_sets_match($checksums_before, $checksums_after);
     $genesis_release_checksums = $checksums_before;
-    $skip_genesis = 1;
 }
 
 # An explicit --target builds just that target; otherwise build the current host
@@ -301,7 +300,6 @@ print "srpm_repo_dir:    $srpm_repo_dir\n";
 print "srpm_tarball:     $srpm_tarball\n";
 
 my @collect_roots;
-push @collect_roots, "$genesis_release/rpm" if $genesis_release;
 
 if ($scrub_all_chroots) {
     run_step(
@@ -468,7 +466,6 @@ push @collect_roots, @extra_collect_dirs;
 my @srpm_collect_roots = (!$skip_xcat)
     ? uniq(@collect_roots, $xcat_srpms_dir)
     : uniq(@collect_roots);
-push @srpm_collect_roots, "$genesis_release/srpm" if $genesis_release;
 @srpm_collect_roots = uniq(@srpm_collect_roots);
 
 if ($genesis_release && !$dry_run) {
@@ -485,6 +482,9 @@ my ($copied, $skipped_src, $missing_roots) = collect_rpms(
     dest_dir => $repo_dir,
     dry_run  => $dry_run,
 );
+
+$copied += install_genesis_release_packages('rpm', $repo_dir)
+    if $genesis_release && !$dry_run;
 
 if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
@@ -510,6 +510,9 @@ my ($copied_srpms, $skipped_non_src, $missing_srpm_roots) = collect_srpms(
     dest_dir => $srpm_repo_dir,
     dry_run  => $dry_run,
 );
+
+$copied_srpms += install_genesis_release_packages('srpm', $srpm_repo_dir)
+    if $genesis_release && !$dry_run;
 
 assert_genesis_release_copied($repo_dir, $srpm_repo_dir)
     if $genesis_release && !$dry_run;
@@ -739,8 +742,8 @@ Options:
   --skip-genesis          Skip the existing per-EL Genesis image build
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
-  --genesis-release PATH  Consume a verified OpenEmbedded Genesis RPM release and skip the
-                          legacy per-EL Genesis build
+  --genesis-release PATH  Add a verified OpenEmbedded Genesis RPM release alongside the
+                          existing per-EL Genesis packages
   --scrub-all-chroots     Run mock -r <target> --scrub=all before build/collect
   --collect-dir PATH      Additional directory to scan recursively for RPMs (repeatable)
   --dry-run               Print planned commands without executing
@@ -934,11 +937,36 @@ sub assert_required_deps {
 sub remove_genesis_packages {
     my ($directory, $source) = @_;
     return unless -d $directory;
-    for my $path (bsd_glob("$directory/xCAT-genesis-base-*.rpm")) {
+    opendir(my $dh, $directory) or die "Cannot read $directory: $!\n";
+    my @names = grep { /^xCAT-genesis-openembedded-.*\.rpm\z/ } readdir($dh);
+    closedir($dh) or die "Cannot close $directory: $!\n";
+    for my $name (@names) {
+        my $path = "$directory/$name";
         next if $source && $path !~ /\.src\.rpm\z/;
         next if !$source && $path =~ /\.src\.rpm\z/;
         unlink($path) or die "Cannot remove stale Genesis package $path: $!\n";
     }
+}
+
+sub install_genesis_release_packages {
+    my ($prefix, $destination_root) = @_;
+    remove_genesis_packages($destination_root, $prefix eq 'srpm');
+
+    my $copied = 0;
+    for my $relative (
+        sort grep { /^\Q$prefix\E\/xCAT-genesis-openembedded-[^\/]+\.rpm\z/ }
+          keys %{$genesis_release_checksums}
+      )
+    {
+        my $source = "$genesis_release/$relative";
+        my $destination = "$destination_root/" . basename($relative);
+        copy($source, $destination)
+            or die "Cannot install Genesis release package $source: $!\n";
+        verify_release_file($genesis_release_checksums, $relative, $destination);
+        $copied++;
+    }
+    die "Genesis release has no $prefix packages\n" unless $copied;
+    return $copied;
 }
 
 sub assert_genesis_release_copied {
@@ -1001,6 +1029,8 @@ sub collect_rpms {
                 next;
             }
             my $base = basename($rpm);
+            next if $genesis_release
+              && $base =~ /^xCAT-genesis-openembedded-/;
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy: $rpm -> $dest/$base\n";
@@ -1050,6 +1080,8 @@ sub collect_srpms {
                 next;
             }
             my $base = basename($rpm);
+            next if $genesis_release
+              && $base =~ /^xCAT-genesis-openembedded-/;
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy source: $rpm -> $dest/$base\n";

@@ -12,7 +12,6 @@ our @EXPORT_OK = qw(
   architectures
   deb_package_name
   read_release_manifest
-  replaced_deb_package_names
   rpm_package_name
   validated_release_checksums
   validate_architecture
@@ -24,10 +23,6 @@ our @EXPORT_OK = qw(
 
 my @ARCHITECTURES = qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64);
 my %ARCHITECTURE = map { $_ => 1 } @ARCHITECTURES;
-my %REPLACED_DEB_PACKAGES = (
-    x86_64  => [ 'xcat-genesis-base-amd64' ],
-    ppc64le => [ 'xcat-genesis-base-ppc64el' ],
-);
 
 sub architectures {
     return @ARCHITECTURES;
@@ -43,20 +38,14 @@ sub validate_architecture {
 sub rpm_package_name {
     my ($architecture) = @_;
     validate_architecture($architecture);
-    return "xCAT-genesis-base-$architecture";
+    return "xCAT-genesis-openembedded-$architecture";
 }
 
 sub deb_package_name {
     my ($architecture) = @_;
     validate_architecture($architecture);
     $architecture =~ tr/_/-/;
-    return "xcat-genesis-base-$architecture";
-}
-
-sub replaced_deb_package_names {
-    my ($architecture) = @_;
-    validate_architecture($architecture);
-    return @{ $REPLACED_DEB_PACKAGES{$architecture} // [] };
+    return "xcat-genesis-openembedded-$architecture";
 }
 
 sub _read_key_values {
