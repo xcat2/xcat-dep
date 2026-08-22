@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path);
+use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 use FindBin;
@@ -13,10 +14,12 @@ use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
   rpm_package_name
+  validated_release_checksums
   validate_architecture
   validate_complete_release
   validate_export
   validate_release
+  verify_release_file
 );
 use XCAT::GenesisReleaseTest qw(
   command_exists
@@ -101,6 +104,18 @@ write_release_manifest(
 write_checksums($release_dir);
 my $manifest = validate_release($release_dir);
 is($manifest->{xcat_revision}, $revision, 'release records xcat-core revision');
+my $verified_checksums = validated_release_checksums($release_dir);
+my $verified_relative = "rpm/xCAT-genesis-base-x86_64-$version-$release.noarch.rpm";
+my $verified_copy = "$tmp/verified-copy.rpm";
+copy("$release_dir/$verified_relative", $verified_copy) or die $!;
+ok(verify_release_file($verified_checksums, $verified_relative, $verified_copy),
+    'collected package matches the verified release');
+write_file($verified_copy, 'changed after verification');
+dies_like(
+    sub { verify_release_file($verified_checksums, $verified_relative, $verified_copy) },
+    qr/Collected release file checksum mismatch/,
+    'release changes after verification are rejected',
+);
 dies_like(
     sub { validate_complete_release($release_dir) },
     qr/Genesis release is missing supported architectures/,
