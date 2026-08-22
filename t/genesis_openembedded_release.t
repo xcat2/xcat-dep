@@ -8,6 +8,7 @@ use File::Temp qw(tempdir);
 use FindBin;
 use Test::More;
 
+use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/../genesis-openembedded/lib";
 use lib "$FindBin::Bin/lib";
 use XCAT::GenesisRelease qw(
