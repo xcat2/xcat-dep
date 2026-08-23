@@ -292,20 +292,21 @@ sub exercise_packager {
     my ($format) = @_;
     my $first = "$tmp/$format-first";
     my $second = "$tmp/$format-second";
+    my $package_revision = sprintf('%032x%08x', time, $$);
     my @command = (
         $packager,
         '--architecture', 'x86_64',
         '--export-dir', $export,
         '--version', $version,
         '--release', $release,
-        '--revision', $revision,
+        '--revision', $package_revision,
         '--source-date-epoch', $epoch,
         '--format', $format,
     );
     my ($legacy_rpm_top, $legacy_rpm_work);
     if ($format eq 'rpm') {
         $legacy_rpm_top =
-          "/var/tmp/xcat-genesis-rpmbuild-$revision-x86_64-$version-$release";
+          "/var/tmp/xcat-genesis-rpmbuild-$package_revision-x86_64-$version-$release";
         $legacy_rpm_work = "$legacy_rpm_top/BUILD/stale";
         make_path("$legacy_rpm_top/BUILD");
         write_binary($legacy_rpm_work, 'stale work');
@@ -347,7 +348,7 @@ sub exercise_packager {
     make_path($release_root);
     copy_tree($first, $release_root);
     write_release_manifest(
-        $release_root, $version, $release, $revision, $epoch, 'x86_64', $format,
+        $release_root, $version, $release, $package_revision, $epoch, 'x86_64', $format,
     );
     write_checksums($release_root);
     ok(validate_release($release_root), "$format release layout passes");
