@@ -103,16 +103,15 @@ if ($format eq 'all' || $format eq 'deb') {
     _build_deb($work, $staging, $source_root, $deb_name);
 }
 
+chmod(0755, $staging) or die "Cannot set output mode: $!\n";
 rename($staging, $output_dir) or die "Cannot publish $output_dir: $!\n";
 print "Packaged Genesis $architecture in $output_dir\n";
 
 sub _build_rpm {
     my ($work, $staging, $source_root, $source_name, $package_name) = @_;
     _require_gnu_tar();
-    my $candidate = "/var/tmp/xcat-genesis-rpmbuild-$revision-$architecture-$version-$release";
-    die "RPM work directory already exists: $candidate\n" if -e $candidate || -l $candidate;
-    mkdir($candidate, 0700) or die "Cannot create RPM work directory $candidate: $!\n";
-    $rpm_top = $candidate;
+    require_command('gzip');
+    $rpm_top = tempdir('xcat-genesis-rpmbuild.XXXXXX', DIR => '/var/tmp', CLEANUP => 0);
     make_path(map { "$rpm_top/$_" } qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS));
     make_path("$staging/rpm", "$staging/srpm");
 
@@ -126,7 +125,7 @@ sub _build_rpm {
     copy($spec, "$rpm_top/SPECS/xCAT-genesis-openembedded.spec")
       or die "Cannot stage RPM spec: $!\n";
     run_command(
-        'rpmbuild', '-ba',
+        'rpmbuild', '-ba', '--nodeps',
         '--define', "_topdir $rpm_top",
         '--define', "genesis_arch $architecture",
         '--define', "version $version",
