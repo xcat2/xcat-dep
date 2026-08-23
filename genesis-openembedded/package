@@ -32,7 +32,8 @@ my $format = 'all';
 my $rpm_top;
 
 END {
-    remove_tree($rpm_top) if defined($rpm_top) && -d $rpm_top && !-l $rpm_top;
+    eval { remove_tree($rpm_top) }
+      if defined($rpm_top) && -d $rpm_top && !-l $rpm_top;
 }
 
 GetOptions(

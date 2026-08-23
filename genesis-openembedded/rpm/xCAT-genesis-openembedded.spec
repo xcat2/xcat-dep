@@ -18,7 +18,7 @@ service actions before a node boots its installed operating system.
 
 %prep
 rm -rf %{name}-%{version}
-tar -xzf ../SOURCES/%{name}-%{version}.tar.gz
+tar -xzf "$RPM_SOURCE_DIR/%{name}-%{version}.tar.gz"
 
 %build
 
