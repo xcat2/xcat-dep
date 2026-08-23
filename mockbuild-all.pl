@@ -9,6 +9,7 @@ use File::Copy qw(copy);
 use File::Find qw(find);
 use File::Glob qw(bsd_glob);
 use File::Path qw(make_path);
+use File::Temp qw(tempfile);
 use FindBin;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
@@ -18,7 +19,7 @@ use XCAT::BuildUtils qw(
   capture_command
   hashes_equal
   print_step
-  read_first_line
+  read_lines
   require_command
   run_command
   shell_quote
@@ -105,7 +106,8 @@ $repo_root = abs_path($repo_root);
 my $SOURCE_DATE_EPOCH;
 $SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
 if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
-    $SOURCE_DATE_EPOCH = read_first_line("$repo_root/Gitepoch");
+    my @gitepoch = read_lines("$repo_root/Gitepoch");
+    $SOURCE_DATE_EPOCH = $gitepoch[0] // '';
 }
 unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
     $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
@@ -297,7 +299,6 @@ print "skip_xcat_dep:    $skip_xcat_dep\n";
 print "skip_perl:        $skip_perl\n";
 print "skip_xcat:        $skip_xcat\n";
 print "skip_genesis:     $skip_genesis\n";
-print "genesis_release:  " . ($genesis_release || '(none)') . "\n";
 print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
 print "skip_tarball:     $skip_tarball\n";
@@ -620,13 +621,7 @@ sub deploy_target {
     for my $rpm (bsd_glob("$src/*.rpm")) {
         next if $rpm =~ /\.src\.rpm$/;
         my $destination = "$dest/" . basename($rpm);
-        my $temporary = "$destination.$$.new";
-        die "Deployment staging file already exists: $temporary\n"
-          if -e $temporary || -l $temporary;
-        copy($rpm, $temporary)
-            or die "Failed to stage $rpm -> $temporary: $!\n";
-        rename($temporary, $destination)
-            or die "Failed to publish $temporary -> $destination: $!\n";
+        publish_file($rpm, $destination);
     }
     if ($genesis_release) {
         my @keep = map { basename($_) } genesis_release_files('rpm');
@@ -638,6 +633,33 @@ sub deploy_target {
     write_dep_repo_metadata($dest, $rel);
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
     print "Deployed rh$rel/$arch: $n rpms\n";
+}
+
+sub publish_file {
+    my ($source, $destination) = @_;
+    my ($temporary_fh, $temporary) = tempfile(
+        '.xcat-deploy.XXXXXX',
+        DIR    => dirname($destination),
+        UNLINK => 0,
+    );
+    close($temporary_fh) or die "Cannot close deployment staging file: $!\n";
+
+    my $mode = (stat($source))[2];
+    die "Cannot read mode from $source: $!\n" unless defined($mode);
+    my $published = eval {
+        copy($source, $temporary)
+          or die "Failed to stage $source -> $temporary: $!\n";
+        chmod($mode & 0x0fff, $temporary)
+          or die "Failed to set mode on $temporary: $!\n";
+        rename($temporary, $destination)
+          or die "Failed to publish $temporary -> $destination: $!\n";
+        1;
+    };
+    return if $published;
+
+    my $error = $@ || "Failed to publish $source\n";
+    unlink($temporary) if -e $temporary || -l $temporary;
+    die $error;
 }
 
 # createrepo_c command with upstream-matching, deterministic metadata. The tool's
