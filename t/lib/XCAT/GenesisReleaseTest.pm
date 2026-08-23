@@ -19,6 +19,7 @@ our @EXPORT_OK = qw(
   dies_like
   make_export
   run_capture
+  write_forkmanager_stub
   write_checksums
   write_release_manifest
 );
@@ -76,6 +77,23 @@ sub copy_tree {
         make_path(dirname($target));
         copy("$source/$relative", $target) or die $!;
     }
+}
+
+sub write_forkmanager_stub {
+    my ($root) = @_;
+    my $stub = "$root/Parallel/ForkManager.pm";
+    make_path("$root/Parallel");
+    write_binary(
+        $stub,
+        "package Parallel::ForkManager;\n"
+          . "sub new { bless {}, shift }\n"
+          . "sub run_on_finish { \$_[0]->{callback} = \$_[1] }\n"
+          . "sub start { 0 }\n"
+          . "sub finish { my (\$self, \$exit) = \@_; "
+          . "\$self->{callback}->(\$\$, \$exit, undef, 0, 0) if \$self->{callback}; 0 }\n"
+          . "sub wait_all_children { 0 }\n1;\n",
+    );
+    return $root;
 }
 
 sub run_capture {

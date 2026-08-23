@@ -26,6 +26,7 @@ use XCAT::GenesisRelease qw(
 use XCAT::GenesisReleaseTest qw(
   make_export
   run_capture
+  write_forkmanager_stub
   write_checksums
   write_release_manifest
 );
@@ -48,24 +49,26 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 13
+    skip 'RPM repository tools require a root Linux builder', 19
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
       && command_exists('rpm')
       && command_exists('createrepo_c');
     test_rpm_consumer();
+    test_legacy_rpm_consumer();
     test_partial_rpm_release();
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 13
+    skip 'APT repository tools are not installed', 17
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive')
       && command_exists('gpg');
     test_deb_consumer();
+    test_legacy_deb_consumer();
     test_partial_deb_release();
 }
 
@@ -88,15 +91,8 @@ sub test_rpm_consumer {
 
     my $dependencies = "$tmp/rpm-dependencies";
     my $scratch_repo_root = "$tmp/rpm-repo-root";
-    make_path($dependencies, $scratch_repo_root);
-    for my $name (qw(
-      ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
-      perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB
-      xCAT-genesis-base-x86_64
-    )) {
-        copy("$release_root/rpm/$package", "$dependencies/$name-1.noarch.rpm")
-          or die $!;
-    }
+    make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
+    make_path($scratch_repo_root);
     write_binary(
         "$dependencies/xCAT-genesis-openembedded-x86_64-$version-old.noarch.rpm",
         'stale OpenEmbedded RPM',
@@ -106,20 +102,9 @@ sub test_rpm_consumer {
         'stale OpenEmbedded SRPM',
     );
 
-    my $stub = "$tmp/perl-stub/Parallel/ForkManager.pm";
-    make_path("$tmp/perl-stub/Parallel");
-    write_binary(
-        $stub,
-        "package Parallel::ForkManager;\n"
-          . "sub new { bless {}, shift }\n"
-          . "sub run_on_finish { \$_[0]->{callback} = \$_[1] }\n"
-          . "sub start { 0 }\n"
-          . "sub finish { my (\$self, \$exit) = \@_; "
-          . "\$self->{callback}->(\$\$, \$exit, undef, 0, 0) if \$self->{callback}; 0 }\n"
-          . "sub wait_all_children { 0 }\n1;\n",
-    );
-
-    my @perl_lib = ("$tmp/perl-stub");
+    my @perl_lib;
+    push(@perl_lib, write_forkmanager_stub("$tmp/perl-stub"))
+      unless eval { require Parallel::ForkManager; 1 };
     push(@perl_lib, $ENV{PERL5LIB})
       if defined($ENV{PERL5LIB}) && $ENV{PERL5LIB} ne '';
     local $ENV{PERL5LIB} = join(':', @perl_lib);
@@ -141,6 +126,15 @@ sub test_rpm_consumer {
     is($status, 0, 'RPM repository accepts a verified Genesis release');
     is(digest_file("$deploy_repo/$package"), digest_file("$release_root/rpm/$package"),
         'deployed RPM matches the release');
+    is(
+        sprintf('%04o', (stat("$deploy_repo/$package"))[2] & 0x0fff),
+        sprintf('%04o', (stat("$release_root/rpm/$package"))[2] & 0x0fff),
+        'deployed RPM keeps the release file mode',
+    );
+    opendir(my $deploy_dh, $deploy_repo) or die $!;
+    my @staging_files = grep { /^\.xcat-deploy\./ } readdir($deploy_dh);
+    closedir($deploy_dh) or die $!;
+    is_deeply(\@staging_files, [], 'RPM deployment leaves no staging files');
     ok(!-e "$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm",
         'stale run RPM is removed');
     ok(!-e "$source_repo/xCAT-genesis-openembedded-stale.src.rpm",
@@ -166,19 +160,8 @@ sub test_deb_consumer {
     my $package = "xcat-genesis-openembedded-x86-64_${version}-${release}_all.deb";
     my $apt_root = "$tmp/apt";
     my $input = "$apt_root/ubuntu24.04";
-    my $dummy = "$tmp/dummy-deb";
-    make_path("$dummy/DEBIAN", $input, "$apt_root/pool/main/noble");
-    write_binary(
-        "$dummy/DEBIAN/control",
-        "Package: xcat-genesis-base-amd64\nVersion: 1\nArchitecture: all\n"
-          . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
-          . "Description: repository test package\n",
-    );
-    die "Cannot build test DEB\n"
-      if run_capture(
-        "$tmp/dummy-deb.log", 'dpkg-deb', '--root-owner-group', '--build',
-        $dummy, "$input/xcat-genesis-base-amd64_1_all.deb",
-      );
+    make_path($input, "$apt_root/pool/main/noble");
+    make_legacy_deb("$tmp/dummy-deb", "$input/xcat-genesis-base-amd64_1_all.deb");
     write_binary("$input/xcat-genesis-openembedded-stale.deb", 'stale');
     write_binary("$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb", 'stale');
 
@@ -233,6 +216,76 @@ sub test_deb_consumer {
         'pooled package still matches the verified release');
 }
 
+sub test_legacy_rpm_consumer {
+    my $release_root = make_package_release("$tmp/rpm-legacy", 'rpm', 'x86_64');
+    my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
+    my $dependencies = "$tmp/rpm-legacy-dependencies";
+    my $output = "$tmp/rpm-legacy-output";
+    my $scratch_repo_root = "$tmp/rpm-legacy-repo-root";
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
+    make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
+    make_path($scratch_repo_root);
+    write_binary("$scratch_repo_root/Gitepoch", '');
+
+    my @perl_lib;
+    push(@perl_lib, write_forkmanager_stub("$tmp/perl-legacy-stub"))
+      unless eval { require Parallel::ForkManager; 1 };
+    push(@perl_lib, $ENV{PERL5LIB})
+      if defined($ENV{PERL5LIB}) && $ENV{PERL5LIB} ne '';
+    local $ENV{PERL5LIB} = join(':', @perl_lib);
+
+    my $log = "$tmp/rpm-legacy-consumer.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $scratch_repo_root,
+        '--output', $output,
+        '--target', $target,
+        '--run-id', 'legacy',
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-createrepo', '--skip-tarball',
+        '--collect-dir', $dependencies,
+    );
+
+    is($status, 0, 'RPM legacy repository accepts an empty Gitepoch');
+    ok(-f "$deployed/xCAT-genesis-base-x86_64-1.noarch.rpm",
+        'RPM legacy path still deploys the existing Genesis package');
+    is_deeply(
+        [ glob("$deployed/xCAT-genesis-openembedded-*.rpm") ],
+        [],
+        'RPM legacy path does not add OpenEmbedded packages',
+    );
+}
+
+sub test_legacy_deb_consumer {
+    my $apt_root = "$tmp/apt-legacy";
+    my $input = "$apt_root/ubuntu24.04";
+    make_path($input);
+    make_legacy_deb(
+        "$tmp/legacy-dummy-deb",
+        "$input/xcat-genesis-base-amd64_1_all.deb",
+    );
+
+    local $ENV{SOURCE_DATE_EPOCH} = $epoch;
+    my $log = "$tmp/deb-legacy-consumer.log";
+    my $status = run_capture(
+        $log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        'ubuntu24.04',
+    );
+    my $packages = "$apt_root/dists/noble/main/binary-amd64/Packages";
+
+    is($status, 0, 'APT repository keeps working without a Genesis release');
+    like(read_binary($packages), qr/^Package: xcat-genesis-base-amd64$/m,
+        'APT legacy path still indexes the existing Genesis package');
+    unlike(read_binary($packages), qr/^Package: xcat-genesis-openembedded-/m,
+        'APT legacy path does not add OpenEmbedded packages');
+}
+
 sub test_partial_rpm_release {
     my $release_root = make_package_release("$tmp/rpm-partial", 'rpm', 'x86_64');
     my $output = "$tmp/partial-output";
@@ -257,6 +310,8 @@ sub test_partial_rpm_release {
     );
 
     isnt($status, 0, 'RPM repository rejects a partial Genesis release');
+    like(read_binary($log), qr/Genesis release is missing supported architectures/,
+        'RPM partial-release failure names the missing architectures');
     ok(-f $existing, 'partial release does not remove the deployed package');
 }
 
@@ -280,6 +335,8 @@ sub test_partial_deb_release {
     );
 
     isnt($status, 0, 'APT repository rejects a partial Genesis release');
+    like(read_binary($log), qr/Genesis release is missing supported architectures/,
+        'APT partial-release failure names the missing architectures');
     ok(-f $existing, 'partial DEB release does not remove the deployed package');
 }
 
@@ -330,4 +387,31 @@ sub make_package_release {
     );
     write_checksums($release_root);
     return $release_root;
+}
+
+sub make_rpm_dependencies {
+    my ($directory, $package) = @_;
+    make_path($directory);
+    for my $name (qw(
+      ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+      perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB
+      xCAT-genesis-base-x86_64
+    )) {
+        copy($package, "$directory/$name-1.noarch.rpm") or die $!;
+    }
+}
+
+sub make_legacy_deb {
+    my ($root, $output) = @_;
+    make_path("$root/DEBIAN");
+    write_binary(
+        "$root/DEBIAN/control",
+        "Package: xcat-genesis-base-amd64\nVersion: 1\nArchitecture: all\n"
+          . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
+          . "Description: repository test package\n",
+    );
+    die "Cannot build legacy test DEB\n"
+      if run_capture(
+        "$root.log", 'dpkg-deb', '--root-owner-group', '--build', $root, $output,
+      );
 }
