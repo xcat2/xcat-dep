@@ -51,6 +51,9 @@ Validate the directory before publishing it:
 ./genesis-openembedded/verify-release --complete /path/to/xcat-genesis-release
 ```
 
+The checksum file detects incomplete or changed output. It does not authenticate
+the release, so only accept a directory produced by a trusted build host.
+
 Pass that same directory to the repository builders:
 
 ```bash
