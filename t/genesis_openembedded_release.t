@@ -3,7 +3,7 @@ use warnings;
 
 use Cwd qw(abs_path);
 use File::Copy qw(copy);
-use File::Path qw(make_path);
+use File::Path qw(make_path remove_tree);
 use File::Temp qw(tempdir);
 use FindBin;
 use Test::More;
@@ -263,7 +263,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'rpmbuild and rpm are not installed', 12
+    skip 'rpmbuild and rpm are not installed', 18
       unless command_exists('rpmbuild') && command_exists('rpm');
     exercise_packager('rpm');
 }
@@ -276,7 +276,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'dpkg-deb is not installed', 10 unless command_exists('dpkg-deb');
+    skip 'dpkg-deb is not installed', 12 unless command_exists('dpkg-deb');
     exercise_packager('deb');
 }
 
@@ -302,6 +302,14 @@ sub exercise_packager {
         '--source-date-epoch', $epoch,
         '--format', $format,
     );
+    my ($legacy_rpm_top, $legacy_rpm_work);
+    if ($format eq 'rpm') {
+        $legacy_rpm_top =
+          "/var/tmp/xcat-genesis-rpmbuild-$revision-x86_64-$version-$release";
+        $legacy_rpm_work = "$legacy_rpm_top/BUILD/stale";
+        make_path("$legacy_rpm_top/BUILD");
+        write_binary($legacy_rpm_work, 'stale work');
+    }
 
     my $original_umask = umask(0022);
     is(system(@command, '--output-dir', $first), 0,
@@ -310,6 +318,14 @@ sub exercise_packager {
     is(system(@command, '--output-dir', $second), 0,
         "$format package rebuilds with umask 0002");
     umask($original_umask);
+    is(sprintf('%04o', (stat($first))[2] & 0x0fff), '0755',
+        "$format output is readable and searchable");
+    is(sprintf('%04o', (stat($second))[2] & 0x0fff), '0755',
+        "$format rebuilt output is readable and searchable");
+    if (defined($legacy_rpm_work)) {
+        ok(-e $legacy_rpm_work, 'RPM package ignores the legacy fixed work path');
+        remove_tree($legacy_rpm_top);
+    }
 
     my ($relative, $source_relative);
     if ($format eq 'rpm') {
@@ -344,6 +360,24 @@ sub exercise_packager {
         like(read_binary($contents_log),
             qr{/opt/xcat/share/xcat/netboot/genesis-openembedded/x86_64/kernel},
             'RPM uses the OpenEmbedded staging namespace');
+        like(read_binary($contents_log),
+            qr{^/usr/share/doc/xCAT-genesis-openembedded-x86_64/?$}m,
+            'RPM owns its documentation directory');
+        my $ownership_log = "$tmp/rpm-ownership.log";
+        is(
+            run_capture(
+                $ownership_log, 'rpm', '-qp',
+                '--qf', '[%{FILEUSERNAME}:%{FILEGROUPNAME}\n]',
+                "$first/$relative",
+            ),
+            0,
+            'RPM file ownership can be read',
+        );
+        is_deeply(
+            [ grep { $_ ne 'root:root' } split(/\n/, read_binary($ownership_log)) ],
+            [],
+            'RPM owns every payload path as root',
+        );
         is(run_capture($contents_log, 'rpm', '-qp', '--scripts', "$first/$relative"), 0,
             'RPM script metadata can be read');
         is(read_binary($contents_log), '', 'RPM has no package scripts');
