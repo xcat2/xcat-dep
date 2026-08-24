@@ -49,7 +49,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 22
+    skip 'RPM repository tools require a root Linux builder', 26
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -59,6 +59,7 @@ SKIP: {
     test_legacy_rpm_consumer();
     test_partial_rpm_release();
     test_failed_build_release();
+    test_dry_run_release();
 }
 
 SKIP: {
@@ -371,6 +372,42 @@ sub test_failed_build_release {
         'the failure names the empty collection, not the missing dependencies');
     ok(!-e "$deployed/$package",
         'a run that built nothing publishes no release package');
+}
+
+sub test_dry_run_release {
+    my $release_root = make_package_release("$tmp/rpm-dry", 'rpm');
+    my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
+    my $output = "$tmp/dry-output";
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $run_repo = "$output/mockbuild-all/$target-dry/repo/" . capture_command('uname', '-m');
+    my $dependencies = "$tmp/rpm-dry-dependencies";
+    my $scratch_repo_root = "$tmp/rpm-dry-root";
+    make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
+    make_path($scratch_repo_root);
+
+    my $log = "$tmp/rpm-dry.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $scratch_repo_root,
+        '--output', $output,
+        '--target', $target,
+        '--run-id', 'dry',
+        '--build-timestamp', $epoch,
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-createrepo', '--skip-tarball',
+        '--genesis-release', $release_root,
+        '--collect-dir', $dependencies,
+        '--dry-run',
+    );
+    my $printed = read_binary($log);
+
+    is($status, 0, 'a dry run accepts a verified Genesis release');
+    like($printed, qr/^DRY-RUN install Genesis release package: .*\Q$package\E$/m,
+        'the dry run reports the release packages it would install');
+    like($printed, qr/^Collected binary RPMs: 15$/m,
+        'the dry run counts the release packages a real run installs');
+    ok(!-e "$run_repo/$package", 'the dry run installs nothing');
 }
 
 sub make_package_release {
