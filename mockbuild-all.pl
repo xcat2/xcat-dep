@@ -230,6 +230,8 @@ for my $tgt (@build_targets) {
 $tgt_pm->wait_all_children;
 die "FATAL: $tgt_fail target(s) failed\n" if $tgt_fail;
 
+publish_genesis_common_repo() if $genesis_release;
+
 print_step('All targets completed');
 exit 0;
 
@@ -519,12 +521,6 @@ if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
 
-if ($genesis_release) {
-    $copied += $dry_run
-      ? preview_genesis_release_packages('rpm', $repo_dir)
-      : install_genesis_release_packages('rpm', $repo_dir);
-}
-
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
 # lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
 if (!$skip_genesis && !$dry_run) {
@@ -549,15 +545,6 @@ my ($copied_srpms, $skipped_non_src, $missing_srpm_roots) = collect_srpms(
 if (!$dry_run && $copied_srpms == 0) {
     print "WARN: No source RPMs were collected. SRPM repo and tarball may be empty.\n";
 }
-
-if ($genesis_release) {
-    $copied_srpms += $dry_run
-      ? preview_genesis_release_packages('srpm', $srpm_repo_dir)
-      : install_genesis_release_packages('srpm', $srpm_repo_dir);
-}
-
-assert_genesis_release_copied($repo_dir, $srpm_repo_dir)
-    if $genesis_release && !$dry_run;
 
 if (!$skip_createrepo) {
     run_step(
@@ -652,16 +639,29 @@ sub deploy_target {
         my $destination = "$dest/" . basename($rpm);
         publish_file($rpm, $destination);
     }
-    if ($genesis_release) {
-        my @keep = map { basename($_) } genesis_release_files('rpm');
-        remove_genesis_packages($dest, 0, \@keep);
-        verify_genesis_release_packages('rpm', $dest);
-    }
+    remove_genesis_packages($dest, 0) if $genesis_release;
     assert_required_deps($dest);
     sign_and_index_repo($dest);
     write_dep_repo_metadata($dest, $rel);
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
     print "Deployed rh$rel/$arch: $n rpms\n";
+}
+
+sub publish_genesis_common_repo {
+    my $dest = "$repo_dep/common";
+    print_step("Publish OpenEmbedded Genesis -> $dest");
+
+    if ($dry_run) {
+        preview_genesis_release_packages('rpm', $dest);
+        return;
+    }
+
+    make_path($dest);
+    my $published = publish_genesis_release_packages('rpm', $dest);
+    verify_genesis_release_packages('rpm', $dest);
+    sign_and_index_repo($dest);
+    write_common_repo_metadata($dest);
+    print "Published common Genesis repository: $published rpms\n";
 }
 
 sub publish_file {
@@ -735,6 +735,34 @@ $gpgkey_line
 EOF
     close $r;
 
+    write_local_repo_helper($dir);
+    write_buildinfo($dir, "rh$rel/$arch");
+}
+
+sub write_common_repo_metadata {
+    my ($dir) = @_;
+    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/common";
+    my $gpgcheck = $gpg_sign ? 1 : 0;
+    my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
+    open my $r, '>', "$dir/xcat-dep-common.repo"
+      or die "Cannot write $dir/xcat-dep-common.repo: $!\n";
+    print {$r} <<"EOF";
+[xcat-dep-common]
+name=xCAT 2 common dependencies
+baseurl=$baseurl
+enabled=1
+gpgcheck=$gpgcheck
+$gpgkey_line
+EOF
+    close $r;
+
+    write_local_repo_helper($dir);
+    write_buildinfo($dir, 'common');
+}
+
+sub write_local_repo_helper {
+    my ($dir) = @_;
+
     open my $m, '>', "$dir/mklocalrepo.sh" or die "Cannot write $dir/mklocalrepo.sh: $!\n";
     print {$m} <<'EOS';
 #!/bin/sh
@@ -753,7 +781,10 @@ cd -
 EOS
     close $m;
     chmod 0775, "$dir/mklocalrepo.sh";
+}
 
+sub write_buildinfo {
+    my ($dir, $target) = @_;
     my $build_time = strftime("%a %b %e %H:%M:%S %Z %Y", gmtime($SOURCE_DATE_EPOCH));
     my $build_machine = `hostname`; chomp $build_machine;
     my $commit = `git -C "$repo_root" rev-parse HEAD 2>/dev/null`; chomp $commit;
@@ -762,7 +793,7 @@ EOS
     my $release = strftime('snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH));
     open my $b, '>', "$dir/buildinfo.txt" or die "Cannot write $dir/buildinfo.txt: $!\n";
     print {$b} <<"EOF";
-TARGET=rh$rel/$arch
+TARGET=$target
 RELEASE=$release
 BUILD_TIME=$build_time
 BUILD_MACHINE=$build_machine
@@ -786,10 +817,10 @@ Options:
                           it. A fail-fast lock is held at <PATH>/.lock, so pass distinct paths
                           to run on two hosts in parallel on one NFS (default: <repo-root>/build-output)
   --output-root PATH      Override the derived build tree root (default: <output>/mockbuild-all)
-  --repo-dep PATH         Override the derived deployable per-EL output root; rh8/rh9/rh10/<arch>
-                          are assembled + signed here (default: <output>/xcat-dep)
+  --repo-dep PATH         Override the deployable output root; rh8/rh9/rh10/<arch> and common
+                          are assembled and signed here (default: <output>/xcat-dep)
   --force-unlock          Remove a stale <output>/.lock before acquiring it
-  --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
+  --gpg-sign              Sign RPMs and repomd.xml in every published repository
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
   --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>); default is
@@ -811,8 +842,7 @@ Options:
   --skip-genesis          Skip the existing per-EL Genesis image build
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
-  --genesis-release PATH  Add a verified OpenEmbedded Genesis RPM release alongside the
-                          existing per-EL Genesis packages
+  --genesis-release PATH  Publish a verified OpenEmbedded Genesis RPM release in common
   --scrub-all-chroots     Run mock -r <target> --scrub=all before build/collect
   --collect-dir PATH      Additional directory to scan recursively for RPMs (repeatable)
   --dry-run               Print planned commands without executing
@@ -1019,16 +1049,16 @@ sub remove_genesis_packages {
     }
 }
 
-sub install_genesis_release_packages {
+sub publish_genesis_release_packages {
     my ($prefix, $destination_root) = @_;
     remove_genesis_packages($destination_root, $prefix eq 'srpm');
+    remove_genesis_packages($destination_root, 1) if $prefix eq 'rpm';
 
     my $copied = 0;
     for my $relative (genesis_release_files($prefix)) {
         my $source = "$genesis_release/$relative";
         my $destination = "$destination_root/" . basename($relative);
-        copy($source, $destination)
-            or die "Cannot install Genesis release package $source: $!\n";
+        publish_file($source, $destination);
         verify_release_file($genesis_release_checksums, $relative, $destination);
         $copied++;
     }
@@ -1036,16 +1066,13 @@ sub install_genesis_release_packages {
     return $copied;
 }
 
-# Dry runs copy nothing, but they must still report what a real run would publish:
-# collect_rpms and collect_srpms drop every xCAT-genesis-openembedded package whenever
-# --genesis-release is given, so without this preview a dry run describes a repository
-# with no Genesis packages at all while the real run installs the whole set.
+# Dry runs copy nothing, but they must still report the shared packages a real run publishes.
 sub preview_genesis_release_packages {
     my ($prefix, $destination_root) = @_;
     my @files = genesis_release_files($prefix);
     die "Genesis release has no $prefix packages\n" unless @files;
     for my $relative (@files) {
-        print "DRY-RUN install Genesis release package: $genesis_release/$relative"
+        print "DRY-RUN publish Genesis release package: $genesis_release/$relative"
           . " -> $destination_root/" . basename($relative) . "\n";
     }
     return scalar(@files);
@@ -1068,17 +1095,6 @@ sub verify_genesis_release_packages {
         verify_release_file($genesis_release_checksums, $relative, $destination);
     }
     return scalar(@files);
-}
-
-sub assert_genesis_release_copied {
-    my ($binary_directory, $source_directory) = @_;
-    for my $entry (
-        [ 'rpm', $binary_directory ],
-        [ 'srpm', $source_directory ],
-    ) {
-        my ($prefix, $destination_root) = @{$entry};
-        verify_genesis_release_packages($prefix, $destination_root);
-    }
 }
 
 sub collect_rpms {
