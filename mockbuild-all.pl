@@ -500,8 +500,11 @@ if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
 
-$copied += install_genesis_release_packages('rpm', $repo_dir)
-    if $genesis_release && !$dry_run;
+if ($genesis_release) {
+    $copied += $dry_run
+      ? preview_genesis_release_packages('rpm', $repo_dir)
+      : install_genesis_release_packages('rpm', $repo_dir);
+}
 
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
 # lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
@@ -528,8 +531,11 @@ if (!$dry_run && $copied_srpms == 0) {
     print "WARN: No source RPMs were collected. SRPM repo and tarball may be empty.\n";
 }
 
-$copied_srpms += install_genesis_release_packages('srpm', $srpm_repo_dir)
-    if $genesis_release && !$dry_run;
+if ($genesis_release) {
+    $copied_srpms += $dry_run
+      ? preview_genesis_release_packages('srpm', $srpm_repo_dir)
+      : install_genesis_release_packages('srpm', $srpm_repo_dir);
+}
 
 assert_genesis_release_copied($repo_dir, $srpm_repo_dir)
     if $genesis_release && !$dry_run;
@@ -978,6 +984,21 @@ sub install_genesis_release_packages {
     }
     die "Genesis release has no $prefix packages\n" unless $copied;
     return $copied;
+}
+
+# Dry runs copy nothing, but they must still report what a real run would publish:
+# collect_rpms and collect_srpms drop every xCAT-genesis-openembedded package whenever
+# --genesis-release is given, so without this preview a dry run describes a repository
+# with no Genesis packages at all while the real run installs the whole set.
+sub preview_genesis_release_packages {
+    my ($prefix, $destination_root) = @_;
+    my @files = genesis_release_files($prefix);
+    die "Genesis release has no $prefix packages\n" unless @files;
+    for my $relative (@files) {
+        print "DRY-RUN install Genesis release package: $genesis_release/$relative"
+          . " -> $destination_root/" . basename($relative) . "\n";
+    }
+    return scalar(@files);
 }
 
 sub genesis_release_files {
