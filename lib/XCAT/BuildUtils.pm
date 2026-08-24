@@ -17,6 +17,7 @@ our @EXPORT_OK = qw(
   digest_file
   digest_manifest
   display_quote
+  every_step_failed
   hashes_equal
   print_step
   read_binary
@@ -145,6 +146,14 @@ sub digest_manifest {
         map { digest_file("$root/$_", $algorithm) . "  $_\n" }
           sort @files,
     );
+}
+
+# True when a set of steps was attempted and none of them survived. Callers tolerate
+# individual failures; losing every step means the builder itself did not work.
+sub every_step_failed {
+    my ($attempted, $failures) = @_;
+    return 0 unless $attempted;
+    return $failures >= $attempted ? 1 : 0;
 }
 
 sub hashes_equal {

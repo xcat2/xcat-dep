@@ -17,6 +17,7 @@ use POSIX qw(strftime);
 use lib "$FindBin::Bin/lib";
 use XCAT::BuildUtils qw(
   capture_command
+  every_step_failed
   hashes_equal
   print_step
   read_lines
@@ -875,10 +876,14 @@ sub run_build_steps_parallel {
     # src.rpm). We collect whatever built and assert the REQUIRED set later (assert_required_deps),
     # matching the historical build behaviour.
     if ($dry_run || $max_processes <= 1 || @{$steps} == 1) {
+        my $serial_failures = 0;
         for my $step (@{$steps}) {
             my $ok = eval { run_step(%{$step}); 1 };
-            warn "WARN: build step failed (tolerated): $step->{step}\n" . ($@ // '') unless $ok;
+            next if $ok;
+            $serial_failures++;
+            warn "WARN: build step failed (tolerated): $step->{step}\n" . ($@ // '');
         }
+        assert_build_progress(scalar(@{$steps}), $serial_failures);
         return;
     }
 
@@ -938,6 +943,18 @@ sub run_build_steps_parallel {
         warn "WARN: some build steps failed (tolerated; required deps asserted after deploy):\n  "
             . join("\n  ", @lines) . "\n";
     }
+
+    assert_build_progress(scalar(@{$steps}), scalar(keys %failed));
+}
+
+# Individual failures are tolerated because some packages are el- or arch-pinned. ALL of them
+# failing is a different thing: the builder itself is unusable (no mock, a broken chroot, no
+# network), this invocation produced nothing, and every package the run would go on to publish
+# would come from somewhere other than this build.
+sub assert_build_progress {
+    my ($attempted, $failures) = @_;
+    return unless every_step_failed($attempted, $failures);
+    die "FATAL: every build step failed ($failures/$attempted). Check the build logs.\n";
 }
 
 # have_rpm: is there a non-src rpm named <name>-... under $dir?
