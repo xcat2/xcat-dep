@@ -49,7 +49,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 27
+    skip 'RPM repository tools require a root Linux builder', 34
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -87,10 +87,12 @@ sub test_rpm_consumer {
     my $source_repo = "$output/mockbuild-all/$run/repo-src";
     my $deploy_repo = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
     my $common_repo = "$output/xcat-dep/common";
-    make_path($run_repo, $source_repo, $deploy_repo);
+    make_path($run_repo, $source_repo, $deploy_repo, $common_repo);
     write_binary("$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
     write_binary("$source_repo/xCAT-genesis-openembedded-stale.src.rpm", 'stale');
     write_binary("$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
+    write_binary("$common_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
+    write_binary("$common_repo/xCAT-genesis-openembedded-stale.src.rpm", 'stale');
 
     my $dependencies = "$tmp/rpm-dependencies";
     my $scratch_repo_root = "$tmp/rpm-repo-root";
@@ -126,16 +128,15 @@ sub test_rpm_consumer {
         '--collect-dir', $dependencies,
     );
 
-    my $published_repo = -f "$common_repo/$package" ? $common_repo : $deploy_repo;
     is($status, 0, 'RPM repository accepts a verified Genesis release');
-    is(digest_file("$published_repo/$package"), digest_file("$release_root/rpm/$package"),
+    is(digest_file("$common_repo/$package"), digest_file("$release_root/rpm/$package"),
         'deployed RPM matches the release');
     is(
-        sprintf('%04o', (stat("$published_repo/$package"))[2] & 0x0fff),
+        sprintf('%04o', (stat("$common_repo/$package"))[2] & 0x0fff),
         sprintf('%04o', (stat("$release_root/rpm/$package"))[2] & 0x0fff),
         'deployed RPM keeps the release file mode',
     );
-    opendir(my $deploy_dh, $published_repo) or die $!;
+    opendir(my $deploy_dh, $common_repo) or die $!;
     my @staging_files = grep { /^\.xcat-deploy\./ } readdir($deploy_dh);
     closedir($deploy_dh) or die $!;
     is_deeply(\@staging_files, [], 'RPM deployment leaves no staging files');
@@ -145,14 +146,39 @@ sub test_rpm_consumer {
         'stale source RPM is removed');
     ok(!-e "$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm",
         'stale deployed RPM is removed');
-    ok(-f "$published_repo/repodata/repomd.xml", 'RPM repository metadata is generated');
+    ok(-f "$common_repo/repodata/repomd.xml", 'RPM repository metadata is generated');
     ok(-f "$deploy_repo/xCAT-genesis-base-x86_64-1.noarch.rpm",
         'legacy Genesis package remains available');
-    ok(!-e "$run_repo/xCAT-genesis-openembedded-x86_64-$version-old.noarch.rpm",
-        'stale OpenEmbedded RPM is not collected');
-    ok(!-e "$source_repo/xCAT-genesis-openembedded-x86_64-$version-old.src.rpm",
-        'stale OpenEmbedded SRPM is not collected');
-    like(read_binary("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=(?:8|15)$/m,
+    my @expected_packages = sort map {
+        rpm_package_name($_) . "-$version-$release.noarch.rpm"
+    } architectures();
+    my @common_packages = genesis_rpm_names($common_repo);
+    is_deeply(\@common_packages, \@expected_packages,
+        'common repository contains one complete Genesis release');
+    is_deeply(
+        [ genesis_rpm_names($deploy_repo) ],
+        [],
+        'per-EL repository contains no OpenEmbedded Genesis packages',
+    );
+    is_deeply(
+        [ genesis_rpm_names($run_repo) ],
+        [],
+        'target staging repository contains no OpenEmbedded Genesis packages',
+    );
+    is_deeply(
+        [ genesis_rpm_names($source_repo) ],
+        [],
+        'target source repository contains no OpenEmbedded Genesis packages',
+    );
+    my $common_config = read_binary("$common_repo/xcat-dep-common.repo");
+    like($common_config, qr/^\[xcat-dep-common\]$/m,
+        'common repository has its own repository ID');
+    like($common_config, qr{/xcat-dep/common$}m,
+        'common repository configuration uses the shared URL');
+    ok(-x "$common_repo/mklocalrepo.sh", 'common repository supports offline setup');
+    like(read_binary("$common_repo/buildinfo.txt"), qr/^TARGET=common$/m,
+        'common repository records its target');
+    like(read_binary("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=8$/m,
         'repository summary counts the collected dependencies');
 }
 
@@ -265,6 +291,8 @@ sub test_legacy_rpm_consumer {
         [],
         'RPM legacy path does not add OpenEmbedded packages',
     );
+    ok(!-d "$output/xcat-dep/common",
+        'RPM legacy path does not create the common repository');
 }
 
 sub test_legacy_deb_consumer {
@@ -299,9 +327,9 @@ sub test_partial_rpm_release {
     my $release_root = make_package_release("$tmp/rpm-partial", 'rpm', 'x86_64');
     my $output = "$tmp/partial-output";
     my $target = 'test+epel-10-' . capture_command('uname', '-m');
-    my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
-    my $existing = "$deployed/xCAT-genesis-base-existing.noarch.rpm";
-    make_path($deployed);
+    my $common = "$output/xcat-dep/common";
+    my $existing = "$common/xCAT-genesis-openembedded-existing.noarch.rpm";
+    make_path($common);
     write_binary($existing, 'existing release');
 
     my $log = "$tmp/rpm-partial.log";
@@ -354,14 +382,14 @@ sub test_failed_build_release {
     my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
     my $output = "$tmp/empty-output";
     my $target = 'test+epel-10-' . capture_command('uname', '-m');
-    my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
+    my $common = "$output/xcat-dep/common";
     my $scratch_repo_root = "$tmp/rpm-empty-root";
     my $collected = "$tmp/rpm-empty-collect";
     my $run_repo = "$output/mockbuild-all/$target-empty/repo/" . capture_command('uname', '-m');
     my $results = "$output/mockbuild-all/$target-empty/build-results/ipmitool-xcat";
     my $stale = "$run_repo/ipmitool-xcat-0-stale.noarch.rpm";
     my $kept = "$results/ipmitool-xcat-0-earlier.noarch.rpm";
-    make_path($deployed, $scratch_repo_root, $collected, $run_repo, $results);
+    make_path($common, $scratch_repo_root, $collected, $run_repo, $results);
     write_binary($stale, 'package left by an earlier run');
     write_binary($kept, 'build output an earlier run produced');
 
@@ -383,7 +411,7 @@ sub test_failed_build_release {
     isnt($status, 0, 'a run that built nothing fails even with a Genesis release');
     like(read_binary($log), qr/No binary RPMs were collected/,
         'the failure names the empty collection, not the missing dependencies');
-    ok(!-e "$deployed/$package",
+    ok(!-e "$common/$package",
         'a run that built nothing publishes no release package');
     ok(!-e $stale,
         'a package left by an earlier run is cleared from the staging repository');
@@ -420,9 +448,10 @@ sub test_dry_run_release {
     my $printed = read_binary($log);
 
     is($status, 0, 'a dry run accepts a verified Genesis release');
-    like($printed, qr/^DRY-RUN (?:install|publish) Genesis release package: .*\Q$package\E$/m,
-        'the dry run reports the release packages it would install');
-    like($printed, qr/^Collected binary RPMs: (?:8|15)$/m,
+    like($printed,
+        qr{^DRY-RUN publish Genesis release package: .*\Q$package\E -> .*/xcat-dep/common/\Q$package\E$}m,
+        'the dry run reports the shared package destination');
+    like($printed, qr/^Collected binary RPMs: 8$/m,
         'the dry run counts the packages collected for the target repository');
     ok(!-e "$run_repo/$package", 'the dry run installs nothing');
 }
@@ -507,6 +536,15 @@ sub make_package_release {
     );
     write_checksums($release_root);
     return $release_root;
+}
+
+sub genesis_rpm_names {
+    my ($directory) = @_;
+    return () unless -d $directory;
+    opendir(my $dh, $directory) or die $!;
+    my @names = sort grep { /^xCAT-genesis-openembedded-.*\.rpm$/ } readdir($dh);
+    closedir($dh) or die $!;
+    return @names;
 }
 
 sub make_rpm_dependencies {
