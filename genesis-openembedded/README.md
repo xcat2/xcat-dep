@@ -77,7 +77,8 @@ the OpenEmbedded packages. Source RPMs stay in the verified release directory.
 The APT builder publishes the DEBs once under
 `pool/main/xcat-genesis-openembedded`. Every suite indexes those same files.
 Genesis publication updates all suites together, so do not pass a `DIST`
-argument with `--genesis-release`.
+argument with `--genesis-release`. Later suite rebuilds keep using the shared
+pool. Pass a new release only when replacing the Genesis packages.
 
 Both consumers require all seven architectures and verify package identities
 and checksums before publication. A management node can install an image for a
