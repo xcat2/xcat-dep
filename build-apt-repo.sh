@@ -16,6 +16,8 @@ DRY_RUN=0
 GENESIS_RELEASE=""
 GENESIS_CHECKSUMS=""
 GENESIS_VERIFIER=""
+GENESIS_POOL_RELATIVE="pool/main/xcat-genesis-openembedded"
+GENESIS_POOL=""
 FORCE_UNLOCK=0
 HELD_LOCK=""
 
@@ -61,7 +63,7 @@ Options:
   --apt-dir PATH         APT output directory (default: <repo-root>/repos/apt)
   --gpg-key-id ID        GPG key ID for signing (default: xcat@megware.com)
   --skip-sign            Skip GPG signing (for testing)
-  --genesis-release PATH Add a verified OpenEmbedded Genesis DEB release to each selected suite
+  --genesis-release PATH Publish a verified OpenEmbedded Genesis DEB release for all suites
   --dry-run              Print planned actions without executing
   --force-unlock         Remove a stale <apt-dir>/.lock before acquiring it
   -h, --help             Show this help
@@ -100,6 +102,7 @@ done
 
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 APT_DIR="${APT_DIR:-$REPO_ROOT/repos/apt}"
+GENESIS_POOL="$APT_DIR/$GENESIS_POOL_RELATIVE"
 
 # Everything from the pool wipe to the signature is one transaction over a shared tree, and
 # the packages are verified inside it: a second writer between the verification and
@@ -160,6 +163,8 @@ if [[ -n "$GENESIS_RELEASE" ]]; then
     "$GENESIS_VERIFIER" --complete --format deb "$GENESIS_RELEASE"
     cmp -s "$GENESIS_CHECKSUMS" "$GENESIS_RELEASE/SHA256SUMS" \
         || die "Genesis release changed during verification"
+    [[ $SUBSET -eq 0 ]] \
+        || die "--genesis-release updates all suites; omit DIST arguments"
     echo "Genesis release: $GENESIS_RELEASE"
 fi
 
@@ -205,6 +210,9 @@ for ver in "${SELECTED_VERS[@]}"; do
         run mkdir -p "$APT_DIR/dists/$codename/main/binary-$arch"
     done
 done
+if [[ -n "$GENESIS_RELEASE" ]]; then
+    run mkdir -p "$GENESIS_POOL"
+fi
 
 step "Populating pool"
 
@@ -227,11 +235,8 @@ copy_genesis_deb() {
     name=$(basename "$source")
     destination="$directory/$name"
     relative="deb/$name"
-    # Every selected suite receives the whole release, so a plain copy spends hundreds of
-    # megabytes per suite. --reflink=auto lets a filesystem that can share extents
-    # copy-on-write avoid that, while still giving the pool a file of its own: a link would
-    # leave the published package and the verified release sharing one inode, where a write
-    # through either path changes what the other holds.
+    # The pool needs a file of its own. A hard link would let a later write through either
+    # path change both the verified release and the published package.
     cp --reflink=auto -- "$source" "$destination" 2>/dev/null \
         || cp -- "$source" "$destination"
     "$GENESIS_VERIFIER" \
@@ -252,30 +257,29 @@ for ver in "${SELECTED_VERS[@]}"; do
             fi
             copy_deb "$deb" "$dst"
         done
-        if [[ -n "$GENESIS_RELEASE" ]]; then
-            for deb in "$GENESIS_RELEASE"/deb/*.deb; do
-                copy_genesis_deb "$deb" "$dst"
-            done
-        fi
     fi
 done
+
+if [[ -n "$GENESIS_RELEASE" && $DRY_RUN -eq 0 ]]; then
+    echo "Genesis release -> $GENESIS_POOL_RELATIVE/"
+    for deb in "$GENESIS_RELEASE"/deb/*.deb; do
+        copy_genesis_deb "$deb" "$GENESIS_POOL"
+    done
+fi
 
 # The pool is indexed and the metadata is signed from what is on disk now, not from what
 # was copied earlier, so check the packages again here: anything that changed between the
 # copy and this point would otherwise be published and signed as verified.
 if [[ -n "$GENESIS_RELEASE" && $DRY_RUN -eq 0 ]]; then
     step "Re-verifying pooled Genesis packages"
-    for ver in "${SELECTED_VERS[@]}"; do
-        codename="${CODENAME_MAP[$ver]}"
-        for deb in "$GENESIS_RELEASE"/deb/*.deb; do
-            name=$(basename "$deb")
-            pooled="$APT_DIR/pool/main/$codename/$name"
-            "$GENESIS_VERIFIER" \
-                --checksum-file "$GENESIS_CHECKSUMS" \
-                --relative-file "deb/$name" \
-                --copied-file "$pooled"
-            echo "Re-verified pooled Genesis package: $pooled"
-        done
+    for deb in "$GENESIS_RELEASE"/deb/*.deb; do
+        name=$(basename "$deb")
+        pooled="$GENESIS_POOL/$name"
+        "$GENESIS_VERIFIER" \
+            --checksum-file "$GENESIS_CHECKSUMS" \
+            --relative-file "deb/$name" \
+            --copied-file "$pooled"
+        echo "Re-verified pooled Genesis package: $pooled"
     done
 fi
 
@@ -290,7 +294,13 @@ for ver in "${SELECTED_VERS[@]}"; do
         continue
     fi
 
-    all_packages=$(cd "$APT_DIR" && apt-ftparchive packages "pool/main/$codename/")
+    all_packages=$(
+        cd "$APT_DIR"
+        apt-ftparchive packages "pool/main/$codename/"
+        if [[ -n "$GENESIS_RELEASE" ]]; then
+            apt-ftparchive packages "$GENESIS_POOL_RELATIVE/"
+        fi
+    )
 
     for arch in "${ARCHITECTURES[@]}"; do
         pkg_file="$APT_DIR/dists/$codename/main/binary-$arch/Packages"
