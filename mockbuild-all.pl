@@ -284,6 +284,12 @@ die "Missing perl builder script: $perl_builder\n"
 
 if (!$dry_run) {
     make_path($build_root, $log_root, $repo_dir, $srpm_repo_dir);
+    # The staging repositories hold what THIS invocation produces. A reused --run-id, or a
+    # rerun after a failed invocation, otherwise leaves an earlier run's packages in them,
+    # where collection never sees them, createrepo indexes them and deploy_target publishes
+    # them as this run's output.
+    reset_staging_repo($repo_dir);
+    reset_staging_repo($srpm_repo_dir);
 }
 
 print_step("Configuration");
@@ -955,6 +961,21 @@ sub assert_required_deps {
     my @missing = grep { !have_rpm($dir, $_) } @req;
     die "FATAL: required deps missing from $dir: @missing\n" if @missing;
     print "[deps] required set present in $dir: @req\n";
+}
+
+sub reset_staging_repo {
+    my ($directory) = @_;
+    return unless -d $directory;
+    opendir(my $dh, $directory) or die "Cannot read $directory: $!\n";
+    my @stale = grep { /\.rpm\z/ } readdir($dh);
+    closedir($dh) or die "Cannot close $directory: $!\n";
+    return unless @stale;
+    print "Removing " . scalar(@stale) . " package(s) left in $directory by an earlier run\n";
+    for my $name (@stale) {
+        unlink("$directory/$name")
+            or die "Cannot remove stale package $directory/$name: $!\n";
+    }
+    return;
 }
 
 sub remove_genesis_packages {
