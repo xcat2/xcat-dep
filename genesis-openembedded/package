@@ -131,7 +131,10 @@ sub _build_rpm {
         '--define', "genesis_arch $architecture",
         '--define', "version $version",
         '--define', "release $release",
-        '--define', "_buildtime $source_date_epoch",
+        # SOURCE_DATE_EPOCH is exported above; rpm turns it into the build time only
+        # when asked, and takes the build host from _buildhost. Both are honoured from
+        # rpm 4.14 through 6, which is what makes the identity verify-release expects
+        # reproducible on every builder.
         '--define', '_buildhost xcat-release',
         '--define', 'use_source_date_epoch_as_buildtime 1',
         '--define', 'clamp_mtime_to_source_date_epoch 1',
