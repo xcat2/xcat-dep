@@ -186,9 +186,8 @@ sub test_deb_consumer {
     my $release_root = make_package_release("$tmp/deb", 'deb');
     my $package = "xcat-genesis-openembedded-x86-64_${version}-${release}_all.deb";
     my $apt_root = "$tmp/apt";
-    my $input = "$apt_root/ubuntu24.04";
+    my $input = make_apt_inputs($apt_root, "$tmp/dummy-deb");
     make_path($input, "$apt_root/pool/main/noble");
-    make_legacy_deb("$tmp/dummy-deb", "$input/xcat-genesis-base-amd64_1_all.deb");
     write_binary("$input/xcat-genesis-openembedded-stale.deb", 'stale');
     write_binary("$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb", 'stale');
 
@@ -201,9 +200,10 @@ sub test_deb_consumer {
         '--apt-dir', $apt_root,
         '--skip-sign',
         '--genesis-release', $release_root,
-        'ubuntu24.04',
     );
-    my $pool_package = "$apt_root/pool/main/noble/$package";
+    my $suite_package = "$apt_root/pool/main/noble/$package";
+    my $shared_package = "$apt_root/pool/main/xcat-genesis-openembedded/$package";
+    my $pool_package = -f $shared_package ? $shared_package : $suite_package;
     my $amd64 = "$apt_root/dists/noble/main/binary-amd64/Packages";
     my $ppc64el = "$apt_root/dists/noble/main/binary-ppc64el/Packages";
 
@@ -233,7 +233,7 @@ sub test_deb_consumer {
         'pooled DEB is verified again before the indexes are generated');
 
     my $collision = "$tmp/apt-collision";
-    make_path("$collision/ubuntu24.04");
+    make_apt_inputs($collision, "$tmp/collision-deb");
     write_binary("$collision/ubuntu24.04/$package", 'different');
     my $collision_log = "$tmp/deb-collision.log";
     my $collision_status = run_capture(
@@ -243,10 +243,12 @@ sub test_deb_consumer {
         '--apt-dir', $collision,
         '--skip-sign',
         '--genesis-release', $release_root,
-        'ubuntu24.04',
     );
+    my $collision_suite = "$collision/pool/main/noble/$package";
+    my $collision_shared = "$collision/pool/main/xcat-genesis-openembedded/$package";
+    my $collision_package = -f $collision_shared ? $collision_shared : $collision_suite;
     is($collision_status, 0, 'verified release replaces a stale source package');
-    is(digest_file("$collision/pool/main/noble/$package"),
+    is(digest_file($collision_package),
         digest_file("$release_root/deb/$package"),
         'pooled package still matches the verified release');
 }
@@ -572,4 +574,16 @@ sub make_legacy_deb {
       if run_capture(
         "$root.log", 'dpkg-deb', '--root-owner-group', '--build', $root, $output,
       );
+}
+
+sub make_apt_inputs {
+    my ($apt_root, $package_root) = @_;
+    my $package = "$package_root.deb";
+    make_legacy_deb($package_root, $package);
+    for my $version (qw(ubuntu22.04 ubuntu24.04 ubuntu26.04)) {
+        my $input = "$apt_root/$version";
+        make_path($input);
+        copy($package, "$input/xcat-genesis-base-amd64_1_all.deb") or die $!;
+    }
+    return "$apt_root/ubuntu24.04";
 }
