@@ -1,0 +1,59 @@
+name: Genesis OpenEmbedded packages
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  package-tests:
+    runs-on: ubuntu-24.04
+    env:
+      XCAT_GENESIS_CI: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            apt-utils createrepo-c dpkg-dev gnupg \
+            libfile-slurper-perl \
+            libparallel-forkmanager-perl libperl-critic-perl rpm shellcheck
+
+      - name: Run static checks
+        run: |
+          perl -c genesis-openembedded/build
+          perl -c genesis-openembedded/package
+          perl -c genesis-openembedded/verify-release
+          perl -Ilib -c lib/XCAT/BuildUtils.pm
+          perl -Ilib -c lib/XCAT/GenesisRelease.pm
+          perl -c mockbuild-all.pl
+          rpmspec -P \
+            -D 'genesis_arch x86_64' \
+            -D 'version 2.19.0' \
+            -D 'release snap202608210726' \
+            genesis-openembedded/rpm/xCAT-genesis-openembedded.spec >/dev/null
+          perlcritic \
+            genesis-openembedded/build \
+            genesis-openembedded/package \
+            genesis-openembedded/verify-release \
+            lib/XCAT/BuildUtils.pm \
+            lib/XCAT/GenesisRelease.pm \
+            mockbuild-all.pl \
+            t/build_utils.t \
+            t/genesis_openembedded_release.t \
+            t/genesis_openembedded_consumer.t \
+            t/lib/XCAT/GenesisReleaseTest.pm
+          bash -n build-apt-repo.sh
+          shellcheck build-apt-repo.sh
+
+      - name: Run package tests
+        run: |
+          prove -v t/build_utils.t
+          prove -v -It/lib t/genesis_openembedded_release.t
+          sudo -E prove -v -It/lib t/genesis_openembedded_consumer.t

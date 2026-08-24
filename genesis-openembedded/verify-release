@@ -1,0 +1,138 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Cwd qw(abs_path);
+use FindBin;
+use Getopt::Long qw(GetOptions);
+use lib "$FindBin::Bin/../lib";
+use XCAT::BuildUtils qw(capture_command require_command);
+use XCAT::GenesisRelease qw(
+  deb_package_name
+  read_checksum_manifest
+  rpm_package_name
+  validate_complete_release
+  validate_release
+  verify_release_file
+);
+
+my $format = 'all';
+my $complete = 0;
+my ($checksum_file, $relative_file, $copied_file);
+GetOptions(
+    'format=s'        => \$format,
+    'complete!'       => \$complete,
+    'checksum-file=s' => \$checksum_file,
+    'relative-file=s' => \$relative_file,
+    'copied-file=s'   => \$copied_file,
+) or die usage();
+
+my $copy_mode = grep { defined($_) }
+  ($checksum_file, $relative_file, $copied_file);
+if ($copy_mode) {
+    die usage()
+      unless defined($checksum_file)
+      && defined($relative_file)
+      && defined($copied_file)
+      && !$complete
+      && $format eq 'all'
+      && !@ARGV;
+    $checksum_file = abs_path($checksum_file)
+      or die "Cannot resolve checksum file\n";
+    $copied_file = abs_path($copied_file)
+      or die "Cannot resolve copied file\n";
+    my $checksums = read_checksum_manifest($checksum_file);
+    verify_release_file($checksums, $relative_file, $copied_file);
+    print "Verified copied Genesis package: $copied_file\n";
+    exit(0);
+}
+
+die usage() unless @ARGV == 1;
+die "Unsupported verification format: $format\n"
+  unless $format eq 'all' || $format eq 'rpm' || $format eq 'deb';
+
+my $directory = abs_path($ARGV[0]) or die "Cannot resolve release directory\n";
+my $manifest = $complete
+    ? validate_complete_release($directory)
+    : validate_release($directory);
+my %available = map { $_ => 1 } split(/,/, $manifest->{formats});
+my @formats = $format eq 'all' ? qw(rpm deb) : ($format);
+for my $required (@formats) {
+    die "Release does not contain $required packages\n" unless $available{$required};
+}
+
+my @architectures = split(/,/, $manifest->{architectures});
+for my $architecture (@architectures) {
+    if (grep { $_ eq 'rpm' } @formats) {
+        _verify_rpm($directory, $manifest, $architecture);
+    }
+    if (grep { $_ eq 'deb' } @formats) {
+        _verify_deb($directory, $manifest, $architecture);
+    }
+}
+
+print "Verified Genesis package release: $directory\n";
+
+sub _verify_rpm {
+    my ($directory, $manifest, $architecture) = @_;
+    require_command('rpm');
+    my $name = rpm_package_name($architecture);
+    my $source_name = "$name-$manifest->{xcat_version}-$manifest->{xcat_release}.src.rpm";
+    my @packages = (
+        [ "$directory/rpm/$name-$manifest->{xcat_version}-$manifest->{xcat_release}.noarch.rpm",
+          'noarch', $source_name ],
+        [ "$directory/srpm/$source_name", 'noarch', '(none)' ],
+    );
+    for my $package (@packages) {
+        my ($path, $expected_arch, $expected_source) = @{$package};
+        my $metadata = capture_command(
+            'rpm', '-qp', '--qf',
+            "%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}\t%{EPOCHNUM}\t%{SOURCERPM}"
+              . "\t%{BUILDHOST}\t%{BUILDTIME}\n",
+            $path,
+        );
+        my $expected = join(
+            "\t", $name, $manifest->{xcat_version}, $manifest->{xcat_release},
+            $expected_arch, '0', $expected_source, 'xcat-release',
+            $manifest->{source_date_epoch},
+        );
+        die "Unexpected RPM identity for $path: $metadata\n" unless $metadata eq $expected;
+        for my $relationship (qw(conflicts obsoletes)) {
+            my $value = capture_command('rpm', '-qp', "--$relationship", $path);
+            die "Unexpected RPM $relationship for $path: $value\n" if $value ne '';
+        }
+        my $provides = capture_command('rpm', '-qp', '--provides', $path);
+        die "Legacy RPM relationship in $path: $provides\n"
+          if $provides =~ /xCAT-genesis-base/;
+    }
+}
+
+sub _verify_deb {
+    my ($directory, $manifest, $architecture) = @_;
+    require_command('dpkg-deb');
+    my $name = deb_package_name($architecture);
+    my $path = "$directory/deb/${name}_$manifest->{xcat_version}-$manifest->{xcat_release}_all.deb";
+    my $metadata = join(
+        "\n",
+        map { capture_command('dpkg-deb', '-f', $path, $_) }
+          qw(Package Version Architecture),
+    );
+    my $expected = join(
+        "\n", $name, "$manifest->{xcat_version}-$manifest->{xcat_release}",
+        'all',
+    );
+    die "Unexpected DEB identity for $path: $metadata\n" unless $metadata eq $expected;
+    for my $field (qw(Breaks Conflicts Provides Replaces)) {
+        my $value = capture_command('dpkg-deb', '-f', $path, $field);
+        die "Unexpected DEB $field for $path: $value\n" if $value ne '';
+    }
+}
+
+sub usage {
+    return <<'USAGE';
+Usage: verify-release [--format all|rpm|deb] [--complete] RELEASE_DIRECTORY
+       verify-release --checksum-file SHA256SUMS --relative-file PATH
+                      --copied-file FILE
+USAGE
+}

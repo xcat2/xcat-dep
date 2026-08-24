@@ -112,6 +112,11 @@ Use these flags to skip specific operations:
   - Skips `createrepo --update`.
 - `--skip-tarball`
   - Skips tarball creation for both binary and SRPM repos.
+- `--skip-genesis`
+  - Skips the existing per-EL Genesis image build.
+- `--genesis-release <PATH>`
+  - Adds a verified OpenEmbedded Genesis RPM release alongside the existing
+    per-EL Genesis packages.
 - `--scrub-all-chroots`
   - Runs `mock -r <TARGET> --scrub=all` before build and collection.
 - `--keep-buildroots`
@@ -138,7 +143,9 @@ Use these flags to skip specific operations:
 Install baseline tooling:
 
 ```bash
-dnf -y install perl perl-Parallel-ForkManager mock createrepo tar rpm-build rpmdevtools dnf-plugins-core wget git
+dnf -y install perl perl-File-Slurper perl-IPC-Cmd \
+  perl-Parallel-ForkManager mock createrepo tar rpm-build rpmdevtools \
+  dnf-plugins-core wget git
 ```
 
 If you will build the `xCAT-genesis-base` package (that is, you will **not** use `--skip-genesis`), install xCAT build dependencies:
@@ -201,6 +208,39 @@ Notes:
 - Add `--skip-genesis` to skip the `xCAT-genesis-base` build (the only step that invokes
   `<XCAT_SOURCE>/buildrpms.pl`).
 - `<RUN_ID>` is optional; when omitted it is timestamp-based.
+
+# Add an OpenEmbedded Genesis Release
+
+Build the Genesis package release first, following
+[`genesis-openembedded/README.md`](genesis-openembedded/README.md). Then pass the
+result to the regular repository build:
+
+```bash
+cd <REPO_ROOT>
+perl ./mockbuild-all.pl \
+  --repo-root <REPO_ROOT> \
+  --xcat-source <XCAT_SOURCE> \
+  --genesis-release /path/to/xcat-genesis-release
+```
+
+The release is checked before any package is collected. Its RPMs and SRPMs are
+copied into each generated EL repository. Stale OpenEmbedded Genesis packages
+are removed from the output first, while the existing per-EL Genesis package
+remains available.
+
+Repository publication requires a release containing every supported Genesis
+architecture. The packages are `noarch`, and every management-node repository
+receives the full set of target images.
+
+The release checksums cover the unsigned input packages. If repository signing
+is enabled, `rpmsign` changes the deployed RPM bytes after collection.
+
+The OpenEmbedded packages use their own names and install under
+`/opt/xcat/share/xcat/netboot/genesis-openembedded/`. Publishing them does not
+replace the Genesis packages used by current xcat-core releases. Activation is
+a separate xcat-core change.
+
+Omit `--genesis-release` to keep using the existing Genesis builder.
 
 # Common Build Modes
 
