@@ -228,6 +228,25 @@ for ver in "${SELECTED_VERS[@]}"; do
     fi
 done
 
+# The pool is indexed and the metadata is signed from what is on disk now, not from what
+# was copied earlier, so check the packages again here: anything that changed between the
+# copy and this point would otherwise be published and signed as verified.
+if [[ -n "$GENESIS_RELEASE" && $DRY_RUN -eq 0 ]]; then
+    step "Re-verifying pooled Genesis packages"
+    for ver in "${SELECTED_VERS[@]}"; do
+        codename="${CODENAME_MAP[$ver]}"
+        for deb in "$GENESIS_RELEASE"/deb/*.deb; do
+            name=$(basename "$deb")
+            pooled="$APT_DIR/pool/main/$codename/$name"
+            "$GENESIS_VERIFIER" \
+                --checksum-file "$GENESIS_CHECKSUMS" \
+                --relative-file "deb/$name" \
+                --copied-file "$pooled"
+            echo "Re-verified pooled Genesis package: $pooled"
+        done
+    done
+fi
+
 step "Generating Packages indexes"
 
 for ver in "${SELECTED_VERS[@]}"; do
