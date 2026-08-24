@@ -8,7 +8,7 @@ use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Find qw(find);
 use File::Glob qw(bsd_glob);
-use File::Path qw(make_path);
+use File::Path qw(make_path remove_tree);
 use File::Temp qw(tempfile);
 use FindBin;
 use Getopt::Long qw(GetOptions);
@@ -291,6 +291,14 @@ if (!$dry_run) {
     # them as this run's output.
     reset_staging_repo($repo_dir);
     reset_staging_repo($srpm_repo_dir);
+    # Same for the builder results when this run is going to build them: a reused --run-id
+    # otherwise leaves a previous run's packages there, and a step that fails this time is
+    # collected from the last time it succeeded. --skip-build deliberately collects earlier
+    # output, from the repository-level build-output tree, and must keep what is there.
+    if (!$skip_build) {
+        remove_tree($build_root);
+        make_path($build_root);
+    }
 }
 
 print_step("Configuration");
