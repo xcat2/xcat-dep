@@ -492,12 +492,16 @@ my ($copied, $skipped_src, $missing_roots) = collect_rpms(
     dry_run  => $dry_run,
 );
 
-$copied += install_genesis_release_packages('rpm', $repo_dir)
-    if $genesis_release && !$dry_run;
-
+# Assert on what this run BUILT, before the Genesis release is added: the release is
+# installed from a verified directory rather than built here, so counting it first would
+# let a run whose builders all failed reach createrepo and the deployable tree, and fail
+# much later in assert_required_deps naming packages instead of the failed builds.
 if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
+
+$copied += install_genesis_release_packages('rpm', $repo_dir)
+    if $genesis_release && !$dry_run;
 
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
 # lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
@@ -520,15 +524,15 @@ my ($copied_srpms, $skipped_non_src, $missing_srpm_roots) = collect_srpms(
     dry_run  => $dry_run,
 );
 
+if (!$dry_run && $copied_srpms == 0) {
+    print "WARN: No source RPMs were collected. SRPM repo and tarball may be empty.\n";
+}
+
 $copied_srpms += install_genesis_release_packages('srpm', $srpm_repo_dir)
     if $genesis_release && !$dry_run;
 
 assert_genesis_release_copied($repo_dir, $srpm_repo_dir)
     if $genesis_release && !$dry_run;
-
-if (!$dry_run && $copied_srpms == 0) {
-    print "WARN: No source RPMs were collected. SRPM repo and tarball may be empty.\n";
-}
 
 if (!$skip_createrepo) {
     run_step(
