@@ -118,11 +118,11 @@ command -v apt-ftparchive >/dev/null 2>&1 \
     || die "apt-ftparchive not found. Install: sudo apt-get install apt-utils"
 command -v gpg >/dev/null 2>&1 \
     || die "gpg not found. Install: sudo apt-get install gnupg"
-command -v cmp >/dev/null 2>&1 \
-    || die "cmp not found. Install: sudo apt-get install diffutils"
 if [[ -n "$GENESIS_RELEASE" ]]; then
     command -v dpkg-deb >/dev/null 2>&1 \
         || die "dpkg-deb not found. Install: sudo apt-get install dpkg"
+    command -v cmp >/dev/null 2>&1 \
+        || die "cmp not found. Install: sudo apt-get install diffutils"
     GENESIS_CHECKSUMS=$(mktemp "${TMPDIR:-/tmp}/xcat-genesis-checksums.XXXXXX")
     cp -- "$GENESIS_RELEASE/SHA256SUMS" "$GENESIS_CHECKSUMS"
     "$GENESIS_VERIFIER" --complete --format deb "$GENESIS_RELEASE"
