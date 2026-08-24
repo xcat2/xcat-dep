@@ -7,10 +7,28 @@ use Cwd qw(abs_path cwd);
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Find qw(find);
-use File::Path qw(make_path);
+use File::Glob qw(bsd_glob);
+use File::Path qw(make_path remove_tree);
+use File::Temp qw(tempfile);
+use FindBin;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
+use lib "$FindBin::Bin/lib";
+use XCAT::BuildUtils qw(
+  capture_command
+  every_step_failed
+  hashes_equal
+  print_step
+  read_lines
+  require_command
+  run_command
+  shell_quote
+);
+use XCAT::GenesisRelease qw(
+  validated_release_checksums
+  verify_release_file
+);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
@@ -36,6 +54,8 @@ my $skip_xcat = 0;
 my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
+my $genesis_release = '';
+my $genesis_release_checksums;
 my $scrub_all_chroots = 0;
 my $dry_run = 0;
 my @extra_collect_dirs;
@@ -72,6 +92,7 @@ GetOptions(
     'skip-genesis!'     => \$skip_genesis,
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
+    'genesis-release=s' => \$genesis_release,
     'scrub-all-chroots!' => \$scrub_all_chroots,
     'collect-dir=s@'    => \@extra_collect_dirs,
     'dry-run!'          => \$dry_run,
@@ -86,7 +107,8 @@ $repo_root = abs_path($repo_root);
 my $SOURCE_DATE_EPOCH;
 $SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
 if (!$SOURCE_DATE_EPOCH && -f "$repo_root/Gitepoch") {
-    $SOURCE_DATE_EPOCH = slurp_chomp("$repo_root/Gitepoch");
+    my @gitepoch = read_lines("$repo_root/Gitepoch");
+    $SOURCE_DATE_EPOCH = $gitepoch[0] // '';
 }
 unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
     $SOURCE_DATE_EPOCH = `git -C \Q$repo_root\E log -1 --format=%ct HEAD 2>/dev/null`;
@@ -118,7 +140,7 @@ acquire_output_lock($output_base, $force_unlock);
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
-my $arch = capture('uname -m');
+my $arch = capture_command('uname', '-m');
 my %os = read_os_release('/etc/os-release');
 my $os_id = $os{ID} // '';
 my $version_id = $os{VERSION_ID} // '';
@@ -134,6 +156,25 @@ for my $bin (qw(perl uname createrepo_c tar find rpm)) {
 require_command('mock') if $scrub_all_chroots;
 require_command('rpmsign') if $gpg_sign;
 require_command('gpg')     if $gpg_sign;
+
+if ($genesis_release ne '') {
+    $genesis_release = abs_path($genesis_release)
+        or die "Cannot resolve --genesis-release directory\n";
+    die "Genesis release directory not found: $genesis_release\n"
+        unless -d $genesis_release;
+    my $verifier = "$script_dir/genesis-openembedded/verify-release";
+    die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    # Checksum, verify, checksum again. The verifier reads the tree it validates, so a
+    # release rewritten together with its SHA256SUMS while the verifier runs would satisfy
+    # both the verifier and any single pass taken afterwards; comparing the pass taken
+    # before with the one taken after is what closes that window.
+    my $checksums_before = validated_release_checksums($genesis_release);
+    run_command($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
+    my $checksums_after = validated_release_checksums($genesis_release);
+    die "Genesis release changed during verification\n"
+      unless hashes_equal($checksums_before, $checksums_after);
+    $genesis_release_checksums = $checksums_before;
+}
 
 # An explicit --target builds just that target; otherwise build the current host
 # arch across rh8/rh9/rh10 into a deployable per-EL xcat-dep repo. This script builds
@@ -154,6 +195,7 @@ print "lock:             $output_base/.lock (held)\n";
 print "gpg_sign:         $gpg_sign\n";
 print "gpg_key_name:     $gpg_key_name\n" if $gpg_sign;
 print "gpg_home:         " . ($gpg_home ne '' ? $gpg_home : '(default keyring)') . "\n" if $gpg_sign;
+print "genesis_release:  " . ($genesis_release || '(legacy builder)') . "\n";
 
 # Build (and deploy) EL targets concurrently. Each target is fully isolated -- distinct run_id
 # (target-folded), mock --uniqueext, /tmp work dir, xcat_src/dist/<target>, and deploy dir
@@ -164,7 +206,7 @@ $tgt_workers = scalar(@build_targets) if $tgt_workers > scalar(@build_targets);
 # mock build already gets a unique --uniqueext (separate chroot), so the only limit needed is
 # hardware: total concurrent builds across all targets stays <= $cap (default host nproc). The
 # per-target build-step concurrency is therefore the cap divided across the active targets.
-my $cap = $max_parallel > 0 ? $max_parallel : (capture('nproc') || 4);
+my $cap = $max_parallel > 0 ? $max_parallel : (capture_command('nproc') || 4);
 my $per_target_builds = defined($parallel_builds) ? $parallel_builds : int($cap / $tgt_workers);
 $per_target_builds = 1 if $per_target_builds < 1;
 print "parallel_targets: " . ($parallel_targets > 0 ? $parallel_targets : "auto($tgt_workers)") . "\n";
@@ -243,6 +285,20 @@ die "Missing perl builder script: $perl_builder\n"
 
 if (!$dry_run) {
     make_path($build_root, $log_root, $repo_dir, $srpm_repo_dir);
+    # The staging repositories hold what THIS invocation produces. A reused --run-id, or a
+    # rerun after a failed invocation, otherwise leaves an earlier run's packages in them,
+    # where collection never sees them, createrepo indexes them and deploy_target publishes
+    # them as this run's output.
+    reset_staging_repo($repo_dir);
+    reset_staging_repo($srpm_repo_dir);
+    # Same for the builder results when this run is going to build them: a reused --run-id
+    # otherwise leaves a previous run's packages there, and a step that fails this time is
+    # collected from the last time it succeeded. --skip-build deliberately collects earlier
+    # output, from the repository-level build-output tree, and must keep what is there.
+    if (!$skip_build) {
+        remove_tree($build_root);
+        make_path($build_root);
+    }
 }
 
 print_step("Configuration");
@@ -277,7 +333,7 @@ my @collect_roots;
 if ($scrub_all_chroots) {
     run_step(
         step => "Scrub all chroots for target $target",
-        cmd  => "mock -r " . sh_quote($target) . " --scrub=all",
+        cmd  => "mock -r " . shell_quote($target) . " --scrub=all",
         log  => "$log_root/scrub-all-chroots.log",
     );
 }
@@ -294,13 +350,13 @@ if (!$skip_build) {
             my $step_log    = "$log_root/$name";
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
             my $cmd = join(' ',
-                'perl', sh_quote($script),
-                '--mock-cfg', sh_quote($target),
-                '--mock-uniqueext', sh_quote($step_uniqueext),
-                '--result-dir', sh_quote($step_result),
-                '--log-dir', sh_quote($step_log),
+                'perl', shell_quote($script),
+                '--mock-cfg', shell_quote($target),
+                '--mock-uniqueext', shell_quote($step_uniqueext),
+                '--result-dir', shell_quote($step_result),
+                '--log-dir', shell_quote($step_log),
                 # host-local, run-scoped work dir so /tmp doesn't collide between runs
-                '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/$name"),
+                '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
                 ($skip_install ? '--skip-install' : ()),
             );
@@ -322,12 +378,12 @@ if (!$skip_build) {
         # forks one mock build per perl package (~7), which -- multiplied by parallel EL targets --
         # oversubscribes the host.
         my $cmd = join(' ',
-            'perl', sh_quote($perl_builder),
-            '--mock-cfg', sh_quote($target),
-            '--mock-uniqueext', sh_quote($perl_uniqueext),
-            '--result-dir', sh_quote($perl_result),
-            '--log-dir', sh_quote($perl_log),
-            '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
+            'perl', shell_quote($perl_builder),
+            '--mock-cfg', shell_quote($target),
+            '--mock-uniqueext', shell_quote($perl_uniqueext),
+            '--result-dir', shell_quote($perl_result),
+            '--log-dir', shell_quote($perl_log),
+            '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
             (($max_build_workers && $max_build_workers >= 1) ? ('--jobs', $max_build_workers) : ()),
             '--build-timestamp', $SOURCE_DATE_EPOCH,
             ($skip_install ? '--skip-install' : ()),
@@ -344,14 +400,14 @@ if (!$skip_build) {
     if (!$skip_xcat) {
         # Own HOME per target (buildrpms.pl uses $HOME/rpmbuild) so parallel targets don't race.
         my $xcat_home = "/tmp/mockbuild-all-$run_id/xcat-home";
-        my $mktree = join(' ', map { sh_quote("$xcat_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($xcat_home) . ' ' . join(' ',
-            'perl', sh_quote("$xcat_src/buildrpms.pl"),
-            '--target', sh_quote($target),
+        my $mktree = join(' ', map { shell_quote("$xcat_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
+        my $cmd = "mkdir -p $mktree && HOME=" . shell_quote($xcat_home) . ' ' . join(' ',
+            'perl', shell_quote("$xcat_src/buildrpms.pl"),
+            '--target', shell_quote($target),
             '--nproc', int($nproc),
             '--force',
             '--verbose',
-            '--xcat_dep_path', sh_quote($repo_root),
+            '--xcat_dep_path', shell_quote($repo_root),
         );
         push @build_steps, {
             id   => 'xcat',
@@ -375,15 +431,15 @@ if (!$skip_build) {
         my $genesis_home = "/tmp/mockbuild-all-$run_id/genesis-home";
         # buildrpms.pl's rpmdev-setuptree only runs during env setup, not per build, so create the
         # rpmbuild tree ourselves for this per-target HOME (else $HOME/rpmbuild/SOURCES is missing).
-        my $mktree = join(' ', map { sh_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
-            'perl', sh_quote("$xcat_src/buildrpms.pl"),
+        my $mktree = join(' ', map { shell_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
+        my $cmd = "mkdir -p $mktree && HOME=" . shell_quote($genesis_home) . ' ' . join(' ',
+            'perl', shell_quote("$xcat_src/buildrpms.pl"),
             '--package', 'xCAT-genesis-base',
-            '--target', sh_quote($target),
+            '--target', shell_quote($target),
             '--nproc', int($nproc),
             '--force',
             '--verbose',
-            '--xcat_dep_path', sh_quote($repo_root),
+            '--xcat_dep_path', shell_quote($repo_root),
         );
         push @build_steps, {
             id   => 'genesis',
@@ -440,6 +496,11 @@ my @srpm_collect_roots = (!$skip_xcat)
     ? uniq(@collect_roots, $xcat_srpms_dir)
     : uniq(@collect_roots);
 
+if ($genesis_release && !$dry_run) {
+    remove_genesis_packages($repo_dir, 0);
+    remove_genesis_packages($srpm_repo_dir, 1);
+}
+
 print_step('Collect RPM artifacts');
 print "collection roots:\n";
 print "  $_\n" for @collect_roots;
@@ -450,14 +511,24 @@ my ($copied, $skipped_src, $missing_roots) = collect_rpms(
     dry_run  => $dry_run,
 );
 
+# Assert on what this run BUILT, before the Genesis release is added: the release is
+# installed from a verified directory rather than built here, so counting it first would
+# let a run whose builders all failed reach createrepo and the deployable tree, and fail
+# much later in assert_required_deps naming packages instead of the failed builds.
 if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
+}
+
+if ($genesis_release) {
+    $copied += $dry_run
+      ? preview_genesis_release_packages('rpm', $repo_dir)
+      : install_genesis_release_packages('rpm', $repo_dir);
 }
 
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
 # lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
 if (!$skip_genesis && !$dry_run) {
-    for my $g (glob("$xcat_rpms_dir/xCAT-genesis-base-*.rpm")) {
+    for my $g (bsd_glob("$xcat_rpms_dir/xCAT-genesis-base-*.rpm")) {
         next if $g =~ /\.src\.rpm$/;
         copy($g, "$repo_dir/" . basename($g))
             or die "Failed to copy genesis-base $g -> $repo_dir: $!\n";
@@ -479,6 +550,15 @@ if (!$dry_run && $copied_srpms == 0) {
     print "WARN: No source RPMs were collected. SRPM repo and tarball may be empty.\n";
 }
 
+if ($genesis_release) {
+    $copied_srpms += $dry_run
+      ? preview_genesis_release_packages('srpm', $srpm_repo_dir)
+      : install_genesis_release_packages('srpm', $srpm_repo_dir);
+}
+
+assert_genesis_release_copied($repo_dir, $srpm_repo_dir)
+    if $genesis_release && !$dry_run;
+
 if (!$skip_createrepo) {
     run_step(
         step => 'Run createrepo',
@@ -496,8 +576,8 @@ if (!$skip_tarball) {
     my $cmd = join(' ',
         'tar', '--sort=name', '--owner=0', '--group=0',
         "--mtime=\@$SOURCE_DATE_EPOCH",
-        '-C', sh_quote($run_root),
-        '-czf', sh_quote($tarball),
+        '-C', shell_quote($run_root),
+        '-czf', shell_quote($tarball),
         'repo'
     );
     run_step(
@@ -508,8 +588,8 @@ if (!$skip_tarball) {
     my $srpm_cmd = join(' ',
         'tar', '--sort=name', '--owner=0', '--group=0',
         "--mtime=\@$SOURCE_DATE_EPOCH",
-        '-C', sh_quote($run_root),
-        '-czf', sh_quote($srpm_tarball),
+        '-C', shell_quote($run_root),
+        '-czf', shell_quote($srpm_tarball),
         'repo-src'
     );
     run_step(
@@ -567,16 +647,48 @@ sub deploy_target {
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
     make_path($dest);
-    for my $rpm (glob("$src/*.rpm")) {
+    for my $rpm (bsd_glob("$src/*.rpm")) {
         next if $rpm =~ /\.src\.rpm$/;
-        copy($rpm, "$dest/" . basename($rpm))
-            or die "Failed to copy $rpm -> $dest: $!\n";
+        my $destination = "$dest/" . basename($rpm);
+        publish_file($rpm, $destination);
+    }
+    if ($genesis_release) {
+        my @keep = map { basename($_) } genesis_release_files('rpm');
+        remove_genesis_packages($dest, 0, \@keep);
+        verify_genesis_release_packages('rpm', $dest);
     }
     assert_required_deps($dest);
     sign_and_index_repo($dest);
     write_dep_repo_metadata($dest, $rel);
-    my $n = scalar(grep { !/\.src\.rpm$/ } glob("$dest/*.rpm"));
+    my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
     print "Deployed rh$rel/$arch: $n rpms\n";
+}
+
+sub publish_file {
+    my ($source, $destination) = @_;
+    my ($temporary_fh, $temporary) = tempfile(
+        '.xcat-deploy.XXXXXX',
+        DIR    => dirname($destination),
+        UNLINK => 0,
+    );
+    close($temporary_fh) or die "Cannot close deployment staging file: $!\n";
+
+    my $mode = (stat($source))[2];
+    die "Cannot read mode from $source: $!\n" unless defined($mode);
+    my $published = eval {
+        copy($source, $temporary)
+          or die "Failed to stage $source -> $temporary: $!\n";
+        chmod($mode & 0x0fff, $temporary)
+          or die "Failed to set mode on $temporary: $!\n";
+        rename($temporary, $destination)
+          or die "Failed to publish $temporary -> $destination: $!\n";
+        1;
+    };
+    return if $published;
+
+    my $error = $@ || "Failed to publish $source\n";
+    unlink($temporary) if -e $temporary || -l $temporary;
+    die $error;
 }
 
 # createrepo_c command with upstream-matching, deterministic metadata. The tool's
@@ -585,25 +697,25 @@ sub deploy_target {
 sub createrepo_c_cmd {
     my ($dir) = @_;
     return 'createrepo_c --update --database '
-        . '--revision ' . sh_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
-        . sh_quote($dir);
+        . '--revision ' . shell_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
+        . shell_quote($dir);
 }
 
 sub sign_and_index_repo {
     my ($dir) = @_;
-    my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+    my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
-            . join(' ', map { sh_quote($_) } @rpms));
+            . join(' ', map { shell_quote($_) } @rpms));
     }
     run_simple(createrepo_c_cmd($dir));
     if ($gpg_sign) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
         unlink "$repomd.asc" if -f "$repomd.asc";
-        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . sh_quote($repomd));
-        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . sh_quote("$repomd.key"));
+        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . shell_quote($repomd));
+        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . shell_quote("$repomd.key"));
     }
 }
 
@@ -696,8 +808,11 @@ Options:
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
   --skip-perl             Skip perl package build step
   --skip-xcat             Skip xCAT buildrpms.pl step
+  --skip-genesis          Skip the existing per-EL Genesis image build
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
+  --genesis-release PATH  Add a verified OpenEmbedded Genesis RPM release alongside the
+                          existing per-EL Genesis packages
   --scrub-all-chroots     Run mock -r <target> --scrub=all before build/collect
   --collect-dir PATH      Additional directory to scan recursively for RPMs (repeatable)
   --dry-run               Print planned commands without executing
@@ -714,16 +829,6 @@ Notes:
 USAGE
 }
 
-sub print_step {
-    my ($msg) = @_;
-    print "\n== $msg ==\n";
-}
-
-sub require_command {
-    my ($cmd) = @_;
-    run_simple("command -v " . sh_quote($cmd) . " >/dev/null 2>&1");
-}
-
 sub run_simple {
     my ($cmd) = @_;
     my $rc = system($cmd);
@@ -731,18 +836,6 @@ sub run_simple {
         my $exit = $rc == -1 ? 255 : ($rc >> 8);
         die "Command failed (rc=$exit): $cmd\n";
     }
-}
-
-sub capture {
-    my ($cmd) = @_;
-    my $out = `$cmd`;
-    my $rc = $?;
-    if ($rc != 0) {
-        my $exit = $rc == -1 ? 255 : ($rc >> 8);
-        die "Command failed (rc=$exit): $cmd\n$out\n";
-    }
-    chomp $out;
-    return $out;
 }
 
 sub run_step {
@@ -765,12 +858,12 @@ sub run_step {
 
     my $full_cmd = $cmd;
     if ($cwd) {
-        $full_cmd = "cd " . sh_quote($cwd) . " && $cmd";
+        $full_cmd = "cd " . shell_quote($cwd) . " && $cmd";
     }
     if ($log) {
         my $log_dir = dirname($log);
         make_path($log_dir) if !-d $log_dir;
-        $full_cmd .= " > " . sh_quote($log) . " 2>&1";
+        $full_cmd .= " > " . shell_quote($log) . " 2>&1";
     }
 
     my $rc = system($full_cmd);
@@ -791,10 +884,14 @@ sub run_build_steps_parallel {
     # src.rpm). We collect whatever built and assert the REQUIRED set later (assert_required_deps),
     # matching the historical build behaviour.
     if ($dry_run || $max_processes <= 1 || @{$steps} == 1) {
+        my $serial_failures = 0;
         for my $step (@{$steps}) {
             my $ok = eval { run_step(%{$step}); 1 };
-            warn "WARN: build step failed (tolerated): $step->{step}\n" . ($@ // '') unless $ok;
+            next if $ok;
+            $serial_failures++;
+            warn "WARN: build step failed (tolerated): $step->{step}\n" . ($@ // '');
         }
+        assert_build_progress(scalar(@{$steps}), $serial_failures);
         return;
     }
 
@@ -854,12 +951,24 @@ sub run_build_steps_parallel {
         warn "WARN: some build steps failed (tolerated; required deps asserted after deploy):\n  "
             . join("\n  ", @lines) . "\n";
     }
+
+    assert_build_progress(scalar(@{$steps}), scalar(keys %failed));
+}
+
+# Individual failures are tolerated because some packages are el- or arch-pinned. ALL of them
+# failing is a different thing: the builder itself is unusable (no mock, a broken chroot, no
+# network), this invocation produced nothing, and every package the run would go on to publish
+# would come from somewhere other than this build.
+sub assert_build_progress {
+    my ($attempted, $failures) = @_;
+    return unless every_step_failed($attempted, $failures);
+    die "FATAL: every build step failed ($failures/$attempted). Check the build logs.\n";
 }
 
 # have_rpm: is there a non-src rpm named <name>-... under $dir?
 sub have_rpm {
     my ($dir, $name) = @_;
-    my @m = grep { !/\.src\.rpm$/ } glob("$dir/${name}-*.rpm");
+    my @m = grep { !/\.src\.rpm$/ } bsd_glob("$dir/${name}-*.rpm");
     return scalar(@m) > 0;
 }
 
@@ -877,6 +986,99 @@ sub assert_required_deps {
     my @missing = grep { !have_rpm($dir, $_) } @req;
     die "FATAL: required deps missing from $dir: @missing\n" if @missing;
     print "[deps] required set present in $dir: @req\n";
+}
+
+sub reset_staging_repo {
+    my ($directory) = @_;
+    return unless -d $directory;
+    opendir(my $dh, $directory) or die "Cannot read $directory: $!\n";
+    my @stale = grep { /\.rpm\z/ } readdir($dh);
+    closedir($dh) or die "Cannot close $directory: $!\n";
+    return unless @stale;
+    print "Removing " . scalar(@stale) . " package(s) left in $directory by an earlier run\n";
+    for my $name (@stale) {
+        unlink("$directory/$name")
+            or die "Cannot remove stale package $directory/$name: $!\n";
+    }
+    return;
+}
+
+sub remove_genesis_packages {
+    my ($directory, $source, $keep_names) = @_;
+    return unless -d $directory;
+    my %keep = map { $_ => 1 } @{ $keep_names // [] };
+    opendir(my $dh, $directory) or die "Cannot read $directory: $!\n";
+    my @names = grep { /^xCAT-genesis-openembedded-.*\.rpm\z/ } readdir($dh);
+    closedir($dh) or die "Cannot close $directory: $!\n";
+    for my $name (@names) {
+        next if $keep{$name};
+        my $path = "$directory/$name";
+        next if $source && $path !~ /\.src\.rpm\z/;
+        next if !$source && $path =~ /\.src\.rpm\z/;
+        unlink($path) or die "Cannot remove stale Genesis package $path: $!\n";
+    }
+}
+
+sub install_genesis_release_packages {
+    my ($prefix, $destination_root) = @_;
+    remove_genesis_packages($destination_root, $prefix eq 'srpm');
+
+    my $copied = 0;
+    for my $relative (genesis_release_files($prefix)) {
+        my $source = "$genesis_release/$relative";
+        my $destination = "$destination_root/" . basename($relative);
+        copy($source, $destination)
+            or die "Cannot install Genesis release package $source: $!\n";
+        verify_release_file($genesis_release_checksums, $relative, $destination);
+        $copied++;
+    }
+    die "Genesis release has no $prefix packages\n" unless $copied;
+    return $copied;
+}
+
+# Dry runs copy nothing, but they must still report what a real run would publish:
+# collect_rpms and collect_srpms drop every xCAT-genesis-openembedded package whenever
+# --genesis-release is given, so without this preview a dry run describes a repository
+# with no Genesis packages at all while the real run installs the whole set.
+sub preview_genesis_release_packages {
+    my ($prefix, $destination_root) = @_;
+    my @files = genesis_release_files($prefix);
+    die "Genesis release has no $prefix packages\n" unless @files;
+    for my $relative (@files) {
+        print "DRY-RUN install Genesis release package: $genesis_release/$relative"
+          . " -> $destination_root/" . basename($relative) . "\n";
+    }
+    return scalar(@files);
+}
+
+sub genesis_release_files {
+    my ($prefix) = @_;
+    my @files = sort grep {
+        /^\Q$prefix\E\/xCAT-genesis-openembedded-[^\/]+\.rpm\z/
+    } keys %{$genesis_release_checksums};
+    return @files;
+}
+
+sub verify_genesis_release_packages {
+    my ($prefix, $destination_root) = @_;
+    my @files = genesis_release_files($prefix);
+    die "Genesis release has no $prefix packages\n" unless @files;
+    for my $relative (@files) {
+        my $destination = "$destination_root/" . basename($relative);
+        verify_release_file($genesis_release_checksums, $relative, $destination);
+    }
+    return scalar(@files);
+}
+
+sub assert_genesis_release_copied {
+    my ($binary_directory, $source_directory) = @_;
+    for my $entry (
+        [ 'rpm', $binary_directory ],
+        [ 'srpm', $source_directory ],
+    ) {
+        my ($prefix, $destination_root) = @{$entry};
+        verify_genesis_release_packages($prefix, $destination_root);
+    }
 }
 
 sub collect_rpms {
@@ -913,6 +1115,8 @@ sub collect_rpms {
                 next;
             }
             my $base = basename($rpm);
+            next if $genesis_release
+              && $base =~ /^xCAT-genesis-openembedded-/;
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy: $rpm -> $dest/$base\n";
@@ -962,6 +1166,8 @@ sub collect_srpms {
                 next;
             }
             my $base = basename($rpm);
+            next if $genesis_release
+              && $base =~ /^xCAT-genesis-openembedded-/;
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy source: $rpm -> $dest/$base\n";
@@ -985,14 +1191,14 @@ sub resolve_mock_cfg {
         rocky          => 'rocky',
     );
     my $candidate = "${os_id}+epel-${rel}-${arch}";
-    my $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+    my $rc = system("mock -r " . shell_quote($candidate) . " --print-root-path >/dev/null 2>&1");
     if ($rc == 0) {
         return $candidate;
     }
     if (exists $short_forms{$os_id}) {
         my $short = $short_forms{$os_id};
         $candidate = "${short}+epel-${rel}-${arch}";
-        $rc = system("mock -r " . sh_quote($candidate) . " --print-root-path >/dev/null 2>&1");
+        $rc = system("mock -r " . shell_quote($candidate) . " --print-root-path >/dev/null 2>&1");
         if ($rc == 0) {
             print "Mock config resolved (short form): $candidate\n";
             return $candidate;
@@ -1053,7 +1259,7 @@ sub acquire_output_lock {
     if (mkdir $lock) {
         $HELD_LOCK = $lock;
         $LOCK_OWNER_PID = $$;
-        my $host = capture('uname -n') || 'unknown';
+        my $host = capture_command('uname', '-n') || 'unknown';
         if (open my $fh, '>', "$lock/owner") {
             print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
             close $fh;
@@ -1109,20 +1315,4 @@ sub read_os_release {
 sub uniq {
     my %seen;
     return grep { defined($_) && !$seen{$_}++ } @_;
-}
-
-sub slurp_chomp {
-    my ($path) = @_;
-    open my $fh, '<', $path or die "Cannot read $path: $!\n";
-    my $line = <$fh>;
-    close $fh;
-    chomp $line if defined $line;
-    return $line // '';
-}
-
-sub sh_quote {
-    my ($s) = @_;
-    $s = '' if !defined $s;
-    $s =~ s/'/'"'"'/g;
-    return "'$s'";
 }

@@ -38,7 +38,13 @@ use Pod::Usage qw(pod2usage);
 use POSIX qw(strftime);
 use Fcntl qw(:flock);
 use FindBin qw($RealBin);
-use lib $RealBin;
+use lib $RealBin, "$RealBin/lib";
+# NOTE: XCAT::GenesisRelease (the shared reader/validator of an OpenEmbedded Genesis package release,
+# the same module mockbuild-all.pl uses for the rpm side) is loaded ON DEMAND in the --genesis-release
+# block, NOT with `use` here. It pulls in XCAT::BuildUtils, which needs File::Slurper, and the Ubuntu
+# build hosts do not all carry that module: a compile-time import would make every apt build depend on
+# it, including the builds that never pass --genesis-release. Its subs are therefore called
+# fully-qualified.
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
@@ -90,12 +96,18 @@ my $no_verify_signature = 0;
 my $gpg_sign = 0;
 my $gpg_key_id = 'xcat@megware.com';
 my $gpg_home = '';
+my $genesis_release = '';            # OpenEmbedded Genesis package release to publish alongside
+my $genesis_release_checksums;       # its verified SHA256SUMS, read once at startup
 my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): path or URL (preferred)
 my $genesis_rpm = '';                # fallback: native-arch genesis rpm to convert
 my $genesis_rpm_ppc = '';            # fallback: cross-arch ppc genesis rpm to convert (amd64 host)
 my $require_ppc_genesis = 0;
 # File-scoped exclusive run-lock handle. MUST be file-scoped (not a lexical inside a block) so the
 # flock lives for the WHOLE process -- a lexical would close the FH and release the lock early.
+# Seconds to wait for a concurrent publisher before giving up (--publish-lock-wait). Long by default:
+# the other holder is a real publish (assemble + gate + swap), and waiting it out is almost always
+# better than failing the run.
+my $PUBLISH_LOCK_WAIT = 1800;
 my $RUN_LOCK_FH;
 
 # Builder map: manifest binary-package name -> the in-tree package dir that carries <dir>/sbuild.pl
@@ -137,6 +149,7 @@ my %DEST = (
     'apt-dir'          => \$apt_dir,
     'mirror'           => \$mirror,
     'gpg-key-id'       => \$gpg_key_id,
+    'genesis-release'  => \$genesis_release,
     'genesis-deb'      => \@genesis_debs,
     'genesis-rpm'      => \$genesis_rpm,
     'genesis-rpm-ppc'  => \$genesis_rpm_ppc,
@@ -160,6 +173,7 @@ $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
 $spec{'require-ppc-genesis!'}  = \$require_ppc_genesis;
 $spec{'publish!'}              = \$publish;        # run the finalization (assemble+sign+gate+tarball)
+$spec{'publish-lock-wait=i'}   = \$PUBLISH_LOCK_WAIT;   # seconds to queue behind another publisher
 $spec{'expect-arch=s'}         = \@expect_arch;   # repeatable; each value may be a space/comma list
 $spec{'verify-repo=s'}         = \$verify_repo_arg;   # standalone gate: --verify-repo=<apt_dir>
 $spec{'no-verify-repo!'}       = \$no_verify_repo;    # suppress the automatic pre-swap gate
@@ -252,6 +266,32 @@ if (length $verify_repo_arg) {
     verify_assembled_repo(\%MANIFEST, $adir, \@dist_list,
         resolve_expect_arches('standalone', $adir), !$no_verify_signature);
     exit 0;
+}
+
+# --genesis-release <DIR>: publish an OpenEmbedded Genesis package RELEASE alongside the packages this
+# run builds. The release is built and signed elsewhere (genesis-openembedded/build + package); this
+# script only VERIFIES it and copies the verified bytes into every selected suite. Resolved here --
+# after the standalone --verify-repo exit, so a verify-only run is not asked for a release, and before
+# any build or publish, so an invalid release fails the run before it touches the tree.
+if ($genesis_release ne '') {
+    $genesis_release = abs_path($genesis_release)
+        or die "FATAL: cannot resolve --genesis-release directory\n";
+    die "FATAL: Genesis release directory not found: $genesis_release\n" unless -d $genesis_release;
+    my $verifier = "$script_dir/genesis-openembedded/verify-release";
+    die "FATAL: Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    # Checksum, verify, checksum again -- the same window mockbuild-all.pl closes on the rpm side: the
+    # verifier reads the tree it validates, so a release rewritten together with its SHA256SUMS while
+    # the verifier runs would satisfy both the verifier and any single pass taken afterwards.
+    require XCAT::BuildUtils;
+    require XCAT::GenesisRelease;
+    my $before = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
+    XCAT::BuildUtils::run_command($^X, $verifier, '--complete', '--format', 'deb', $genesis_release);
+    my $after = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
+    die "FATAL: Genesis release changed during verification\n"
+        unless XCAT::BuildUtils::hashes_equal($before, $after);
+    $genesis_release_checksums = $before;
+    print_step('Genesis release');
+    print "  $genesis_release (" . scalar(genesis_release_debs()) . " deb packages)\n";
 }
 
 for my $cn (@dist_list) {
@@ -907,7 +947,6 @@ sub verify_assembled_repo {
 # matters, since the pipeline's finalization step always runs on one host (the amd64 Ubuntu builder).
 # ---------------------------------------------------------------------------------------------------
 my $PUBLISH_LOCK_FH;
-my $PUBLISH_LOCK_WAIT = 1800;   # seconds to wait for a concurrent publisher before giving up
 
 sub acquire_publish_lock {
     make_path($output_root);
@@ -930,6 +969,40 @@ sub acquire_publish_lock {
 # assemble_into($dir, $expect_arches): (re)assemble every --dists codename inside $dir from the
 # validated staging tree, index it per expected binary-<arch>, write + sign Release. $dir is the SIDE
 # tree, never the published one.
+# ---------------------------------------------------------------------------------------------------
+# OpenEmbedded Genesis release (--genesis-release)
+# ---------------------------------------------------------------------------------------------------
+# genesis_release_debs: the release-relative paths of the release's deb packages, taken from the
+# VERIFIED checksum manifest rather than from a directory listing -- a file that is not in SHA256SUMS
+# is not part of the release and must never reach the pool.
+sub genesis_release_debs {
+    return sort grep { m{^deb/xcat-genesis-openembedded-[^/]+\.deb\z} }
+        keys %{ $genesis_release_checksums // {} };
+}
+
+# install_genesis_release_debs($pool, $flat): copy every release deb into this codename's pool (and
+# the flat per-version dir), verifying each copy against the release checksums. Called with the
+# publish lock held, between the pool wipe and apt-ftparchive, so the bytes indexed and signed are
+# exactly the bytes verified here.
+#
+# A plain copy, never link(): the pool file must be its own inode. A hard link would leave the
+# published package and the verified release sharing one, where a write through either path silently
+# changes what the other holds.
+sub install_genesis_release_debs {
+    my ($pool, $flat) = @_;
+    my @files = genesis_release_debs();
+    die "FATAL: Genesis release has no deb packages\n" unless @files;
+    for my $relative (@files) {
+        my $base = basename($relative);
+        copy("$genesis_release/$relative", "$pool/$base")
+            or die "FATAL: cannot install Genesis release package $relative -> $pool: $!\n";
+        XCAT::GenesisRelease::verify_release_file($genesis_release_checksums, $relative, "$pool/$base");
+        copy("$pool/$base", "$flat/$base")
+            or die "FATAL: cannot install Genesis release package $relative -> $flat: $!\n";
+    }
+    return scalar(@files);
+}
+
 sub assemble_into {
     my ($dir, $expect) = @_;
     for my $cn (@dist_list) {
@@ -947,6 +1020,10 @@ sub assemble_into {
         # holds regardless of the --skip-genesis single-producer contract.
         my %best;   # "name|arch" => { file => path, ver => version }
         for my $deb (glob("$staging/$cn/*/*.deb")) {
+            # With --genesis-release the release is the ONLY source of OpenEmbedded Genesis packages:
+            # drop anything staged under that name so a leftover from an earlier run cannot be
+            # published as if it had been verified.
+            next if $genesis_release ne '' && basename($deb) =~ /^xcat-genesis-openembedded-/;
             my $name  = deb_field($deb, 'Package');
             my $darch = deb_field($deb, 'Architecture');
             my $dver  = deb_field($deb, 'Version');
@@ -966,6 +1043,10 @@ sub assemble_into {
             my $b = basename($deb);
             link($deb, "$pool/$b") or copy($deb, "$pool/$b");
             copy($deb, "$dir/$ver/$b");
+        }
+        if ($genesis_release ne '') {
+            my $n = install_genesis_release_debs($pool, "$dir/$ver");
+            print "  installed + verified $n Genesis release package(s) into $cn\n";
         }
         # Packages index per EXPECTED binary-<arch>: an arch's index carries that arch's debs + all
         # Architecture:all. Only the expected arches get an index -- writing a binary-ppc64el index
@@ -1220,6 +1301,8 @@ Produces the C<xcat-genesis-base> deb: a native deb is ingested as-is when provi
 (C<--genesis-deb>); otherwise the rpm is converted while B<preserving the maintained control>
 (Depends/Breaks/Replaces) and maintainer scripts. The amd64 host also converts the cross-arch
 ppc64el genesis (issue #7610) unless C<--require-ppc-genesis> gates it. Skipped with C<--skip-genesis>.
+An B<OpenEmbedded Genesis package release> is a separate, verified input published by
+C<--genesis-release>; it is not built here.
 
 =item Validate
 
@@ -1310,6 +1393,25 @@ Native-arch genesis rpm to convert / cross-arch ppc genesis rpm to convert on am
 
 Make a missing ppc64el genesis fatal (default: warn).
 
+=item B<--genesis-release> C<dir>
+
+Publish an B<OpenEmbedded Genesis package release> alongside the packages this run builds. The
+release is produced separately (see F<genesis-openembedded/README.md>); this option only verifies it
+and copies the verified bytes into every selected suite.
+
+The release must be B<complete> (every supported Genesis architecture) and must carry C<deb>
+packages. It is validated before any build or publish: its C<SHA256SUMS> is read, the shared
+verifier runs, and the checksums are read again -- a release rewritten together with its checksums
+while the verifier runs is rejected. During publication each package is copied into the codename's
+pool and re-checked against those checksums, with the publish lock held, so what is indexed and
+signed is exactly what was verified. Anything staged under the OpenEmbedded Genesis package name is
+dropped: the release is the only source of those packages.
+
+The OpenEmbedded packages carry their own names and install under
+F</opt/xcat/share/xcat/netboot/genesis-openembedded/>, so publishing them does not replace the
+C<xcat-genesis-base> package current xcat-core releases use. Omit the option to publish only the
+existing Genesis deb.
+
 =item B<--gpg-sign> B<--gpg-key-id> C<id> B<--gpg-home> C<dir>
 
 Sign C<Release>/C<InRelease> with the given key from the given GNUPGHOME.
@@ -1328,6 +1430,11 @@ the default gives 8 concurrent build streams for a 4-codename matrix (4 per host
 
 Skip the corresponding phase(s). C<--skip-build --skip-genesis> is the finalization run (it publishes
 by default; see C<--publish>). C<--skip-createrepo> forces "do not publish" and always wins.
+
+=item B<--publish-lock-wait> C<seconds>
+
+How long to queue behind another publisher before failing (default 1800). Publishing takes one
+global lock, so a concurrent publish is waited out rather than interleaved with.
 
 =item B<--publish>
 

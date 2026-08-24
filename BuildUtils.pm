@@ -137,6 +137,7 @@ sub standard_options {
         run-id=s build-timestamp=i build-number=i
         parallel-targets=i parallel-builds=i max-parallel=i
         gpg-sign! gpg-home=s
+        genesis-release=s
         dry-run!
     );
 }

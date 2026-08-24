@@ -76,6 +76,11 @@ Use these flags to skip specific operations:
   - Skips `createrepo --update`.
 - `--skip-tarball`
   - Skips tarball creation for both binary and SRPM repos.
+- `--skip-genesis`
+  - Skips the existing per-EL Genesis image build.
+- `--genesis-release <PATH>`
+  - Adds a verified OpenEmbedded Genesis RPM release alongside the existing
+    per-EL Genesis packages.
 - `--scrub-all-chroots`
   - Runs `mock -r <TARGET> --scrub=all` before build and collection.
 - `--collect-dir <PATH>`
@@ -92,7 +97,9 @@ Use these flags to skip specific operations:
 Install baseline tooling:
 
 ```bash
-dnf -y install perl perl-Parallel-ForkManager mock createrepo tar rpm-build rpmdevtools dnf-plugins-core wget git
+dnf -y install perl perl-File-Slurper perl-IPC-Cmd \
+  perl-Parallel-ForkManager mock createrepo tar rpm-build rpmdevtools \
+  dnf-plugins-core wget git
 ```
 
 If you will build xCAT packages (that is, you will **not** use `--skip-xcat`), install xCAT build dependencies:
@@ -146,6 +153,55 @@ Notes:
 - Install/smoke checks run by default inside child builders.
 - Add `--skip-install` to skip those checks.
 - `<RUN_ID>` is optional; when omitted it is timestamp-based.
+
+# Add an OpenEmbedded Genesis Release
+
+Build the Genesis package release first, following
+[`genesis-openembedded/README.md`](genesis-openembedded/README.md). Then pass the
+result to the regular repository build:
+
+```bash
+cd <REPO_ROOT>
+perl ./mockbuild-all.pl \
+  --repo-root <REPO_ROOT> \
+  --xcat-source <XCAT_SOURCE> \
+  --genesis-release /path/to/xcat-genesis-release
+```
+
+The release is checked before any package is collected. Its RPMs and SRPMs are
+copied into each generated EL repository. Stale OpenEmbedded Genesis packages
+are removed from the output first, while the existing per-EL Genesis package
+remains available.
+
+Repository publication requires a release containing every supported Genesis
+architecture. The packages are `noarch`, and every management-node repository
+receives the full set of target images.
+
+The release checksums cover the unsigned input packages. If repository signing
+is enabled, `rpmsign` changes the deployed RPM bytes after collection.
+
+The OpenEmbedded packages use their own names and install under
+`/opt/xcat/share/xcat/netboot/genesis-openembedded/`. Publishing them does not
+replace the Genesis packages used by current xcat-core releases. Activation is
+a separate xcat-core change.
+
+Omit `--genesis-release` to keep using the existing Genesis builder.
+
+The APT side takes the same option, on the run that **publishes** (the release is
+copied into every selected suite while the publish lock is held, so what is indexed
+and signed is what was verified):
+
+```bash
+./sbuild-all.pl --skip-build --skip-genesis \
+  --publish --expect-arch "amd64 ppc64el" \
+  --genesis-release /path/to/xcat-genesis-release \
+  --gpg-sign --gpg-key-id <id> --gpg-home <gpg-home>
+```
+
+Anything staged under the OpenEmbedded Genesis package name is dropped when
+`--genesis-release` is given: the verified release is the only source of those
+packages. `sbuild-all.pl` loads the release reader only when the option is used, so
+an apt build without it does not need `perl-File-Slurper` on the build host.
 
 # Build Unified Repository Without xCAT (`--skip-xcat`)
 
@@ -384,6 +440,8 @@ because the run builds nothing; state it explicitly if you want to build **and**
 ```bash
 ./sbuild-all.pl --dry-run --arch amd64 --dists noble               # print the plan, do nothing
 ./sbuild-all.pl --skip-build --skip-genesis --gpg-sign ...         # publish-only (re-index/re-sign staging)
+./sbuild-all.pl --skip-build --skip-genesis --publish \
+  --genesis-release <release-dir> ...                              # publish an OpenEmbedded Genesis release too
 # single host: build AND publish in one go
 ./sbuild-all.pl --arch amd64 --dists noble --genesis-rpm <rpm> \
   --publish --expect-arch amd64 --gpg-sign --gpg-key-id <id> --gpg-home <dir>
