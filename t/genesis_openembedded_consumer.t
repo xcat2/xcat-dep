@@ -49,7 +49,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 27
+    skip 'RPM repository tools require a root Linux builder', 28
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -72,6 +72,7 @@ SKIP: {
     test_deb_consumer();
     test_legacy_deb_consumer();
     test_partial_deb_release();
+    test_apt_lock();
 }
 
 done_testing();
@@ -359,9 +360,12 @@ sub test_failed_build_release {
     my $scratch_repo_root = "$tmp/rpm-empty-root";
     my $collected = "$tmp/rpm-empty-collect";
     my $run_repo = "$output/mockbuild-all/$target-empty/repo/" . capture_command('uname', '-m');
+    my $results = "$output/mockbuild-all/$target-empty/build-results/ipmitool-xcat";
     my $stale = "$run_repo/ipmitool-xcat-0-stale.noarch.rpm";
-    make_path($deployed, $scratch_repo_root, $collected, $run_repo);
+    my $kept = "$results/ipmitool-xcat-0-earlier.noarch.rpm";
+    make_path($deployed, $scratch_repo_root, $collected, $run_repo, $results);
     write_binary($stale, 'package left by an earlier run');
+    write_binary($kept, 'build output an earlier run produced');
 
     my $log = "$tmp/rpm-empty.log";
     my $status = run_capture(
@@ -385,6 +389,8 @@ sub test_failed_build_release {
         'a run that built nothing publishes no release package');
     ok(!-e $stale,
         'a package left by an earlier run is cleared from the staging repository');
+    ok(-e $kept,
+        'a run that skips building keeps the build results it collects from');
 }
 
 sub test_dry_run_release {
@@ -421,6 +427,39 @@ sub test_dry_run_release {
     like($printed, qr/^Collected binary RPMs: 15$/m,
         'the dry run counts the release packages a real run installs');
     ok(!-e "$run_repo/$package", 'the dry run installs nothing');
+}
+
+sub test_apt_lock {
+    my $apt_root = "$tmp/apt-lock";
+    my $input = "$apt_root/ubuntu24.04";
+    make_path($input, "$apt_root/.lock");
+    make_legacy_deb("$tmp/lock-deb", "$input/xcat-genesis-base-amd64_1_all.deb");
+
+    my $locked_log = "$tmp/deb-locked.log";
+    my $locked_status = run_capture(
+        $locked_log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        'ubuntu24.04',
+    );
+    isnt($locked_status, 0, 'a locked APT directory is not published into');
+    like(read_binary($locked_log), qr/\Q$apt_root\E is locked/,
+        'the refusal names the directory another run owns');
+
+    my $forced_log = "$tmp/deb-forced.log";
+    my $forced_status = run_capture(
+        $forced_log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        '--force-unlock',
+        'ubuntu24.04',
+    );
+    is($forced_status, 0, '--force-unlock takes over a stale lock');
+    ok(!-d "$apt_root/.lock", 'the lock is released when the run finishes');
 }
 
 sub make_package_release {
