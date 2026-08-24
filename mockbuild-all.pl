@@ -63,6 +63,7 @@ my $repo_dep = '';
 my $gpg_sign = 0;
 my $gpg_key_name = 'xCAT Signing Key';
 my $gpg_home = '';
+my $gpg_program = '';
 my $force_unlock = 0;
 my $HELD_LOCK;        # path of the output lock this process owns (for cleanup on exit)
 my $LOCK_OWNER_PID;   # pid that created the lock; forked children must NOT remove it
@@ -155,7 +156,7 @@ for my $bin (qw(perl uname createrepo_c tar find rpm)) {
 }
 require_command('mock') if $scrub_all_chroots;
 require_command('rpmsign') if $gpg_sign;
-require_command('gpg')     if $gpg_sign;
+$gpg_program = require_command('gpg') if $gpg_sign;
 
 if ($genesis_release ne '') {
     $genesis_release = abs_path($genesis_release)
@@ -706,7 +707,8 @@ sub sign_and_index_repo {
     my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
-        run_simple(qq(rpmsign --define "%_gpg_name $gpg_key_name" --addsign )
+        run_simple('rpmsign --define ' . shell_quote("%_gpg_name $gpg_key_name")
+            . ' --define ' . shell_quote("%__gpg $gpg_program") . ' --addsign '
             . join(' ', map { shell_quote($_) } @rpms));
     }
     run_simple(createrepo_c_cmd($dir));

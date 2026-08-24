@@ -196,8 +196,15 @@ if [[ $DRY_RUN -eq 0 ]]; then
         done
         echo "Removed dists/ and pool/ for: ${SELECTED_VERS[*]}"
     else
-        rm -rf "$APT_DIR/dists" "$APT_DIR/pool"
-        echo "Removed dists/ and pool/"
+        rm -rf "$APT_DIR/dists"
+        for ver in "${!CODENAME_MAP[@]}"; do
+            rm -rf "$APT_DIR/pool/main/${CODENAME_MAP[$ver]}"
+        done
+        echo "Removed dists/ and suite pools"
+    fi
+    if [[ -n "$GENESIS_RELEASE" ]]; then
+        rm -rf "$GENESIS_POOL"
+        echo "Removed the previous shared Genesis pool"
     fi
 fi
 
@@ -252,7 +259,7 @@ for ver in "${SELECTED_VERS[@]}"; do
     echo "$ver -> pool/main/$codename/"
     if [[ $DRY_RUN -eq 0 ]]; then
         for deb in "$src"/*.deb; do
-            if [[ -n "$GENESIS_RELEASE" && ${deb##*/} == xcat-genesis-openembedded-*.deb ]]; then
+            if [[ ${deb##*/} == xcat-genesis-openembedded-*.deb ]]; then
                 continue
             fi
             copy_deb "$deb" "$dst"
@@ -297,7 +304,7 @@ for ver in "${SELECTED_VERS[@]}"; do
     all_packages=$(
         cd "$APT_DIR"
         apt-ftparchive packages "pool/main/$codename/"
-        if [[ -n "$GENESIS_RELEASE" ]]; then
+        if [[ -d "$GENESIS_POOL" ]]; then
             apt-ftparchive packages "$GENESIS_POOL_RELATIVE/"
         fi
     )
