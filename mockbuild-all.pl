@@ -1298,7 +1298,8 @@ sub run_build_steps_parallel {
     }
 
     assert_build_progress(scalar(@{$steps}), scalar(keys %failed));
-    return sort keys %failed;
+    my @failed_ids = sort keys %failed;
+    return @failed_ids;
 }
 
 # The caller enforces zero tolerance per required package (verify_target_repo). ALL steps
@@ -1347,8 +1348,9 @@ sub gpg_key_fingerprint {
         elsif ($line =~ /^sub:/) { $want = 0; }
         elsif ($want && $line =~ /^fpr:+([0-9A-Fa-f]+):/) { push @fprs, $1; $want = 0; }
     }
-    return undef if @fprs != 1;
-    return $fprs[0];
+    my $fingerprint;
+    $fingerprint = $fprs[0] if @fprs == 1;
+    return $fingerprint;
 }
 
 # gpg_key_ids: all acceptable key ids (lowercased) for a signing key NAME -- the primary key id AND
@@ -1375,11 +1377,12 @@ sub gpg_key_ids {
 # when the rpm is not signed. Reads the RSA (or DSA) header pgpsig and pulls the "Key ID <hex>" field.
 sub rpm_signer_keyid {
     my ($rpm) = @_;
+    my $keyid;
     for my $tag (qw(RSAHEADER DSAHEADER)) {
         my $out = `rpm -qp --qf '%{$tag:pgpsig}' ${\ sh_quote($rpm)} 2>/dev/null` // '';
-        return lc($1) if $out =~ /Key ID\s+([0-9A-Fa-f]+)/i;
+        if ($out =~ /Key ID\s+([0-9A-Fa-f]+)/i) { $keyid = lc($1); last; }
     }
-    return undef;
+    return $keyid;
 }
 
 # rpm_evr: the single distinct EPOCH:VERSION-RELEASE of package $name's binary rpm(s) in $dir (epoch
@@ -1403,10 +1406,11 @@ sub rpm_evr {
         chomp $evr;
         $evrs{$evr} = 1 if $evr ne '';
     }
-    return undef unless %evrs;
+    my $evr;
+    return $evr unless %evrs;
     die "Multiple EVRs of $name present in $dir: " . join(', ', sort keys %evrs)
       . " (stale artifact not cleaned before the build)\n" if keys(%evrs) > 1;
-    my ($evr) = keys %evrs;
+    ($evr) = keys %evrs;
     return $evr;
 }
 
@@ -1556,9 +1560,10 @@ sub verify_target_repo {
 # so the standalone --verify-repo mode can require an explicit --target instead.
 sub derive_target_from_repo_path {
     my ($dir) = @_;
-    return undef unless defined $dir;
-    return "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
-    return undef;
+    my $tgt;
+    return $tgt unless defined $dir;
+    $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    return $tgt;
 }
 
 sub reset_staging_repo {
