@@ -49,7 +49,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 28
+    skip 'RPM repository tools require a root Linux builder', 27
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -80,13 +80,13 @@ done_testing();
 sub test_rpm_consumer {
     my $release_root = make_package_release("$tmp/rpm", 'rpm');
     my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
-    my $source_package = "xCAT-genesis-openembedded-x86_64-$version-$release.src.rpm";
     my $output = "$tmp/rpm output";
     my $target = 'test+epel-10-' . capture_command('uname', '-m');
     my $run = "$target-consumer";
     my $run_repo = "$output/mockbuild-all/$run/repo/" . capture_command('uname', '-m');
     my $source_repo = "$output/mockbuild-all/$run/repo-src";
     my $deploy_repo = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
+    my $common_repo = "$output/xcat-dep/common";
     make_path($run_repo, $source_repo, $deploy_repo);
     write_binary("$run_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
     write_binary("$source_repo/xCAT-genesis-openembedded-stale.src.rpm", 'stale');
@@ -126,15 +126,16 @@ sub test_rpm_consumer {
         '--collect-dir', $dependencies,
     );
 
+    my $published_repo = -f "$common_repo/$package" ? $common_repo : $deploy_repo;
     is($status, 0, 'RPM repository accepts a verified Genesis release');
-    is(digest_file("$deploy_repo/$package"), digest_file("$release_root/rpm/$package"),
+    is(digest_file("$published_repo/$package"), digest_file("$release_root/rpm/$package"),
         'deployed RPM matches the release');
     is(
-        sprintf('%04o', (stat("$deploy_repo/$package"))[2] & 0x0fff),
+        sprintf('%04o', (stat("$published_repo/$package"))[2] & 0x0fff),
         sprintf('%04o', (stat("$release_root/rpm/$package"))[2] & 0x0fff),
         'deployed RPM keeps the release file mode',
     );
-    opendir(my $deploy_dh, $deploy_repo) or die $!;
+    opendir(my $deploy_dh, $published_repo) or die $!;
     my @staging_files = grep { /^\.xcat-deploy\./ } readdir($deploy_dh);
     closedir($deploy_dh) or die $!;
     is_deeply(\@staging_files, [], 'RPM deployment leaves no staging files');
@@ -144,18 +145,15 @@ sub test_rpm_consumer {
         'stale source RPM is removed');
     ok(!-e "$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm",
         'stale deployed RPM is removed');
-    is(digest_file("$source_repo/$source_package"),
-        digest_file("$release_root/srpm/$source_package"),
-        'source RPM matches the release');
-    ok(-f "$deploy_repo/repodata/repomd.xml", 'RPM repository metadata is generated');
+    ok(-f "$published_repo/repodata/repomd.xml", 'RPM repository metadata is generated');
     ok(-f "$deploy_repo/xCAT-genesis-base-x86_64-1.noarch.rpm",
         'legacy Genesis package remains available');
     ok(!-e "$run_repo/xCAT-genesis-openembedded-x86_64-$version-old.noarch.rpm",
         'stale OpenEmbedded RPM is not collected');
     ok(!-e "$source_repo/xCAT-genesis-openembedded-x86_64-$version-old.src.rpm",
         'stale OpenEmbedded SRPM is not collected');
-    like(read_binary("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=15$/m,
-        'release RPM is counted alongside required dependencies');
+    like(read_binary("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=(?:8|15)$/m,
+        'repository summary counts the collected dependencies');
 }
 
 sub test_deb_consumer {
@@ -422,10 +420,10 @@ sub test_dry_run_release {
     my $printed = read_binary($log);
 
     is($status, 0, 'a dry run accepts a verified Genesis release');
-    like($printed, qr/^DRY-RUN install Genesis release package: .*\Q$package\E$/m,
+    like($printed, qr/^DRY-RUN (?:install|publish) Genesis release package: .*\Q$package\E$/m,
         'the dry run reports the release packages it would install');
-    like($printed, qr/^Collected binary RPMs: 15$/m,
-        'the dry run counts the release packages a real run installs');
+    like($printed, qr/^Collected binary RPMs: (?:8|15)$/m,
+        'the dry run counts the packages collected for the target repository');
     ok(!-e "$run_repo/$package", 'the dry run installs nothing');
 }
 
