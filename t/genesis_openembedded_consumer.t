@@ -49,7 +49,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 26
+    skip 'RPM repository tools require a root Linux builder', 27
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -358,7 +358,10 @@ sub test_failed_build_release {
     my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
     my $scratch_repo_root = "$tmp/rpm-empty-root";
     my $collected = "$tmp/rpm-empty-collect";
-    make_path($deployed, $scratch_repo_root, $collected);
+    my $run_repo = "$output/mockbuild-all/$target-empty/repo/" . capture_command('uname', '-m');
+    my $stale = "$run_repo/ipmitool-xcat-0-stale.noarch.rpm";
+    make_path($deployed, $scratch_repo_root, $collected, $run_repo);
+    write_binary($stale, 'package left by an earlier run');
 
     my $log = "$tmp/rpm-empty.log";
     my $status = run_capture(
@@ -380,6 +383,8 @@ sub test_failed_build_release {
         'the failure names the empty collection, not the missing dependencies');
     ok(!-e "$deployed/$package",
         'a run that built nothing publishes no release package');
+    ok(!-e $stale,
+        'a package left by an earlier run is cleared from the staging repository');
 }
 
 sub test_dry_run_release {
