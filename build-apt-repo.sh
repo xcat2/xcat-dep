@@ -195,7 +195,13 @@ copy_genesis_deb() {
     name=$(basename "$source")
     destination="$directory/$name"
     relative="deb/$name"
-    cp -- "$source" "$destination"
+    # Every selected suite receives the whole release, so a plain copy spends hundreds of
+    # megabytes per suite. --reflink=auto lets a filesystem that can share extents
+    # copy-on-write avoid that, while still giving the pool a file of its own: a link would
+    # leave the published package and the verified release sharing one inode, where a write
+    # through either path changes what the other holds.
+    cp --reflink=auto -- "$source" "$destination" 2>/dev/null \
+        || cp -- "$source" "$destination"
     "$GENESIS_VERIFIER" \
         --checksum-file "$GENESIS_CHECKSUMS" \
         --relative-file "$relative" \
