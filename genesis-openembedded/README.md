@@ -67,15 +67,21 @@ perl ./mockbuild-all.pl \
   [other build options]
 
 ./build-apt-repo.sh \
-  --genesis-release /path/to/xcat-genesis-release \
-  [DIST ...]
+  --genesis-release /path/to/xcat-genesis-release
 ```
 
-The RPM builder keeps its old per-EL Genesis build and adds the new packages.
-The APT builder does the same for each selected suite. Both consumers require
-all seven architectures and verify package identities and checksums before
-collecting packages. Every management-node repository receives every target
-image so it can provision nodes of another architecture.
+The RPM builder publishes the binary packages once under `xcat-dep/common`.
+The per-EL repositories keep the old Genesis packages and contain no copies of
+the OpenEmbedded packages. Source RPMs stay in the verified release directory.
+
+The APT builder publishes the DEBs once under
+`pool/main/xcat-genesis-openembedded`. Every suite indexes those same files.
+Genesis publication updates all suites together, so do not pass a `DIST`
+argument with `--genesis-release`.
+
+Both consumers require all seven architectures and verify package identities
+and checksums before publication. A management node can install an image for a
+different target architecture.
 
 Without `--genesis-release`, both builders keep their existing behavior. The
 new packages do not provide, replace, or obsolete the old package names. A
