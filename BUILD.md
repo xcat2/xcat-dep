@@ -168,14 +168,14 @@ perl ./mockbuild-all.pl \
   --genesis-release /path/to/xcat-genesis-release
 ```
 
-The release is checked before any package is collected. Its RPMs and SRPMs are
-copied into each generated EL repository. Stale OpenEmbedded Genesis packages
-are removed from the output first, while the existing per-EL Genesis package
-remains available.
+The release is checked before any package is collected. Its binary RPMs are
+published once under `xcat-dep/common`. Source RPMs stay in the verified
+release directory. Existing per-EL repositories keep the old Genesis packages
+and contain no OpenEmbedded copies.
 
 Repository publication requires a release containing every supported Genesis
-architecture. The packages are `noarch`, and every management-node repository
-receives the full set of target images.
+architecture. The packages are `noarch`, and the common repository contains
+the full set of target images.
 
 The release checksums cover the unsigned input packages. If repository signing
 is enabled, `rpmsign` changes the deployed RPM bytes after collection.
