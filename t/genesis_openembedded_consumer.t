@@ -204,6 +204,8 @@ sub test_deb_consumer {
     my @released = stat("$release_root/deb/$package");
     isnt("$pooled[0]:$pooled[1]", "$released[0]:$released[1]",
         'pooled DEB is published independently of the release file');
+    like(read_binary($log), qr/^Re-verified pooled Genesis package: \Q$pool_package\E$/m,
+        'pooled DEB is verified again before the indexes are generated');
 
     my $collision = "$tmp/apt-collision";
     make_path("$collision/ubuntu24.04");
