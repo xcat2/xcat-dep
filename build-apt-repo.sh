@@ -16,10 +16,16 @@ DRY_RUN=0
 GENESIS_RELEASE=""
 GENESIS_CHECKSUMS=""
 GENESIS_VERIFIER=""
+FORCE_UNLOCK=0
+HELD_LOCK=""
 
 cleanup() {
     if [[ -n "$GENESIS_CHECKSUMS" ]]; then
         rm -f -- "$GENESIS_CHECKSUMS"
+    fi
+    if [[ -n "$HELD_LOCK" ]]; then
+        rm -f -- "$HELD_LOCK/owner"
+        rmdir -- "$HELD_LOCK" 2>/dev/null || true
     fi
 }
 trap cleanup EXIT
@@ -57,6 +63,7 @@ Options:
   --skip-sign            Skip GPG signing (for testing)
   --genesis-release PATH Add a verified OpenEmbedded Genesis DEB release to each selected suite
   --dry-run              Print planned actions without executing
+  --force-unlock         Remove a stale <apt-dir>/.lock before acquiring it
   -h, --help             Show this help
 
 Examples:
@@ -84,6 +91,7 @@ while [[ $# -gt 0 ]]; do
         --skip-sign)   SKIP_SIGN=1; shift ;;
         --genesis-release) GENESIS_RELEASE="$2"; shift 2 ;;
         --dry-run)     DRY_RUN=1; shift ;;
+        --force-unlock) FORCE_UNLOCK=1; shift ;;
         -h|--help)     usage; exit 0 ;;
         -*)            die "Unknown option: $1" ;;
         *)             SELECTED_VERS+=("$1"); SUBSET=1; shift ;;
@@ -92,6 +100,30 @@ done
 
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 APT_DIR="${APT_DIR:-$REPO_ROOT/repos/apt}"
+
+# Everything from the pool wipe to the signature is one transaction over a shared tree, and
+# the packages are verified inside it: a second writer between the verification and
+# apt-ftparchive would be indexed and signed unchecked. Hold the tree for the whole run, with
+# an atomic mkdir (reliable over NFS, unlike flock) like mockbuild-all.pl does for its output.
+acquire_apt_lock() {
+    local lock="$APT_DIR/.lock"
+    [[ $DRY_RUN -eq 0 ]] || return 0
+    mkdir -p -- "$APT_DIR"
+    if [[ $FORCE_UNLOCK -eq 1 && -d "$lock" ]]; then
+        echo "force-unlock: removing stale lock $lock"
+        rm -f -- "$lock/owner"
+        rmdir -- "$lock" 2>/dev/null || true
+    fi
+    if mkdir -- "$lock" 2>/dev/null; then
+        HELD_LOCK="$lock"
+        printf 'host=%s\npid=%s\nepoch=%s\n' "$(uname -n)" "$$" "$(date +%s)" > "$lock/owner"
+        return 0
+    fi
+    [[ -d "$lock" ]] || die "Cannot create lock $lock"
+    die "APT directory $APT_DIR is locked ($lock): $(tr '\n' ' ' < "$lock/owner" 2>/dev/null)
+another build-apt-repo.sh run owns it; use a different --apt-dir or --force-unlock if stale."
+}
+acquire_apt_lock
 
 if [[ -n "$GENESIS_RELEASE" ]]; then
     [[ -d "$GENESIS_RELEASE" ]] || die "Genesis release directory not found: $GENESIS_RELEASE"
