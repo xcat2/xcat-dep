@@ -13,6 +13,7 @@ use XCAT::BuildUtils qw(
   digest_file
   digest_manifest
   display_quote
+  every_step_failed
   hashes_equal
   read_binary
   read_first_line
@@ -68,6 +69,10 @@ like($@, qr/Unsupported digest algorithm/, 'unknown digest is rejected');
 is(display_quote('plain/value'), 'plain/value', 'simple display value is unquoted');
 is(display_quote('two words'), q{'two words'}, 'display value with spaces is quoted');
 is(shell_quote("it's"), q{'it'"'"'s'}, 'shell quote escapes apostrophes');
+ok(every_step_failed(6, 6), 'every attempted step failing is reported');
+ok(!every_step_failed(6, 5), 'one surviving step is not a total failure');
+ok(!every_step_failed(0, 0), 'attempting no steps is not a failure');
+
 ok(hashes_equal({ a => 1 }, { a => 1 }), 'equal hashes match');
 ok(!hashes_equal({ a => 1 }, { a => 2 }), 'different hashes do not match');
 
