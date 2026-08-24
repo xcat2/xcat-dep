@@ -198,6 +198,12 @@ sub test_deb_consumer {
         'legacy Genesis DEB remains available');
     ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-stale.deb",
         'stale OpenEmbedded DEB is not collected');
+    # The published package must be a file of its own: sharing an inode with the release
+    # would make a later write through either path change what the other one holds.
+    my @pooled = stat($pool_package);
+    my @released = stat("$release_root/deb/$package");
+    isnt("$pooled[0]:$pooled[1]", "$released[0]:$released[1]",
+        'pooled DEB is published independently of the release file');
 
     my $collision = "$tmp/apt-collision";
     make_path("$collision/ubuntu24.04");
