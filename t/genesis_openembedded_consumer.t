@@ -49,13 +49,15 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 34
+    skip 'RPM repository tools require a root Linux builder', 38
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
+      && command_exists('rpmsign')
       && command_exists('rpm')
       && command_exists('createrepo_c');
     test_rpm_consumer();
+    test_signed_common_rpm_repository();
     test_legacy_rpm_consumer();
     test_partial_rpm_release();
     test_failed_build_release();
@@ -63,7 +65,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 32
+    skip 'APT repository tools are not installed', 43
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -286,6 +288,129 @@ sub test_deb_consumer {
         'partial suite failure explains the consistency requirement');
     is(digest_file($pool_package), $before_subset,
         'partial suite failure leaves the shared package unchanged');
+
+    my $jammy_before = digest_file(
+        "$apt_root/dists/jammy/main/binary-amd64/Packages"
+    );
+    my $resolute_before = digest_file(
+        "$apt_root/dists/resolute/main/binary-amd64/Packages"
+    );
+    write_binary(
+        "$apt_root/ubuntu24.04/xcat-genesis-openembedded-stale.deb",
+        'stale suite package',
+    );
+    my $refresh_log = "$tmp/deb-refresh.log";
+    my $refresh_status = run_capture(
+        $refresh_log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        'ubuntu24.04',
+    );
+    is($refresh_status, 0, 'a suite refresh reuses the shared Genesis pool');
+    is(digest_file($pool_package), $before_subset,
+        'a suite refresh leaves the shared package unchanged');
+    like(
+        read_binary("$apt_root/dists/noble/main/binary-amd64/Packages"),
+        qr{^Filename: pool/main/xcat-genesis-openembedded/\Q$package\E$}m,
+        'the refreshed suite still indexes the shared package',
+    );
+    ok(
+        !-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-stale.deb",
+        'a suite refresh does not restore the old per-suite package layout',
+    );
+    is(
+        digest_file("$apt_root/dists/jammy/main/binary-amd64/Packages"),
+        $jammy_before,
+        'a suite refresh leaves the jammy index alone',
+    );
+    is(
+        digest_file("$apt_root/dists/resolute/main/binary-amd64/Packages"),
+        $resolute_before,
+        'a suite refresh leaves the resolute index alone',
+    );
+
+    my $full_refresh_log = "$tmp/deb-full-refresh.log";
+    my $full_refresh_status = run_capture(
+        $full_refresh_log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+    );
+    is($full_refresh_status, 0, 'a full refresh reuses the shared Genesis pool');
+    is(digest_file($pool_package), $before_subset,
+        'a full refresh leaves the shared package unchanged');
+    for my $codename (qw(jammy noble resolute)) {
+        like(
+            read_binary("$apt_root/dists/$codename/main/binary-amd64/Packages"),
+            qr{^Filename: pool/main/xcat-genesis-openembedded/\Q$package\E$}m,
+            "$codename still indexes the shared package after a full refresh",
+        );
+    }
+}
+
+sub test_signed_common_rpm_repository {
+    my $release_root = make_package_release("$tmp/rpm-signed", 'rpm');
+    my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
+    my $output = "$tmp/rpm-signed-output";
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $dependencies = "$tmp/rpm-signed-dependencies";
+    my $scratch_repo_root = "$tmp/rpm-signed-repo-root";
+    my $common = "$output/xcat-dep/common";
+    my $gpg_home = "$tmp/rpm-signing-key";
+    my $identity = 'xCAT repository test <xcat-repository-test@example.invalid>';
+    make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
+    make_path($scratch_repo_root, $gpg_home);
+    chmod(0700, $gpg_home) or die $!;
+    system(
+        'gpg', '--batch', '--homedir', $gpg_home, '--passphrase', '',
+        '--quick-generate-key', $identity, 'rsa2048', 'sign', '0',
+    ) == 0 or die "could not create the repository test key";
+
+    my @perl_lib;
+    push(@perl_lib, write_forkmanager_stub("$tmp/perl-signed-stub"))
+      unless eval { require Parallel::ForkManager; 1 };
+    push(@perl_lib, $ENV{PERL5LIB})
+      if defined($ENV{PERL5LIB}) && $ENV{PERL5LIB} ne '';
+    local $ENV{PERL5LIB} = join(':', @perl_lib);
+
+    my $log = "$tmp/rpm-signed-consumer.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $scratch_repo_root,
+        '--xcat-source', $repo_root,
+        '--output', $output,
+        '--target', $target,
+        '--run-id', 'signed-consumer',
+        '--build-timestamp', $epoch,
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-genesis', '--skip-createrepo', '--skip-tarball',
+        '--collect-dir', $dependencies,
+        '--genesis-release', $release_root,
+        '--gpg-sign', '--gpg-key-name', $identity, '--gpg-home', $gpg_home,
+    );
+
+    diag(read_binary($log)) if $status;
+    is($status, 0, 'the common RPM repository can be signed');
+    ok(-f "$common/repodata/repomd.xml.key",
+        'the common repository exports its own public key');
+    is(
+        system(
+            'gpg', '--batch', '--homedir', $gpg_home, '--verify',
+            "$common/repodata/repomd.xml.asc",
+            "$common/repodata/repomd.xml",
+        ) >> 8,
+        0,
+        'the common repository metadata signature verifies',
+    );
+    like(
+        read_binary("$common/xcat-dep-common.repo"),
+        qr{^gpgkey=https://xcat\.org/files/xcat/repos/yum/devel/xcat-dep/common/repodata/repomd\.xml\.key$}m,
+        'the common repository file points to its own exported key',
+    );
 }
 
 sub test_legacy_rpm_consumer {
