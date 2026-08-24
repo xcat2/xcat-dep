@@ -54,6 +54,11 @@ Validate the directory before publishing it:
 The checksum file detects incomplete or changed output. It does not authenticate
 the release, so only accept a directory produced by a trusted build host.
 
+`verify-release` also checks the identity of each package, including a fixed
+build host and a build time taken from the source epoch. Those are reproduced
+by rpm 4.14.3, 4.16.1.3, 4.19.1.1 and 6.0.2, so an EL8 or later builder -- and
+a current Fedora one -- produces a release the verifier accepts.
+
 Pass that same directory to the repository builders:
 
 ```bash

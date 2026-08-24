@@ -163,6 +163,10 @@ if ($genesis_release ne '') {
         unless -d $genesis_release;
     my $verifier = "$script_dir/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    # Checksum, verify, checksum again. The verifier reads the tree it validates, so a
+    # release rewritten together with its SHA256SUMS while the verifier runs would satisfy
+    # both the verifier and any single pass taken afterwards; comparing the pass taken
+    # before with the one taken after is what closes that window.
     my $checksums_before = validated_release_checksums($genesis_release);
     run_command($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
     my $checksums_after = validated_release_checksums($genesis_release);
