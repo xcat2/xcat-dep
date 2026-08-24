@@ -49,7 +49,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 19
+    skip 'RPM repository tools require a root Linux builder', 22
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -58,6 +58,7 @@ SKIP: {
     test_rpm_consumer();
     test_legacy_rpm_consumer();
     test_partial_rpm_release();
+    test_failed_build_release();
 }
 
 SKIP: {
@@ -338,6 +339,38 @@ sub test_partial_deb_release {
     like(read_binary($log), qr/Genesis release is missing supported architectures/,
         'APT partial-release failure names the missing architectures');
     ok(-f $existing, 'partial DEB release does not remove the deployed package');
+}
+
+sub test_failed_build_release {
+    my $release_root = make_package_release("$tmp/rpm-empty", 'rpm');
+    my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
+    my $output = "$tmp/empty-output";
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
+    my $scratch_repo_root = "$tmp/rpm-empty-root";
+    my $collected = "$tmp/rpm-empty-collect";
+    make_path($deployed, $scratch_repo_root, $collected);
+
+    my $log = "$tmp/rpm-empty.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $scratch_repo_root,
+        '--output', $output,
+        '--target', $target,
+        '--run-id', 'empty',
+        '--build-timestamp', $epoch,
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-createrepo', '--skip-tarball',
+        '--genesis-release', $release_root,
+        '--collect-dir', $collected,
+    );
+
+    isnt($status, 0, 'a run that built nothing fails even with a Genesis release');
+    like(read_binary($log), qr/No binary RPMs were collected/,
+        'the failure names the empty collection, not the missing dependencies');
+    ok(!-e "$deployed/$package",
+        'a run that built nothing publishes no release package');
 }
 
 sub make_package_release {
