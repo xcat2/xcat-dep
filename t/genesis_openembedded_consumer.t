@@ -63,7 +63,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 17
+    skip 'APT repository tools are not installed', 32
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -187,9 +187,10 @@ sub test_deb_consumer {
     my $package = "xcat-genesis-openembedded-x86-64_${version}-${release}_all.deb";
     my $apt_root = "$tmp/apt";
     my $input = make_apt_inputs($apt_root, "$tmp/dummy-deb");
-    make_path($input, "$apt_root/pool/main/noble");
+    my $shared_pool = "$apt_root/pool/main/xcat-genesis-openembedded";
+    make_path($input, $shared_pool);
     write_binary("$input/xcat-genesis-openembedded-stale.deb", 'stale');
-    write_binary("$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb", 'stale');
+    write_binary("$shared_pool/xcat-genesis-openembedded-old.deb", 'stale');
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
     my $log = "$tmp/deb-consumer.log";
@@ -201,24 +202,43 @@ sub test_deb_consumer {
         '--skip-sign',
         '--genesis-release', $release_root,
     );
-    my $suite_package = "$apt_root/pool/main/noble/$package";
-    my $shared_package = "$apt_root/pool/main/xcat-genesis-openembedded/$package";
-    my $pool_package = -f $shared_package ? $shared_package : $suite_package;
+    my $pool_package = "$shared_pool/$package";
     my $amd64 = "$apt_root/dists/noble/main/binary-amd64/Packages";
-    my $ppc64el = "$apt_root/dists/noble/main/binary-ppc64el/Packages";
 
     is($status, 0, 'APT repository accepts a verified Genesis release');
     like(read_binary($log), qr/Verified copied Genesis package:/,
         'APT repository uses the shared copied-package verifier');
     is(digest_file($pool_package), digest_file("$release_root/deb/$package"),
         'pooled DEB matches the release');
-    ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-old.deb",
+    ok(!-e "$shared_pool/xcat-genesis-openembedded-old.deb",
         'stale pooled DEB is removed');
-    like(read_binary($amd64), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
-        'all-architecture DEB is indexed for amd64');
-    like(read_binary($ppc64el), qr/^Package: xcat-genesis-openembedded-x86-64$/m,
-        'all-architecture DEB is indexed for ppc64el');
-    ok(-f "$apt_root/dists/noble/Release", 'APT Release metadata is generated');
+    my @expected_packages = sort map {
+        deb_package_name($_) . "_${version}-${release}_all.deb"
+    } architectures();
+    is_deeply([ genesis_deb_names($shared_pool) ], \@expected_packages,
+        'shared APT pool contains one complete Genesis release');
+    my @suite_packages;
+    for my $codename (qw(jammy noble resolute)) {
+        push(@suite_packages, map { "$codename/$_" }
+            genesis_deb_names("$apt_root/pool/main/$codename"));
+    }
+    is_deeply(\@suite_packages, [], 'suite pools contain no OpenEmbedded Genesis packages');
+    for my $codename (qw(jammy noble resolute)) {
+        for my $architecture (qw(amd64 ppc64el)) {
+            my $packages = read_binary(
+                "$apt_root/dists/$codename/main/binary-$architecture/Packages"
+            );
+            like($packages,
+                qr{^Filename: pool/main/xcat-genesis-openembedded/\Q$package\E$}m,
+                "$codename $architecture index uses the shared Genesis package",
+            );
+        }
+    }
+    is_deeply(
+        [ grep { !-f "$apt_root/dists/$_/Release" } qw(jammy noble resolute) ],
+        [],
+        'APT Release metadata is generated for every suite',
+    );
     like(read_binary($amd64), qr/^Package: xcat-genesis-base-amd64$/m,
         'legacy Genesis DEB remains available');
     ok(!-e "$apt_root/pool/main/noble/xcat-genesis-openembedded-stale.deb",
@@ -244,13 +264,28 @@ sub test_deb_consumer {
         '--skip-sign',
         '--genesis-release', $release_root,
     );
-    my $collision_suite = "$collision/pool/main/noble/$package";
-    my $collision_shared = "$collision/pool/main/xcat-genesis-openembedded/$package";
-    my $collision_package = -f $collision_shared ? $collision_shared : $collision_suite;
+    my $collision_package = "$collision/pool/main/xcat-genesis-openembedded/$package";
     is($collision_status, 0, 'verified release replaces a stale source package');
     is(digest_file($collision_package),
         digest_file("$release_root/deb/$package"),
         'pooled package still matches the verified release');
+
+    my $subset_log = "$tmp/deb-subset.log";
+    my $before_subset = digest_file($pool_package);
+    my $subset_status = run_capture(
+        $subset_log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        '--genesis-release', $release_root,
+        'ubuntu24.04',
+    );
+    isnt($subset_status, 0, 'Genesis publication rejects a partial suite update');
+    like(read_binary($subset_log), qr/updates all suites; omit DIST arguments/,
+        'partial suite failure explains the consistency requirement');
+    is(digest_file($pool_package), $before_subset,
+        'partial suite failure leaves the shared package unchanged');
 }
 
 sub test_legacy_rpm_consumer {
@@ -545,6 +580,15 @@ sub genesis_rpm_names {
     return () unless -d $directory;
     opendir(my $dh, $directory) or die $!;
     my @names = sort grep { /^xCAT-genesis-openembedded-.*\.rpm$/ } readdir($dh);
+    closedir($dh) or die $!;
+    return @names;
+}
+
+sub genesis_deb_names {
+    my ($directory) = @_;
+    return () unless -d $directory;
+    opendir(my $dh, $directory) or die $!;
+    my @names = sort grep { /^xcat-genesis-openembedded-.*\.deb$/ } readdir($dh);
     closedir($dh) or die $!;
     return @names;
 }
