@@ -30,6 +30,22 @@ install -m 0644 image/* "$RPM_BUILD_ROOT/opt/xcat/share/xcat/netboot/genesis-ope
 # Keep this path stable across RPM build hosts. %%{_docdir} differs on SUSE.
 install -d -m 0755 "$RPM_BUILD_ROOT/usr/share/doc/%{name}"
 install -m 0644 xcat-core-revision "$RPM_BUILD_ROOT/usr/share/doc/%{name}/"
+install -d -m 0755 "$RPM_BUILD_ROOT/usr/libexec/xcat"
+install -m 0755 activate "$RPM_BUILD_ROOT/usr/libexec/xcat/genesis-openembedded-activate-%{genesis_arch}"
+
+%posttrans
+/usr/libexec/xcat/genesis-openembedded-activate-%{genesis_arch} %{genesis_arch}
+
+%postun
+if [ "$1" -eq 0 ] && [ -f /proc/cmdline ]; then
+    host_root=$(stat -c '%i %d' / 2>/dev/null) || host_root=
+    init_root=$(stat -c '%i %d' /proc/1/root/. 2>/dev/null) || init_root=
+    if [ -n "$host_root" ] && [ "$host_root" = "$init_root" ] \
+        && [ -x /opt/xcat/sbin/mknb ]; then
+        /opt/xcat/sbin/mknb %{genesis_arch} --remove-openembedded || :
+        /opt/xcat/sbin/mknb %{genesis_arch} || :
+    fi
+fi
 
 %files
 %defattr(-,root,root,-)
@@ -41,3 +57,5 @@ install -m 0644 xcat-core-revision "$RPM_BUILD_ROOT/usr/share/doc/%{name}/"
 /opt/xcat/share/xcat/netboot/genesis-openembedded/%{genesis_arch}
 %dir /usr/share/doc/%{name}
 %doc /usr/share/doc/%{name}/xcat-core-revision
+%dir /usr/libexec/xcat
+/usr/libexec/xcat/genesis-openembedded-activate-%{genesis_arch}

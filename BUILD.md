@@ -87,6 +87,8 @@ Use these flags to skip specific operations:
   - Adds extra artifact roots to the collection phase (repeatable).
 - `--dry-run`
   - Prints planned actions without executing them.
+- `--force-unlock`
+  - Removes a stale lock after the previous publisher has been checked.
 
 # Prerequisites
 
@@ -168,14 +170,21 @@ perl ./mockbuild-all.pl \
   --genesis-release /path/to/xcat-genesis-release
 ```
 
-The release is checked before any package is collected. Its RPMs and SRPMs are
-copied into each generated EL repository. Stale OpenEmbedded Genesis packages
-are removed from the output first, while the existing per-EL Genesis package
-remains available.
+The release is checked before any package is collected. Its binary RPMs are
+published once under `xcat-dep/common`. Source RPMs stay in the verified
+release directory. Existing per-EL repositories keep the old Genesis packages
+and contain no OpenEmbedded copies.
+
+The build holds separate locks for its work area and the published repository.
+It prepares the complete common repository in a temporary directory, then
+replaces the previous repository only after package verification, metadata
+generation, and signing have succeeded. If a stopped publisher leaves staging
+or backup directories behind, rerun it with ``--force-unlock`` to recover the
+previous repository before starting a new publication.
 
 Repository publication requires a release containing every supported Genesis
-architecture. The packages are `noarch`, and every management-node repository
-receives the full set of target images.
+architecture. The packages are `noarch`, and the common repository contains
+the full set of target images.
 
 The release checksums cover the unsigned input packages. If repository signing
 is enabled, `rpmsign` changes the deployed RPM bytes after collection.
@@ -186,6 +195,10 @@ replace the Genesis packages used by current xcat-core releases. Activation is
 a separate xcat-core change.
 
 Omit `--genesis-release` to keep using the existing Genesis builder.
+
+The per-target repository tarballs do not contain `xcat-dep/common`. For an
+offline installation, mirror the common repository with its metadata before
+disconnecting the installation network.
 
 # Build Unified Repository Without xCAT (`--skip-xcat`)
 

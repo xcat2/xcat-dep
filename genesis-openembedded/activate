@@ -1,0 +1,60 @@
+#!/bin/sh
+
+genesis_is_host_root() {
+    [ -f /proc/cmdline ] || return 1
+    host_root=$(stat -c '%i %d' / 2>/dev/null) || return 1
+    init_root=$(stat -c '%i %d' /proc/1/root/. 2>/dev/null) || return 1
+    [ "$host_root" = "$init_root" ]
+}
+
+genesis_mknb_exists() {
+    [ -x /opt/xcat/sbin/mknb ]
+}
+
+genesis_is_service_node() {
+    if command -v rpm >/dev/null 2>&1 \
+        && rpm -q xCATsn >/dev/null 2>&1; then
+        return 0
+    fi
+    command -v dpkg-query >/dev/null 2>&1 || return 1
+    dpkg-query -W -f='${Status}' xcatsn 2>/dev/null \
+        | grep -q '^install ok installed$'
+}
+
+genesis_uses_shared_tftp() {
+    [ -x /opt/xcat/sbin/tabdump ] || return 1
+    sharedtftp=$(
+        /opt/xcat/sbin/tabdump site 2>/dev/null \
+            | awk -F '"' '$2 == "sharedtftp" { print $4; exit }'
+    )
+    [ "$sharedtftp" = 1 ]
+}
+
+genesis_run_mknb() {
+    # shellcheck disable=SC1091
+    [ ! -r /etc/profile.d/xcat.sh ] || . /etc/profile.d/xcat.sh
+    /opt/xcat/sbin/mknb "$1"
+}
+
+genesis_activation_main() {
+    architecture=$1
+    case "$architecture" in
+        x86|x86_64|ppc64|ppc64le|armv7hf|aarch64|riscv64) ;;
+        *)
+            echo "Invalid Genesis architecture: $architecture" >&2
+            return 0
+            ;;
+    esac
+
+    genesis_is_host_root || return 0
+    genesis_mknb_exists || return 0
+    if genesis_is_service_node && genesis_uses_shared_tftp; then
+        return 0
+    fi
+    if ! genesis_run_mknb "$architecture"; then
+        echo "WARNING: mknb $architecture failed; rerun it after xcatd is available." >&2
+    fi
+    return 0
+}
+
+genesis_activation_main "$@"

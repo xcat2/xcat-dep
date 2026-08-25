@@ -56,8 +56,8 @@ the release, so only accept a directory produced by a trusted build host.
 
 `verify-release` also checks the identity of each package, including a fixed
 build host and a build time taken from the source epoch. Those are reproduced
-by rpm 4.14.3, 4.16.1.3, 4.19.1.1 and 6.0.2, so an EL8 or later builder -- and
-a current Fedora one -- produces a release the verifier accepts.
+by rpm 4.14.3, 4.16.1.3, 4.19.1.1, and 6.0.2. An EL8 or later builder, or a
+current Fedora builder, produces a release the verifier accepts.
 
 Pass that same directory to the repository builders:
 
@@ -67,21 +67,47 @@ perl ./mockbuild-all.pl \
   [other build options]
 
 ./build-apt-repo.sh \
-  --genesis-release /path/to/xcat-genesis-release \
-  [DIST ...]
+  --genesis-release /path/to/xcat-genesis-release
 ```
 
-The RPM builder keeps its old per-EL Genesis build and adds the new packages.
-The APT builder does the same for each selected suite. Both consumers require
-all seven architectures and verify package identities and checksums before
-collecting packages. Every management-node repository receives every target
-image so it can provision nodes of another architecture.
+The RPM builder publishes the binary packages once under `xcat-dep/common`.
+The per-EL repositories keep the old Genesis packages and contain no copies of
+the OpenEmbedded packages. Source RPMs stay in the verified release directory.
+The publisher locks the shared repository and replaces `common` only after the
+new package set, metadata, signatures, and local setup files are ready.
+
+The APT builder publishes the DEBs once under
+`pool/main/xcat-genesis-openembedded`. Every suite indexes those same files.
+Genesis publication updates all suites together, so do not pass a `DIST`
+argument with `--genesis-release`. The input directories for every configured
+suite must already exist. Later suite rebuilds keep using the shared pool. Pass
+a new release only when replacing the Genesis packages.
+
+APT metadata is generated in a temporary tree. New packages are copied into
+place before the metadata directories are replaced, and old packages are
+removed only after the new metadata is active. Rebuilt packages may keep the
+same filename; the previous files, signing key, and indexes are restored if
+publication fails. Use ``--force-unlock`` after an interrupted publisher to
+recover its saved repository and remove abandoned staging files.
+
+Both consumers require all seven architectures and verify package identities
+and checksums before publication. A management node can install an image for a
+different target architecture.
 
 Without `--genesis-release`, both builders keep their existing behavior. The
-new packages do not provide, replace, or obsolete the old package names. A
-separate xcat-core change will select the OpenEmbedded package and install
-namespace after the repositories carry it. Generated images and packages
-belong in release storage, not in Git.
+new packages do not provide, replace, or obsolete the old package names.
+xcat-core selects the OpenEmbedded install namespace when an image package is
+present and falls back to the old Genesis image otherwise. Package installation
+or update runs `mknb` for that package's architecture on nodes with local TFTP
+storage. With ``site.sharedtftp=0``, update service nodes before the management
+node so they can serve the exact architecture name immediately. Removing an
+image package retires its published files and rebuilds any legacy fallback that
+is still installed. Generated images and packages belong in release storage,
+not in Git.
+
+The per-target RPM tarballs do not include `xcat-dep/common`. Mirror that
+repository separately, including its metadata, when preparing an offline
+installation.
 
 Run the package tests on a Linux builder with RPM, DEB, and repository tools:
 
