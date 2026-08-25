@@ -49,7 +49,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 38
+    skip 'RPM repository tools require a root Linux builder', 40
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -65,7 +65,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 43
+    skip 'APT repository tools are not installed', 45
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -95,6 +95,14 @@ sub test_rpm_consumer {
     write_binary("$deploy_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
     write_binary("$common_repo/xCAT-genesis-openembedded-stale.noarch.rpm", 'stale');
     write_binary("$common_repo/xCAT-genesis-openembedded-stale.src.rpm", 'stale');
+
+    my $rpm_scripts = capture_command(
+        'rpm', '-qp', '--scripts', "$release_root/rpm/$package"
+    );
+    like($rpm_scripts, qr{/opt/xcat/sbin/mknb x86_64},
+        'the RPM refreshes its architecture after a package transaction');
+    like($rpm_scripts, qr/sharedtftp/,
+        'the RPM respects shared TFTP service nodes');
 
     my $dependencies = "$tmp/rpm-dependencies";
     my $scratch_repo_root = "$tmp/rpm-repo-root";
@@ -193,6 +201,13 @@ sub test_deb_consumer {
     make_path($input, $shared_pool);
     write_binary("$input/xcat-genesis-openembedded-stale.deb", 'stale');
     write_binary("$shared_pool/xcat-genesis-openembedded-old.deb", 'stale');
+
+    my $postinst = capture_command(
+        'dpkg-deb', '--info', "$release_root/deb/$package", 'postinst'
+    );
+    isnt($postinst, '', 'the DEB includes a post-installation script');
+    like($postinst, qr{/opt/xcat/sbin/mknb x86_64},
+        'the DEB refreshes its architecture after configuration');
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
     my $log = "$tmp/deb-consumer.log";
