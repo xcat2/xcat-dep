@@ -72,7 +72,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 47
+    skip 'APT repository tools are not installed', 49
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -317,8 +317,14 @@ sub test_deb_consumer {
     my @released = stat("$release_root/deb/$package");
     isnt("$pooled[0]:$pooled[1]", "$released[0]:$released[1]",
         'pooled DEB is published independently of the release file');
-    like(read_binary($log), qr/^Re-verified pooled Genesis package: \Q$pool_package\E$/m,
-        'pooled DEB is verified again before the indexes are generated');
+    my $publication_log = read_binary($log);
+    my $verified_at = index(
+        $publication_log,
+        "Re-verified pooled Genesis package: ",
+    );
+    my $indexed_at = index($publication_log, "== Generating Packages indexes ==");
+    ok($verified_at >= 0 && $verified_at < $indexed_at,
+        'staged DEBs are verified again before the indexes are generated');
 
     my $collision = "$tmp/apt-collision";
     make_apt_inputs($collision, "$tmp/collision-deb");
@@ -417,7 +423,10 @@ sub test_deb_consumer {
     }
 
     my $retained = "$shared_pool/xcat-genesis-openembedded-retained.deb";
+    my $retained_suite = "$apt_root/pool/main/noble/xcat-dep-retained.deb";
+    my $packages_before = digest_file($amd64);
     write_binary($retained, 'previous complete release');
+    write_binary($retained_suite, 'previous suite package');
     my $fail_bin = "$tmp/apt-fail-bin";
     make_path($fail_bin);
     write_binary("$fail_bin/apt-ftparchive", "#!/bin/sh\nexit 1\n");
@@ -434,6 +443,10 @@ sub test_deb_consumer {
     );
     isnt($failed_status, 0, 'a failed APT metadata build aborts publication');
     ok(-f $retained, 'a failed APT publication keeps the previous package set');
+    ok(-f $retained_suite,
+        'a failed APT publication keeps the previous suite package set');
+    ok(-f $amd64 && digest_file($amd64) eq $packages_before,
+        'a failed APT publication keeps the previous metadata');
 }
 
 sub test_signed_common_rpm_repository {

@@ -9,7 +9,7 @@ use File::Copy qw(copy);
 use File::Find qw(find);
 use File::Glob qw(bsd_glob);
 use File::Path qw(make_path remove_tree);
-use File::Temp qw(tempfile);
+use File::Temp qw(tempdir tempfile);
 use FindBin;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
@@ -65,8 +65,9 @@ my $gpg_key_name = 'xCAT Signing Key';
 my $gpg_home = '';
 my $gpg_program = '';
 my $force_unlock = 0;
-my $HELD_LOCK;        # path of the output lock this process owns (for cleanup on exit)
-my $LOCK_OWNER_PID;   # pid that created the lock; forked children must NOT remove it
+my @HELD_LOCKS;
+my $LOCK_OWNER_PID;
+my ($COMMON_STAGE, $COMMON_DESTINATION, $COMMON_BACKUP);
 
 GetOptions(
     'repo-root=s'       => \$repo_root,
@@ -134,10 +135,15 @@ $output_base = abs_path($output_base)
 $output_root = "$output_base/mockbuild-all" if $output_root eq '';
 # Deployable per-EL xcat-dep repo root (rh8/rh9/rh10/<arch> assembled here).
 $repo_dep = "$output_base/xcat-dep" if $repo_dep eq '';
+make_path($repo_dep) if !-d $repo_dep;
+$repo_dep = abs_path($repo_dep)
+    or die "Cannot resolve --repo-dep directory\n";
 
 # Fail-fast lock on the output base so a second run against the same --output aborts instead of
 # racing on the shared NFS tree. Held for the whole invocation; released by the exit handlers.
 acquire_output_lock($output_base, $force_unlock);
+acquire_repository_lock($repo_dep, $force_unlock)
+    if $repo_dep ne $output_base;
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
@@ -192,7 +198,8 @@ print_step('Targets to build');
 print "  $_\n" for @build_targets;
 print "output_base:      $output_base\n";
 print "deploy repo-dep:  $repo_dep\n";
-print "lock:             $output_base/.lock (held)\n";
+print "output lock:      $output_base/.lock (held)\n";
+print "repository lock:  $repo_dep/.lock (held)\n";
 print "gpg_sign:         $gpg_sign\n";
 print "gpg_key_name:     $gpg_key_name\n" if $gpg_sign;
 print "gpg_home:         " . ($gpg_home ne '' ? $gpg_home : '(default keyring)') . "\n" if $gpg_sign;
@@ -657,12 +664,35 @@ sub publish_genesis_common_repo {
         return;
     }
 
-    make_path($dest);
-    my $published = publish_genesis_release_packages('rpm', $dest);
-    verify_genesis_release_packages('rpm', $dest);
-    sign_and_index_repo($dest);
-    write_common_repo_metadata($dest);
+    $COMMON_STAGE = tempdir('.common.XXXXXXXX', DIR => $repo_dep, CLEANUP => 0);
+    my $published = publish_genesis_release_packages('rpm', $COMMON_STAGE);
+    verify_genesis_release_packages('rpm', $COMMON_STAGE);
+    sign_and_index_repo($COMMON_STAGE);
+    write_common_repo_metadata($COMMON_STAGE);
+    replace_common_repository($COMMON_STAGE, $dest);
     print "Published common Genesis repository: $published rpms\n";
+}
+
+sub replace_common_repository {
+    my ($staged, $destination) = @_;
+    my $backup = "$repo_dep/.common.previous.$$";
+    remove_tree($backup) if -e $backup || -l $backup;
+
+    $COMMON_DESTINATION = $destination;
+    if (-e $destination || -l $destination) {
+        rename($destination, $backup)
+          or die "Cannot preserve $destination before publication: $!\n";
+        $COMMON_BACKUP = $backup;
+    }
+    unless (rename($staged, $destination)) {
+        my $error = $!;
+        rename($backup, $destination) if $COMMON_BACKUP && -d $backup;
+        die "Cannot publish $destination: $error\n";
+    }
+    undef($COMMON_STAGE);
+    undef($COMMON_DESTINATION);
+    remove_tree($backup) if $COMMON_BACKUP && -d $backup;
+    undef($COMMON_BACKUP);
 }
 
 sub publish_file {
@@ -1267,16 +1297,16 @@ sub resolve_xcat_source {
 # Fail-fast advisory lock on the output base. Uses an atomic mkdir (portable and reliable over
 # NFS, unlike flock) of "<base>/.lock". A second run against the same --output dies immediately
 # rather than racing on the shared tree. Only the process that created the lock removes it.
-sub acquire_output_lock {
-    my ($base, $force) = @_;
+sub acquire_named_lock {
+    my ($base, $label, $force) = @_;
     my $lock = "$base/.lock";
     if ($force && -d $lock) {
         print "force-unlock: removing stale lock $lock\n";
         _rmdir_lock($lock);
     }
     if (mkdir $lock) {
-        $HELD_LOCK = $lock;
-        $LOCK_OWNER_PID = $$;
+        push(@HELD_LOCKS, $lock);
+        $LOCK_OWNER_PID //= $$;
         my $host = capture_command('uname', '-n') || 'unknown';
         if (open my $fh, '>', "$lock/owner") {
             print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
@@ -1289,10 +1319,20 @@ sub acquire_output_lock {
         my $info = '';
         if (open my $fh, '<', "$lock/owner") { local $/; $info = <$fh>; close $fh; }
         $info =~ s/\s+/ /g;
-        die "output $base is locked ($lock): $info\n"
-          . "another mockbuild-all run owns it; use a different --output or --force-unlock if stale.\n";
+        die "$label $base is locked ($lock): $info\n"
+          . "another mockbuild-all run owns it; use a different destination or --force-unlock if stale.\n";
     }
     die "Cannot create lock $lock: $!\n";
+}
+
+sub acquire_output_lock {
+    my ($base, $force) = @_;
+    acquire_named_lock($base, 'output', $force);
+}
+
+sub acquire_repository_lock {
+    my ($base, $force) = @_;
+    acquire_named_lock($base, 'repository', $force);
 }
 
 sub _rmdir_lock {
@@ -1301,16 +1341,33 @@ sub _rmdir_lock {
     rmdir $lock;
 }
 
-# Release the lock on any exit path (normal, die, or signal) -- but ONLY in the process that
-# created it. Forked children (per-builder and per-target ForkManager workers) inherit
-# $HELD_LOCK; without the pid guard their exit would delete the parent's lock mid-run.
-sub _release_lock_if_owner {
-    return unless $HELD_LOCK && defined $LOCK_OWNER_PID && $$ == $LOCK_OWNER_PID;
-    _rmdir_lock($HELD_LOCK) if -d $HELD_LOCK;
+# Release locks on every exit path, but only from the process that acquired them.
+# Forked build workers inherit the lock list and must leave the parent's locks alone.
+sub _restore_common_repository {
+    return unless defined($LOCK_OWNER_PID) && $$ == $LOCK_OWNER_PID;
+    remove_tree($COMMON_STAGE)
+      if $COMMON_STAGE && -d $COMMON_STAGE && !-l $COMMON_STAGE;
+    if ($COMMON_DESTINATION && $COMMON_BACKUP
+        && !-e $COMMON_DESTINATION && -d $COMMON_BACKUP) {
+        rename($COMMON_BACKUP, $COMMON_DESTINATION);
+    } elsif ($COMMON_DESTINATION && $COMMON_BACKUP
+        && -d $COMMON_DESTINATION && -d $COMMON_BACKUP) {
+        remove_tree($COMMON_BACKUP);
+    }
 }
-END { _release_lock_if_owner(); }
+
+sub _release_locks_if_owner {
+    return unless defined($LOCK_OWNER_PID) && $$ == $LOCK_OWNER_PID;
+    for my $lock (reverse(@HELD_LOCKS)) {
+        _rmdir_lock($lock) if -d $lock;
+    }
+}
+END {
+    _restore_common_repository();
+    _release_locks_if_owner();
+}
 for my $sig (qw(INT TERM HUP)) {
-    $SIG{$sig} = sub { _release_lock_if_owner(); exit 1; };
+    $SIG{$sig} = sub { exit 1; };
 }
 
 sub read_os_release {
