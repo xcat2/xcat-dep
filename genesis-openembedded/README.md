@@ -79,8 +79,9 @@ new package set, metadata, signatures, and local setup files are ready.
 The APT builder publishes the DEBs once under
 `pool/main/xcat-genesis-openembedded`. Every suite indexes those same files.
 Genesis publication updates all suites together, so do not pass a `DIST`
-argument with `--genesis-release`. Later suite rebuilds keep using the shared
-pool. Pass a new release only when replacing the Genesis packages.
+argument with `--genesis-release`. The input directories for every configured
+suite must already exist. Later suite rebuilds keep using the shared pool. Pass
+a new release only when replacing the Genesis packages.
 
 APT metadata is generated in a temporary tree. New packages are copied into
 place before the metadata directories are replaced, and old packages are
