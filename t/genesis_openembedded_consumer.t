@@ -52,7 +52,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 59
+    skip 'RPM repository tools require a root Linux builder', 60
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -114,6 +114,11 @@ sub test_rpm_consumer {
         capture_command('rpm', '-qpl', "$release_root/rpm/$package"),
         qr{/usr/libexec/xcat/genesis-openembedded-activate-x86_64$}m,
         'the RPM contains its architecture-specific activation helper',
+    );
+    like(
+        capture_command('rpm', '-qpl', "$release_root/rpm/$package"),
+        qr{^/usr/libexec/xcat/?$}m,
+        'the RPM owns its private helper directory',
     );
 
     my $dependencies = "$tmp/rpm-dependencies";
