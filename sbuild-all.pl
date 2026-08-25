@@ -98,6 +98,10 @@ my $gpg_key_id = 'xcat@megware.com';
 my $gpg_home = '';
 my $genesis_release = '';            # OpenEmbedded Genesis package release to publish alongside
 my $genesis_release_checksums;       # its verified SHA256SUMS, read once at startup
+# The OpenEmbedded Genesis debs are published ONCE, in a pool of their own that every suite indexes.
+# They are Architecture:all and identical for all suites, so a per-suite copy would multiply hundreds
+# of megabytes by the number of codenames for no gain.
+my $GENESIS_POOL_RELATIVE = 'pool/main/xcat-genesis-openembedded';
 my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): path or URL (preferred)
 my $genesis_rpm = '';                # fallback: native-arch genesis rpm to convert
 my $genesis_rpm_ppc = '';            # fallback: cross-arch ppc genesis rpm to convert (amd64 host)
@@ -290,6 +294,12 @@ if ($genesis_release ne '') {
     die "FATAL: Genesis release changed during verification\n"
         unless XCAT::BuildUtils::hashes_equal($before, $after);
     $genesis_release_checksums = $before;
+    # Every suite's Packages index points into the shared Genesis pool, and publishing a release
+    # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
+    # files that no longer exist. Publish a release for all of them or for none.
+    my @missing = grep { my $c = $_; !grep { $_ eq $c } @dist_list } known_codenames();
+    die "FATAL: --genesis-release updates the shared Genesis pool every suite indexes, so it must\n"
+      . "       cover all of them; --dists omits: @missing\n" if @missing;
     print_step('Genesis release');
     print "  $genesis_release (" . scalar(genesis_release_debs()) . " deb packages)\n";
 }
@@ -980,31 +990,38 @@ sub genesis_release_debs {
         keys %{ $genesis_release_checksums // {} };
 }
 
-# install_genesis_release_debs($pool, $flat): copy every release deb into this codename's pool (and
-# the flat per-version dir), verifying each copy against the release checksums. Called with the
-# publish lock held, between the pool wipe and apt-ftparchive, so the bytes indexed and signed are
-# exactly the bytes verified here.
+# install_genesis_release_debs($dir): (re)build the SHARED Genesis pool inside the side tree from
+# the verified release, verifying each copy against the release checksums. Called once per publish,
+# with the publish lock held and before any apt-ftparchive run, so the bytes indexed and signed are
+# exactly the bytes verified here. Wiping first is what retires packages an earlier release left.
 #
 # A plain copy, never link(): the pool file must be its own inode. A hard link would leave the
 # published package and the verified release sharing one, where a write through either path silently
 # changes what the other holds.
 sub install_genesis_release_debs {
-    my ($pool, $flat) = @_;
+    my ($dir) = @_;
     my @files = genesis_release_debs();
     die "FATAL: Genesis release has no deb packages\n" unless @files;
+    my $pool = "$dir/$GENESIS_POOL_RELATIVE";
+    wipe_tree($pool);
+    make_path($pool);
     for my $relative (@files) {
         my $base = basename($relative);
         copy("$genesis_release/$relative", "$pool/$base")
             or die "FATAL: cannot install Genesis release package $relative -> $pool: $!\n";
+        chmod(0644, "$pool/$base")
+            or die "FATAL: cannot set mode on $pool/$base: $!\n";
         XCAT::GenesisRelease::verify_release_file($genesis_release_checksums, $relative, "$pool/$base");
-        copy("$pool/$base", "$flat/$base")
-            or die "FATAL: cannot install Genesis release package $relative -> $flat: $!\n";
     }
     return scalar(@files);
 }
 
 sub assemble_into {
     my ($dir, $expect) = @_;
+    if ($genesis_release ne '') {
+        my $n = install_genesis_release_debs($dir);
+        print "  published + verified $n Genesis release package(s) into $GENESIS_POOL_RELATIVE\n";
+    }
     for my $cn (@dist_list) {
         my $ver = codename_to_version($cn);
         my $pool = "$dir/pool/main/$cn";
@@ -1020,10 +1037,10 @@ sub assemble_into {
         # holds regardless of the --skip-genesis single-producer contract.
         my %best;   # "name|arch" => { file => path, ver => version }
         for my $deb (glob("$staging/$cn/*/*.deb")) {
-            # With --genesis-release the release is the ONLY source of OpenEmbedded Genesis packages:
-            # drop anything staged under that name so a leftover from an earlier run cannot be
-            # published as if it had been verified.
-            next if $genesis_release ne '' && basename($deb) =~ /^xcat-genesis-openembedded-/;
+            # OpenEmbedded Genesis debs never belong to a suite pool -- they are published once
+            # into the shared pool. Drop anything staged under that name, so a leftover from an
+            # earlier run cannot be published as if it had come from a verified release.
+            next if basename($deb) =~ /^xcat-genesis-openembedded-/;
             my $name  = deb_field($deb, 'Package');
             my $darch = deb_field($deb, 'Architecture');
             my $dver  = deb_field($deb, 'Version');
@@ -1043,16 +1060,18 @@ sub assemble_into {
             my $b = basename($deb);
             link($deb, "$pool/$b") or copy($deb, "$pool/$b");
             copy($deb, "$dir/$ver/$b");
-        }
-        if ($genesis_release ne '') {
-            my $n = install_genesis_release_debs($pool, "$dir/$ver");
-            print "  installed + verified $n Genesis release package(s) into $cn\n";
+            # Served by a web server running as somebody else -- do not inherit the builder umask.
+            chmod(0644, "$pool/$b", "$dir/$ver/$b");
         }
         # Packages index per EXPECTED binary-<arch>: an arch's index carries that arch's debs + all
         # Architecture:all. Only the expected arches get an index -- writing a binary-ppc64el index
         # containing nothing but the Architecture:all debs would advertise a ppc64el repo that cannot
         # actually satisfy a ppc64el client (and would then be mistaken for "ppc was published").
+        # This suite's own pool PLUS the shared Genesis pool: one Packages index, two sources, each
+        # deb's Filename staying relative to the repository root so clients fetch it where it is.
         my $all = `cd ${\ sh_quote($dir)} && apt-ftparchive packages pool/main/$cn`;
+        $all .= `cd ${\ sh_quote($dir)} && apt-ftparchive packages $GENESIS_POOL_RELATIVE`
+            if -d "$dir/$GENESIS_POOL_RELATIVE";
         for my $a (@$expect) {
             my $bindir = "$dir/dists/$cn/main/binary-$a";
             make_path($bindir);
@@ -1096,6 +1115,7 @@ sub assemble_into {
         my $keysrc = "$repo_root/repomd.xml.key";
         if (-f $keysrc) { copy($keysrc, "$dir/xcat-dep.asc"); }
         else { run("${g}gpg --armor --export " . sh_quote($gpg_key_id) . " > " . sh_quote("$dir/xcat-dep.asc"), nofail => 1); }
+        chmod(0644, "$dir/xcat-dep.asc") if -f "$dir/xcat-dep.asc";
     }
 }
 
@@ -1402,10 +1422,16 @@ and copies the verified bytes into every selected suite.
 The release must be B<complete> (every supported Genesis architecture) and must carry C<deb>
 packages. It is validated before any build or publish: its C<SHA256SUMS> is read, the shared
 verifier runs, and the checksums are read again -- a release rewritten together with its checksums
-while the verifier runs is rejected. During publication each package is copied into the codename's
-pool and re-checked against those checksums, with the publish lock held, so what is indexed and
-signed is exactly what was verified. Anything staged under the OpenEmbedded Genesis package name is
-dropped: the release is the only source of those packages.
+while the verifier runs is rejected.
+
+The packages are published B<once>, into F<pool/main/xcat-genesis-openembedded>, and every suite's
+C<Packages> index points at that one copy: they are C<Architecture: all> and identical everywhere,
+so a per-suite copy would multiply hundreds of megabytes by the number of codenames. Because every
+suite indexes it, a release must be published for B<all> of them -- a run whose C<--dists> omits a
+suite is refused rather than leaving that suite indexing files the new release retired. Each package
+is copied and re-checked against the release checksums with the publish lock held, so what is
+indexed and signed is exactly what was verified, and anything staged under the OpenEmbedded Genesis
+package name is dropped: the release is the only source of those packages.
 
 The OpenEmbedded packages carry their own names and install under
 F</opt/xcat/share/xcat/netboot/genesis-openembedded/>, so publishing them does not replace the

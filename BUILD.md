@@ -87,6 +87,8 @@ Use these flags to skip specific operations:
   - Adds extra artifact roots to the collection phase (repeatable).
 - `--dry-run`
   - Prints planned actions without executing them.
+- `--force-unlock`
+  - Removes a stale lock after the previous publisher has been checked.
 
 # Prerequisites
 
@@ -168,14 +170,21 @@ perl ./mockbuild-all.pl \
   --genesis-release /path/to/xcat-genesis-release
 ```
 
-The release is checked before any package is collected. Its RPMs and SRPMs are
-copied into each generated EL repository. Stale OpenEmbedded Genesis packages
-are removed from the output first, while the existing per-EL Genesis package
-remains available.
+The release is checked before any package is collected. Its binary RPMs are
+published once under `xcat-dep/common`. Source RPMs stay in the verified
+release directory. Existing per-EL repositories keep the old Genesis packages
+and contain no OpenEmbedded copies.
+
+The build holds separate locks for its work area and the published repository.
+It prepares the complete common repository in a temporary directory, then
+replaces the previous repository only after package verification, metadata
+generation, and signing have succeeded. If a stopped publisher leaves staging
+or backup directories behind, rerun it with ``--force-unlock`` to recover the
+previous repository before starting a new publication.
 
 Repository publication requires a release containing every supported Genesis
-architecture. The packages are `noarch`, and every management-node repository
-receives the full set of target images.
+architecture. The packages are `noarch`, and the common repository contains
+the full set of target images.
 
 The release checksums cover the unsigned input packages. If repository signing
 is enabled, `rpmsign` changes the deployed RPM bytes after collection.
@@ -187,9 +196,7 @@ a separate xcat-core change.
 
 Omit `--genesis-release` to keep using the existing Genesis builder.
 
-The APT side takes the same option, on the run that **publishes** (the release is
-copied into every selected suite while the publish lock is held, so what is indexed
-and signed is what was verified):
+The APT side takes the same option, on the run that **publishes**:
 
 ```bash
 ./sbuild-all.pl --skip-build --skip-genesis \
@@ -198,10 +205,21 @@ and signed is what was verified):
   --gpg-sign --gpg-key-id <id> --gpg-home <gpg-home>
 ```
 
-Anything staged under the OpenEmbedded Genesis package name is dropped when
-`--genesis-release` is given: the verified release is the only source of those
-packages. `sbuild-all.pl` loads the release reader only when the option is used, so
-an apt build without it does not need `perl-File-Slurper` on the build host.
+The debs are published **once**, under `pool/main/xcat-genesis-openembedded`, and
+every suite's `Packages` index points at that one copy — they are
+`Architecture: all` and identical for every codename. Because every suite indexes
+it, a release must be published for all of them: a run whose `--dists` omits a
+suite is refused rather than leaving that suite indexing retired files. Each
+package is copied and re-checked against the release checksums while the publish
+lock is held, so what is indexed and signed is what was verified, and anything
+staged under the OpenEmbedded Genesis package name is dropped: the release is the
+only source of those packages. `sbuild-all.pl` loads the release reader only when
+the option is used, so an apt build without it does not need `perl-File-Slurper`
+on the build host.
+
+The per-target repository tarballs do not contain `xcat-dep/common`. For an
+offline installation, mirror the common repository with its metadata before
+disconnecting the installation network.
 
 # Build Unified Repository Without xCAT (`--skip-xcat`)
 
