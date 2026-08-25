@@ -57,4 +57,5 @@ fi
 /opt/xcat/share/xcat/netboot/genesis-openembedded/%{genesis_arch}
 %dir /usr/share/doc/%{name}
 %doc /usr/share/doc/%{name}/xcat-core-revision
+%dir /usr/libexec/xcat
 /usr/libexec/xcat/genesis-openembedded-activate-%{genesis_arch}
