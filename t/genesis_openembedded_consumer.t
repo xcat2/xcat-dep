@@ -41,11 +41,7 @@ my $release = 'snap202608210726';
 my $epoch = 1787293573;
 my $tmp = tempdir(CLEANUP => 1);
 
-SKIP: {
-    skip 'Genesis package activation requires Linux procfs semantics', 5
-      unless $^O eq 'linux';
-    test_activation_helper();
-}
+test_activation_helper();
 
 if ($ENV{XCAT_GENESIS_CI}) {
     BAIL_OUT('CI requires Linux root') unless $^O eq 'linux' && $> == 0;
@@ -55,7 +51,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 47
+    skip 'RPM repository tools require a root Linux builder', 52
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -72,7 +68,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 49
+    skip 'APT repository tools are not installed', 56
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -108,6 +104,8 @@ sub test_rpm_consumer {
     );
     like($rpm_scripts, qr{genesis-openembedded-activate-x86_64 x86_64},
         'the RPM refreshes its architecture after a package transaction');
+    like($rpm_scripts, qr{mknb x86_64 --remove-openembedded},
+        'the RPM removes published artifacts when the image is erased');
     like(
         capture_command('rpm', '-qpl', "$release_root/rpm/$package"),
         qr{/usr/libexec/xcat/genesis-openembedded-activate-x86_64$}m,
@@ -149,6 +147,11 @@ sub test_rpm_consumer {
     );
 
     is($status, 0, 'RPM repository accepts a verified Genesis release');
+    is(
+        sprintf('%04o', (stat($common_repo))[2] & 0x0fff),
+        '0755',
+        'the common repository is traversable by an unprivileged server',
+    );
     is(digest_file("$common_repo/$package"), digest_file("$release_root/rpm/$package"),
         'deployed RPM matches the release');
     is(
@@ -264,13 +267,22 @@ sub test_deb_consumer {
     isnt($postinst, '', 'the DEB includes a post-installation script');
     like($postinst, qr{genesis-openembedded-activate-x86_64 x86_64},
         'the DEB refreshes its architecture after configuration');
+    my $postrm = capture_command(
+        'dpkg-deb', '--info', "$release_root/deb/$package", 'postrm'
+    );
+    like($postrm, qr{mknb x86_64 --remove-openembedded},
+        'the DEB removes published artifacts when the image is erased');
+
+    my $apt_repo_root = "$tmp/apt-repository-root";
+    make_path($apt_repo_root);
+    write_binary("$apt_repo_root/repomd.xml.key", "test repository key\n");
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
     my $log = "$tmp/deb-consumer.log";
     my $status = run_capture(
         $log,
         'bash', $deb_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $apt_repo_root,
         '--apt-dir', $apt_root,
         '--skip-sign',
         '--genesis-release', $release_root,
@@ -283,6 +295,16 @@ sub test_deb_consumer {
         'APT repository uses the shared copied-package verifier');
     is(digest_file($pool_package), digest_file("$release_root/deb/$package"),
         'pooled DEB matches the release');
+    is(
+        sprintf('%04o', (stat($pool_package))[2] & 0x0fff),
+        '0644',
+        'the pooled DEB is readable by an unprivileged server',
+    );
+    is(
+        sprintf('%04o', (stat("$apt_root/xcat-dep.asc"))[2] & 0x0fff),
+        '0644',
+        'the APT signing key is readable by an unprivileged server',
+    );
     ok(!-e "$shared_pool/xcat-genesis-openembedded-old.deb",
         'stale pooled DEB is removed');
     my @expected_packages = sort map {
@@ -331,6 +353,26 @@ sub test_deb_consumer {
     ok($verified_at >= 0 && $verified_at < $indexed_at,
         'staged DEBs are verified again before the indexes are generated');
 
+    my $legacy_pool = "$apt_root/pool/main/noble/xcat-genesis-base-amd64_1_all.deb";
+    my $legacy_before = digest_file($legacy_pool);
+    make_legacy_deb(
+        "$tmp/rebuilt-legacy-deb",
+        "$input/xcat-genesis-base-amd64_1_all.deb",
+        'rebuilt repository test package',
+    );
+    my $replace_log = "$tmp/deb-replace.log";
+    my $replace_status = run_capture(
+        $replace_log,
+        'bash', $deb_consumer,
+        '--repo-root', $apt_repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        'ubuntu24.04',
+    );
+    is($replace_status, 0, 'a rebuilt DEB may keep its published filename');
+    isnt(digest_file($legacy_pool), $legacy_before,
+        'the rebuilt DEB replaces the earlier package atomically');
+
     my $collision = "$tmp/apt-collision";
     make_apt_inputs($collision, "$tmp/collision-deb");
     write_binary("$collision/ubuntu24.04/$package", 'different');
@@ -338,7 +380,7 @@ sub test_deb_consumer {
     my $collision_status = run_capture(
         $collision_log,
         'bash', $deb_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $apt_repo_root,
         '--apt-dir', $collision,
         '--skip-sign',
         '--genesis-release', $release_root,
@@ -354,7 +396,7 @@ sub test_deb_consumer {
     my $subset_status = run_capture(
         $subset_log,
         'bash', $deb_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $apt_repo_root,
         '--apt-dir', $apt_root,
         '--skip-sign',
         '--genesis-release', $release_root,
@@ -380,7 +422,7 @@ sub test_deb_consumer {
     my $refresh_status = run_capture(
         $refresh_log,
         'bash', $deb_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $apt_repo_root,
         '--apt-dir', $apt_root,
         '--skip-sign',
         'ubuntu24.04',
@@ -412,7 +454,7 @@ sub test_deb_consumer {
     my $full_refresh_status = run_capture(
         $full_refresh_log,
         'bash', $deb_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $apt_repo_root,
         '--apt-dir', $apt_root,
         '--skip-sign',
     );
@@ -441,7 +483,7 @@ sub test_deb_consumer {
     my $failed_status = run_capture(
         $failed_log,
         'bash', $deb_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $apt_repo_root,
         '--apt-dir', $apt_root,
         '--skip-sign',
         '--genesis-release', $release_root,
@@ -748,6 +790,26 @@ sub test_rpm_repository_lock {
     isnt($status, 0, 'a shared RPM repository cannot have two publishers');
     like(read_binary($log), qr/repository \Q$repository\E is locked/,
         'the lock failure names the shared repository');
+
+    my $backup = "$repository/.common.previous.999";
+    my $staging = "$repository/.common.abandoned";
+    make_path($backup, $staging);
+    write_binary("$backup/marker", "previous repository\n");
+    my $forced_log = "$tmp/rpm-repository-force.log";
+    my $forced_status = run_capture(
+        $forced_log,
+        $^X, $rpm_consumer,
+        '--repo-root', $repo_root,
+        '--output', "$tmp/rpm-force-output",
+        '--repo-dep', $repository,
+        '--target', 'test+epel-10-' . capture_command('uname', '-m'),
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-createrepo', '--skip-tarball', '--dry-run', '--force-unlock',
+    );
+    is($forced_status, 0, '--force-unlock recovers an interrupted RPM publication');
+    ok(-f "$repository/common/marker",
+        'the interrupted common repository is restored before publication');
+    ok(!-d $staging, 'abandoned common repository staging is removed');
 }
 
 sub test_apt_lock {
@@ -769,6 +831,11 @@ sub test_apt_lock {
     like(read_binary($locked_log), qr/\Q$apt_root\E is locked/,
         'the refusal names the directory another run owns');
 
+    my $backup = "$apt_root/dists/.jammy.previous.999";
+    my $staging = "$apt_root/.xcat-apt.abandoned";
+    make_path($backup, $staging);
+    write_binary("$backup/marker", "previous repository\n");
+
     my $forced_log = "$tmp/deb-forced.log";
     my $forced_status = run_capture(
         $forced_log,
@@ -781,71 +848,53 @@ sub test_apt_lock {
     );
     is($forced_status, 0, '--force-unlock takes over a stale lock');
     ok(!-d "$apt_root/.lock", 'the lock is released when the run finishes');
+    ok(-f "$apt_root/dists/jammy/marker",
+        'the interrupted APT metadata directory is restored');
+    ok(!-d $staging, 'abandoned APT transaction staging is removed');
 }
 
 sub test_activation_helper {
-    my $root = "$tmp/activation-root";
-    my $bin = "$tmp/activation-bin";
+    my $activation = read_binary("$repo_root/genesis-openembedded/activate");
+    unlike($activation, qr/XCAT_GENESIS_ROOT/,
+        'the root package helper has no environment-controlled execution root');
+    $activation =~ s/\ngenesis_activation_main "\$\@"\s*\z/\n/
+      or BAIL_OUT('the activation helper has no reusable main boundary');
+
+    my $driver = "$tmp/activation-driver";
     my $log = "$tmp/activation.log";
     my $output = "$tmp/activation-output.log";
-    make_path(
-        "$root/proc/1",
-        "$root/opt/xcat/sbin",
-        $bin,
-    );
-    write_binary("$root/proc/cmdline", "test\n");
-    symlink($root, "$root/proc/1/root") or die "Cannot create proc root link: $!";
     write_binary(
-        "$root/opt/xcat/sbin/mknb",
-        <<'SH',
-#!/bin/sh
-echo "$*" >>"$XCAT_TEST_LOG"
-exit "${XCAT_TEST_MKNB_STATUS:-0}"
+        $driver,
+        $activation
+          . <<'SH',
+genesis_is_host_root() { return 0; }
+genesis_mknb_exists() { return 0; }
+genesis_is_service_node() { [ "${XCAT_TEST_SERVICE_NODE:-0}" = 1 ]; }
+genesis_uses_shared_tftp() { [ "${XCAT_TEST_SHAREDTFTP:-0}" = 1 ]; }
+genesis_run_mknb() {
+    printf '%s\n' "$1" >>"$XCAT_TEST_LOG"
+    return "${XCAT_TEST_MKNB_STATUS:-0}"
+}
+genesis_activation_main "$@"
 SH
     );
-    write_binary(
-        "$root/opt/xcat/sbin/tabdump",
-        <<'SH',
-#!/bin/sh
-printf '"sharedtftp","%s"\n' "${XCAT_TEST_SHAREDTFTP:-0}"
-SH
-    );
-    write_binary(
-        "$bin/rpm",
-        <<'SH',
-#!/bin/sh
-[ "${XCAT_TEST_SERVICE_NODE:-0}" = "1" ]
-SH
-    );
-    chmod(0755,
-        "$root/opt/xcat/sbin/mknb",
-        "$root/opt/xcat/sbin/tabdump",
-        "$bin/rpm",
-    ) or die "Cannot make activation fixtures executable: $!";
+    chmod(0755, $driver) or die "Cannot make activation driver executable: $!";
 
-    local $ENV{XCAT_GENESIS_ROOT} = $root;
     local $ENV{XCAT_TEST_LOG} = $log;
-    local $ENV{PATH} = "$bin:$ENV{PATH}";
-    my $status = run_capture(
-        $output, "$repo_root/genesis-openembedded/activate", 'x86_64'
-    );
+    my $status = run_capture($output, $driver, 'x86_64');
     is($status, 0, 'the activation helper accepts a local-TFTP node');
     is(read_binary($log), "x86_64\n", 'the activation helper runs mknb for one architecture');
 
     write_binary($log, '');
     local $ENV{XCAT_TEST_SERVICE_NODE} = 1;
     local $ENV{XCAT_TEST_SHAREDTFTP} = 1;
-    $status = run_capture(
-        $output, "$repo_root/genesis-openembedded/activate", 'ppc64le'
-    );
+    $status = run_capture($output, $driver, 'ppc64le');
     is($status, 0, 'a shared-TFTP service node is accepted');
     is(read_binary($log), '', 'a shared-TFTP service node does not rebuild Genesis');
 
     local $ENV{XCAT_TEST_SERVICE_NODE} = 0;
     local $ENV{XCAT_TEST_MKNB_STATUS} = 1;
-    $status = run_capture(
-        $output, "$repo_root/genesis-openembedded/activate", 'ppc64le'
-    );
+    $status = run_capture($output, $driver, 'ppc64le');
     is($status, 0, 'an mknb failure does not fail the package transaction');
 }
 
@@ -929,13 +978,14 @@ sub make_rpm_dependencies {
 }
 
 sub make_legacy_deb {
-    my ($root, $output) = @_;
+    my ($root, $output, $description) = @_;
+    $description //= 'repository test package';
     make_path("$root/DEBIAN");
     write_binary(
         "$root/DEBIAN/control",
         "Package: xcat-genesis-base-amd64\nVersion: 1\nArchitecture: all\n"
           . "Maintainer: xCAT <xcat-user\@lists.sourceforge.net>\n"
-          . "Description: repository test package\n",
+          . "Description: $description\n",
     );
     die "Cannot build legacy test DEB\n"
       if run_capture(

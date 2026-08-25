@@ -386,6 +386,11 @@ sub exercise_packager {
             qr{posttrans scriptlet.*\n/usr/libexec/xcat/genesis-openembedded-activate-x86_64 x86_64\n}s,
             'RPM refreshes the installed architecture after the transaction',
         );
+        like(
+            read_binary($contents_log),
+            qr{postuninstall scriptlet.*mknb x86_64 --remove-openembedded}s,
+            'RPM retires published artifacts after erasing the image',
+        );
     } else {
         is(run_capture($contents_log, 'dpkg-deb', '-c', "$first/$relative"), 0,
             'DEB payload can be listed');
@@ -399,12 +404,17 @@ sub exercise_packager {
         opendir(my $control_dh, $control) or die $!;
         my @control_files = sort grep { $_ ne '.' && $_ ne '..' } readdir($control_dh);
         closedir($control_dh) or die $!;
-        is_deeply(\@control_files, [ qw(control md5sums postinst) ],
-            'DEB contains only the expected maintainer script');
+        is_deeply(\@control_files, [ qw(control md5sums postinst postrm) ],
+            'DEB contains the expected installation and removal scripts');
         like(
             read_binary("$control/postinst"),
             qr{^#!/bin/sh\n/usr/libexec/xcat/genesis-openembedded-activate-x86_64 x86_64\nexit 0\n$},
             'DEB refreshes the installed architecture after configuration',
+        );
+        like(
+            read_binary("$control/postrm"),
+            qr{mknb x86_64 --remove-openembedded},
+            'DEB retires published artifacts after erasing the image',
         );
     }
 }
