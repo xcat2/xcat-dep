@@ -39,6 +39,7 @@ if [ "$service_node" -eq 1 ] && [ -x "$tabdump" ]; then
     [ "$sharedtftp" = "1" ] && exit 0
 fi
 
+# shellcheck disable=SC1090
 [ ! -r "$profile" ] || . "$profile"
 if ! "$mknb" "$architecture"; then
     echo "WARNING: mknb $architecture failed; rerun it after xcatd is available." >&2
