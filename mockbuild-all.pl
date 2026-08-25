@@ -68,6 +68,9 @@ my $force_unlock = 0;
 my @HELD_LOCKS;
 my $LOCK_OWNER_PID;
 my ($COMMON_STAGE, $COMMON_DESTINATION, $COMMON_BACKUP);
+for my $sig (qw(INT TERM HUP)) {
+    $SIG{$sig} = sub { exit 1; };
+}
 
 GetOptions(
     'repo-root=s'       => \$repo_root,
@@ -1394,9 +1397,6 @@ sub _release_locks_if_owner {
 END {
     _restore_common_repository();
     _release_locks_if_owner();
-}
-for my $sig (qw(INT TERM HUP)) {
-    $SIG{$sig} = sub { exit 1; };
 }
 
 sub read_os_release {

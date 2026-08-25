@@ -185,8 +185,12 @@ recover_interrupted_apt_publication() {
         else
             mv -- "$backup" "$destination"
         fi
-    done < <(find "$APT_DIR/dists" "$APT_DIR/pool" -depth \
-        -name '.*.previous.*' -print0 2>/dev/null)
+    done < <(
+        find "$APT_DIR" -maxdepth 1 -type f \
+            -name '.xcat-dep.asc.previous.*' -print0 2>/dev/null
+        find "$APT_DIR/dists" "$APT_DIR/pool" -depth \
+            -name '.*.previous.*' -print0 2>/dev/null
+    )
     find "$APT_DIR" -maxdepth 1 -type d -name '.xcat-apt.*' \
         -exec rm -rf -- {} +
     find "$APT_DIR" -type f \
