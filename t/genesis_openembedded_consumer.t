@@ -68,7 +68,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 59
+    skip 'APT repository tools are not installed', 60
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -327,6 +327,8 @@ sub test_deb_consumer {
     my $jammy_package_before = digest_file($jammy_package);
     my $jammy_metadata = "$apt_root/dists/jammy/main/binary-amd64/Packages";
     my $jammy_metadata_before = digest_file($jammy_metadata);
+    my $published_key_before = digest_file("$apt_root/xcat-dep.asc");
+    write_binary("$apt_repo_root/repomd.xml.key", "replacement repository key\n");
     make_legacy_deb(
         "$tmp/interrupted-legacy-deb",
         "$apt_root/ubuntu22.04/xcat-genesis-base-amd64_1_all.deb",
@@ -366,6 +368,8 @@ SH
         'a failed metadata swap restores the previous package bytes');
     is(digest_file($jammy_metadata), $jammy_metadata_before,
         'a failed metadata swap restores the previous package index');
+    is(digest_file("$apt_root/xcat-dep.asc"), $published_key_before,
+        'a failed metadata swap restores the previous signing key');
     is_deeply(\@suite_packages, [], 'suite pools contain no OpenEmbedded Genesis packages');
     for my $codename (qw(jammy noble resolute)) {
         for my $architecture (qw(amd64 ppc64el)) {
