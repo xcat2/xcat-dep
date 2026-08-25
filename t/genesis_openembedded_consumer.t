@@ -9,6 +9,7 @@ use File::Temp qw(tempdir);
 use FindBin;
 use POSIX ();
 use Test::More;
+use Time::HiRes qw(sleep);
 
 use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/lib";
@@ -920,7 +921,7 @@ sub test_rpm_signal_cleanup {
             $locked = 1;
             last;
         }
-        select(undef, undef, undef, 0.05);
+        sleep(0.05);
     }
     ok($locked, 'the signal test reaches the locked publication phase');
     kill('TERM', -$pid);
