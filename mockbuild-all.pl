@@ -798,18 +798,22 @@ sub write_local_repo_helper {
     open my $m, '>', "$dir/mklocalrepo.sh" or die "Cannot write $dir/mklocalrepo.sh: $!\n";
     print {$m} <<'EOS';
 #!/bin/sh
-cd `dirname $0`
-REPOFILE=`basename xcat-*.repo`
-if [[ $REPOFILE == "xcat-*.repo" ]]; then
+SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$SCRIPT_DIRECTORY" || exit 1
+set -- xcat-*.repo
+if [ "$#" -ne 1 ] || [ "$1" = "xcat-*.repo" ]; then
     echo "ERROR: For xcat-dep, please execute $0 in the correct <os>/<arch> subdirectory"
     exit 1
 fi
+REPOFILE=$1
 DIRECTORY="/etc/yum.repos.d"
 if [ ! -d "$DIRECTORY" ]; then
     DIRECTORY="/etc/zypp/repos.d"
 fi
-sed -e 's|baseurl=.*|baseurl=file://'"`pwd`"'|' $REPOFILE | sed -e 's|gpgkey=.*|gpgkey=file://'"`pwd`"'/repodata/repomd.xml.key|' > "$DIRECTORY/$REPOFILE"
-cd -
+CURRENT_DIRECTORY=$(pwd)
+sed -e 's|baseurl=.*|baseurl=file://'"$CURRENT_DIRECTORY"'|' "$REPOFILE" \
+  | sed -e 's|gpgkey=.*|gpgkey=file://'"$CURRENT_DIRECTORY"'/repodata/repomd.xml.key|' \
+  > "$DIRECTORY/$REPOFILE"
 EOS
     close $m;
     chmod 0775, "$dir/mklocalrepo.sh";
