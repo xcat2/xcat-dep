@@ -178,7 +178,9 @@ and contain no OpenEmbedded copies.
 The build holds separate locks for its work area and the published repository.
 It prepares the complete common repository in a temporary directory, then
 replaces the previous repository only after package verification, metadata
-generation, and signing have succeeded.
+generation, and signing have succeeded. If a stopped publisher leaves staging
+or backup directories behind, rerun it with ``--force-unlock`` to recover the
+previous repository before starting a new publication.
 
 Repository publication requires a release containing every supported Genesis
 architecture. The packages are `noarch`, and the common repository contains

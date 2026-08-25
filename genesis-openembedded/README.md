@@ -84,8 +84,10 @@ pool. Pass a new release only when replacing the Genesis packages.
 
 APT metadata is generated in a temporary tree. New packages are copied into
 place before the metadata directories are replaced, and old packages are
-removed only after the new metadata is active. If publication fails, clients
-can still use the previous package set and indexes.
+removed only after the new metadata is active. Rebuilt packages may keep the
+same filename; the previous files, signing key, and indexes are restored if
+publication fails. Use ``--force-unlock`` after an interrupted publisher to
+recover its saved repository and remove abandoned staging files.
 
 Both consumers require all seven architectures and verify package identities
 and checksums before publication. A management node can install an image for a
@@ -96,7 +98,11 @@ new packages do not provide, replace, or obsolete the old package names.
 xcat-core selects the OpenEmbedded install namespace when an image package is
 present and falls back to the old Genesis image otherwise. Package installation
 or update runs `mknb` for that package's architecture on nodes with local TFTP
-storage. Generated images and packages belong in release storage, not in Git.
+storage. With ``site.sharedtftp=0``, update service nodes before the management
+node so they can serve the exact architecture name immediately. Removing an
+image package retires its published files and rebuilds any legacy fallback that
+is still installed. Generated images and packages belong in release storage,
+not in Git.
 
 The per-target RPM tarballs do not include `xcat-dep/common`. Mirror that
 repository separately, including its metadata, when preparing an offline
