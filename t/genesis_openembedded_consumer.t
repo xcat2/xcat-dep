@@ -51,7 +51,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 52
+    skip 'RPM repository tools require a root Linux builder', 54
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -68,7 +68,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 56
+    skip 'APT repository tools are not installed', 59
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -198,6 +198,10 @@ sub test_rpm_consumer {
         'common repository has its own repository ID');
     like($common_config, qr{/xcat-dep/common$}m,
         'common repository configuration uses the shared URL');
+    like($common_config, qr/^skip_if_unavailable=1$/m,
+        'the published common repository stays optional during outages');
+    like($common_config, qr/^repo_gpgcheck=0$/m,
+        'unsigned test metadata is declared explicitly');
     ok(-x "$common_repo/mklocalrepo.sh", 'common repository supports offline setup');
     my $local_repo_helper = read_binary("$common_repo/mklocalrepo.sh");
     unlike($local_repo_helper, qr/\[\[/,
@@ -317,6 +321,51 @@ sub test_deb_consumer {
         push(@suite_packages, map { "$codename/$_" }
             genesis_deb_names("$apt_root/pool/main/$codename"));
     }
+
+    my $jammy_package =
+      "$apt_root/pool/main/jammy/xcat-genesis-base-amd64_1_all.deb";
+    my $jammy_package_before = digest_file($jammy_package);
+    my $jammy_metadata = "$apt_root/dists/jammy/main/binary-amd64/Packages";
+    my $jammy_metadata_before = digest_file($jammy_metadata);
+    make_legacy_deb(
+        "$tmp/interrupted-legacy-deb",
+        "$apt_root/ubuntu22.04/xcat-genesis-base-amd64_1_all.deb",
+        'interrupted replacement package',
+    );
+    my $mv_bin = "$tmp/apt-mv-failure";
+    make_path($mv_bin);
+    write_binary(
+        "$mv_bin/mv",
+        <<'SH',
+#!/bin/sh
+if [ "${2:-}" = "$XCAT_TEST_FAIL_DESTINATION" ]; then
+    exit 1
+fi
+exec "$XCAT_TEST_MV" "$@"
+SH
+    );
+    chmod(0755, "$mv_bin/mv") or die $!;
+    my $interrupted_log = "$tmp/deb-interrupted-publication.log";
+    my $interrupted_status;
+    {
+        local $ENV{XCAT_TEST_FAIL_DESTINATION} = "$apt_root/dists/jammy";
+        local $ENV{XCAT_TEST_MV} = capture_command('sh', '-c', 'command -v mv');
+        local $ENV{PATH} = "$mv_bin:$ENV{PATH}";
+        $interrupted_status = run_capture(
+            $interrupted_log,
+            'bash', $deb_consumer,
+            '--repo-root', $apt_repo_root,
+            '--apt-dir', $apt_root,
+            '--skip-sign',
+            'ubuntu22.04',
+        );
+    }
+    isnt($interrupted_status, 0,
+        'a failed metadata swap aborts a rebuilt package publication');
+    is(digest_file($jammy_package), $jammy_package_before,
+        'a failed metadata swap restores the previous package bytes');
+    is(digest_file($jammy_metadata), $jammy_metadata_before,
+        'a failed metadata swap restores the previous package index');
     is_deeply(\@suite_packages, [], 'suite pools contain no OpenEmbedded Genesis packages');
     for my $codename (qw(jammy noble resolute)) {
         for my $architecture (qw(amd64 ppc64el)) {
@@ -556,6 +605,10 @@ sub test_signed_common_rpm_repository {
         qr{^gpgkey=https://xcat\.org/files/xcat/repos/yum/devel/xcat-dep/common/repodata/repomd\.xml\.key$}m,
         'the common repository file points to its own exported key',
     );
+    like(read_binary("$common/xcat-dep-common.repo"), qr/^repo_gpgcheck=1$/m,
+        'the signed common repository requires metadata verification');
+    like(read_binary("$common/xcat-dep-common.repo"), qr/^skip_if_unavailable=1$/m,
+        'the signed common repository remains optional during outages');
 }
 
 sub test_legacy_rpm_consumer {
