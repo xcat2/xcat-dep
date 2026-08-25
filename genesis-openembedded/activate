@@ -2,8 +2,9 @@
 
 genesis_is_host_root() {
     [ -f /proc/cmdline ] || return 1
-    [ "$(stat -c '%i %d' / 2>/dev/null)" = \
-        "$(stat -c '%i %d' /proc/1/root/. 2>/dev/null)" ]
+    host_root=$(stat -c '%i %d' / 2>/dev/null) || return 1
+    init_root=$(stat -c '%i %d' /proc/1/root/. 2>/dev/null) || return 1
+    [ "$host_root" = "$init_root" ]
 }
 
 genesis_mknb_exists() {

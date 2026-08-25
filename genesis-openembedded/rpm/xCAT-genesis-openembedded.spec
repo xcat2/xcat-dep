@@ -37,9 +37,14 @@ install -m 0755 activate "$RPM_BUILD_ROOT/usr/libexec/xcat/genesis-openembedded-
 /usr/libexec/xcat/genesis-openembedded-activate-%{genesis_arch} %{genesis_arch}
 
 %postun
-if [ "$1" -eq 0 ] && [ -x /opt/xcat/sbin/mknb ]; then
-    /opt/xcat/sbin/mknb %{genesis_arch} --remove-openembedded || :
-    /opt/xcat/sbin/mknb %{genesis_arch} || :
+if [ "$1" -eq 0 ] && [ -f /proc/cmdline ]; then
+    host_root=$(stat -c '%i %d' / 2>/dev/null) || host_root=
+    init_root=$(stat -c '%i %d' /proc/1/root/. 2>/dev/null) || init_root=
+    if [ -n "$host_root" ] && [ "$host_root" = "$init_root" ] \
+        && [ -x /opt/xcat/sbin/mknb ]; then
+        /opt/xcat/sbin/mknb %{genesis_arch} --remove-openembedded || :
+        /opt/xcat/sbin/mknb %{genesis_arch} || :
+    fi
 fi
 
 %files
