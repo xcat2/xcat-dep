@@ -36,6 +36,12 @@ install -m 0755 activate "$RPM_BUILD_ROOT/usr/libexec/xcat/genesis-openembedded-
 %posttrans
 /usr/libexec/xcat/genesis-openembedded-activate-%{genesis_arch} %{genesis_arch}
 
+%postun
+if [ "$1" -eq 0 ] && [ -x /opt/xcat/sbin/mknb ]; then
+    /opt/xcat/sbin/mknb %{genesis_arch} --remove-openembedded || :
+    /opt/xcat/sbin/mknb %{genesis_arch} || :
+fi
+
 %files
 %defattr(-,root,root,-)
 %dir /opt/xcat

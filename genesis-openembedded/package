@@ -198,6 +198,21 @@ sub _build_deb {
     );
     chmod(0755, "$root/DEBIAN/postinst")
       or die "Cannot set post-installation script mode: $!\n";
+    write_binary(
+        "$root/DEBIAN/postrm",
+        "#!/bin/sh\n"
+          . "case \"\$1\" in\n"
+          . "  remove|purge)\n"
+          . "    if [ -x /opt/xcat/sbin/mknb ]; then\n"
+          . "      /opt/xcat/sbin/mknb $architecture --remove-openembedded || :\n"
+          . "      /opt/xcat/sbin/mknb $architecture || :\n"
+          . "    fi\n"
+          . "    ;;\n"
+          . "esac\n"
+          . "exit 0\n",
+    );
+    chmod(0755, "$root/DEBIAN/postrm")
+      or die "Cannot set post-removal script mode: $!\n";
     _write_deb_md5sums($root);
     _normalize_mtime($root, $source_date_epoch);
 
