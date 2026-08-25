@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+shopt -s nullglob
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
@@ -16,12 +17,57 @@ DRY_RUN=0
 GENESIS_RELEASE=""
 GENESIS_CHECKSUMS=""
 GENESIS_VERIFIER=""
+GENESIS_POOL_RELATIVE="pool/main/xcat-genesis-openembedded"
+GENESIS_POOL=""
+GENESIS_STAGE_RELATIVE=""
+GENESIS_STAGE=""
+PACKAGE_TEMPORARY=""
+KEY_STAGED=""
+TRANSACTION_ROOT=""
+METADATA_ROOT=""
 FORCE_UNLOCK=0
 HELD_LOCK=""
+PUBLICATION_COMMITTED=0
+declare -A GENESIS_EXPECTED=()
+declare -A SUITE_EXPECTED=()
+declare -A SUITE_STAGE=()
+declare -a PUBLISHED_DESTINATIONS=()
+declare -a PUBLISHED_BACKUPS=()
+declare -a PUBLISHED_PACKAGE_DESTINATIONS=()
+declare -a PUBLISHED_PACKAGE_BACKUPS=()
 
 cleanup() {
+    if [[ $PUBLICATION_COMMITTED -eq 0 ]]; then
+        local index destination backup
+        for ((index=${#PUBLISHED_DESTINATIONS[@]} - 1; index >= 0; index--)); do
+            destination="${PUBLISHED_DESTINATIONS[$index]}"
+            backup="${PUBLISHED_BACKUPS[$index]}"
+            if [[ -n "$backup" && -d "$backup" ]]; then
+                rm -rf -- "$destination"
+                mv -- "$backup" "$destination"
+            elif [[ -z "$backup" ]]; then
+                rm -rf -- "$destination"
+            fi
+        done
+        for ((index=${#PUBLISHED_PACKAGE_DESTINATIONS[@]} - 1; index >= 0; index--)); do
+            destination="${PUBLISHED_PACKAGE_DESTINATIONS[$index]}"
+            backup="${PUBLISHED_PACKAGE_BACKUPS[$index]}"
+            if [[ -n "$backup" && -f "$backup" ]]; then
+                rm -f -- "$destination"
+                mv -- "$backup" "$destination"
+            elif [[ -z "$backup" ]]; then
+                rm -f -- "$destination"
+            fi
+        done
+    fi
     if [[ -n "$GENESIS_CHECKSUMS" ]]; then
         rm -f -- "$GENESIS_CHECKSUMS"
+    fi
+    if [[ -n "$TRANSACTION_ROOT" && -d "$TRANSACTION_ROOT" ]]; then
+        rm -rf -- "$TRANSACTION_ROOT"
+    fi
+    if [[ -n "$PACKAGE_TEMPORARY" ]]; then
+        rm -f -- "$PACKAGE_TEMPORARY"
     fi
     if [[ -n "$HELD_LOCK" ]]; then
         rm -f -- "$HELD_LOCK/owner"
@@ -37,9 +83,8 @@ declare -A CODENAME_MAP=(
 )
 ARCHITECTURES=(amd64 ppc64el)
 
-# Versions to build. Populated from positional DIST args; defaults to all of
-# CODENAME_MAP when none are given. SUBSET=1 means the user requested a subset
-# (so cleanup is scoped to the selected dists instead of wiping the whole repo).
+# Versions to build. Positional DIST arguments select a subset. With no DIST
+# argument, metadata is rebuilt for every known suite.
 SELECTED_VERS=()
 SUBSET=0
 
@@ -61,7 +106,7 @@ Options:
   --apt-dir PATH         APT output directory (default: <repo-root>/repos/apt)
   --gpg-key-id ID        GPG key ID for signing (default: xcat@megware.com)
   --skip-sign            Skip GPG signing (for testing)
-  --genesis-release PATH Add a verified OpenEmbedded Genesis DEB release to each selected suite
+  --genesis-release PATH Publish a verified OpenEmbedded Genesis DEB release for all suites
   --dry-run              Print planned actions without executing
   --force-unlock         Remove a stale <apt-dir>/.lock before acquiring it
   -h, --help             Show this help
@@ -100,19 +145,22 @@ done
 
 REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
 APT_DIR="${APT_DIR:-$REPO_ROOT/repos/apt}"
+GENESIS_POOL="$APT_DIR/$GENESIS_POOL_RELATIVE"
 
-# Everything from the pool wipe to the signature is one transaction over a shared tree, and
-# the packages are verified inside it: a second writer between the verification and
-# apt-ftparchive would be indexed and signed unchecked. Hold the tree for the whole run, with
-# an atomic mkdir (reliable over NFS, unlike flock) like mockbuild-all.pl does for its output.
+# Publication is one transaction over a shared tree. The lock also covers verification, so a
+# second writer cannot replace a package between verification and metadata generation. mkdir
+# is used because it remains reliable when the repository is stored on NFS.
 acquire_apt_lock() {
     local lock="$APT_DIR/.lock"
     [[ $DRY_RUN -eq 0 ]] || return 0
     mkdir -p -- "$APT_DIR"
-    if [[ $FORCE_UNLOCK -eq 1 && -d "$lock" ]]; then
-        echo "force-unlock: removing stale lock $lock"
-        rm -f -- "$lock/owner"
-        rmdir -- "$lock" 2>/dev/null || true
+    if [[ $FORCE_UNLOCK -eq 1 ]]; then
+        recover_interrupted_apt_publication
+        if [[ -d "$lock" ]]; then
+            echo "force-unlock: removing stale lock $lock"
+            rm -f -- "$lock/owner"
+            rmdir -- "$lock" 2>/dev/null || true
+        fi
     fi
     if mkdir -- "$lock" 2>/dev/null; then
         HELD_LOCK="$lock"
@@ -122,6 +170,32 @@ acquire_apt_lock() {
     [[ -d "$lock" ]] || die "Cannot create lock $lock"
     die "APT directory $APT_DIR is locked ($lock): $(tr '\n' ' ' < "$lock/owner" 2>/dev/null)
 another build-apt-repo.sh run owns it; use a different --apt-dir or --force-unlock if stale."
+}
+
+recover_interrupted_apt_publication() {
+    local backup directory name destination
+    while IFS= read -r -d '' backup; do
+        directory=$(dirname "$backup")
+        name=$(basename "$backup")
+        name=${name#.}
+        name=${name%.previous.*}
+        destination="$directory/$name"
+        if [[ -e "$destination" ]]; then
+            rm -rf -- "$backup"
+        else
+            mv -- "$backup" "$destination"
+        fi
+    done < <(
+        find "$APT_DIR" -maxdepth 1 -type f \
+            -name '.xcat-dep.asc.previous.*' -print0 2>/dev/null
+        find "$APT_DIR/dists" "$APT_DIR/pool" -depth \
+            -name '.*.previous.*' -print0 2>/dev/null
+    )
+    find "$APT_DIR" -maxdepth 1 -type d -name '.xcat-apt.*' \
+        -exec rm -rf -- {} +
+    find "$APT_DIR" -type f \
+        \( -name '.xcat-deploy.*' -o -name '.xcat-key.*' \) \
+        -delete
 }
 acquire_apt_lock
 
@@ -160,6 +234,8 @@ if [[ -n "$GENESIS_RELEASE" ]]; then
     "$GENESIS_VERIFIER" --complete --format deb "$GENESIS_RELEASE"
     cmp -s "$GENESIS_CHECKSUMS" "$GENESIS_RELEASE/SHA256SUMS" \
         || die "Genesis release changed during verification"
+    [[ $SUBSET -eq 0 ]] \
+        || die "--genesis-release updates all suites; omit DIST arguments"
     echo "Genesis release: $GENESIS_RELEASE"
 fi
 
@@ -180,31 +256,31 @@ for ver in "${SELECTED_VERS[@]}"; do
     echo "Found $count debs in $src"
 done
 
-step "Cleaning previous repo metadata"
-
-if [[ $DRY_RUN -eq 0 ]]; then
-    if [[ $SUBSET -eq 1 ]]; then
-        # Subset build: only remove the selected dists, leave others intact.
-        for ver in "${SELECTED_VERS[@]}"; do
-            codename="${CODENAME_MAP[$ver]}"
-            rm -rf "$APT_DIR/dists/$codename" "$APT_DIR/pool/main/$codename"
-        done
-        echo "Removed dists/ and pool/ for: ${SELECTED_VERS[*]}"
-    else
-        rm -rf "$APT_DIR/dists" "$APT_DIR/pool"
-        echo "Removed dists/ and pool/"
-    fi
-fi
-
-step "Creating directory structure"
+step "Preparing repository transaction"
 
 for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
-    run mkdir -p "$APT_DIR/pool/main/$codename"
-    for arch in "${ARCHITECTURES[@]}"; do
-        run mkdir -p "$APT_DIR/dists/$codename/main/binary-$arch"
-    done
+    echo "$ver -> pool/main/$codename/"
 done
+
+if [[ $DRY_RUN -eq 0 ]]; then
+    mkdir -p "$APT_DIR"
+    TRANSACTION_ROOT=$(mktemp -d "$APT_DIR/.xcat-apt.XXXXXX")
+    METADATA_ROOT="$TRANSACTION_ROOT/dists"
+    for ver in "${SELECTED_VERS[@]}"; do
+        codename="${CODENAME_MAP[$ver]}"
+        SUITE_STAGE["$codename"]="$TRANSACTION_ROOT/pool/main/$codename"
+        mkdir -p "${SUITE_STAGE[$codename]}"
+        for arch in "${ARCHITECTURES[@]}"; do
+            mkdir -p "$METADATA_ROOT/$codename/main/binary-$arch"
+        done
+    done
+fi
+if [[ -n "$GENESIS_RELEASE" && $DRY_RUN -eq 0 ]]; then
+    GENESIS_STAGE="$TRANSACTION_ROOT/pool/main/xcat-genesis-openembedded"
+    mkdir -p "$GENESIS_STAGE"
+    GENESIS_STAGE_RELATIVE=${GENESIS_STAGE#"$APT_DIR/"}
+fi
 
 step "Populating pool"
 
@@ -217,7 +293,8 @@ copy_deb() {
             || die "Package collision with different content: $destination"
         return
     fi
-    ln "$source" "$destination" 2>/dev/null || cp "$source" "$destination"
+    cp --reflink=auto -- "$source" "$destination" 2>/dev/null \
+        || cp -- "$source" "$destination"
 }
 
 copy_genesis_deb() {
@@ -227,11 +304,13 @@ copy_genesis_deb() {
     name=$(basename "$source")
     destination="$directory/$name"
     relative="deb/$name"
-    # Every selected suite receives the whole release, so a plain copy spends hundreds of
-    # megabytes per suite. --reflink=auto lets a filesystem that can share extents
-    # copy-on-write avoid that, while still giving the pool a file of its own: a link would
-    # leave the published package and the verified release sharing one inode, where a write
-    # through either path changes what the other holds.
+    if [[ -e "$destination" ]]; then
+        cmp -s "$source" "$destination" \
+            || die "Package collision with different content: $destination"
+        return
+    fi
+    # The pool needs a file of its own. A hard link would let a later write through either
+    # path change both the verified release and the published package.
     cp --reflink=auto -- "$source" "$destination" 2>/dev/null \
         || cp -- "$source" "$destination"
     "$GENESIS_VERIFIER" \
@@ -243,39 +322,39 @@ copy_genesis_deb() {
 for ver in "${SELECTED_VERS[@]}"; do
     codename="${CODENAME_MAP[$ver]}"
     src="$APT_DIR/$ver"
-    dst="$APT_DIR/pool/main/$codename"
-    echo "$ver -> pool/main/$codename/"
+    dst="${SUITE_STAGE[$codename]:-}"
     if [[ $DRY_RUN -eq 0 ]]; then
         for deb in "$src"/*.deb; do
-            if [[ -n "$GENESIS_RELEASE" && ${deb##*/} == xcat-genesis-openembedded-*.deb ]]; then
+            if [[ ${deb##*/} == xcat-genesis-openembedded-*.deb ]]; then
                 continue
             fi
+            SUITE_EXPECTED["$codename/${deb##*/}"]=1
             copy_deb "$deb" "$dst"
         done
-        if [[ -n "$GENESIS_RELEASE" ]]; then
-            for deb in "$GENESIS_RELEASE"/deb/*.deb; do
-                copy_genesis_deb "$deb" "$dst"
-            done
-        fi
     fi
 done
+
+if [[ -n "$GENESIS_RELEASE" && $DRY_RUN -eq 0 ]]; then
+    echo "Genesis release -> staged shared pool"
+    for deb in "$GENESIS_RELEASE"/deb/*.deb; do
+        copy_genesis_deb "$deb" "$GENESIS_STAGE"
+    done
+fi
 
 # The pool is indexed and the metadata is signed from what is on disk now, not from what
 # was copied earlier, so check the packages again here: anything that changed between the
 # copy and this point would otherwise be published and signed as verified.
 if [[ -n "$GENESIS_RELEASE" && $DRY_RUN -eq 0 ]]; then
     step "Re-verifying pooled Genesis packages"
-    for ver in "${SELECTED_VERS[@]}"; do
-        codename="${CODENAME_MAP[$ver]}"
-        for deb in "$GENESIS_RELEASE"/deb/*.deb; do
-            name=$(basename "$deb")
-            pooled="$APT_DIR/pool/main/$codename/$name"
-            "$GENESIS_VERIFIER" \
-                --checksum-file "$GENESIS_CHECKSUMS" \
-                --relative-file "deb/$name" \
-                --copied-file "$pooled"
-            echo "Re-verified pooled Genesis package: $pooled"
-        done
+    for deb in "$GENESIS_RELEASE"/deb/*.deb; do
+        name=$(basename "$deb")
+        GENESIS_EXPECTED["$name"]=1
+        pooled="$GENESIS_STAGE/$name"
+        "$GENESIS_VERIFIER" \
+            --checksum-file "$GENESIS_CHECKSUMS" \
+            --relative-file "deb/$name" \
+            --copied-file "$pooled"
+        echo "Re-verified pooled Genesis package: $pooled"
     done
 fi
 
@@ -290,10 +369,21 @@ for ver in "${SELECTED_VERS[@]}"; do
         continue
     fi
 
-    all_packages=$(cd "$APT_DIR" && apt-ftparchive packages "pool/main/$codename/")
+    all_packages=$(
+        cd "$APT_DIR"
+        suite_stage_relative=${SUITE_STAGE[$codename]#"$APT_DIR/"}
+        apt-ftparchive packages "$suite_stage_relative/" \
+            | sed "s|^Filename: $suite_stage_relative/|Filename: pool/main/$codename/|"
+        if [[ -n "$GENESIS_STAGE_RELATIVE" ]]; then
+            apt-ftparchive packages "$GENESIS_STAGE_RELATIVE/" \
+                | sed "s|^Filename: $GENESIS_STAGE_RELATIVE/|Filename: $GENESIS_POOL_RELATIVE/|"
+        elif [[ -d "$GENESIS_POOL" ]]; then
+            apt-ftparchive packages "$GENESIS_POOL_RELATIVE/"
+        fi
+    )
 
     for arch in "${ARCHITECTURES[@]}"; do
-        pkg_file="$APT_DIR/dists/$codename/main/binary-$arch/Packages"
+        pkg_file="$METADATA_ROOT/$codename/main/binary-$arch/Packages"
 
         echo -n "" > "$pkg_file"
 
@@ -339,12 +429,12 @@ for ver in "${SELECTED_VERS[@]}"; do
         -o "APT::FTPArchive::Release::Architectures=amd64 ppc64el" \
         -o "APT::FTPArchive::Release::Components=main" \
         -o "APT::FTPArchive::Release::Description=xCAT dependency packages for $ver" \
-        release "$APT_DIR/dists/$codename/" \
-        > "$APT_DIR/dists/$codename/Release"
+        release "$METADATA_ROOT/$codename/" \
+        > "$METADATA_ROOT/$codename/Release"
 
     if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
         deterministic_date=$(date -R -d "@$SOURCE_DATE_EPOCH" --utc)
-        sed -i "s/^Date: .*/Date: $deterministic_date/" "$APT_DIR/dists/$codename/Release"
+        sed -i "s/^Date: .*/Date: $deterministic_date/" "$METADATA_ROOT/$codename/Release"
     fi
 done
 
@@ -353,7 +443,7 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
 
     for ver in "${SELECTED_VERS[@]}"; do
         codename="${CODENAME_MAP[$ver]}"
-        release="$APT_DIR/dists/$codename/Release"
+        release="$METADATA_ROOT/$codename/Release"
 
         echo "Signing $codename..."
         if [[ $DRY_RUN -eq 0 ]]; then
@@ -365,7 +455,7 @@ if [[ $SKIP_SIGN -eq 0 ]]; then
             gpg --default-key "$GPG_KEY_ID" \
                 --batch --yes --armor \
                 --clearsign \
-                -o "$APT_DIR/dists/$codename/InRelease" "$release"
+                -o "$METADATA_ROOT/$codename/InRelease" "$release"
         fi
     done
 fi
@@ -375,19 +465,129 @@ step "Exporting public key"
 key_src="$REPO_ROOT/repomd.xml.key"
 key_dst="$APT_DIR/xcat-dep.asc"
 if [[ -f "$key_src" ]]; then
-    run cp "$key_src" "$key_dst"
+    if [[ $DRY_RUN -eq 1 ]]; then
+        echo "+ cp $key_src $key_dst"
+    else
+        KEY_STAGED="$TRANSACTION_ROOT/xcat-dep.asc"
+        cp -- "$key_src" "$KEY_STAGED"
+        chmod 0644 "$KEY_STAGED"
+    fi
     echo "Public key -> xcat-dep.asc (from $key_src)"
 elif [[ $DRY_RUN -eq 1 ]]; then
     echo "(dry-run: would export $GPG_KEY_ID public key to xcat-dep.asc)"
 else
     # No pre-exported key file: export the signing public key straight from the
     # keyring (honors GNUPGHOME), so clients get the matching pubkey.
-    if gpg --armor --export "$GPG_KEY_ID" > "$key_dst" 2>/dev/null && [[ -s "$key_dst" ]]; then
+    KEY_STAGED="$TRANSACTION_ROOT/xcat-dep.asc"
+    if gpg --armor --export "$GPG_KEY_ID" > "$KEY_STAGED" 2>/dev/null \
+        && [[ -s "$KEY_STAGED" ]]; then
+        chmod 0644 "$KEY_STAGED"
         echo "Public key -> xcat-dep.asc (exported $GPG_KEY_ID from keyring)"
     else
-        rm -f "$key_dst"
+        rm -f "$KEY_STAGED"
+        KEY_STAGED=""
         echo "WARNING: could not export '$GPG_KEY_ID' and $key_src not found; no xcat-dep.asc written"
     fi
+fi
+
+publish_package() {
+    local source="$1"
+    local destination
+    local genesis_relative="${3:-}"
+    destination="$2/$(basename "$source")"
+    mkdir -p -- "$2"
+    local backup=""
+    if [[ -e "$destination" ]] && cmp -s "$source" "$destination"; then
+        return
+    fi
+    if [[ -e "$destination" ]]; then
+        backup="$2/.${destination##*/}.previous.$$"
+        rm -f -- "$backup"
+    fi
+    PUBLISHED_PACKAGE_DESTINATIONS+=("$destination")
+    PUBLISHED_PACKAGE_BACKUPS+=("$backup")
+    [[ -z "$backup" ]] || mv -- "$destination" "$backup"
+    PACKAGE_TEMPORARY=$(mktemp "$2/.xcat-deploy.XXXXXX")
+    cp --reflink=auto -- "$source" "$PACKAGE_TEMPORARY" 2>/dev/null \
+        || cp -- "$source" "$PACKAGE_TEMPORARY"
+    chmod 0644 "$PACKAGE_TEMPORARY"
+    if [[ -n "$genesis_relative" ]]; then
+        "$GENESIS_VERIFIER" \
+            --checksum-file "$GENESIS_CHECKSUMS" \
+            --relative-file "$genesis_relative" \
+            --copied-file "$PACKAGE_TEMPORARY"
+    fi
+    mv -- "$PACKAGE_TEMPORARY" "$destination"
+    PACKAGE_TEMPORARY=""
+}
+
+publish_metadata() {
+    local source="$1"
+    local destination="$2"
+    local backup=""
+    mkdir -p -- "$(dirname "$destination")"
+    if [[ -e "$destination" ]]; then
+        backup="$(dirname "$destination")/.${destination##*/}.previous.$$"
+        rm -rf -- "$backup"
+    fi
+    PUBLISHED_DESTINATIONS+=("$destination")
+    PUBLISHED_BACKUPS+=("$backup")
+    [[ -z "$backup" ]] || mv -- "$destination" "$backup"
+    mv -- "$source" "$destination"
+}
+
+if [[ $DRY_RUN -eq 0 ]]; then
+    step "Publishing packages"
+    for ver in "${SELECTED_VERS[@]}"; do
+        codename="${CODENAME_MAP[$ver]}"
+        for deb in "${SUITE_STAGE[$codename]}"/*.deb; do
+            publish_package "$deb" "$APT_DIR/pool/main/$codename"
+        done
+    done
+    if [[ -n "$GENESIS_RELEASE" ]]; then
+        for deb in "$GENESIS_STAGE"/*.deb; do
+            publish_package "$deb" "$GENESIS_POOL" "deb/${deb##*/}"
+        done
+    fi
+    if [[ -n "$KEY_STAGED" ]]; then
+        publish_package "$KEY_STAGED" "$APT_DIR"
+    fi
+
+    step "Publishing repository metadata"
+    for ver in "${SELECTED_VERS[@]}"; do
+        codename="${CODENAME_MAP[$ver]}"
+        publish_metadata "$METADATA_ROOT/$codename" "$APT_DIR/dists/$codename"
+    done
+    PUBLICATION_COMMITTED=1
+    for backup in "${PUBLISHED_BACKUPS[@]}"; do
+        [[ -z "$backup" ]] || rm -rf -- "$backup"
+    done
+    for backup in "${PUBLISHED_PACKAGE_BACKUPS[@]}"; do
+        [[ -z "$backup" ]] || rm -f -- "$backup"
+    done
+
+    step "Retiring previous packages"
+    for ver in "${SELECTED_VERS[@]}"; do
+        codename="${CODENAME_MAP[$ver]}"
+        for deb in "$APT_DIR/pool/main/$codename"/*.deb; do
+            [[ -e "$deb" ]] || continue
+            name=$(basename "$deb")
+            [[ -n "${SUITE_EXPECTED[$codename/$name]:-}" ]] || rm -f -- "$deb"
+        done
+    done
+fi
+
+if [[ -n "$GENESIS_RELEASE" && $DRY_RUN -eq 0 ]]; then
+    for deb in "$GENESIS_POOL"/*.deb; do
+        [[ -e "$deb" ]] || continue
+        name=$(basename "$deb")
+        [[ -n "${GENESIS_EXPECTED[$name]:-}" ]] || rm -f -- "$deb"
+    done
+fi
+
+if [[ $DRY_RUN -eq 0 ]]; then
+    rm -rf -- "$TRANSACTION_ROOT"
+    TRANSACTION_ROOT=""
 fi
 
 step "Summary"

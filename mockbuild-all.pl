@@ -114,6 +114,7 @@ my $repo_dep = '';
 my $gpg_sign = 0;
 my $gpg_key_name = 'xCAT Signing Key';
 my $gpg_home = '';
+my $gpg_program = '';
 my $force_unlock = 0;
 # --finalize-xcat-dep: post-build cross-arch genesis provisioning (issue #7610). Takes the two
 # per-arch repo roots and cross-populates the noarch xCAT-genesis-base between them.
@@ -127,8 +128,12 @@ my $verify_repo = '';
 # --no-verify-repo suppresses the AUTOMATIC post-build gate deploy_target runs after each target is
 # finalized+signed (for iteration/debug). Verification is ON by default.
 my $no_verify_repo = 0;
-my $HELD_LOCK;        # path of the output lock this process owns (for cleanup on exit)
-my $LOCK_OWNER_PID;   # pid that created the lock; forked children must NOT remove it
+my @HELD_LOCKS;
+my $LOCK_OWNER_PID;
+my ($COMMON_STAGE, $COMMON_DESTINATION, $COMMON_BACKUP);
+for my $sig (qw(INT TERM HUP)) {
+    $SIG{$sig} = sub { exit 1; };
+}
 
 GetOptions(
     'repo-root=s'       => \$repo_root,
@@ -294,10 +299,15 @@ $output_base = abs_path($output_base)
 $output_root = "$output_base/mockbuild-all" if $output_root eq '';
 # Deployable per-EL xcat-dep repo root (rh8/rh9/rh10/<arch> assembled here).
 $repo_dep = "$output_base/xcat-dep" if $repo_dep eq '';
+make_path($repo_dep) if !-d $repo_dep;
+$repo_dep = abs_path($repo_dep)
+    or die "Cannot resolve --repo-dep directory\n";
 
 # Fail-fast lock on the output base so a second run against the same --output aborts instead of
 # racing on the shared NFS tree. Held for the whole invocation; released by the exit handlers.
 acquire_output_lock($output_base, $force_unlock);
+acquire_repository_lock($repo_dep, $force_unlock)
+    if $repo_dep ne $output_base;
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
@@ -316,7 +326,7 @@ for my $bin (qw(perl uname createrepo_c tar find rpm)) {
 }
 require_command('mock') if $scrub_all_chroots;
 require_command('rpmsign') if $gpg_sign;
-require_command('gpg')     if $gpg_sign;
+$gpg_program = require_command('gpg') if $gpg_sign;
 
 if ($genesis_release ne '') {
     $genesis_release = abs_path($genesis_release)
@@ -352,7 +362,8 @@ print_step('Targets to build');
 print "  $_\n" for @build_targets;
 print "output_base:      $output_base\n";
 print "deploy repo-dep:  $repo_dep\n";
-print "lock:             $output_base/.lock (held)\n";
+print "output lock:      $output_base/.lock (held)\n";
+print "repository lock:  $repo_dep/.lock (held)\n";
 print "gpg_sign:         $gpg_sign\n";
 print "gpg_key_name:     $gpg_key_name\n" if $gpg_sign;
 print "gpg_home:         " . ($gpg_home ne '' ? $gpg_home : '(default keyring)') . "\n" if $gpg_sign;
@@ -390,6 +401,8 @@ for my $tgt (@build_targets) {
 }
 $tgt_pm->wait_all_children;
 die "FATAL: $tgt_fail target(s) failed\n" if $tgt_fail;
+
+publish_genesis_common_repo() if $genesis_release;
 
 print_step('All targets completed');
 exit 0;
@@ -732,12 +745,6 @@ if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
 
-if ($genesis_release) {
-    $copied += $dry_run
-      ? preview_genesis_release_packages('rpm', $repo_dir)
-      : install_genesis_release_packages('rpm', $repo_dir);
-}
-
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
 # lands in the dep repo -- pull it individually out of the xcat-core dist tree (the
 # rest of that tree, the full xCAT core, is built + published by the xcat-core pipeline).
@@ -784,15 +791,6 @@ my ($copied_srpms, $skipped_non_src, $missing_srpm_roots) = collect_srpms(
 if (!$dry_run && $copied_srpms == 0) {
     print "WARN: No source RPMs were collected. SRPM repo and tarball may be empty.\n";
 }
-
-if ($genesis_release) {
-    $copied_srpms += $dry_run
-      ? preview_genesis_release_packages('srpm', $srpm_repo_dir)
-      : install_genesis_release_packages('srpm', $srpm_repo_dir);
-}
-
-assert_genesis_release_copied($repo_dir, $srpm_repo_dir)
-    if $genesis_release && !$dry_run;
 
 if (!$skip_createrepo) {
     run_step(
@@ -901,15 +899,11 @@ sub deploy_target {
             next if $rpm =~ /\.src\.rpm$/;
             publish_file($rpm, "$stage/" . basename($rpm));
         }
-        # --genesis-release: drop any stale OpenEmbedded Genesis rpm the collection carried over,
-        # then verify the ones from THIS release still match their checksums. Both run on the STAGE
-        # and BEFORE sign_and_index_repo, because rpmsign rewrites the rpm bytes the release
-        # checksums cover.
-        if ($genesis_release) {
-            my @keep = map { basename($_) } genesis_release_files('rpm');
-            remove_genesis_packages($stage, 0, \@keep);
-            verify_genesis_release_packages('rpm', $stage);
-        }
+        # --genesis-release: the release itself is published ONCE into <repo-dep>/common, not into
+        # each per-EL cell, so nothing from it is kept here -- drop any stale OpenEmbedded Genesis
+        # rpm an earlier layout left in the collection. On the STAGE, so the published cell is
+        # already correct when it is swapped in.
+        remove_genesis_packages($stage, 0) if $genesis_release;
         sign_and_index_repo($stage);
         write_dep_repo_metadata($stage, $rel);
         # Automatic completeness + signature gate on the freshly signed cell -- the single
@@ -942,6 +936,48 @@ sub deploy_target {
 
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
     print "Deployed rh$rel/$arch: $n rpms\n";
+}
+
+sub publish_genesis_common_repo {
+    my $dest = "$repo_dep/common";
+    print_step("Publish OpenEmbedded Genesis -> $dest");
+
+    if ($dry_run) {
+        preview_genesis_release_packages('rpm', $dest);
+        return;
+    }
+
+    $COMMON_STAGE = tempdir('.common.XXXXXXXX', DIR => $repo_dep, CLEANUP => 0);
+    my $published = publish_genesis_release_packages('rpm', $COMMON_STAGE);
+    verify_genesis_release_packages('rpm', $COMMON_STAGE);
+    sign_and_index_repo($COMMON_STAGE);
+    write_common_repo_metadata($COMMON_STAGE);
+    chmod(0755, $COMMON_STAGE)
+      or die "Cannot make $COMMON_STAGE traversable: $!\n";
+    replace_common_repository($COMMON_STAGE, $dest);
+    print "Published common Genesis repository: $published rpms\n";
+}
+
+sub replace_common_repository {
+    my ($staged, $destination) = @_;
+    my $backup = "$repo_dep/.common.previous.$$";
+    remove_tree($backup) if -e $backup || -l $backup;
+
+    $COMMON_DESTINATION = $destination;
+    if (-e $destination || -l $destination) {
+        $COMMON_BACKUP = $backup;
+        rename($destination, $backup)
+          or die "Cannot preserve $destination before publication: $!\n";
+    }
+    unless (rename($staged, $destination)) {
+        my $error = $!;
+        rename($backup, $destination) if $COMMON_BACKUP && -d $backup;
+        die "Cannot publish $destination: $error\n";
+    }
+    undef($COMMON_STAGE);
+    undef($COMMON_DESTINATION);
+    remove_tree($backup) if $COMMON_BACKUP && -d $backup;
+    undef($COMMON_BACKUP);
 }
 
 sub publish_file {
@@ -986,8 +1022,9 @@ sub sign_and_index_repo {
     my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
-        run_simple("rpmsign --define " . sh_quote("%_gpg_name $gpg_key_name") . " --addsign "
-            . join(' ', map { sh_quote($_) } @rpms));
+        run_simple('rpmsign --define ' . shell_quote("%_gpg_name $gpg_key_name")
+            . ' --define ' . shell_quote("%__gpg $gpg_program") . ' --addsign '
+            . join(' ', map { shell_quote($_) } @rpms));
     }
     run_simple(createrepo_c_cmd($dir));
     if ($gpg_sign) {
@@ -1019,25 +1056,62 @@ $gpgkey_line
 EOF
     close $r;
 
+    write_local_repo_helper($dir);
+    write_buildinfo($dir, "rh$rel/$arch");
+}
+
+sub write_common_repo_metadata {
+    my ($dir) = @_;
+    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/common";
+    my $gpgcheck = $gpg_sign ? 1 : 0;
+    my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
+    open my $r, '>', "$dir/xcat-dep-common.repo"
+      or die "Cannot write $dir/xcat-dep-common.repo: $!\n";
+    print {$r} <<"EOF";
+[xcat-dep-common]
+name=xCAT 2 common dependencies
+baseurl=$baseurl
+enabled=1
+gpgcheck=$gpgcheck
+repo_gpgcheck=$gpgcheck
+skip_if_unavailable=1
+$gpgkey_line
+EOF
+    close $r;
+
+    write_local_repo_helper($dir);
+    write_buildinfo($dir, 'common');
+}
+
+sub write_local_repo_helper {
+    my ($dir) = @_;
+
     open my $m, '>', "$dir/mklocalrepo.sh" or die "Cannot write $dir/mklocalrepo.sh: $!\n";
     print {$m} <<'EOS';
 #!/bin/sh
-cd `dirname $0`
-REPOFILE=`basename xcat-*.repo`
-if [[ $REPOFILE == "xcat-*.repo" ]]; then
-    echo "ERROR: For xcat-dep, please execute $0 in the correct <os>/<arch> subdirectory"
+SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+cd "$SCRIPT_DIRECTORY" || exit 1
+set -- xcat-*.repo
+if [ "$#" -ne 1 ] || [ "$1" = "xcat-*.repo" ]; then
+    echo "ERROR: Execute $0 in an xcat-dep repository directory"
     exit 1
 fi
+REPOFILE=$1
 DIRECTORY="/etc/yum.repos.d"
 if [ ! -d "$DIRECTORY" ]; then
     DIRECTORY="/etc/zypp/repos.d"
 fi
-sed -e 's|baseurl=.*|baseurl=file://'"`pwd`"'|' $REPOFILE | sed -e 's|gpgkey=.*|gpgkey=file://'"`pwd`"'/repodata/repomd.xml.key|' > "$DIRECTORY/$REPOFILE"
-cd -
+CURRENT_DIRECTORY=$(pwd)
+sed -e 's|baseurl=.*|baseurl=file://'"$CURRENT_DIRECTORY"'|' "$REPOFILE" \
+  | sed -e 's|gpgkey=.*|gpgkey=file://'"$CURRENT_DIRECTORY"'/repodata/repomd.xml.key|' \
+  > "$DIRECTORY/$REPOFILE"
 EOS
     close $m;
     chmod 0775, "$dir/mklocalrepo.sh";
+}
 
+sub write_buildinfo {
+    my ($dir, $target) = @_;
     my $build_time = strftime("%a %b %e %H:%M:%S %Z %Y", gmtime($SOURCE_DATE_EPOCH));
     my $build_machine = `hostname`; chomp $build_machine;
     my $commit = `git -C "$repo_root" rev-parse HEAD 2>/dev/null`; chomp $commit;
@@ -1046,7 +1120,7 @@ EOS
     my $release = strftime('snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH));
     open my $b, '>', "$dir/buildinfo.txt" or die "Cannot write $dir/buildinfo.txt: $!\n";
     print {$b} <<"EOF";
-TARGET=rh$rel/$arch
+TARGET=$target
 RELEASE=$release
 BUILD_TIME=$build_time
 BUILD_MACHINE=$build_machine
@@ -1089,8 +1163,8 @@ Options:
                           it. A fail-fast lock is held at <PATH>/.lock, so pass distinct paths
                           to run on two hosts in parallel on one NFS (default: <repo-root>/build-output)
   --output-root PATH      Override the derived build tree root (default: <output>/mockbuild-all)
-  --repo-dep PATH         Override the derived deployable per-EL output root; rh8/rh9/rh10/<arch>
-                          are assembled + signed here (default: <output>/xcat-dep)
+  --repo-dep PATH         Override the deployable output root; rh8/rh9/rh10/<arch> and common
+                          are assembled and signed here (default: <output>/xcat-dep)
   --force-unlock          Remove a stale <output>/.lock before acquiring it
   --finalize-xcat-dep     Post-build cross-arch genesis mode (builds nothing). Requires
                           --x86_64-repo and --ppc64le-repo. For each matching <os>/x86_64 and
@@ -1111,7 +1185,7 @@ Options:
                           manifest and gpg key/home come from the usual options. Use alone.
   --no-verify-repo        Suppress the AUTOMATIC post-build completeness+signature gate that runs
                           after each target's repo is finalized (default: verification ON)
-  --gpg-sign              Sign rpms + repomd.xml of each per-EL repo
+  --gpg-sign              Sign RPMs and repomd.xml in every published repository
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
   --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>); default is
@@ -1131,8 +1205,7 @@ Options:
   --skip-genesis          Skip the existing per-EL Genesis image build
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
-  --genesis-release PATH  Add a verified OpenEmbedded Genesis RPM release alongside the
-                          existing per-EL Genesis packages
+  --genesis-release PATH  Publish a verified OpenEmbedded Genesis RPM release in common
   --scrub-all-chroots     Run mock -r <target> --scrub=all before build/collect
   --collect-dir PATH      Additional directory to scan recursively for RPMs (repeatable)
   --dry-run               Print planned commands without executing
@@ -1597,16 +1670,16 @@ sub remove_genesis_packages {
     }
 }
 
-sub install_genesis_release_packages {
+sub publish_genesis_release_packages {
     my ($prefix, $destination_root) = @_;
     remove_genesis_packages($destination_root, $prefix eq 'srpm');
+    remove_genesis_packages($destination_root, 1) if $prefix eq 'rpm';
 
     my $copied = 0;
     for my $relative (genesis_release_files($prefix)) {
         my $source = "$genesis_release/$relative";
         my $destination = "$destination_root/" . basename($relative);
-        copy($source, $destination)
-            or die "Cannot install Genesis release package $source: $!\n";
+        publish_file($source, $destination);
         verify_release_file($genesis_release_checksums, $relative, $destination);
         $copied++;
     }
@@ -1614,16 +1687,13 @@ sub install_genesis_release_packages {
     return $copied;
 }
 
-# Dry runs copy nothing, but they must still report what a real run would publish:
-# collect_rpms and collect_srpms drop every xCAT-genesis-openembedded package whenever
-# --genesis-release is given, so without this preview a dry run describes a repository
-# with no Genesis packages at all while the real run installs the whole set.
+# Dry runs copy nothing, but they must still report the shared packages a real run publishes.
 sub preview_genesis_release_packages {
     my ($prefix, $destination_root) = @_;
     my @files = genesis_release_files($prefix);
     die "Genesis release has no $prefix packages\n" unless @files;
     for my $relative (@files) {
-        print "DRY-RUN install Genesis release package: $genesis_release/$relative"
+        print "DRY-RUN publish Genesis release package: $genesis_release/$relative"
           . " -> $destination_root/" . basename($relative) . "\n";
     }
     return scalar(@files);
@@ -1646,17 +1716,6 @@ sub verify_genesis_release_packages {
         verify_release_file($genesis_release_checksums, $relative, $destination);
     }
     return scalar(@files);
-}
-
-sub assert_genesis_release_copied {
-    my ($binary_directory, $source_directory) = @_;
-    for my $entry (
-        [ 'rpm', $binary_directory ],
-        [ 'srpm', $source_directory ],
-    ) {
-        my ($prefix, $destination_root) = @{$entry};
-        verify_genesis_release_packages($prefix, $destination_root);
-    }
 }
 
 sub collect_rpms {
@@ -1804,16 +1863,16 @@ sub resolve_xcat_source {
 # Fail-fast advisory lock on the output base. Uses an atomic mkdir (portable and reliable over
 # NFS, unlike flock) of "<base>/.lock". A second run against the same --output dies immediately
 # rather than racing on the shared tree. Only the process that created the lock removes it.
-sub acquire_output_lock {
-    my ($base, $force) = @_;
+sub acquire_named_lock {
+    my ($base, $label, $force) = @_;
     my $lock = "$base/.lock";
     if ($force && -d $lock) {
         print "force-unlock: removing stale lock $lock\n";
         _rmdir_lock($lock);
     }
     if (mkdir $lock) {
-        $HELD_LOCK = $lock;
-        $LOCK_OWNER_PID = $$;
+        push(@HELD_LOCKS, $lock);
+        $LOCK_OWNER_PID //= $$;
         my $host = capture_command('uname', '-n') || 'unknown';
         if (open my $fh, '>', "$lock/owner") {
             print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
@@ -1826,10 +1885,41 @@ sub acquire_output_lock {
         my $info = '';
         if (open my $fh, '<', "$lock/owner") { local $/; $info = <$fh>; close $fh; }
         $info =~ s/\s+/ /g;
-        die "output $base is locked ($lock): $info\n"
-          . "another mockbuild-all run owns it; use a different --output or --force-unlock if stale.\n";
+        die "$label $base is locked ($lock): $info\n"
+          . "another mockbuild-all run owns it; use a different destination or --force-unlock if stale.\n";
     }
     die "Cannot create lock $lock: $!\n";
+}
+
+sub acquire_output_lock {
+    my ($base, $force) = @_;
+    acquire_named_lock($base, 'output', $force);
+}
+
+sub acquire_repository_lock {
+    my ($base, $force) = @_;
+    _recover_common_repository($base) if $force;
+    acquire_named_lock($base, 'repository', $force);
+}
+
+sub _recover_common_repository {
+    my ($base) = @_;
+    my $destination = "$base/common";
+    my @backups = sort {
+        ((stat($a))[9] // 0) <=> ((stat($b))[9] // 0)
+    } grep { -d $_ && !-l $_ } bsd_glob("$base/.common.previous.*");
+
+    if (!-e $destination && !-l $destination && @backups) {
+        my $backup = pop(@backups);
+        rename($backup, $destination)
+          or die "Cannot restore interrupted common repository $backup: $!\n";
+    }
+    remove_tree($_) for grep { -d $_ && !-l $_ } @backups;
+
+    for my $staging (bsd_glob("$base/.common.*")) {
+        next if $staging =~ m{/\.common\.previous\.};
+        remove_tree($staging) if -d $staging && !-l $staging;
+    }
 }
 
 sub _rmdir_lock {
@@ -1838,16 +1928,30 @@ sub _rmdir_lock {
     rmdir $lock;
 }
 
-# Release the lock on any exit path (normal, die, or signal) -- but ONLY in the process that
-# created it. Forked children (per-builder and per-target ForkManager workers) inherit
-# $HELD_LOCK; without the pid guard their exit would delete the parent's lock mid-run.
-sub _release_lock_if_owner {
-    return unless $HELD_LOCK && defined $LOCK_OWNER_PID && $$ == $LOCK_OWNER_PID;
-    _rmdir_lock($HELD_LOCK) if -d $HELD_LOCK;
+# Release locks on every exit path, but only from the process that acquired them.
+# Forked build workers inherit the lock list and must leave the parent's locks alone.
+sub _restore_common_repository {
+    return unless defined($LOCK_OWNER_PID) && $$ == $LOCK_OWNER_PID;
+    remove_tree($COMMON_STAGE)
+      if $COMMON_STAGE && -d $COMMON_STAGE && !-l $COMMON_STAGE;
+    if ($COMMON_DESTINATION && $COMMON_BACKUP
+        && !-e $COMMON_DESTINATION && -d $COMMON_BACKUP) {
+        rename($COMMON_BACKUP, $COMMON_DESTINATION);
+    } elsif ($COMMON_DESTINATION && $COMMON_BACKUP
+        && -d $COMMON_DESTINATION && -d $COMMON_BACKUP) {
+        remove_tree($COMMON_BACKUP);
+    }
 }
-END { _release_lock_if_owner(); }
-for my $sig (qw(INT TERM HUP)) {
-    $SIG{$sig} = sub { _release_lock_if_owner(); exit 1; };
+
+sub _release_locks_if_owner {
+    return unless defined($LOCK_OWNER_PID) && $$ == $LOCK_OWNER_PID;
+    for my $lock (reverse(@HELD_LOCKS)) {
+        _rmdir_lock($lock) if -d $lock;
+    }
+}
+END {
+    _restore_common_repository();
+    _release_locks_if_owner();
 }
 
 sub read_os_release {
