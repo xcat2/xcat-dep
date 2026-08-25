@@ -55,7 +55,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 40
+    skip 'RPM repository tools require a root Linux builder', 45
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -68,10 +68,11 @@ SKIP: {
     test_partial_rpm_release();
     test_failed_build_release();
     test_dry_run_release();
+    test_rpm_repository_lock();
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 45
+    skip 'APT repository tools are not installed', 47
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -199,6 +200,47 @@ sub test_rpm_consumer {
         'common repository records its target');
     like(read_binary("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=8$/m,
         'repository summary counts the collected dependencies');
+
+    my $retained = "$common_repo/xCAT-genesis-openembedded-retained.noarch.rpm";
+    my $repomd = "$common_repo/repodata/repomd.xml";
+    my $repomd_before = digest_file($repomd);
+    write_binary($retained, 'previous complete release');
+    my $fail_bin = "$tmp/rpm-fail-bin";
+    make_path($fail_bin);
+    write_binary(
+        "$fail_bin/createrepo_c",
+        <<'SH',
+#!/bin/sh
+for argument in "$@"; do last=$argument; done
+case "$last" in
+    */common|*/.common.*) exit 1 ;;
+esac
+exec "$XCAT_TEST_CREATEREPO" "$@"
+SH
+    );
+    chmod(0755, "$fail_bin/createrepo_c") or die $!;
+    local $ENV{XCAT_TEST_CREATEREPO} = capture_command(
+        'sh', '-c', 'command -v createrepo_c'
+    );
+    local $ENV{PATH} = "$fail_bin:$ENV{PATH}";
+    my $failed_log = "$tmp/rpm-publication-failure.log";
+    my $failed_status = run_capture(
+        $failed_log,
+        $^X, $rpm_consumer,
+        '--repo-root', $scratch_repo_root,
+        '--output', $output,
+        '--target', $target,
+        '--run-id', 'publication-failure',
+        '--build-timestamp', $epoch,
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-createrepo', '--skip-tarball',
+        '--genesis-release', $release_root,
+        '--collect-dir', $dependencies,
+    );
+    isnt($failed_status, 0, 'a failed RPM metadata build aborts publication');
+    ok(-f $retained, 'a failed RPM publication keeps the previous package set');
+    is(digest_file($repomd), $repomd_before,
+        'a failed RPM publication keeps the previous metadata');
 }
 
 sub test_deb_consumer {
@@ -373,6 +415,25 @@ sub test_deb_consumer {
             "$codename still indexes the shared package after a full refresh",
         );
     }
+
+    my $retained = "$shared_pool/xcat-genesis-openembedded-retained.deb";
+    write_binary($retained, 'previous complete release');
+    my $fail_bin = "$tmp/apt-fail-bin";
+    make_path($fail_bin);
+    write_binary("$fail_bin/apt-ftparchive", "#!/bin/sh\nexit 1\n");
+    chmod(0755, "$fail_bin/apt-ftparchive") or die $!;
+    local $ENV{PATH} = "$fail_bin:$ENV{PATH}";
+    my $failed_log = "$tmp/deb-publication-failure.log";
+    my $failed_status = run_capture(
+        $failed_log,
+        'bash', $deb_consumer,
+        '--repo-root', $repo_root,
+        '--apt-dir', $apt_root,
+        '--skip-sign',
+        '--genesis-release', $release_root,
+    );
+    isnt($failed_status, 0, 'a failed APT metadata build aborts publication');
+    ok(-f $retained, 'a failed APT publication keeps the previous package set');
 }
 
 sub test_signed_common_rpm_repository {
@@ -640,6 +701,35 @@ sub test_dry_run_release {
     like($printed, qr/^Collected binary RPMs: 8$/m,
         'the dry run counts the packages collected for the target repository');
     ok(!-e "$run_repo/$package", 'the dry run installs nothing');
+}
+
+sub test_rpm_repository_lock {
+    my $output = "$tmp/rpm-lock-output";
+    my $repository = "$tmp/rpm-shared-repository";
+    make_path("$repository/.lock");
+    write_binary("$repository/.lock/owner", "host=other\npid=1\nepoch=1\n");
+
+    my @perl_lib;
+    push(@perl_lib, write_forkmanager_stub("$tmp/perl-lock-stub"))
+      unless eval { require Parallel::ForkManager; 1 };
+    push(@perl_lib, $ENV{PERL5LIB})
+      if defined($ENV{PERL5LIB}) && $ENV{PERL5LIB} ne '';
+    local $ENV{PERL5LIB} = join(':', @perl_lib);
+
+    my $log = "$tmp/rpm-repository-lock.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $repo_root,
+        '--output', $output,
+        '--repo-dep', $repository,
+        '--target', 'test+epel-10-' . capture_command('uname', '-m'),
+        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-createrepo', '--skip-tarball', '--dry-run',
+    );
+    isnt($status, 0, 'a shared RPM repository cannot have two publishers');
+    like(read_binary($log), qr/repository \Q$repository\E is locked/,
+        'the lock failure names the shared repository');
 }
 
 sub test_apt_lock {
