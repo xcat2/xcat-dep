@@ -516,6 +516,15 @@ SKIP: {
 
     like($s, qr/mk-build-deps --install --remove/,
         'Build-Depends come from mk-build-deps (honours versions/alternatives/arch qualifiers)');
+    # A development suite can move between the index and the fetch (resolute rolling openssl left
+    # libssl-dev 404ing mid-build), so the build-dep install is retried WITH an index refresh --
+    # and is still fatal once the attempts are spent.
+    like($s, qr/\[retry\] dependency installation failed/,
+        'a failed build-dep install is retried, not accepted');
+    like($s, qr/refreshing the index/,
+        'the retry refreshes the index -- a stale index is what makes the fetch 404');
+    like($s, qr/FATAL: mk-build-deps failed after/,
+        'the build-dep install is still fatal once the retries are spent');
     like($s, qr/apt_retry update -q/,  'apt-get update is retried then fatal');
     like($s, qr/apt_retry install -y/, 'the common tooling install is retried then fatal');
     like($s, qr/\bequivs\b/,           'equivs is installed (mk-build-deps needs it)');

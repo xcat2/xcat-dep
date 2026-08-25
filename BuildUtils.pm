@@ -632,8 +632,26 @@ find "$W" -maxdepth 3 -name '*.deb' -printf '%s %T@ %p\n' | sort > "$W/.debs-bef
 # build dependency must stop the build, never be papered over by whatever the chroot already carries.
 if [ -f debian/control ]; then
     echo "== installing Build-Depends from debian/control (mk-build-deps) =="
-    mk-build-deps --install --remove \
-        --tool 'apt-get -y --no-install-recommends' debian/control
+    # Retried like every other apt operation here, and for the same reason: a suite that moves under
+    # us (resolute rolling openssl, say) leaves the index naming a version the pool has already
+    # dropped, and the fetch 404s. Refreshing the index between attempts is what fixes that, so the
+    # retry does exactly that. Still FATAL once the attempts are spent -- a package must never build
+    # against whatever the chroot happens to carry.
+    attempt=1
+    while :; do
+        if mk-build-deps --install --remove \
+            --tool 'apt-get -y --no-install-recommends' debian/control; then
+            break
+        fi
+        if [ "$attempt" -ge 3 ]; then
+            echo "FATAL: mk-build-deps failed after $attempt attempts" >&2
+            exit 1
+        fi
+        echo "[retry] dependency installation failed (attempt $attempt/3); refreshing the index" >&2
+        apt_retry update -q
+        sleep 5
+        attempt=$((attempt + 1))
+    done
 fi
 
 printf '%s' "$B64" | base64 -d > "$W/pkgbuild.sh"
