@@ -55,7 +55,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 45
+    skip 'RPM repository tools require a root Linux builder', 47
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -196,6 +196,11 @@ sub test_rpm_consumer {
     like($common_config, qr{/xcat-dep/common$}m,
         'common repository configuration uses the shared URL');
     ok(-x "$common_repo/mklocalrepo.sh", 'common repository supports offline setup');
+    my $local_repo_helper = read_binary("$common_repo/mklocalrepo.sh");
+    unlike($local_repo_helper, qr/\[\[/,
+        'the offline helper does not require Bash conditionals');
+    unlike($local_repo_helper, qr/`/,
+        'the offline helper uses POSIX command substitution');
     like(read_binary("$common_repo/buildinfo.txt"), qr/^TARGET=common$/m,
         'common repository records its target');
     like(read_binary("$output/mockbuild-all/$run/summary.txt"), qr/^copied_rpms=8$/m,
