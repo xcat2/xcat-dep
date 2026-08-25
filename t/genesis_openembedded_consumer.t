@@ -41,6 +41,12 @@ my $release = 'snap202608210726';
 my $epoch = 1787293573;
 my $tmp = tempdir(CLEANUP => 1);
 
+SKIP: {
+    skip 'Genesis package activation requires Linux procfs semantics', 5
+      unless $^O eq 'linux';
+    test_activation_helper();
+}
+
 if ($ENV{XCAT_GENESIS_CI}) {
     BAIL_OUT('CI requires Linux root') unless $^O eq 'linux' && $> == 0;
     for my $command (qw(apt-ftparchive bash createrepo_c dpkg-deb gpg rpm rpmbuild)) {
@@ -99,10 +105,13 @@ sub test_rpm_consumer {
     my $rpm_scripts = capture_command(
         'rpm', '-qp', '--scripts', "$release_root/rpm/$package"
     );
-    like($rpm_scripts, qr{/opt/xcat/sbin/mknb x86_64},
+    like($rpm_scripts, qr{genesis-openembedded-activate-x86_64 x86_64},
         'the RPM refreshes its architecture after a package transaction');
-    like($rpm_scripts, qr/sharedtftp/,
-        'the RPM respects shared TFTP service nodes');
+    like(
+        capture_command('rpm', '-qpl', "$release_root/rpm/$package"),
+        qr{/usr/libexec/xcat/genesis-openembedded-activate-x86_64$}m,
+        'the RPM contains its architecture-specific activation helper',
+    );
 
     my $dependencies = "$tmp/rpm-dependencies";
     my $scratch_repo_root = "$tmp/rpm-repo-root";
@@ -206,7 +215,7 @@ sub test_deb_consumer {
         'dpkg-deb', '--info', "$release_root/deb/$package", 'postinst'
     );
     isnt($postinst, '', 'the DEB includes a post-installation script');
-    like($postinst, qr{/opt/xcat/sbin/mknb x86_64},
+    like($postinst, qr{genesis-openembedded-activate-x86_64 x86_64},
         'the DEB refreshes its architecture after configuration');
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
@@ -664,6 +673,72 @@ sub test_apt_lock {
     );
     is($forced_status, 0, '--force-unlock takes over a stale lock');
     ok(!-d "$apt_root/.lock", 'the lock is released when the run finishes');
+}
+
+sub test_activation_helper {
+    my $root = "$tmp/activation-root";
+    my $bin = "$tmp/activation-bin";
+    my $log = "$tmp/activation.log";
+    my $output = "$tmp/activation-output.log";
+    make_path(
+        "$root/proc/1",
+        "$root/opt/xcat/sbin",
+        $bin,
+    );
+    write_binary("$root/proc/cmdline", "test\n");
+    symlink($root, "$root/proc/1/root") or die "Cannot create proc root link: $!";
+    write_binary(
+        "$root/opt/xcat/sbin/mknb",
+        <<'SH',
+#!/bin/sh
+echo "$*" >>"$XCAT_TEST_LOG"
+exit "${XCAT_TEST_MKNB_STATUS:-0}"
+SH
+    );
+    write_binary(
+        "$root/opt/xcat/sbin/tabdump",
+        <<'SH',
+#!/bin/sh
+printf '"sharedtftp","%s"\n' "${XCAT_TEST_SHAREDTFTP:-0}"
+SH
+    );
+    write_binary(
+        "$bin/rpm",
+        <<'SH',
+#!/bin/sh
+[ "${XCAT_TEST_SERVICE_NODE:-0}" = "1" ]
+SH
+    );
+    chmod(0755,
+        "$root/opt/xcat/sbin/mknb",
+        "$root/opt/xcat/sbin/tabdump",
+        "$bin/rpm",
+    ) or die "Cannot make activation fixtures executable: $!";
+
+    local $ENV{XCAT_GENESIS_ROOT} = $root;
+    local $ENV{XCAT_TEST_LOG} = $log;
+    local $ENV{PATH} = "$bin:$ENV{PATH}";
+    my $status = run_capture(
+        $output, "$repo_root/genesis-openembedded/activate", 'x86_64'
+    );
+    is($status, 0, 'the activation helper accepts a local-TFTP node');
+    is(read_binary($log), "x86_64\n", 'the activation helper runs mknb for one architecture');
+
+    write_binary($log, '');
+    local $ENV{XCAT_TEST_SERVICE_NODE} = 1;
+    local $ENV{XCAT_TEST_SHAREDTFTP} = 1;
+    $status = run_capture(
+        $output, "$repo_root/genesis-openembedded/activate", 'ppc64le'
+    );
+    is($status, 0, 'a shared-TFTP service node is accepted');
+    is(read_binary($log), '', 'a shared-TFTP service node does not rebuild Genesis');
+
+    local $ENV{XCAT_TEST_SERVICE_NODE} = 0;
+    local $ENV{XCAT_TEST_MKNB_STATUS} = 1;
+    $status = run_capture(
+        $output, "$repo_root/genesis-openembedded/activate", 'ppc64le'
+    );
+    is($status, 0, 'an mknb failure does not fail the package transaction');
 }
 
 sub make_package_release {

@@ -1,0 +1,46 @@
+#!/bin/sh
+
+architecture=$1
+root=${XCAT_GENESIS_ROOT:-}
+
+case "$architecture" in
+    x86|x86_64|ppc64|ppc64le|armv7hf|aarch64|riscv64) ;;
+    *)
+        echo "Invalid Genesis architecture: $architecture" >&2
+        exit 0
+        ;;
+esac
+
+cmdline="$root/proc/cmdline"
+init_root="$root/proc/1/root/."
+mknb="$root/opt/xcat/sbin/mknb"
+tabdump="$root/opt/xcat/sbin/tabdump"
+profile="$root/etc/profile.d/xcat.sh"
+
+[ -f "$cmdline" ] || exit 0
+[ -x "$mknb" ] || exit 0
+[ "$(stat -c '%i %d' "$root/" 2>/dev/null)" = "$(stat -c '%i %d' "$init_root" 2>/dev/null)" ] \
+    || exit 0
+
+service_node=0
+if command -v rpm >/dev/null 2>&1 && rpm -q xCATsn >/dev/null 2>&1; then
+    service_node=1
+elif command -v dpkg-query >/dev/null 2>&1 \
+    && dpkg-query -W -f='${Status}' xcatsn 2>/dev/null \
+        | grep -q '^install ok installed$'; then
+    service_node=1
+fi
+
+if [ "$service_node" -eq 1 ] && [ -x "$tabdump" ]; then
+    sharedtftp=$(
+        "$tabdump" site 2>/dev/null \
+            | awk -F '"' '$2 == "sharedtftp" { print $4; exit }'
+    )
+    [ "$sharedtftp" = "1" ] && exit 0
+fi
+
+[ ! -r "$profile" ] || . "$profile"
+if ! "$mknb" "$architecture"; then
+    echo "WARNING: mknb $architecture failed; rerun it after xcatd is available." >&2
+fi
+exit 0

@@ -91,6 +91,10 @@ for my $entry (_flat_files($export_dir)) {
     copy("$export_dir/$entry", "$source_root/image/$entry")
       or die "Cannot copy export file $entry: $!\n";
 }
+copy("$FindBin::Bin/activate", "$source_root/activate")
+  or die "Cannot copy the Genesis activation helper: $!\n";
+chmod(0755, "$source_root/activate")
+  or die "Cannot set the Genesis activation helper mode: $!\n";
 write_binary("$source_root/xcat-core-revision", "$revision\n");
 
 local $ENV{SOURCE_DATE_EPOCH} = $source_date_epoch;
@@ -158,7 +162,8 @@ sub _build_deb {
     my $root = "$work/deb-root";
     my $image = "$root/opt/xcat/share/xcat/netboot/genesis-openembedded/$architecture";
     my $doc = "$root/usr/share/doc/$package_name";
-    make_path("$root/DEBIAN", $image, $doc, "$staging/deb");
+    my $helper = "$root/usr/libexec/xcat/genesis-openembedded-activate-$architecture";
+    make_path("$root/DEBIAN", $image, $doc, dirname($helper), "$staging/deb");
 
     for my $entry (_flat_files("$source_root/image")) {
         copy("$source_root/image/$entry", "$image/$entry")
@@ -168,6 +173,9 @@ sub _build_deb {
     copy("$source_root/xcat-core-revision", "$doc/xcat-core-revision")
       or die "Cannot stage DEB revision: $!\n";
     chmod(0644, "$doc/xcat-core-revision") or die "Cannot set revision mode: $!\n";
+    copy("$source_root/activate", $helper)
+      or die "Cannot stage DEB activation helper: $!\n";
+    chmod(0755, $helper) or die "Cannot set activation helper mode: $!\n";
 
     my $installed_kib = _tree_bytes($root);
     $installed_kib = int(($installed_kib + 1023) / 1024);
@@ -182,6 +190,14 @@ sub _build_deb {
           . " The OpenEmbedded Genesis image used for node discovery, inventory,\n"
           . " and service actions.\n",
     );
+    write_binary(
+        "$root/DEBIAN/postinst",
+        "#!/bin/sh\n"
+          . "/usr/libexec/xcat/genesis-openembedded-activate-$architecture $architecture\n"
+          . "exit 0\n",
+    );
+    chmod(0755, "$root/DEBIAN/postinst")
+      or die "Cannot set post-installation script mode: $!\n";
     _write_deb_md5sums($root);
     _normalize_mtime($root, $source_date_epoch);
 
