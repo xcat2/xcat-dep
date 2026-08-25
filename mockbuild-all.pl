@@ -669,6 +669,8 @@ sub publish_genesis_common_repo {
     verify_genesis_release_packages('rpm', $COMMON_STAGE);
     sign_and_index_repo($COMMON_STAGE);
     write_common_repo_metadata($COMMON_STAGE);
+    chmod(0755, $COMMON_STAGE)
+      or die "Cannot make $COMMON_STAGE traversable: $!\n";
     replace_common_repository($COMMON_STAGE, $dest);
     print "Published common Genesis repository: $published rpms\n";
 }
@@ -680,9 +682,9 @@ sub replace_common_repository {
 
     $COMMON_DESTINATION = $destination;
     if (-e $destination || -l $destination) {
+        $COMMON_BACKUP = $backup;
         rename($destination, $backup)
           or die "Cannot preserve $destination before publication: $!\n";
-        $COMMON_BACKUP = $backup;
     }
     unless (rename($staged, $destination)) {
         my $error = $!;
@@ -784,6 +786,8 @@ name=xCAT 2 common dependencies
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
+repo_gpgcheck=$gpgcheck
+skip_if_unavailable=1
 $gpgkey_line
 EOF
     close $r;
@@ -802,7 +806,7 @@ SCRIPT_DIRECTORY=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 cd "$SCRIPT_DIRECTORY" || exit 1
 set -- xcat-*.repo
 if [ "$#" -ne 1 ] || [ "$1" = "xcat-*.repo" ]; then
-    echo "ERROR: For xcat-dep, please execute $0 in the correct <os>/<arch> subdirectory"
+    echo "ERROR: Execute $0 in an xcat-dep repository directory"
     exit 1
 fi
 REPOFILE=$1
@@ -1336,7 +1340,28 @@ sub acquire_output_lock {
 
 sub acquire_repository_lock {
     my ($base, $force) = @_;
+    _recover_common_repository($base) if $force;
     acquire_named_lock($base, 'repository', $force);
+}
+
+sub _recover_common_repository {
+    my ($base) = @_;
+    my $destination = "$base/common";
+    my @backups = sort {
+        ((stat($a))[9] // 0) <=> ((stat($b))[9] // 0)
+    } grep { -d $_ && !-l $_ } bsd_glob("$base/.common.previous.*");
+
+    if (!-e $destination && !-l $destination && @backups) {
+        my $backup = pop(@backups);
+        rename($backup, $destination)
+          or die "Cannot restore interrupted common repository $backup: $!\n";
+    }
+    remove_tree($_) for grep { -d $_ && !-l $_ } @backups;
+
+    for my $staging (bsd_glob("$base/.common.*")) {
+        next if $staging =~ m{/\.common\.previous\.};
+        remove_tree($staging) if -d $staging && !-l $staging;
+    }
 }
 
 sub _rmdir_lock {

@@ -22,7 +22,7 @@ GENESIS_POOL=""
 GENESIS_STAGE_RELATIVE=""
 GENESIS_STAGE=""
 PACKAGE_TEMPORARY=""
-KEY_TEMPORARY=""
+KEY_STAGED=""
 TRANSACTION_ROOT=""
 METADATA_ROOT=""
 FORCE_UNLOCK=0
@@ -33,6 +33,8 @@ declare -A SUITE_EXPECTED=()
 declare -A SUITE_STAGE=()
 declare -a PUBLISHED_DESTINATIONS=()
 declare -a PUBLISHED_BACKUPS=()
+declare -a PUBLISHED_PACKAGE_DESTINATIONS=()
+declare -a PUBLISHED_PACKAGE_BACKUPS=()
 
 cleanup() {
     if [[ $PUBLICATION_COMMITTED -eq 0 ]]; then
@@ -40,9 +42,21 @@ cleanup() {
         for ((index=${#PUBLISHED_DESTINATIONS[@]} - 1; index >= 0; index--)); do
             destination="${PUBLISHED_DESTINATIONS[$index]}"
             backup="${PUBLISHED_BACKUPS[$index]}"
-            rm -rf -- "$destination"
             if [[ -n "$backup" && -d "$backup" ]]; then
+                rm -rf -- "$destination"
                 mv -- "$backup" "$destination"
+            elif [[ -z "$backup" ]]; then
+                rm -rf -- "$destination"
+            fi
+        done
+        for ((index=${#PUBLISHED_PACKAGE_DESTINATIONS[@]} - 1; index >= 0; index--)); do
+            destination="${PUBLISHED_PACKAGE_DESTINATIONS[$index]}"
+            backup="${PUBLISHED_PACKAGE_BACKUPS[$index]}"
+            if [[ -n "$backup" && -f "$backup" ]]; then
+                rm -f -- "$destination"
+                mv -- "$backup" "$destination"
+            elif [[ -z "$backup" ]]; then
+                rm -f -- "$destination"
             fi
         done
     fi
@@ -54,9 +68,6 @@ cleanup() {
     fi
     if [[ -n "$PACKAGE_TEMPORARY" ]]; then
         rm -f -- "$PACKAGE_TEMPORARY"
-    fi
-    if [[ -n "$KEY_TEMPORARY" ]]; then
-        rm -f -- "$KEY_TEMPORARY"
     fi
     if [[ -n "$HELD_LOCK" ]]; then
         rm -f -- "$HELD_LOCK/owner"
@@ -143,10 +154,13 @@ acquire_apt_lock() {
     local lock="$APT_DIR/.lock"
     [[ $DRY_RUN -eq 0 ]] || return 0
     mkdir -p -- "$APT_DIR"
-    if [[ $FORCE_UNLOCK -eq 1 && -d "$lock" ]]; then
-        echo "force-unlock: removing stale lock $lock"
-        rm -f -- "$lock/owner"
-        rmdir -- "$lock" 2>/dev/null || true
+    if [[ $FORCE_UNLOCK -eq 1 ]]; then
+        recover_interrupted_apt_publication
+        if [[ -d "$lock" ]]; then
+            echo "force-unlock: removing stale lock $lock"
+            rm -f -- "$lock/owner"
+            rmdir -- "$lock" 2>/dev/null || true
+        fi
     fi
     if mkdir -- "$lock" 2>/dev/null; then
         HELD_LOCK="$lock"
@@ -156,6 +170,28 @@ acquire_apt_lock() {
     [[ -d "$lock" ]] || die "Cannot create lock $lock"
     die "APT directory $APT_DIR is locked ($lock): $(tr '\n' ' ' < "$lock/owner" 2>/dev/null)
 another build-apt-repo.sh run owns it; use a different --apt-dir or --force-unlock if stale."
+}
+
+recover_interrupted_apt_publication() {
+    local backup directory name destination
+    while IFS= read -r -d '' backup; do
+        directory=$(dirname "$backup")
+        name=$(basename "$backup")
+        name=${name#.}
+        name=${name%.previous.*}
+        destination="$directory/$name"
+        if [[ -e "$destination" ]]; then
+            rm -rf -- "$backup"
+        else
+            mv -- "$backup" "$destination"
+        fi
+    done < <(find "$APT_DIR/dists" "$APT_DIR/pool" -depth \
+        -name '.*.previous.*' -print0 2>/dev/null)
+    find "$APT_DIR" -maxdepth 1 -type d -name '.xcat-apt.*' \
+        -exec rm -rf -- {} +
+    find "$APT_DIR" -type f \
+        \( -name '.xcat-deploy.*' -o -name '.xcat-key.*' \) \
+        -delete
 }
 acquire_apt_lock
 
@@ -428,10 +464,9 @@ if [[ -f "$key_src" ]]; then
     if [[ $DRY_RUN -eq 1 ]]; then
         echo "+ cp $key_src $key_dst"
     else
-        KEY_TEMPORARY=$(mktemp "$APT_DIR/.xcat-key.XXXXXX")
-        cp -- "$key_src" "$KEY_TEMPORARY"
-        mv -- "$KEY_TEMPORARY" "$key_dst"
-        KEY_TEMPORARY=""
+        KEY_STAGED="$TRANSACTION_ROOT/xcat-dep.asc"
+        cp -- "$key_src" "$KEY_STAGED"
+        chmod 0644 "$KEY_STAGED"
     fi
     echo "Public key -> xcat-dep.asc (from $key_src)"
 elif [[ $DRY_RUN -eq 1 ]]; then
@@ -439,15 +474,14 @@ elif [[ $DRY_RUN -eq 1 ]]; then
 else
     # No pre-exported key file: export the signing public key straight from the
     # keyring (honors GNUPGHOME), so clients get the matching pubkey.
-    KEY_TEMPORARY=$(mktemp "$APT_DIR/.xcat-key.XXXXXX")
-    if gpg --armor --export "$GPG_KEY_ID" > "$KEY_TEMPORARY" 2>/dev/null \
-        && [[ -s "$KEY_TEMPORARY" ]]; then
-        mv -- "$KEY_TEMPORARY" "$key_dst"
-        KEY_TEMPORARY=""
+    KEY_STAGED="$TRANSACTION_ROOT/xcat-dep.asc"
+    if gpg --armor --export "$GPG_KEY_ID" > "$KEY_STAGED" 2>/dev/null \
+        && [[ -s "$KEY_STAGED" ]]; then
+        chmod 0644 "$KEY_STAGED"
         echo "Public key -> xcat-dep.asc (exported $GPG_KEY_ID from keyring)"
     else
-        rm -f "$KEY_TEMPORARY"
-        KEY_TEMPORARY=""
+        rm -f "$KEY_STAGED"
+        KEY_STAGED=""
         echo "WARNING: could not export '$GPG_KEY_ID' and $key_src not found; no xcat-dep.asc written"
     fi
 fi
@@ -458,14 +492,21 @@ publish_package() {
     local genesis_relative="${3:-}"
     destination="$2/$(basename "$source")"
     mkdir -p -- "$2"
-    if [[ -e "$destination" ]]; then
-        cmp -s "$source" "$destination" \
-            || die "Package collision with different content: $destination"
+    local backup=""
+    if [[ -e "$destination" ]] && cmp -s "$source" "$destination"; then
         return
     fi
+    if [[ -e "$destination" ]]; then
+        backup="$2/.${destination##*/}.previous.$$"
+        rm -f -- "$backup"
+    fi
+    PUBLISHED_PACKAGE_DESTINATIONS+=("$destination")
+    PUBLISHED_PACKAGE_BACKUPS+=("$backup")
+    [[ -z "$backup" ]] || mv -- "$destination" "$backup"
     PACKAGE_TEMPORARY=$(mktemp "$2/.xcat-deploy.XXXXXX")
     cp --reflink=auto -- "$source" "$PACKAGE_TEMPORARY" 2>/dev/null \
         || cp -- "$source" "$PACKAGE_TEMPORARY"
+    chmod 0644 "$PACKAGE_TEMPORARY"
     if [[ -n "$genesis_relative" ]]; then
         "$GENESIS_VERIFIER" \
             --checksum-file "$GENESIS_CHECKSUMS" \
@@ -484,10 +525,10 @@ publish_metadata() {
     if [[ -e "$destination" ]]; then
         backup="$(dirname "$destination")/.${destination##*/}.previous.$$"
         rm -rf -- "$backup"
-        mv -- "$destination" "$backup"
     fi
     PUBLISHED_DESTINATIONS+=("$destination")
     PUBLISHED_BACKUPS+=("$backup")
+    [[ -z "$backup" ]] || mv -- "$destination" "$backup"
     mv -- "$source" "$destination"
 }
 
@@ -504,6 +545,9 @@ if [[ $DRY_RUN -eq 0 ]]; then
             publish_package "$deb" "$GENESIS_POOL" "deb/${deb##*/}"
         done
     fi
+    if [[ -n "$KEY_STAGED" ]]; then
+        publish_package "$KEY_STAGED" "$APT_DIR"
+    fi
 
     step "Publishing repository metadata"
     for ver in "${SELECTED_VERS[@]}"; do
@@ -513,6 +557,9 @@ if [[ $DRY_RUN -eq 0 ]]; then
     PUBLICATION_COMMITTED=1
     for backup in "${PUBLISHED_BACKUPS[@]}"; do
         [[ -z "$backup" ]] || rm -rf -- "$backup"
+    done
+    for backup in "${PUBLISHED_PACKAGE_BACKUPS[@]}"; do
+        [[ -z "$backup" ]] || rm -f -- "$backup"
     done
 
     step "Retiring previous packages"
