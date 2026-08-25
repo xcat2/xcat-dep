@@ -7,6 +7,7 @@ use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 use FindBin;
+use POSIX ();
 use Test::More;
 
 use lib "$FindBin::Bin/../lib";
@@ -51,7 +52,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 54
+    skip 'RPM repository tools require a root Linux builder', 59
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -65,10 +66,11 @@ SKIP: {
     test_failed_build_release();
     test_dry_run_release();
     test_rpm_repository_lock();
+    test_rpm_signal_cleanup();
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 60
+    skip 'APT repository tools are not installed', 63
       unless $^O eq 'linux'
       && command_exists('bash')
       && command_exists('dpkg-deb')
@@ -106,6 +108,8 @@ sub test_rpm_consumer {
         'the RPM refreshes its architecture after a package transaction');
     like($rpm_scripts, qr{mknb x86_64 --remove-openembedded},
         'the RPM removes published artifacts when the image is erased');
+    like($rpm_scripts, qr{/proc/1/root},
+        'the RPM removal path refuses to operate from a chroot');
     like(
         capture_command('rpm', '-qpl', "$release_root/rpm/$package"),
         qr{/usr/libexec/xcat/genesis-openembedded-activate-x86_64$}m,
@@ -276,6 +280,8 @@ sub test_deb_consumer {
     );
     like($postrm, qr{mknb x86_64 --remove-openembedded},
         'the DEB removes published artifacts when the image is erased');
+    like($postrm, qr{/proc/1/root},
+        'the DEB removal path refuses to operate from a chroot');
 
     my $apt_repo_root = "$tmp/apt-repository-root";
     make_path($apt_repo_root);
@@ -869,6 +875,56 @@ sub test_rpm_repository_lock {
     ok(!-d $staging, 'abandoned common repository staging is removed');
 }
 
+sub test_rpm_signal_cleanup {
+    my $output = "$tmp/rpm-signal-output";
+    my $repository = "$tmp/rpm-signal-repository";
+    my $signal_bin = "$tmp/rpm-signal-bin";
+    my $log = "$tmp/rpm-signal.log";
+    make_path($repository, $signal_bin);
+    write_binary(
+        "$signal_bin/uname",
+        "#!/bin/sh\n"
+          . "if [ \"\$1\" = -m ]; then sleep 60; exit 1; fi\n"
+          . "exec /usr/bin/uname \"\$@\"\n",
+    );
+    chmod(0755, "$signal_bin/uname") or die $!;
+
+    my $pid = fork();
+    die "Cannot fork signal test: $!" unless defined($pid);
+    if ($pid == 0) {
+        POSIX::setpgid(0, 0);
+        local $ENV{PATH} = "$signal_bin:$ENV{PATH}";
+        open(STDOUT, '>', $log) or die "open $log: $!";
+        open(STDERR, '>&', fileno(STDOUT)) or die "redirect stderr: $!";
+        exec(
+            $^X, $rpm_consumer,
+            '--repo-root', $repo_root,
+            '--xcat-source', $repo_root,
+            '--output', $output,
+            '--repo-dep', $repository,
+            '--target', 'test+epel-10-x86_64',
+            '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+            '--skip-createrepo', '--skip-tarball', '--dry-run',
+        );
+        exit 127;
+    }
+
+    my $locked = 0;
+    for (1 .. 200) {
+        if (-d "$output/.lock" && -d "$repository/.lock") {
+            $locked = 1;
+            last;
+        }
+        select(undef, undef, undef, 0.05);
+    }
+    ok($locked, 'the signal test reaches the locked publication phase');
+    kill('TERM', -$pid);
+    waitpid($pid, 0);
+    is($? >> 8, 1, 'SIGTERM follows the publisher cleanup exit path');
+    ok(!-d "$output/.lock", 'SIGTERM releases the output lock');
+    ok(!-d "$repository/.lock", 'SIGTERM releases the repository lock');
+}
+
 sub test_apt_lock {
     my $apt_root = "$tmp/apt-lock";
     my $input = "$apt_root/ubuntu24.04";
@@ -889,9 +945,11 @@ sub test_apt_lock {
         'the refusal names the directory another run owns');
 
     my $backup = "$apt_root/dists/.jammy.previous.999";
+    my $key_backup = "$apt_root/.xcat-dep.asc.previous.999";
     my $staging = "$apt_root/.xcat-apt.abandoned";
     make_path($backup, $staging);
     write_binary("$backup/marker", "previous repository\n");
+    write_binary($key_backup, "previous signing key\n");
 
     my $forced_log = "$tmp/deb-forced.log";
     my $forced_status = run_capture(
@@ -907,6 +965,9 @@ sub test_apt_lock {
     ok(!-d "$apt_root/.lock", 'the lock is released when the run finishes');
     ok(-f "$apt_root/dists/jammy/marker",
         'the interrupted APT metadata directory is restored');
+    is(read_binary("$apt_root/xcat-dep.asc"), "previous signing key\n",
+        'the interrupted APT signing key is restored');
+    ok(!-e $key_backup, 'the recovered signing key backup is retired');
     ok(!-d $staging, 'abandoned APT transaction staging is removed');
 }
 
