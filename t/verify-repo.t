@@ -47,15 +47,22 @@ sub stanza {
 # The two Architecture:all packages ride into EVERY binary-<arch> index, exactly as apt-ftparchive
 # emits them -- which is why a non-empty ppc index is not evidence that ppc64el was built.
 sub arch_all_stanzas {
-    my ($genesis_arch) = @_;
-    return stanza('grub2-xcat', '2.12-1', 'all')
-         . stanza("xcat-genesis-base-$genesis_arch", '2.19.0-snap202608211200', 'all');
+    my ($genesis_arch, %o) = @_;
+    my $body = stanza('grub2-xcat', '2.12-1', 'all');
+    $body .= stanza("xcat-genesis-base-$genesis_arch", '2.19.0-snap202608211200', 'all')
+        unless $o{no_genesis};
+    return $body;
 }
 
 sub native_stanzas {
     my ($a, %o) = @_;
-    return stanza('ipmitool-xcat', $o{ipmi_version} // '1.8.18-snap202608211200', $a)
-         . stanza('goconserver',   '0.3.3-snap202608211200',  $a);
+    my $body = stanza('ipmitool-xcat', $o{ipmi_version} // '1.8.18-snap202608211200', $a);
+    # drop_dep names ONE compiled dep to leave out, so a "missing dep" fixture still carries native
+    # stanzas for this arch -- otherwise the arch itself reads as absent and the gate fails for that
+    # reason instead of the one under test.
+    $body .= stanza('goconserver', '0.3.3-snap202608211200', $a)
+        unless ($o{drop_dep} // '') eq 'goconserver';
+    return $body;
 }
 
 # make_repo(%opt): a fixture apt tree for codename 'noble'.
@@ -70,8 +77,11 @@ sub make_repo {
     my %native  = map { $_ => 1 } @{ $o{native} // [@arches] };
     my $dir = "$tmp/repo" . (++$repo_seq);
     for my $a (@arches) {
-        my $body = ($native{$a} ? native_stanzas($a, ipmi_version => $o{ipmi_version}) : '')
-                 . arch_all_stanzas($a);
+        my $body = ($native{$a}
+                      ? native_stanzas($a, ipmi_version => $o{ipmi_version},
+                                           drop_dep => $o{drop_dep})
+                      : '')
+                 . arch_all_stanzas($a, no_genesis => $o{no_genesis});
         write_file("$dir/dists/noble/main/binary-$a/Packages", $body);
     }
     write_file("$dir/dists/noble/Release",
@@ -118,6 +128,30 @@ sub run_gate {
     my ($repo, @extra) = @_;
     return run_cmd($^X, $SCRIPT, '--verify-repo', $repo, '--manifest', $manifest,
                    '--dists', 'noble', '--arch', 'amd64', @extra);
+}
+
+# ---- a --skip-* flag must NOT weaken the PUBLICATION gate (PR #63 review) -----------------------
+# The documented publish-only invocation is `--skip-build --skip-genesis --publish`, and the gate fed
+# those flags into required_pkgs() when deciding what the PUBLISHED repository must carry. So a
+# repository with no Genesis package passed its own publication gate. The flags say what this
+# INVOCATION built; they never say what the published repository is allowed to be missing -- the
+# manifest is the source of truth for that, whole, every time.
+{
+    my $repo = make_repo(no_genesis => 1);
+    my ($rc, $out) = run_gate($repo, '--no-verify-signature', '--skip-genesis');
+    isnt($rc, 0, 'a published repo missing Genesis fails the gate even with --skip-genesis')
+        or diag($out);
+    like($out, qr/xcat-genesis-base/, '... and the failure names the missing package');
+}
+
+# The same reasoning for the compiled deps: --skip-xcat-dep means this invocation did not build
+# them, not that the repository may ship without them.
+{
+    my $repo = make_repo(drop_dep => 'goconserver');
+    my ($rc, $out) = run_gate($repo, '--no-verify-signature', '--skip-xcat-dep');
+    isnt($rc, 0, 'a published repo missing a compiled dep fails the gate even with --skip-xcat-dep')
+        or diag($out);
+    like($out, qr/goconserver/, '... and the failure names the missing dep');
 }
 
 # ---- a complete two-arch repo passes (the baseline: the gate is not simply always-red) -----------
