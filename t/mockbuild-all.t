@@ -445,4 +445,36 @@ my $vercmp = sub {
         'build_mock_uniqueext: deterministic for a given (run, seq, label)');
 }
 
+# ---- the shipped manifest keeps xCAT's release-sensitive floors (PR #62 review) -----------------
+# xCAT states these as ">= version-release" Requires, so a VERSION-only pin lets the gate accept an
+# rpm with the right Version and a Release older than xCAT will install against. Guard the shipped
+# manifest itself, in every section, so a later edit cannot quietly drop a floor back to a bare
+# version.
+{
+    my $shipped = "$RealBin/../packages-manifest.conf";
+  SKIP: {
+        skip 'packages-manifest.conf not found', 2 unless -f $shipped;
+        my %m = read_manifest($shipped);
+        my @evr_pinned = qw(goconserver xnba-undi syslinux-xcat ipmitool-xcat
+                            perl-HTTP-Async perl-Net-HTTPS-NB perl-IO-Stty xCAT-genesis-base);
+        my @bare;
+        for my $tgt (sort keys %m) {
+            for my $pkg (@evr_pinned) {
+                my $pin = $m{$tgt}{$pkg};
+                next unless defined $pin;                  # not every target lists every package
+                push @bare, "[$tgt] $pkg=$pin" unless $pin =~ /^\s*(?:>=|>|<=|<|=)\s*\S/;
+            }
+        }
+        is_deeply(\@bare, [], 'every release-sensitive package keeps an EVR floor in every section')
+            or diag("VERSION-only pin(s):\n  " . join("\n  ", @bare));
+
+        # grub2-xcat is the deliberate exception: xCAT-server asks for >= 2.02-0.76.el7.1.snap...,
+        # which the grub2-xcat this repo builds (1.0-2) cannot satisfy. Encoding that Requires would
+        # fail every build, so the pin tracks what is actually produced -- see the file's header.
+        my @grub = grep { defined } map { $m{$_}{'grub2-xcat'} } sort keys %m;
+        is_deeply([ grep { /^\s*>=/ } @grub ], [],
+            'grub2-xcat stays a version pin (its xCAT Requires cannot be met by what is built)');
+    }
+}
+
 done_testing;
