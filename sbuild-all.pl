@@ -908,7 +908,13 @@ sub verify_assembled_repo {
                 push @all, "[$cn/$a] NO-MANIFEST section [$tgt] in $manifest, but $a is expected";
                 next;
             }
-            my @names = required_pkgs([sort keys %$req], $skip_genesis, $skip_xcat_dep);
+            # The WHOLE manifest, deliberately -- no required_pkgs() skip filtering here. The
+            # --skip-* flags say what this INVOCATION built, and the documented publish-only run
+            # passes --skip-genesis; honouring them here would let the run that publishes decide
+            # what the published repository is allowed to be missing, and a repo with no Genesis
+            # package would pass its own publication gate. Packages this invocation did not build
+            # are still expected in the tree (seeded from the previously published repo).
+            my @names = sort keys %$req;
             my $idx = "$adir/dists/$cn/main/binary-$a/Packages";
             unless (-f $idx) {
                 push @all, "[$cn/$a] MISSING-INDEX (no $idx)";
