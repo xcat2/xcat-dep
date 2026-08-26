@@ -74,7 +74,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 58
+    skip 'APT repository tools are not installed', 59
       unless $^O eq 'linux'
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive');
@@ -279,8 +279,13 @@ sub run_apt_consumer {
     unless ($manifest) {
         $manifest = "$args{output}/manifest.conf";
         make_path($args{output});
+        # plus the shipped [shared] section verbatim: publishing a release gates the shared pool
+        # against it, and a manifest without it is refused rather than silently ungated.
+        my $shipped = read_binary("$repo_root/debs-manifest.conf");
+        my ($shared) = $shipped =~ /^(\[shared\]\n(?:[^\[]*))/ms;
+        BAIL_OUT('debs-manifest.conf has no [shared] section') unless $shared;
         write_binary($manifest,
-            join('', map { "[$_-amd64]\nxcat-genesis-base=*\n" } @APT_SUITES));
+            join('', map { "[$_-amd64]\nxcat-genesis-base=*\n" } @APT_SUITES) . "\n" . $shared);
     }
     return run_capture(
         $args{log},
@@ -370,6 +375,8 @@ sub test_deb_consumer {
     } architectures();
     is_deeply([ genesis_deb_names($shared_pool) ], \@expected_packages,
         'shared APT pool contains one complete Genesis release');
+    like(read_binary($log), qr/\[verify-repo\] shared pool complete: 7 packages present/,
+        'the shared pool is gated against the manifest\'s [shared] section');
     my @suite_packages;
     for my $codename (@APT_SUITES) {
         push(@suite_packages, map { "$codename/$_" }

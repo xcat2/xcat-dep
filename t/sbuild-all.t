@@ -324,8 +324,11 @@ SKIP: {
 # ---- manifest <-> reality consistency (concern #3 + doc drift guard) -----------------------------
 {
     my %m = read_manifest("$RealBin/../debs-manifest.conf");
-    my @targets = sort keys %m;
+    # Not every section is a build target: [shared] describes the ONE pool the OpenEmbedded Genesis
+    # release is published into, which no builder produces. Target sections are <codename>-<arch>.
+    my @targets = grep { /^[a-z]+-(?:amd64|ppc64el)$/ } sort keys %m;
     cmp_ok(scalar(@targets), '>=', 8, 'manifest has all 8 codename x arch target sections');
+    ok(!grep({ $_ eq 'shared' } @targets), 'the shared-pool section is not treated as a build target');
 
     # goconserver is a compiled dep built for EVERY target (both arches, all codenames).
     my @miss_go = grep { !exists $m{$_}{'goconserver'} } @targets;

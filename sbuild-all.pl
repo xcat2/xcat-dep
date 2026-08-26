@@ -1019,7 +1019,29 @@ sub install_genesis_release_debs {
             or die "FATAL: cannot set mode on $pool/$base: $!\n";
         XCAT::GenesisRelease::verify_release_file($genesis_release_checksums, $relative, "$pool/$base");
     }
+    verify_shared_pool($pool);
     return scalar(@files);
+}
+
+# verify_shared_pool($pool): assert the shared Genesis pool carries every package the manifest's
+# [shared] section requires, at a version satisfying its pin. [shared] is not a build target: it
+# describes the one pool every suite indexes, which no [<codename>-<arch>] section covers. Run on
+# the SIDE TREE, before it is swapped into place, so an incomplete pool is never published.
+# Completeness only -- the release checksums cover the bytes.
+sub verify_shared_pool {
+    my ($pool) = @_;
+    my %req = %{ $MANIFEST{shared} // {} };
+    die "FATAL: no [shared] section in $manifest -- cannot verify the shared Genesis pool\n"
+        if !%req;
+    my @names = sort keys %req;
+    my %present = map { $_ => deb_version($pool, $_) } @names;
+    my @problems = verify_repo_packages(\%req, \%present);
+    if (@problems) {
+        print "  - $_\n" for @problems;
+        die "FATAL: shared Genesis pool INCOMPLETE at $pool (" . scalar(@problems) . " problem(s))\n";
+    }
+    print "  [verify-repo] shared pool complete: " . scalar(@names) . " packages present\n";
+    return 1;
 }
 
 sub assemble_into {
