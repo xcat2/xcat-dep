@@ -237,8 +237,12 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
 # doc and the manifest can never silently drift apart again.
 {
     my %m = read_manifest("$RealBin/../packages-manifest.conf");
-    my @targets = sort keys %m;
+    # Not every section is a build target: [common] describes the SHARED repository the
+    # OpenEmbedded Genesis release is published into, which no builder produces. Target sections are
+    # the ones named after a mock config (<id>+epel-<rel>-<arch>, opensuse-leap-<ver>-<arch>).
+    my @targets = grep { /^[a-z0-9.+-]+-\d+(?:\.\d+)?-[a-z0-9_]+$/ } sort keys %m;
     cmp_ok(scalar(@targets), '>=', 1, 'packages-manifest.conf has at least one target section');
+    ok(!grep({ $_ eq 'common' } @targets), 'the shared-repo section is not treated as a build target');
     my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
     is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
         or diag("missing conserver-xcat in: @missing");

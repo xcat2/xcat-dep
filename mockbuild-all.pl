@@ -952,10 +952,52 @@ sub publish_genesis_common_repo {
     verify_genesis_release_packages('rpm', $COMMON_STAGE);
     sign_and_index_repo($COMMON_STAGE);
     write_common_repo_metadata($COMMON_STAGE);
+    # Gate the STAGE, so an incomplete shared repo is never swapped into place. Completeness only:
+    # the packages were verified against the release checksums as they were copied, and the deploy
+    # asserts every rpm's signature, but until now nothing checked that the repository being
+    # published actually carries the whole architecture set the manifest says it must.
+    verify_common_repo($COMMON_STAGE) unless $no_verify_repo;
     chmod(0755, $COMMON_STAGE)
       or die "Cannot make $COMMON_STAGE traversable: $!\n";
     replace_common_repository($COMMON_STAGE, $dest);
     print "Published common Genesis repository: $published rpms\n";
+}
+
+#--------------------------------------------------------------------------------
+
+=head3 verify_common_repo
+
+    Assert the shared OpenEmbedded Genesis repository carries every package the manifest's [common]
+    section requires, at a version satisfying its pin. [common] is not a build target: it describes
+    the one repository published beside the per-EL cells, which no [<target>] section covers.
+
+    Arguments:
+        $dir - the repository to check (the staging directory, before it is swapped into place)
+    Returns:
+        1, or dies listing every problem
+
+=cut
+
+#--------------------------------------------------------------------------------
+sub verify_common_repo {
+    my ($dir) = @_;
+    my $manifest = "$repo_root/packages-manifest.conf";
+    my %MAN = read_manifest($manifest);
+    my %req = %{ $MAN{common} // {} };
+    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
+        if !%req;
+
+    my @names       = sort keys %req;
+    my %present     = repo_present_versions($dir, \@names);
+    my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
+    my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
+    if (@problems) {
+        print "  - $_\n" for @problems;
+        die "FATAL: shared Genesis repo INCOMPLETE at $dir (" . scalar(@problems) . " problem(s))\n";
+    }
+    print "[verify-repo] common complete: " . scalar(@names)
+        . " packages present + EVR-satisfied in $dir\n";
+    return 1;
 }
 
 sub replace_common_repository {
