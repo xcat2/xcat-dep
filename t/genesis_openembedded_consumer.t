@@ -87,12 +87,15 @@ SKIP: {
 done_testing();
 
 # mockbuild-all.pl builds and gates each target against <repo-root>/packages-manifest.conf, and a
-# target with no section there is fatal. These fixtures use a synthetic target, and their dependency
-# packages are copies of one rpm -- so the section names the header name those copies actually carry.
-# The per-package manifest gate itself is covered by t/mockbuild-all.t; what these runs exercise is
-# the Genesis release path. The runs pass --skip-genesis rather than the removed --skip-xcat: this
-# script no longer builds the xCAT core, so xcat-core's buildrpms.pl is required only for the
-# per-EL xCAT-genesis-base build.
+# target with no section there is fatal -- so these runs, which use a synthetic target, need a
+# section to exist at all. Its CONTENT is deliberately not meaningful: the dependency packages here
+# are copies of one rpm, so no set of names describes them the way a real manifest describes a real
+# build. The runs therefore pass --no-verify-repo and the completeness gate is covered where it can
+# be tested honestly, against purpose-built rpms, in t/verify-repo-el.t. What these runs exercise is
+# the Genesis release path.
+#
+# They pass --skip-genesis rather than the removed --skip-xcat: this script no longer builds the
+# xCAT core, so xcat-core's buildrpms.pl is required only for the per-EL xCAT-genesis-base build.
 sub write_target_manifest {
     my ($root, $target) = @_;
     make_path($root);
@@ -168,6 +171,7 @@ sub test_rpm_consumer {
         '--run-id', 'consumer',
         '--build-timestamp', $epoch,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $dependencies,
@@ -272,6 +276,7 @@ SH
         '--run-id', 'publication-failure',
         '--build-timestamp', $epoch,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $dependencies,
@@ -615,6 +620,7 @@ sub test_signed_common_rpm_repository {
         '--run-id', 'signed-consumer',
         '--build-timestamp', $epoch,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--collect-dir', $dependencies,
         '--genesis-release', $release_root,
@@ -673,6 +679,7 @@ sub test_legacy_rpm_consumer {
         '--target', $target,
         '--run-id', 'legacy',
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--collect-dir', $dependencies,
     );
@@ -736,6 +743,7 @@ sub test_partial_rpm_release {
         '--run-id', 'partial',
         '--build-timestamp', $epoch,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
     );
@@ -795,6 +803,7 @@ sub test_failed_build_release {
         '--run-id', 'empty',
         '--build-timestamp', $epoch,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $collected,
@@ -837,6 +846,7 @@ sub test_skip_build_collects_results {
         '--run-id', 'kept',
         '--build-timestamp', $epoch,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
     );
 
@@ -866,6 +876,7 @@ sub test_dry_run_release {
         '--run-id', 'dry',
         '--build-timestamp', $epoch,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $dependencies,
@@ -907,6 +918,7 @@ sub test_rpm_repository_lock {
         '--repo-dep', $repository,
         '--target', $target,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball', '--dry-run',
     );
     isnt($status, 0, 'a shared RPM repository cannot have two publishers');
@@ -926,6 +938,7 @@ sub test_rpm_repository_lock {
         '--repo-dep', $repository,
         '--target', $target,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball', '--dry-run', '--force-unlock',
     );
     is($forced_status, 0, '--force-unlock recovers an interrupted RPM publication');
@@ -963,6 +976,7 @@ sub test_rpm_signal_cleanup {
             '--repo-dep', $repository,
             '--target', 'test+epel-10-x86_64',
             '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
             '--skip-createrepo', '--skip-tarball', '--dry-run',
         );
         exit 127;

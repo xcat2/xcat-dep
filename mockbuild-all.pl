@@ -1562,8 +1562,11 @@ sub verify_target_repo {
     my %MAN = read_manifest($manifest);
     my %req = %{ $MAN{$tgt} // {} };
     die "FATAL: no manifest section for target '$tgt' in $manifest\n" if !%req;
-    # Skip flags default 0 -> the full required set. A package whose builder was skipped is not required.
-    my @names   = required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep);
+    # The WHOLE manifest, deliberately -- the --skip-* flags are NOT applied here. They say what
+    # this INVOCATION built; they never say what the verified repository may be missing. Honouring
+    # them let a repo with no xCAT-genesis-base pass whenever the verifying run happened to carry
+    # --skip-genesis (PR #62 review). A package an earlier run built is still expected to be here.
+    my @names   = sort keys %req;
     my %present     = repo_present_versions($dir, \@names);
     # Full EPOCH:VERSION-RELEASE per package, so a manifest EVR constraint (e.g. genesis-base
     # '>= 2:2.18.0', which %{VERSION}-only matching cannot enforce -- 2.* would accept a pre-2.18
