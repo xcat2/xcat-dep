@@ -16,6 +16,7 @@ use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
+                      install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
@@ -51,7 +52,7 @@ use XCAT::GenesisRelease qw(
 # otherwise warn loudly and continue unisolated. MOCKBUILD_ALL_MOUNTNS guards against a re-exec loop.
 # Build-free modes (--verify-repo, --finalize-xcat-dep) run no mock and are documented no-root, so they
 # skip the re-exec entirely -- no cgroup exposure, and no spurious non-root warning.
-my $mountns_build_free = grep { /^--(?:verify-repo|finalize-xcat-dep)(?:=|$)/ } @ARGV;
+my $mountns_build_free = grep { /^--(?:verify-repo|finalize-xcat-dep|install-deps)(?:=|$)/ } @ARGV;
 unless ($ENV{MOCKBUILD_ALL_MOUNTNS} || $mountns_build_free) {
     if ($> != 0) {
         warn "WARN: not root -- skipping mount-namespace isolation (host-cgroup propagation guard); "
@@ -101,6 +102,7 @@ my $GOCONSERVER_REF = '6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f';
 my $skip_build = 0;
 my $skip_xcat_dep = 0;
 my $skip_perl = 0;
+my $install_deps = 0;
 my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
@@ -161,6 +163,7 @@ GetOptions(
     'skip-build!'       => \$skip_build,
     'skip-xcat-dep!'    => \$skip_xcat_dep,
     'skip-perl!'        => \$skip_perl,
+    'install-deps!'     => \$install_deps,
     'skip-genesis!'     => \$skip_genesis,
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
@@ -320,6 +323,28 @@ my ($rel) = $version_id =~ /^(\d+)/;
 die "Could not resolve ID from /etc/os-release\n" if $os_id eq '';
 die "Could not resolve major release from VERSION_ID='$version_id' in /etc/os-release\n"
     if !defined($rel) || $rel eq '';
+
+# --install-deps: make THIS host able to run the script, then exit. It has to come before the
+# require_command checks below -- those are the very things it installs, and a host that lacks them
+# would die here with no way to fix itself. Run once per build host, as root.
+#
+# The perl modules are re-checked by LOADING them afterwards rather than trusting the package
+# manager: a module that is still missing is exactly the failure this mode exists to prevent, and it
+# aborted CD runs mid-build twice (perl-File-Slurper on xcat-master-ub, perl-IPC-Cmd on
+# xcat-master-ppc), each time as a compile-time error inside XCAT::BuildUtils.
+if ($install_deps) {
+    die "--install-deps must run as root (uid=$>)\n" if $> != 0;
+    my @cmd = install_deps_command($os_id);
+    print_step("Install build prerequisites ($os_id)");
+    print "  " . join(' ', @cmd) . "\n";
+    run_command(@cmd);
+    my @modules = qw(File::Slurper IPC::Cmd Parallel::ForkManager Digest::SHA);
+    my @missing = missing_perl_modules(@modules);
+    die "FATAL: still missing after install: " . join(', ', @missing) . "\n" if @missing;
+    print "  perl modules present: " . join(', ', @modules) . "\n";
+    print "  host is ready\n";
+    exit 0;
+}
 
 for my $bin (qw(perl uname createrepo_c tar find rpm)) {
     require_command($bin);
@@ -1244,6 +1269,9 @@ Options:
   --skip-build            Skip all build steps and only collect/create repo/tarballs
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
   --skip-perl             Skip perl package build step
+  --install-deps          Install this host's build prerequisites (package manager + the perl
+                          modules the script loads), verify each module now loads, then exit.
+                          Run once per build host, as root. Use alone.
   --skip-genesis          Skip the existing per-EL Genesis image build
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation

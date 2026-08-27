@@ -13,6 +13,7 @@ use Sys::Hostname;
 use Digest::MD5 qw(md5_hex);
 
 our @EXPORT_OK = qw(
+    install_deps_packages install_deps_command missing_perl_modules
     sh_quote print_step
     version_matches required_pkgs have_rpm read_manifest
     verify_repo_packages verify_repo_signature verify_rpm_signatures
@@ -21,6 +22,47 @@ our @EXPORT_OK = qw(
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     build_mock_uniqueext
 );
+
+# install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
+# given /etc/os-release ID. Kept as data, beside the code that needs them, because the failure mode
+# is a build host provisioned by hand: xcat-master-ub had no perl-File-Slurper and xcat-master-ppc no
+# perl-IPC-Cmd, and each surfaced as a compile-time abort in the middle of a CD run.
+sub install_deps_packages {
+    my ($os_id) = @_;
+    $os_id = '' unless defined $os_id;
+    # The perl modules are what actually break a run; the rest is the toolchain the script drives.
+    return qw(perl perl-File-Slurper perl-IPC-Cmd perl-Parallel-ForkManager perl-Digest-SHA
+              mock createrepo_c tar findutils rpm rpm-build rpm-sign rpmdevtools gnupg2 wget git)
+        if $os_id =~ /^(?:opensuse|sles|sled)/;
+    return qw(perl perl-File-Slurper perl-IPC-Cmd perl-Parallel-ForkManager perl-Digest-SHA
+              mock createrepo_c tar findutils rpm rpm-build rpm-sign rpmdevtools
+              dnf-plugins-core gnupg2 wget git);
+}
+
+# install_deps_command($os_id): the argv that installs them, non-interactively.
+sub install_deps_command {
+    my ($os_id) = @_;
+    $os_id = '' unless defined $os_id;
+    my @pkgs = install_deps_packages($os_id);
+    return ('zypper', '--non-interactive', 'install', '--no-recommends', @pkgs)
+        if $os_id =~ /^(?:opensuse|sles|sled)/;
+    return ('dnf', '-y', 'install', @pkgs);
+}
+
+# missing_perl_modules(@modules): those that cannot be loaded, in order. The point of --install-deps
+# is that the run AFTER it cannot die on a missing module, so the modules are proven by loading
+# them, not by trusting the package manager's exit code.
+sub missing_perl_modules {
+    my (@modules) = @_;
+    my @missing;
+    for my $m (@modules) {
+        my $file = $m;
+        $file =~ s{::}{/}g;
+        $file .= '.pm';
+        eval { require $file; 1 } or push @missing, $m;
+    }
+    return @missing;
+}
 
 # sh_quote: single-quote a string for safe use in a shell command.
 sub sh_quote {

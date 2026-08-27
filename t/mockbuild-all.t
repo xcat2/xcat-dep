@@ -10,7 +10,8 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
-use MockBuildUtils qw(required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
+use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
+                      required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
@@ -479,6 +480,35 @@ my $vercmp = sub {
         is_deeply([ grep { /^\s*>=/ } @grub ], [],
             'grub2-xcat stays a version pin (its xCAT Requires cannot be met by what is built)');
     }
+}
+
+# ---- --install-deps: the host prerequisites (the modules are what actually break a run) ----------
+# Two CD runs died at compile time inside XCAT::BuildUtils because a builder lacked a module
+# (perl-File-Slurper on one host, perl-IPC-Cmd on another), so the list must carry every module the
+# script loads, and the mode must PROVE them by loading rather than trusting the package manager.
+{
+    my @el = install_deps_packages('almalinux');
+    for my $need (qw(perl-File-Slurper perl-IPC-Cmd perl-Parallel-ForkManager mock createrepo_c)) {
+        ok(scalar(grep { $_ eq $need } @el), "EL prerequisites include $need");
+    }
+    my @cmd = install_deps_command('almalinux');
+    is($cmd[0], 'dnf', 'EL installs with dnf');
+    ok(scalar(grep { $_ eq '-y' } @cmd), '... non-interactively');
+
+    my @suse = install_deps_command('opensuse-leap');
+    is($suse[0], 'zypper', 'SUSE installs with zypper');
+    ok(scalar(grep { $_ eq '--non-interactive' } @suse), '... non-interactively');
+    is_deeply([ grep { /^perl-/ } install_deps_packages('opensuse-leap') ],
+              [ grep { /^perl-/ } @el ],
+              'both families install the same perl modules');
+
+    # the probe reports what cannot be loaded, and nothing else
+    is_deeply([ missing_perl_modules('Digest::SHA') ], [],
+        'missing_perl_modules: a loadable module is not reported');
+    is_deeply([ missing_perl_modules('No::Such::Module::Here') ], ['No::Such::Module::Here'],
+        'missing_perl_modules: an absent module is reported');
+    is_deeply([ missing_perl_modules('Digest::SHA', 'No::Such::Module::Here') ],
+        ['No::Such::Module::Here'], '... and only the absent one, from a mixed list');
 }
 
 done_testing;

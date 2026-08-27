@@ -142,7 +142,17 @@ Use these flags to skip specific operations:
 - `mockbuild-all.pl` and package sources present under `<REPO_ROOT>`.
 - xCAT sources present under `<XCAT_SOURCE>`.
 
-Install baseline tooling:
+Install baseline tooling — let the script do it, so the list cannot drift from what it loads:
+
+```bash
+./mockbuild-all.pl --install-deps        # as root, once per build host
+```
+
+It installs the toolchain and the Perl modules for this host's package manager (dnf on EL, zypper
+on SUSE), then **loads** each module and fails if one is still missing. That last step is the point:
+a missing module surfaces otherwise as a compile-time abort inside `XCAT::BuildUtils`, in the middle
+of a CD run, which is how `perl-File-Slurper` and `perl-IPC-Cmd` each took a pipeline down. The
+equivalent by hand:
 
 ```bash
 dnf -y install perl perl-File-Slurper perl-IPC-Cmd \
