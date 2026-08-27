@@ -12,7 +12,8 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
-use BuildUtils qw(required_pkgs version_matches read_manifest standard_options
+use BuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
+                  required_pkgs version_matches read_manifest standard_options
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
@@ -590,6 +591,31 @@ STUB
         unlike($@, qr/is NOT disposable/, '... the failure is NOT the disposability guard');
         like($@, qr/no \.deb is visible/, '... it is the host-side "debs did not land" check');
     }
+}
+
+# ---- --install-deps: the host prerequisites (the modules are what actually break a run) ----------
+# A CD run died at compile time inside XCAT::BuildUtils because this builder lacked File::Slurper,
+# so the list must carry every module the script loads, and the mode must PROVE them by loading
+# rather than trusting apt's exit code.
+{
+    my @pkgs = install_deps_packages();
+    for my $need (qw(libfile-slurper-perl libparallel-forkmanager-perl sbuild schroot apt-utils dpkg-dev)) {
+        ok(scalar(grep { $_ eq $need } @pkgs), "prerequisites include $need");
+    }
+    my @cmd = install_deps_command();
+    is($cmd[0], 'apt-get', 'installs with apt-get');
+    ok(scalar(grep { $_ eq '-y' } @cmd), '... non-interactively');
+    ok(scalar(grep { $_ eq '--no-install-recommends' } @cmd), '... without recommends');
+
+    # IPC::Cmd is CORE on Debian/Ubuntu -- there is no package to name, and naming one fails the
+    # whole install. The probe is what asserts it is usable.
+    ok(!scalar(grep { /ipc-cmd/ } @pkgs), 'no libipc-cmd-perl: IPC::Cmd is core on Debian/Ubuntu');
+    is_deeply([ missing_perl_modules('IPC::Cmd') ], [], '... and it loads');
+
+    is_deeply([ missing_perl_modules('Digest::MD5') ], [],
+        'missing_perl_modules: a loadable module is not reported');
+    is_deeply([ missing_perl_modules('No::Such::Module::Here') ], ['No::Such::Module::Here'],
+        'missing_perl_modules: an absent module is reported');
 }
 
 done_testing;

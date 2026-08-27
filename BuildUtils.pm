@@ -22,6 +22,7 @@ use Digest::MD5;
 use MIME::Base64 qw(encode_base64);
 
 our @EXPORT_OK = qw(
+    install_deps_packages install_deps_command missing_perl_modules
     sh_quote print_step
     version_matches required_pkgs read_manifest standard_options
     verify_repo_packages verify_repo_signature verify_repo_arches
@@ -53,6 +54,38 @@ sub version_to_codename { my ($v) = @_; return $VERSION_TO_CODENAME{$v // ''}; }
 # ---------------------------------------------------------------------------------------------------
 # Shared / format-agnostic helpers (identical semantics to MockBuildUtils.pm; see migration note).
 # ---------------------------------------------------------------------------------------------------
+
+# install_deps_packages(): the host packages sbuild-all.pl needs to run at all. Kept as data beside
+# the code that needs them: the failure mode is a build host provisioned by hand, and a missing perl
+# module surfaces as a compile-time abort in the middle of a CD run rather than as a clear message
+# (xcat-master-ub had no File::Slurper, which is how this was found).
+sub install_deps_packages {
+    # NOTE: no libipc-cmd-perl -- IPC::Cmd is CORE on Debian/Ubuntu (it ships in perl-modules) and
+    # no such package exists, so naming it fails the whole install. That it is present is asserted
+    # by the module probe, not by installing a package.
+    return qw(perl libfile-slurper-perl libparallel-forkmanager-perl
+              sbuild schroot debootstrap apt-utils dpkg-dev devscripts equivs quilt fakeroot
+              build-essential reprepro gnupg rsync wget git);
+}
+
+# install_deps_command(): the argv that installs them, non-interactively.
+sub install_deps_command {
+    return ('apt-get', 'install', '-y', '--no-install-recommends', install_deps_packages());
+}
+
+# missing_perl_modules(@modules): those that cannot be loaded, in order. --install-deps proves the
+# modules by LOADING them, rather than trusting the package manager's exit code.
+sub missing_perl_modules {
+    my (@modules) = @_;
+    my @missing;
+    for my $m (@modules) {
+        my $file = $m;
+        $file =~ s{::}{/}g;
+        $file .= '.pm';
+        eval { require $file; 1 } or push @missing, $m;
+    }
+    return @missing;
+}
 
 # sh_quote: single-quote a string for safe use in a shell command.
 sub sh_quote {

@@ -402,6 +402,21 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
 - **`t/verify-repo.t`** — end-to-end tests of the repo gate against fixture apt trees (missing
   secondary arch, arch:all-only index, unsigned repo, missing manifest section).
 
+## Prerequisites (once per build host, as root)
+
+```bash
+./sbuild-all.pl --install-deps
+```
+
+Installs the sbuild/schroot toolchain and the Perl modules the script loads, then **loads** each one
+and fails if any is still missing. That last step is the point: a missing module surfaces otherwise
+as a compile-time abort inside `XCAT::BuildUtils`, mid-run — which is how `File::Slurper` being
+absent on `xcat-master-ub` took a CD run down. `IPC::Cmd` is deliberately not in the package list:
+it is core on Debian/Ubuntu, no such package exists, and naming one fails the whole install; the
+probe is what asserts it is usable.
+
+The per-codename sbuild chroots are separate host state — see `ci/mk-dep-chroots.sh`.
+
 ## Usage (per arch, as root on the matching build host)
 
 Run `sbuild-all.pl` on the build host for the arch you are building (amd64 on the x86 Ubuntu host,

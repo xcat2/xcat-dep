@@ -46,6 +46,7 @@ use lib $RealBin, "$RealBin/lib";
 # it, including the builds that never pass --genesis-release. Its subs are therefore called
 # fully-qualified.
 use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifest standard_options
+                  install_deps_packages install_deps_command missing_perl_modules
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
@@ -73,6 +74,7 @@ my $build_number;
 # (4 per host). N caps it to N; 1 forces serial.
 my $parallel_targets = 0;
 my ($skip_build, $skip_install, $skip_genesis, $skip_xcat_dep) = (0,0,0,0);
+my $install_deps = 0;
 my ($skip_createrepo, $skip_tarball) = (0,0);
 my $dry_run = 0;
 # --publish: run the FINALIZATION phase (assemble + sign + gate + tarball). See the "Publishing"
@@ -176,6 +178,7 @@ $spec{'genesis-deb=s'}         = \@genesis_debs;
 $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
 $spec{'require-ppc-genesis!'}  = \$require_ppc_genesis;
+$spec{'install-deps!'}         = \$install_deps;   # make this host able to run at all, then exit
 $spec{'publish!'}              = \$publish;        # run the finalization (assemble+sign+gate+tarball)
 $spec{'publish-lock-wait=i'}   = \$PUBLISH_LOCK_WAIT;   # seconds to queue behind another publisher
 $spec{'expect-arch=s'}         = \@expect_arch;   # repeatable; each value may be a space/comma list
@@ -187,6 +190,27 @@ $spec{'help|h'}                = sub { pod2usage(-verbose => 1, -exitval => 0); 
 $spec{'man'}                   = sub { pod2usage(-verbose => 2, -exitval => 0); };
 
 GetOptions(%spec) or pod2usage(-verbose => 1, -exitval => 2);
+
+# --install-deps: make THIS host able to run the script, then exit. It comes first because
+# everything below assumes the toolchain is present, and a host that lacks it would fail with a
+# compile-time error inside a module rather than a message it can act on -- which is how
+# File::Slurper being absent on xcat-master-ub aborted a CD run mid-build. The modules are proven by
+# LOADING them, not by trusting apt's exit code. Run once per build host, as root.
+if ($install_deps) {
+    die "FATAL: --install-deps must run as root (uid=$>)\n" if $> != 0;
+    my @cmd = install_deps_command();
+    print_step('Install build prerequisites');
+    print "  " . join(' ', @cmd) . "\n";
+    local $ENV{DEBIAN_FRONTEND} = 'noninteractive';
+    system('apt-get', 'update', '-q') == 0 or die "FATAL: apt-get update failed\n";
+    system(@cmd) == 0 or die "FATAL: " . join(' ', @cmd) . " failed\n";
+    my @modules = qw(File::Slurper IPC::Cmd Parallel::ForkManager Digest::MD5);
+    my @missing = missing_perl_modules(@modules);
+    die "FATAL: still missing after install: " . join(', ', @missing) . "\n" if @missing;
+    print "  perl modules present: " . join(', ', @modules) . "\n";
+    print "  host is ready\n";
+    exit 0;
+}
 
 # ---------------------------------------------------------------------------------------------------
 # Configuration
@@ -1484,6 +1508,12 @@ the default gives 8 concurrent build streams for a 4-codename matrix (4 per host
 
 Skip the corresponding phase(s). C<--skip-build --skip-genesis> is the finalization run (it publishes
 by default; see C<--publish>). C<--skip-createrepo> forces "do not publish" and always wins.
+
+=item B<--install-deps>
+
+Install this host's build prerequisites (the sbuild/schroot toolchain and the Perl modules the
+script loads), verify each module now loads, then exit. Run once per build host, as root. Use
+alone.
 
 =item B<--publish-lock-wait> C<seconds>
 
