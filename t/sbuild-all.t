@@ -646,4 +646,41 @@ STUB
     }
 }
 
+# ---- every non-glob manifest pin must match the package's own debian/changelog --------------
+# debs-manifest.conf pins the exact deb version each package must produce, and the version comes
+# from that package's debian/changelog. Bumping the changelog without the pin does not fail the
+# build -- it fails the manifest VALIDATION, at the end, after every package has been compiled:
+#   FATAL: manifest validation failed:
+#     [noble-amd64] grub2-xcat: built 2.12-2, manifest pins 2.12-1
+# which is a whole build's worth of time to learn about a one-line edit. grub2-xcat drifted exactly
+# that way when the riscv64 UEFI image was added. Globbed pins are deliberate (goconserver's
+# revision is the CD stamp; xcat-genesis-base is not versioned by xcat-dep) and are skipped.
+{
+    my $root = "$FindBin::Bin/..";
+    my %dir_of = (
+        'ipmitool-xcat'  => 'ipmitool',
+        'conserver-xcat' => 'conserver',
+        'syslinux-xcat'  => 'syslinux',
+        'grub2-xcat'     => 'grub2-xcat',
+        'elilo-xcat'     => 'elilo',
+        'xnba-undi'      => 'xnba',
+    );
+    my %manifest = read_manifest("$root/debs-manifest.conf");
+    my %seen;
+    for my $section (sort keys %manifest) {
+        for my $pkg (sort keys %{ $manifest{$section} }) {
+            my $pin = $manifest{$section}{$pkg};
+            next if !defined $pin || $pin =~ /[*?]/;
+            my $dir = $dir_of{$pkg} or next;
+            my $cl  = "$root/$dir/debian/changelog";
+            next unless -f $cl;
+            open my $fh, '<', $cl or next;
+            my $first = <$fh>; close $fh;
+            my ($ver) = $first =~ /^\S+\s+\(([^)]+)\)/;
+            next if $seen{"$pkg=$pin=$ver"}++;
+            is($pin, $ver, "manifest pin $pkg=$pin matches $dir/debian/changelog");
+        }
+    }
+}
+
 done_testing;
