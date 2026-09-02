@@ -50,7 +50,8 @@ use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifes
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
-                  codename_to_version known_codenames chroot_name chroot_sources_list
+                  codename_to_version known_codenames supported_arches is_supported_arch
+                  chroot_name chroot_sources_list
                   chroot_is_disposable
                   control_field genesis_deb_control
                   deb_field deb_version deb_hash cross_copy_genesis_deb);
@@ -220,16 +221,17 @@ $xcat_src  = abs_path($xcat_src) if -d $xcat_src;
 $manifest  ||= "$repo_root/debs-manifest.conf";
 $arch      ||= `dpkg --print-architecture 2>/dev/null`; chomp $arch;
 $arch      ||= 'amd64';
-die "FATAL: unsupported --arch '$arch' (amd64|ppc64el)\n" unless $arch =~ /^(amd64|ppc64el)$/;
-# Arch-aware chroot bootstrap mirror: ppc64el is NOT served by archive.ubuntu.com -- it lives on
-# ubuntu-ports. Only defaulted when --mirror was not given explicitly.
-$mirror    ||= ($arch eq 'ppc64el') ? 'http://ports.ubuntu.com/ubuntu-ports'
-                                     : 'http://br.archive.ubuntu.com/ubuntu';
+die "FATAL: unsupported --arch '$arch' (@{[join '|', supported_arches()]})\n" unless is_supported_arch($arch);
+# Arch-aware chroot bootstrap mirror: only amd64 is on archive.ubuntu.com. Every secondary
+# architecture -- ppc64el and riscv64 -- lives on ubuntu-ports. Only defaulted when --mirror was not
+# given explicitly.
+$mirror    ||= ($arch ne 'amd64') ? 'http://ports.ubuntu.com/ubuntu-ports'
+                                  : 'http://br.archive.ubuntu.com/ubuntu';
 
 # --target "<codename>-<arch>" pins a single codename (and cross-checks the arch); otherwise --dists.
 my @dist_list;
-if ($dists =~ /-(amd64|ppc64el)$/) {
-    my ($cn, $a) = $dists =~ /^(.+)-(amd64|ppc64el)$/;
+if ($dists =~ /-(@{[join '|', supported_arches()]})$/) {
+    my ($cn, $a) = $dists =~ /^(.+)-(@{[join '|', supported_arches()]})$/;
     die "FATAL: --target arch '$a' != host --arch '$arch'\n" if $a ne $arch;
     @dist_list = ($cn);
 } else {
@@ -243,7 +245,7 @@ for my $cn (@dist_list) {
 
 @expect_arch = grep { length } map { split /[\s,]+/ } @expect_arch;
 for my $a (@expect_arch) {
-    die "FATAL: unsupported --expect-arch '$a' (amd64|ppc64el)\n" unless $a =~ /^(amd64|ppc64el)$/;
+    die "FATAL: unsupported --expect-arch '$a' (@{[join '|', supported_arches()]})\n" unless is_supported_arch($a);
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -604,7 +606,8 @@ sub maintained_genesis_control {
     my $f = "$xcat_src/xCAT-genesis-builder/debian/control";
     return undef unless -f $f;
     local $/; open my $fh, '<', $f or return undef; my $t = <$fh>; close $fh;
-    if ($a eq 'ppc64el') { $t =~ s/amd64/ppc64el/g; }
+    # The tree carries the amd64 control; any other arch is the same text with the arch renamed.
+    $t =~ s/amd64/$a/g if $a ne 'amd64';
     return $t;
 }
 # convert_genesis_rpm($rpm, $pkgname, $arch, $outdir): rpm2cpio-extract the noarch genesis rpm and

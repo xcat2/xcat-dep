@@ -29,6 +29,7 @@ our @EXPORT_OK = qw(
     parse_packages_index parse_release_architectures resolve_present_names
     index_has_native_arch control_binary_arch skip_arch_all_on
     codename_to_version version_to_codename known_codenames
+    supported_arches is_supported_arch
     chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
     control_field genesis_deb_control
     deb_field deb_version deb_hash cross_copy_genesis_deb
@@ -48,6 +49,17 @@ my %CODENAME_TO_VERSION = (
 my %VERSION_TO_CODENAME = reverse %CODENAME_TO_VERSION;
 
 sub known_codenames    { return sort keys %CODENAME_TO_VERSION; }
+
+# The dpkg architectures xcat-dep builds. amd64 is the native one and the single producer of the
+# Architecture:all packages; every other one is a secondary architecture, is served by
+# ubuntu-ports rather than archive.ubuntu.com, and is built through a qemu-user chroot when the
+# build host is amd64. Keep this the single source of truth: --arch, --target, --expect-arch and
+# the mirror choice all derive from it.
+my @ARCHES = qw(amd64 ppc64el riscv64);
+my %ARCH   = map { $_ => 1 } @ARCHES;
+
+sub supported_arches   { return @ARCHES; }
+sub is_supported_arch  { my ($a) = @_; return defined($a) && $ARCH{$a} ? 1 : 0; }
 sub codename_to_version { my ($c) = @_; return $CODENAME_TO_VERSION{$c // ''}; }
 sub version_to_codename { my ($v) = @_; return $VERSION_TO_CODENAME{$v // ''}; }
 
