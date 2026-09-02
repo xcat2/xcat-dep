@@ -1,14 +1,14 @@
 # Pinned `go.mod` / `go.sum` for the goconserver build
 
-These pin the Go module graph for goconserver at the commit built by `../sbuild.pl`
-(`REF=6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f`). `sbuild.pl` overlays them into the freshly
-cloned upstream tree and compiles with `GOFLAGS=-mod=mod`, so modules are downloaded from the Go
-proxy but **pinned and integrity-checked by `go.sum`** — the build is reproducible, with **no
-`go mod tidy`** at build time (which would float transitive versions from the network).
+These pin the Go module graph for goconserver at the commit built by `../sbuild.pl` (Ubuntu) and
+`../mockbuild.pl` (EL): `REF=6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f`. Both builders overlay them
+into the freshly cloned upstream tree and compile with `GOFLAGS=-mod=mod`, so modules are downloaded
+from the Go proxy but **pinned and integrity-checked by `go.sum`** — the build is reproducible, with
+**no `go mod tidy`** at build time (which would float transitive versions from the network).
 
-Generated with the same pinned toolchain the build uses (`GO_PIN` in `../sbuild.pl`, currently
-go 1.25.12), so `go.mod`'s `go` directive matches — do not copy the EL branch's `gomod/` (it is
-generated with a different Go and pins slightly different minor versions).
+The `go` directive (currently go 1.25.12) is the floor every builder must meet: the `GO_PIN`
+toolchain of `../sbuild.pl` and the `golang` of the EL10 mock chroot. Regenerate with the lowest of
+them, so neither build is rejected.
 
 ## Regenerate (when bumping `REF` or `GO_PIN`, or a dependency)
 

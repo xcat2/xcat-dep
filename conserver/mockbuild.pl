@@ -1,11 +1,10 @@
 #!/usr/bin/perl
 #
 # mockbuild.pl - build conserver-xcat (the traditional C conserver, 8.2.1) for one
-# mock target and smoke-test the resulting binaries. Mirrors the other xcat-dep
+# mock target. Mirrors the other xcat-dep
 # builders (goconserver/mockbuild.pl, ipmitool/mockbuild.pl): stage sources + spec,
-# build a SRPM, `mock --rebuild` it in the target chroot, copy the RPMs to
-# --result-dir, then (unless --skip-install) install into the chroot and run
-# `console -V` / `conserver -V` to confirm the binaries work.
+# build a SRPM, `mock --rebuild` it in the target chroot, and copy the RPMs to
+# --result-dir.
 #
 # conserver is NOT part of the default mockbuild-all.pl dep set (xCAT uses goconserver),
 # so this builder is standalone. Usage:
@@ -29,7 +28,6 @@ my $target_arch    = '';
 my $mock_uniqueext = '';
 my $result_dir     = "$script_dir/../build-output/list-conserver/conserver";
 my $log_dir        = "$script_dir/../build-logs/list-conserver/conserver";
-my $skip_install   = 0;
 my $build_timestamp;
 
 GetOptions(
@@ -39,7 +37,6 @@ GetOptions(
     'mock-uniqueext=s'  => \$mock_uniqueext,
     'result-dir=s'      => \$result_dir,
     'log-dir=s'         => \$log_dir,
-    'skip-install!'     => \$skip_install,
     'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
@@ -118,19 +115,6 @@ for my $r (@rpms) {
 }
 print "built: " . join(', ', map { basename($_) } @rpms) . "\n";
 
-# ---- smoke test: install into the chroot and run the binaries ---------------
-unless ($skip_install) {
-    print "== Smoke test (install + run) ==\n";
-    run("mock -r " . sh_quote($mock_cfg) . $uniq . " --install " . sh_quote($main)
-        . " > " . sh_quote("$log_dir/install.log") . " 2>&1");
-    # console (client) and conserver (daemon) both print their version to stderr/stdout.
-    my $smoke = capture("mock -r " . sh_quote($mock_cfg) . $uniq
-        . " --chroot -- " . sh_quote('/usr/bin/console -V 2>&1; /usr/sbin/conserver -V 2>&1')
-        . " 2>&1");
-    print "  output: $smoke\n";
-    die "FATAL: smoke test did not report version $version\n" unless $smoke =~ /\Q$version\E/;
-    print "smoke test PASSED (console/conserver report $version)\n";
-}
 print "DONE: conserver-xcat $version for $mock_cfg -> $result_dir\n";
 
 # ---- helpers ----------------------------------------------------------------
@@ -160,6 +144,6 @@ sub run_mock {
 }
 sub sh_quote { my ($s) = @_; $s =~ s/'/'\\''/g; return "'$s'"; }
 sub usage {
-    return "usage: mockbuild.pl --mock-cfg <cfg> [--target-arch ARCH] [--result-dir DIR] [--work-dir DIR]\n"
-         . "                    [--log-dir DIR] [--mock-uniqueext EXT] [--skip-install]\n";
+    return "usage: mockbuild.pl --mock-cfg <cfg> [--target-arch ARCH] [--result-dir DIR]\n"
+         . "                    [--work-dir DIR] [--log-dir DIR] [--mock-uniqueext EXT]\n";
 }

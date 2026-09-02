@@ -15,14 +15,17 @@ my $mock_cfg  = '';
 my $noarch_mock_cfg = '';
 my $target_arch = '';
 my $mock_uniqueext = '';
+my $keep_buildroots = 0;
 my $result_dir = '';
 my $log_dir    = '';
 my $packages_csv = '';
 my $epel_gap = 0;
 my $jobs = 0;
-my $skip_install = 0;
-my $allow_erasing = 0;
 my $build_timestamp;
+# CD version bump: appended to the Release of the srpm-mode packages (HTML-Form, IO-Stty,
+# Net-Telnet), which build from a committed .src.rpm and so are NOT covered by mockbuild-all's
+# in-tree spec bump. Spec-mode packages get bumped in-tree upstream, so we leave those alone.
+my $release_suffix = '';
 
 GetOptions(
     'work-dir=s'      => \$work_dir,
@@ -30,14 +33,14 @@ GetOptions(
     'noarch-mock-cfg=s' => \$noarch_mock_cfg,
     'target-arch=s'   => \$target_arch,
     'mock-uniqueext=s' => \$mock_uniqueext,
+    'keep-buildroots!' => \$keep_buildroots,
     'result-dir=s'    => \$result_dir,
     'log-dir=s'       => \$log_dir,
     'packages=s'      => \$packages_csv,
     'epel-gap!'       => \$epel_gap,
     'jobs=i'          => \$jobs,
-    'skip-install!'   => \$skip_install,
-    'allow-erasing!'  => \$allow_erasing,
     'build-timestamp=i' => \$build_timestamp,
+    'release-suffix=s'  => \$release_suffix,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -300,10 +303,6 @@ $jobs = 1 if $jobs < 1;
 if (@packages && $jobs > scalar(@packages)) {
     $jobs = scalar(@packages);
 }
-if (!$skip_install && $jobs > 1) {
-    print "INFO: --skip-install is disabled; forcing --jobs 1 to avoid host dnf lock contention\n";
-    $jobs = 1;
-}
 
 make_path($result_dir);
 make_path($log_dir);
@@ -322,8 +321,7 @@ print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') 
 print "epel_gap:    $epel_gap\n";
 print "packages:    " . join(', ', @packages) . "\n";
 print "jobs:        $jobs\n";
-print "skip_install:$skip_install\n";
-print "allow_erasing:$allow_erasing\n";
+print "release_suffix:" . ($release_suffix ne '' ? $release_suffix : '(none)') . "\n";
 
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
@@ -333,14 +331,17 @@ run("mock -r " . sh_quote($noarch_mock_cfg) . $mock_uniqueext_opt . " --print-ro
 my @failed;
 my @passed;
 my @summary_lines;
+my @built_roots;   # pkg + mock cfg + uniqueext of every chroot this run made
 
 print_step("Build packages");
 print "parallel jobs: $jobs\n";
+my %child_rc;   # pkg => child exit code; the AUTHORITATIVE pass/fail for that build
 my $pm = Parallel::ForkManager->new($jobs);
 $pm->run_on_finish(
     sub {
         my ($pid, $exit_code, $ident) = @_;
         my $label = defined $ident ? $ident : "pid=$pid";
+        $child_rc{$ident} = $exit_code if defined $ident;   # record it; do not trust status.txt alone
         my $state = $exit_code == 0 ? 'PASS' : "FAIL(rc=$exit_code)";
         print "[$label] $state\n";
     }
@@ -356,6 +357,11 @@ for my $wave (build_waves(\@packages)) {
         my $pkg_uniqueext = package_uniqueext($mock_uniqueext, ++$idx, $pkg);
         my @needs = grep { $selected{$_} } @{ $cfg->{needs} // [] };
 
+        # The noarch packages of a forcearch target build in the native chroot, so scrub the
+        # chroot the package was actually built in.
+        my $pkg_mock_cfg = $cfg->{rpm_arch} eq 'noarch' ? $noarch_mock_cfg : $mock_cfg;
+        push @built_roots, { pkg => $pkg, mock_cfg => $pkg_mock_cfg, uniqueext => $pkg_uniqueext };
+
         my $pid = $pm->start($pkg);
         next if $pid;
         my $ok = build_package(
@@ -364,21 +370,57 @@ for my $wave (build_waves(\@packages)) {
             work_dir      => $work_dir,
             result_dir    => $result_dir,
             log_dir       => $log_dir,
-            mock_cfg      => ($cfg->{rpm_arch} eq 'noarch' ? $noarch_mock_cfg : $mock_cfg),
+            mock_cfg      => $pkg_mock_cfg,
             mock_uniqueext => $pkg_uniqueext,
             arch          => $target_arch,
             host_arch     => $arch,
             needs         => \@needs,
-            skip_install  => $skip_install,
-            allow_erasing => $allow_erasing,
+            release_suffix => $release_suffix,
         );
+        unless ($keep_buildroots) {
+            # Reclaim ONLY this package's build chroot here (it's the ~GB disk hog). --scrub=chroot
+            # is uniqueext-local, so it never touches a concurrent sibling. Do NOT --scrub=bootstrap
+            # here: despite the --uniqueext, mock's bootstrap scrub removes the CONFIG-LEVEL shared
+            # bootstrap cache (/var/cache/mock/<cfg>-bootstrap/, keyed by config name, NOT
+            # uniqueext). Doing that mid-batch deletes the cache a still-starting sibling is about to
+            # bind-mount into its own bootstrap root -> `mount rc=32` and a spurious build failure
+            # (observed: perl-Sys-Virt's buildsrpm raced a faster sibling's post-build bootstrap
+            # scrub). The shared bootstrap is reclaimed once below, after ALL workers finish, when
+            # nothing can be binding it.
+            (my $ps = $pkg) =~ s/[^\w.-]+/-/g;
+            system("mock -r " . sh_quote($pkg_mock_cfg) . " --uniqueext " . sh_quote($pkg_uniqueext)
+                 . " --scrub=chroot > " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
+        }
         $pm->finish($ok ? 0 : 1);
     }
     $pm->wait_all_children;
 }
 
+# Now that every worker has exited, reclaim the per-uniqueext bootstrap roots + the shared
+# config-level bootstrap cache. Serialized and post-join, so no scrub can race a concurrent
+# bind (that race is exactly what the per-package note above avoids). Best-effort: the first
+# scrub drops /var/cache/mock/<cfg>-bootstrap; each also removes its uniqueext bootstrap root.
+unless ($keep_buildroots) {
+    for my $root (@built_roots) {
+        (my $ps = $root->{pkg}) =~ s/[^\w.-]+/-/g;
+        system("mock -r " . sh_quote($root->{mock_cfg}) . " --uniqueext " . sh_quote($root->{uniqueext})
+             . " --scrub=bootstrap >> " . sh_quote("$log_dir/scrub-$ps.log") . " 2>&1");
+    }
+}
+
 for my $pkg (@packages) {
     my $status_file = "$log_dir/$pkg/status.txt";
+    # The child exit code is authoritative: a package is PASS only if its worker exited 0 AND wrote
+    # a PASS status this run. A missing/non-zero child result is FAIL regardless of any status.txt
+    # (which could be a stale PASS left in a reused log dir, or unwritten because the worker crashed).
+    my $rc = $child_rc{$pkg};
+    if (!defined $rc || $rc != 0) {
+        push @failed, $pkg;
+        push @summary_lines, defined $rc
+            ? "$pkg FAIL worker exited rc=$rc"
+            : "$pkg FAIL no worker result recorded";
+        next;
+    }
     if (!-f $status_file) {
         push @failed, $pkg;
         push @summary_lines, "$pkg FAIL missing status file ($status_file)";
@@ -434,8 +476,7 @@ sub build_package {
     my $arch           = $args{arch};
     my $host_arch      = $args{host_arch} // $arch;
     my $needs          = $args{needs} // [];
-    my $skip_install   = $args{skip_install};
-    my $allow_erasing  = $args{allow_erasing};
+    my $release_suffix = $args{release_suffix};
 
     my $pkg_run_dir = "$work_dir/$pkg";
     my $pkg_result  = "$result_dir/$pkg";
@@ -446,6 +487,9 @@ sub build_package {
     make_path($pkg_run_dir);
     make_path($pkg_result);
     make_path($pkg_log);
+    # Clear any status/error left by an earlier run in a reused log dir BEFORE building, so a crash
+    # between here and the status write below can never leave a stale PASS the aggregate would trust.
+    unlink $status_file, "$pkg_log/error.txt";
 
     my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $pkg_run_dir);
 
@@ -473,6 +517,35 @@ sub build_package {
         if ($cfg->{mode} eq 'srpm') {
             $srpm_path = select_srpm($cfg->{srpm_globs});
             die "Could not locate source RPM for $pkg\n" if !$srpm_path;
+            # CD version bump: these packages build from a committed .src.rpm, so the in-tree
+            # spec Release bump (mockbuild-all) never reaches them. Re-stamp here: unpack the
+            # srpm, append the suffix to its spec's Release (KEEPING %{?dist}, exactly like the
+            # spec-mode packages -> e.g. 19%{?dist} -> 19%{?dist}.snap...N), and roll a fresh
+            # srpm. With no suffix (non-CD run), rebuild the committed srpm unchanged.
+            if ($release_suffix ne '') {
+                my $ext = "$pkg_run_dir/restamp";
+                for my $d (qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS)) { make_path("$ext/$d"); }
+                run("rpm -i --define " . sh_quote("_topdir $ext") . ' ' . sh_quote($srpm_path)
+                    . " > " . sh_quote("$pkg_log/srpm-unpack.log") . " 2>&1");
+                my ($espec) = sort glob("$ext/SPECS/*.spec");
+                die "No spec found after unpacking srpm for $pkg\n" if !$espec;
+                append_release_suffix($espec, $release_suffix);
+                my $restamp_result = "$pkg_run_dir/restamp-srpm";
+                make_path($restamp_result);
+                run(
+                    "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
+                    " --buildsrpm --spec " . sh_quote($espec) .
+                    " --sources " . sh_quote("$ext/SOURCES") .
+                    " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+                    " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+                    " --define " . sh_quote("_buildhost xcat-build") .
+                    " --resultdir " . sh_quote($restamp_result) .
+                    " > " . sh_quote("$pkg_log/mock-restamp-buildsrpm.log") . " 2>&1"
+                );
+                my @restamped = sort glob("$restamp_result/*.src.rpm");
+                die "No re-stamped SRPM produced for $pkg in $restamp_result\n" if !@restamped;
+                $srpm_path = $restamped[-1];
+            }
         } else {
             my $spec = $cfg->{spec};
             die "Missing spec for $pkg: $spec\n" if !-f $spec;
@@ -591,7 +664,7 @@ sub build_package {
             }
         }
 
-        if (!$skip_install && $cfg->{rpm_arch} eq 'native' && $arch ne $host_arch) {
+        if ($cfg->{rpm_arch} eq 'native' && $arch ne $host_arch) {
             # A cross-built XS module cannot be loaded on this host: install the rpm into the
             # (emulated) build chroot and import the module there.
             my $module = $cfg->{module};
@@ -605,14 +678,6 @@ sub build_package {
                 " -q --chroot -- perl -M$module -e 1",
                 "$pkg_log/smoke-perl-module.log");
             die "Perl module import failed for $pkg ($module) in the $arch chroot, rc=$rc_mod\n" if $rc_mod != 0;
-        }
-        elsif (!$skip_install) {
-            my $install_cmd = "dnf -y install ";
-            $install_cmd .= "--allowerasing " if $allow_erasing;
-            run($install_cmd . sh_quote($main_rpm));
-            my $module = $cfg->{module};
-            my $rc_mod = run_capture_rc("perl -M$module -e 1", "$pkg_log/smoke-perl-module.log");
-            die "Perl module import failed for $pkg ($module), rc=$rc_mod\n" if $rc_mod != 0;
         }
 
         $summary = "$pkg PASS main_rpm=" . basename($main_rpm);
@@ -688,9 +753,34 @@ Usage: $0 [options]
   --epel-gap           Also build the perl deps of xCAT that EL takes from EPEL (for an arch
                        without EPEL, e.g. riscv64)
   --build-timestamp EPOCH  Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
-  --skip-install       Skip dnf install + perl module import checks
-  --allow-erasing      Allow dnf to erase conflicting packages during install smoke tests
+  --release-suffix STR CD bump appended to the Release of the srpm-mode packages that build
+                       from a committed .src.rpm (HTML-Form, IO-Stty, Net-Telnet)
 USAGE
+}
+
+# Append $suffix (e.g. ".snap202607161200.57") to the first Release: line of $spec, in place.
+# Mirrors mockbuild-all's bump_dep_release_suffix: case-insensitive (some specs use lowercase
+# `release:`), preserves any %{?dist} macro on the line, and is idempotent (a line already
+# carrying this exact suffix is left as-is).
+sub append_release_suffix {
+    my ($spec, $suffix) = @_;
+    my $qs = quotemeta($suffix);
+    open my $in, '<', $spec or die "open $spec: $!\n";
+    my @lines = <$in>;
+    close $in;
+    my $changed = 0;
+    for my $line (@lines) {
+        next unless $line =~ /^Release:\s*\S/i;
+        last if $line =~ /$qs\s*$/;          # already stamped
+        $line =~ s/(^Release:\s*\S+)/$1$suffix/i;
+        $changed = 1;
+        last;                                 # only the first Release: line
+    }
+    die "No Release: line to stamp in $spec\n" if !$changed && !grep { /^Release:\s*\S/i } @lines;
+    return if !$changed;
+    open my $out, '>', $spec or die "open> $spec: $!\n";
+    print {$out} @lines;
+    close $out;
 }
 
 sub select_srpm {

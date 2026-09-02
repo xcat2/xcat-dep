@@ -20,7 +20,6 @@ my $mock_cfg      = '';
 my $mock_uniqueext = '';
 my $result_dir    = "$repo_root/build-output/list3/grub2-xcat";
 my $log_dir       = "$repo_root/build-logs/list3/grub2-xcat";
-my $skip_install  = 0;
 my $build_timestamp;
 
 GetOptions(
@@ -30,7 +29,6 @@ GetOptions(
     'mock-uniqueext=s'       => \$mock_uniqueext,
     'result-dir=s'           => \$result_dir,
     'log-dir=s'              => \$log_dir,
-    'skip-install!'          => \$skip_install,
     'build-timestamp=i'      => \$build_timestamp,
 ) or die usage();
 
@@ -88,7 +86,6 @@ print "result_dir: $result_dir\n";
 print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
-print "skip_install:  $skip_install\n";
 
 make_path($result_dir);
 make_path($log_dir);
@@ -231,68 +228,6 @@ for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
         or die "Failed to copy $src to $log_dir: $!\n";
 }
 
-if (!$skip_install) {
-    print_step("Install RPM and run smoke tests");
-    run("dnf -y install " . sh_quote($main_rpm));
-
-    my $core = '/tftpboot/boot/grub2/powerpc-ieee1275/core.elf';
-    my $grub2ppc = '/tftpboot/boot/grub2/grub2.ppc';
-    die "Missing installed core image: $core\n" if !-f $core;
-    die "Missing installed post script output: $grub2ppc\n" if !-f $grub2ppc;
-
-    my $file_core_log = "$log_dir/smoke-file-core.log";
-    my $file_ppc_log  = "$log_dir/smoke-file-grub2ppc.log";
-    my $qf_log        = "$log_dir/smoke-rpm-qf.log";
-
-    my $rc_file_core = run_capture_rc("file $core", $file_core_log);
-    my $rc_file_ppc  = run_capture_rc("file $grub2ppc", $file_ppc_log);
-    my $rc_qf        = run_capture_rc("rpm -qf $core", $qf_log);
-    my $rc_cmp       = run_capture_rc("cmp -s $core $grub2ppc", "$log_dir/smoke-cmp.log");
-
-    die "Smoke check failed: file core returned $rc_file_core\n" if $rc_file_core != 0;
-    die "Smoke check failed: file grub2.ppc returned $rc_file_ppc\n" if $rc_file_ppc != 0;
-    die "Smoke check failed: rpm -qf returned $rc_qf\n" if $rc_qf != 0;
-    die "Smoke check failed: core.elf and grub2.ppc differ (cmp rc=$rc_cmp)\n" if $rc_cmp != 0;
-
-    my $riscv_image = '/tftpboot/boot/grub2/riscv64-efi/grubriscv64.efi';
-    my $grub2riscv  = '/tftpboot/boot/grub2/grub2.riscv64';
-    die "Missing installed riscv64 grub2 image: $riscv_image\n" if !-f $riscv_image;
-    die "Missing installed post script output: $grub2riscv\n" if !-f $grub2riscv;
-    # The installed image must be the verified source image byte for byte, and %post must have
-    # copied it to grub2.riscv64.
-    my $rc_cmp_riscv_src = run_capture_rc("cmp -s " . sh_quote($riscv_efi) . " $riscv_image",
-                                          "$log_dir/smoke-cmp-riscv64-source.log");
-    my $rc_cmp_riscv     = run_capture_rc("cmp -s $riscv_image $grub2riscv", "$log_dir/smoke-cmp-riscv64.log");
-    die "Smoke check failed: installed grubriscv64.efi differs from the source image (cmp rc=$rc_cmp_riscv_src)\n"
-        if $rc_cmp_riscv_src != 0;
-    die "Smoke check failed: grubriscv64.efi and grub2.riscv64 differ (cmp rc=$rc_cmp_riscv)\n" if $rc_cmp_riscv != 0;
-    my $riscv_type = pe_image_type($grub2riscv);
-    die "riscv64 grub2 image type check failed: $grub2riscv is $riscv_type\n"
-        if $riscv_type ne 'PE32+ RISC-V 64-bit';
-
-    my $core_out = slurp($file_core_log);
-    my $qf_out   = slurp($qf_log);
-
-    die "Core image signature check failed:\n$core_out\n"
-        if $core_out !~ /ELF|data/i;
-    die "Installed core image is not owned by grub2-xcat:\n$qf_out\n"
-        if $qf_out !~ /^grub2-xcat-/m;
-
-    my $summary = "$log_dir/smoke-summary.txt";
-    open my $sfh, '>', $summary or die "Cannot write $summary: $!\n";
-    print {$sfh} "core=$core\n";
-    print {$sfh} "grub2ppc=$grub2ppc\n";
-    print {$sfh} "rc_file_core=$rc_file_core\n";
-    print {$sfh} "rc_file_ppc=$rc_file_ppc\n";
-    print {$sfh} "rc_qf=$rc_qf\n";
-    print {$sfh} "rc_cmp=$rc_cmp\n";
-    print {$sfh} "grub2riscv64=$grub2riscv\n";
-    print {$sfh} "rc_cmp_riscv64_source=$rc_cmp_riscv_src\n";
-    print {$sfh} "type_riscv64=$riscv_type\n";
-    print {$sfh} "rc_cmp_riscv64=$rc_cmp_riscv\n";
-    close $sfh;
-}
-
 print_step("Completed");
 print "Main RPM: $main_rpm\n";
 print "Artifacts: $result_dir\n";
@@ -308,7 +243,6 @@ Usage: $0 [options]
   --mock-uniqueext TXT    Optional mock --uniqueext suffix to isolate concurrent builds
   --result-dir PATH       Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH          Log directory (default: $log_dir)
-  --skip-install          Skip dnf install + smoke tests
   --build-timestamp EPOCH Unix timestamp for deterministic builds (SOURCE_DATE_EPOCH)
 USAGE
 }

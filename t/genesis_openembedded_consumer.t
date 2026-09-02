@@ -56,7 +56,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 69
+    skip 'RPM repository tools require a root Linux builder', 64
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -68,6 +68,7 @@ SKIP: {
     test_legacy_rpm_consumer();
     test_partial_rpm_release();
     test_failed_build_release();
+    test_skip_build_collects_results();
     test_dry_run_release();
     test_rpm_repository_lock();
     test_rpm_signal_cleanup();
@@ -85,6 +86,25 @@ SKIP: {
 }
 
 done_testing();
+
+# mockbuild-all.pl builds and gates each target against <repo-root>/packages-manifest.conf, and a
+# target with no section there is fatal -- so these runs, which use a synthetic target, need a
+# section to exist at all. Its CONTENT is deliberately not meaningful: the dependency packages here
+# are copies of one rpm, so no set of names describes them the way a real manifest describes a real
+# build. The runs therefore pass --no-verify-repo and the completeness gate is covered where it can
+# be tested honestly, against purpose-built rpms, in t/verify-repo-el.t. What these runs exercise is
+# the Genesis release path.
+#
+# They pass --skip-genesis rather than the removed --skip-xcat: this script no longer builds the
+# xCAT core, so xcat-core's buildrpms.pl is required only for the per-EL xCAT-genesis-base build.
+sub write_target_manifest {
+    my ($root, $target) = @_;
+    make_path($root);
+    write_binary(
+        "$root/packages-manifest.conf",
+        "[$target]\n" . rpm_package_name(capture_command('uname', '-m')) . "=*\n",
+    );
+}
 
 sub test_rpm_consumer {
     my $release_root = make_package_release("$tmp/rpm", 'rpm');
@@ -126,7 +146,7 @@ sub test_rpm_consumer {
     my $dependencies = "$tmp/rpm-dependencies";
     my $scratch_repo_root = "$tmp/rpm-repo-root";
     make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
-    make_path($scratch_repo_root);
+    write_target_manifest($scratch_repo_root, $target);
     write_binary(
         "$dependencies/xCAT-genesis-openembedded-x86_64-$version-old.noarch.rpm",
         'stale OpenEmbedded RPM',
@@ -151,7 +171,8 @@ sub test_rpm_consumer {
         '--target', $target,
         '--run-id', 'consumer',
         '--build-timestamp', $epoch,
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $dependencies,
@@ -255,7 +276,8 @@ SH
         '--target', $target,
         '--run-id', 'publication-failure',
         '--build-timestamp', $epoch,
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $dependencies,
@@ -513,7 +535,8 @@ sub test_signed_common_rpm_repository {
     my $gpg_home = "$tmp/rpm-signing-key";
     my $identity = 'xCAT repository test <xcat-repository-test@example.invalid>';
     make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
-    make_path($scratch_repo_root, $gpg_home);
+    make_path($gpg_home);
+    write_target_manifest($scratch_repo_root, $target);
     chmod(0700, $gpg_home) or die $!;
     system(
         'gpg', '--batch', '--homedir', $gpg_home, '--passphrase', '',
@@ -537,8 +560,9 @@ sub test_signed_common_rpm_repository {
         '--target', $target,
         '--run-id', 'signed-consumer',
         '--build-timestamp', $epoch,
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
-        '--skip-genesis', '--skip-createrepo', '--skip-tarball',
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
+        '--skip-createrepo', '--skip-tarball',
         '--collect-dir', $dependencies,
         '--genesis-release', $release_root,
         '--gpg-sign', '--gpg-key-name', $identity, '--gpg-home', $gpg_home,
@@ -577,7 +601,7 @@ sub test_legacy_rpm_consumer {
     my $target = 'test+epel-10-' . capture_command('uname', '-m');
     my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
     make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
-    make_path($scratch_repo_root);
+    write_target_manifest($scratch_repo_root, $target);
     write_binary("$scratch_repo_root/Gitepoch", '');
 
     my @perl_lib;
@@ -595,7 +619,8 @@ sub test_legacy_rpm_consumer {
         '--output', $output,
         '--target', $target,
         '--run-id', 'legacy',
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--collect-dir', $dependencies,
     );
@@ -647,7 +672,8 @@ sub test_partial_rpm_release {
         '--target', $target,
         '--run-id', 'partial',
         '--build-timestamp', $epoch,
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
     );
@@ -689,12 +715,10 @@ sub test_failed_build_release {
     my $scratch_repo_root = "$tmp/rpm-empty-root";
     my $collected = "$tmp/rpm-empty-collect";
     my $run_repo = "$output/mockbuild-all/$target-empty/repo/" . capture_command('uname', '-m');
-    my $results = "$output/mockbuild-all/$target-empty/build-results/ipmitool-xcat";
     my $stale = "$run_repo/ipmitool-xcat-0-stale.noarch.rpm";
-    my $kept = "$results/ipmitool-xcat-0-earlier.noarch.rpm";
-    make_path($common, $scratch_repo_root, $collected, $run_repo, $results);
+    make_path($common, $scratch_repo_root, $collected, $run_repo);
+    write_target_manifest($scratch_repo_root, $target);
     write_binary($stale, 'package left by an earlier run');
-    write_binary($kept, 'build output an earlier run produced');
 
     my $log = "$tmp/rpm-empty.log";
     my $status = run_capture(
@@ -705,7 +729,8 @@ sub test_failed_build_release {
         '--target', $target,
         '--run-id', 'empty',
         '--build-timestamp', $epoch,
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $collected,
@@ -718,8 +743,43 @@ sub test_failed_build_release {
         'a run that built nothing publishes no release package');
     ok(!-e $stale,
         'a package left by an earlier run is cleared from the staging repository');
-    ok(-e $kept,
-        'a run that skips building keeps the build results it collects from');
+}
+
+# --skip-build collects THIS target's previously built artifacts out of its own build-results tree,
+# so a run that skips building must not destroy the tree it collects from. (Where this test came
+# from the --skip-build roots were the legacy build-output/list* directories and build-results was
+# only ever kept, never collected -- which is why the empty-collection case above can no longer
+# leave an rpm there.)
+sub test_skip_build_collects_results {
+    my $release_root = make_package_release("$tmp/rpm-kept", 'rpm');
+    my $package = "xCAT-genesis-openembedded-x86_64-$version-$release.noarch.rpm";
+    my $output = "$tmp/kept-output";
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $scratch_repo_root = "$tmp/rpm-kept-root";
+    my $results = "$output/mockbuild-all/$target-kept/build-results/ipmitool-xcat";
+    my $kept = "$results/ipmitool-xcat-1.noarch.rpm";
+    my $deployed = "$output/xcat-dep/rh10/" . capture_command('uname', '-m');
+    make_path($results);
+    copy("$release_root/rpm/$package", $kept) or die $!;
+    write_target_manifest($scratch_repo_root, $target);
+
+    my $log = "$tmp/rpm-kept.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $scratch_repo_root,
+        '--output', $output,
+        '--target', $target,
+        '--run-id', 'kept',
+        '--build-timestamp', $epoch,
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
+        '--skip-createrepo', '--skip-tarball',
+    );
+
+    is($status, 0, 'a run that skips building collects its own build results');
+    ok(-e $kept, 'the build results it collects from are kept');
+    ok(-e "$deployed/" . basename($kept), 'the collected package reaches the deployed repo');
 }
 
 sub test_dry_run_release {
@@ -731,7 +791,7 @@ sub test_dry_run_release {
     my $dependencies = "$tmp/rpm-dry-dependencies";
     my $scratch_repo_root = "$tmp/rpm-dry-root";
     make_rpm_dependencies($dependencies, "$release_root/rpm/$package");
-    make_path($scratch_repo_root);
+    write_target_manifest($scratch_repo_root, $target);
 
     my $log = "$tmp/rpm-dry.log";
     my $status = run_capture(
@@ -742,7 +802,8 @@ sub test_dry_run_release {
         '--target', $target,
         '--run-id', 'dry',
         '--build-timestamp', $epoch,
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball',
         '--genesis-release', $release_root,
         '--collect-dir', $dependencies,
@@ -762,6 +823,9 @@ sub test_dry_run_release {
 sub test_rpm_repository_lock {
     my $output = "$tmp/rpm-lock-output";
     my $repository = "$tmp/rpm-shared-repository";
+    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $scratch_repo_root = "$tmp/rpm-lock-repo-root";
+    write_target_manifest($scratch_repo_root, $target);
     make_path("$repository/.lock");
     write_binary("$repository/.lock/owner", "host=other\npid=1\nepoch=1\n");
 
@@ -776,11 +840,12 @@ sub test_rpm_repository_lock {
     my $status = run_capture(
         $log,
         $^X, $rpm_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $scratch_repo_root,
         '--output', $output,
         '--repo-dep', $repository,
-        '--target', 'test+epel-10-' . capture_command('uname', '-m'),
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--target', $target,
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball', '--dry-run',
     );
     isnt($status, 0, 'a shared RPM repository cannot have two publishers');
@@ -795,11 +860,12 @@ sub test_rpm_repository_lock {
     my $forced_status = run_capture(
         $forced_log,
         $^X, $rpm_consumer,
-        '--repo-root', $repo_root,
+        '--repo-root', $scratch_repo_root,
         '--output', "$tmp/rpm-force-output",
         '--repo-dep', $repository,
-        '--target', 'test+epel-10-' . capture_command('uname', '-m'),
-        '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+        '--target', $target,
+        '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball', '--dry-run', '--force-unlock',
     );
     is($forced_status, 0, '--force-unlock recovers an interrupted RPM publication');
@@ -836,7 +902,8 @@ sub test_rpm_signal_cleanup {
             '--output', $output,
             '--repo-dep', $repository,
             '--target', 'test+epel-10-x86_64',
-            '--skip-build', '--skip-xcat', '--skip-xcat-dep', '--skip-perl',
+            '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
+        '--no-verify-repo',
             '--skip-createrepo', '--skip-tarball', '--dry-run',
         );
         exit 127;

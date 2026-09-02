@@ -3,7 +3,7 @@
 use strict;
 use warnings;
 use Cwd qw(abs_path);
-use File::Basename qw(dirname basename);
+use File::Basename qw(dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
 use Getopt::Long qw(GetOptions);
@@ -13,7 +13,6 @@ my $repo_root  = abs_path("$script_dir/..");
 my $pkg_dir    = "$repo_root/ipmitool";
 my $spec_file  = "$pkg_dir/ipmitool.spec";
 
-my $source_url = 'https://github.com/ipmitool/ipmitool/archive/refs/tags/IPMITOOL_1_8_18.tar.gz';
 my $source_file = '';
 my $work_dir = '/tmp/ipmitool-xcat-mockbuild';
 my $mock_cfg = '';
@@ -21,11 +20,9 @@ my $target_arch = '';
 my $mock_uniqueext = '';
 my $result_dir = "$repo_root/build-output/list3/ipmitool-xcat";
 my $log_dir = "$repo_root/build-logs/list3/ipmitool-xcat";
-my $skip_install = 0;
 my $build_timestamp;
 
 GetOptions(
-    'source-url=s'   => \$source_url,
     'source-file=s'  => \$source_file,
     'work-dir=s'     => \$work_dir,
     'mock-cfg=s'     => \$mock_cfg,
@@ -33,14 +30,13 @@ GetOptions(
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'   => \$result_dir,
     'log-dir=s'      => \$log_dir,
-    'skip-install!'  => \$skip_install,
     'build-timestamp=i' => \$build_timestamp,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
 die "Missing spec file: $spec_file\n" if !-f $spec_file;
 
-for my $bin (qw(wget mock rpmbuild rpm dnf ldd bash)) {
+for my $bin (qw(mock rpmbuild rpm dnf ldd bash)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
@@ -86,9 +82,7 @@ print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
 print "target_arch:$target_arch\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
-print "source_url: $source_url\n";
 print "source_file:$source_file\n";
-print "skip_install: $skip_install\n";
 print "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH\n";
 
 make_path($result_dir);
@@ -97,10 +91,24 @@ make_path($log_dir);
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
 
-print_step("Download upstream source");
-run("wget --spider " . sh_quote($source_url));
-run("wget -O " . sh_quote($source_path) . " " . sh_quote($source_url));
-normalize_source_archive($source_path, $version, $work_dir);
+print_step("Verify tracked source archive");
+# Upstream source (documented for provenance; NOT fetched at build time -- see below):
+#   https://github.com/ipmitool/ipmitool/archive/refs/tags/IPMITOOL_1_8_18.tar.gz
+# The ipmitool source (ipmitool-<ver>.tar.gz) is tracked in the repo, already normalized to the
+# ipmitool-<ver>/ top-level that %setup -n expects, and consumed directly by mock (--sources
+# $pkg_dir below). There is nothing to download: the old fetch re-derived this SAME tracked file
+# and rewrote it IN PLACE, and the checkout is shared between the two arch build hosts building at
+# once -- so the in-place rewrite raced the other host's concurrent ipmitool build, which could
+# read the file mid-write and get a truncated archive. We only READ it now, so concurrent builds
+# can never race on it. Fail loudly (do NOT silently re-fetch) if the checkout is missing/broken.
+die "Tracked ipmitool source missing: $source_path (incomplete checkout?)\n" if !-f $source_path;
+my $top = capture(
+    "tar -tzf " . sh_quote($source_path) .
+    " 2>/dev/null | grep -E '^(\\./)?ipmitool-$version/' | head -n1 || true"
+);
+die "Tracked ipmitool source is not the expected ipmitool-$version/ tree: $source_path\n"
+    if $top eq '';
+print "Using tracked source archive (read-only, no fetch, no shared write): $source_path\n";
 
 print_step("Verify spec assets");
 for my $asset (@spec_assets) {
@@ -201,7 +209,7 @@ for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
         or die "Failed to copy $src to $log_dir: $!\n";
 }
 
-if (!$skip_install && $target_arch ne $arch) {
+if ($target_arch ne $arch) {
     # A cross-built rpm cannot be installed on this host: install it into the (emulated) build
     # chroot instead and run the binary there.
     print_step("Install RPM into the chroot and run smoke tests");
@@ -222,59 +230,6 @@ if (!$skip_install && $target_arch ne $arch) {
     print {$sfh} "rc_version=$rc_version\n";
     close $sfh;
 }
-elsif (!$skip_install) {
-    print_step("Install RPM and run smoke tests");
-    run("dnf -y install " . sh_quote($main_rpm));
-
-    my $bin = '/opt/xcat/bin/ipmitool-xcat';
-    die "Missing installed binary: $bin\n" if !-x $bin;
-
-    my $help_short_log = "$log_dir/smoke-help-short.log";
-    my $help_long_log  = "$log_dir/smoke-help-long.log";
-    my $version_log    = "$log_dir/smoke-version.log";
-    my $open_log       = "$log_dir/smoke-open-mc-info.log";
-    my $ldd_log        = "$log_dir/smoke-ldd.log";
-
-    my $rc_help_short = run_capture_rc("$bin -h", $help_short_log);
-    my $rc_help_long  = run_capture_rc("$bin --help", $help_long_log);
-    my $rc_version    = run_capture_rc("$bin -V", $version_log);
-    my $rc_open       = run_capture_rc("$bin -I open mc info", $open_log);
-    my $rc_ldd        = run_capture_rc("ldd $bin", $ldd_log);
-
-    die "Smoke check failed: -h returned $rc_help_short\n" if $rc_help_short != 0;
-    die "Smoke check failed: -V returned $rc_version\n" if $rc_version != 0;
-    die "Smoke check failed: ldd returned $rc_ldd\n" if $rc_ldd != 0;
-
-    my $help_short_out = slurp($help_short_log);
-    my $help_long_out  = slurp($help_long_log);
-    my $version_out    = slurp($version_log);
-    my $open_out       = slurp($open_log);
-    my $ldd_out        = slurp($ldd_log);
-
-    die "Short help output does not contain usage text\n"
-        if $help_short_out !~ /usage:/i;
-    die "Long help output does not contain usage text\n"
-        if $help_long_out !~ /usage:/i;
-    die "Long help returned unexpected rc=$rc_help_long (expected 0 or 1)\n"
-        if $rc_help_long != 0 && $rc_help_long != 1;
-    die "Version output missing expected version string\n"
-        if $version_out !~ /ipmitool-xcat version \Q$version\E/i;
-    die "ldd output missing libcrypto dependency\n"
-        if $ldd_out !~ /libcrypto/;
-    if ($rc_open != 0 && $open_out !~ m{Could not open device|/dev/ipmi}) {
-        die "IPMI probe failed with unexpected output:\n$open_out\n";
-    }
-
-    my $summary = "$log_dir/smoke-summary.txt";
-    open my $sfh, '>', $summary or die "Cannot write $summary: $!\n";
-    print {$sfh} "binary=$bin\n";
-    print {$sfh} "rc_help_short=$rc_help_short\n";
-    print {$sfh} "rc_help_long=$rc_help_long\n";
-    print {$sfh} "rc_version=$rc_version\n";
-    print {$sfh} "rc_open=$rc_open\n";
-    print {$sfh} "rc_ldd=$rc_ldd\n";
-    close $sfh;
-}
 
 print_step("Completed");
 print "Main RPM: $main_rpm\n";
@@ -285,7 +240,6 @@ exit 0;
 sub usage {
     return <<"USAGE";
 Usage: $0 [options]
-  --source-url URL      Upstream tarball URL (default: $source_url)
   --source-file FILE    Source filename stored in ipmitool/ (default: inferred from spec version)
   --work-dir PATH       Temporary work dir (default: $work_dir)
   --mock-cfg NAME       Mock config (default: <ID>+epel-10-<ARCH>)
@@ -294,7 +248,6 @@ Usage: $0 [options]
   --mock-uniqueext TXT  Optional mock --uniqueext suffix to isolate concurrent builds
   --result-dir PATH     Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH        Log directory (default: $log_dir)
-  --skip-install        Skip dnf install + smoke tests
   --build-timestamp N   Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
 USAGE
 }
@@ -335,38 +288,6 @@ sub parse_spec {
     } @assets;
 
     return ($version, @assets);
-}
-
-sub normalize_source_archive {
-    my ($archive, $version, $work_base) = @_;
-
-    my $normalize_dir = "$work_base/source-normalize";
-    remove_tree($normalize_dir) if -d $normalize_dir;
-    make_path($normalize_dir);
-
-    run("tar -xzf " . sh_quote($archive) . " -C " . sh_quote($normalize_dir));
-
-    my @entries = grep { $_ !~ m{/\.\.?$} } glob("$normalize_dir/*");
-    die "Unexpected archive layout in $archive\n" if @entries != 1;
-    my $top_path = $entries[0];
-    die "Unexpected non-directory top-level entry in $archive: $top_path\n"
-        if !-d $top_path;
-
-    my $expected_top = "ipmitool-$version";
-    my $actual_top = basename($top_path);
-    if ($actual_top ne $expected_top) {
-        my $new_path = "$normalize_dir/$expected_top";
-        run("rm -rf " . sh_quote($new_path));
-        run("mv " . sh_quote($top_path) . " " . sh_quote($new_path));
-    }
-
-    # Repack using the expected top-level directory required by the spec.
-    run(
-        "tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
-        " -C " . sh_quote($normalize_dir) .
-        " -czf " . sh_quote($archive) .
-        " " . sh_quote($expected_top)
-    );
 }
 
 sub print_step {

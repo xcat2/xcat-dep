@@ -10,16 +10,23 @@ use File::Find qw(find);
 use File::Glob qw(bsd_glob);
 use File::Path qw(make_path remove_tree);
 use File::Temp qw(tempdir tempfile);
-use FindBin;
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
-use lib "$FindBin::Bin/lib";
+use FindBin qw($RealBin);
+use lib $RealBin, "$RealBin/lib";
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
+                      install_deps_packages install_deps_command missing_perl_modules
+                      read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
+                      rpm_version rpm_release rpm_sigmd5 restamp_release_line
+                      cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
+                      build_mock_uniqueext rpmkeys_checksig_problem);
+# print_step and sh_quote come from MockBuildUtils above; XCAT::BuildUtils carries the same
+# print_step, so it is deliberately NOT imported here (one definition, no redefinition warning).
 use XCAT::BuildUtils qw(
   capture_command
   every_step_failed
   hashes_equal
-  print_step
   read_lines
   require_command
   run_command
@@ -29,6 +36,43 @@ use XCAT::GenesisRelease qw(
   validated_release_checksums
   verify_release_file
 );
+
+# --- Mount-namespace isolation: guard the host cgroup against mock teardown propagation ----------
+# mock mounts /sys/fs/cgroup into every build chroot. On these systemd build hosts every mount is
+# `shared`, so the chroot's cgroup joins the HOST's cgroup peer group. When mock tears a chroot down
+# -- its post-build --scrub, or an aborted build's cleanup -- the unmount PROPAGATES back through the
+# shared peer group and unmounts the HOST's /sys/fs/cgroup, after which every later mock (and even new
+# login sessions) dies with "Failed to determine whether the unified cgroups hierarchy is used: No
+# medium found". This bit ppc hardest (it leaks corpse chroot mounts on abort) but x86 shares the same
+# shared-cgroup exposure. Re-exec inside a private mount namespace made rslave
+# (`unshare --mount --propagation slave`): the namespace still sees host mounts (slave = one-way), but
+# nothing mock mounts/unmounts can propagate OUT to the host. As a bonus the namespace tears down every
+# mount mock leaks when we exit, so an aborted build can no longer leave corpse mounts under
+# /var/lib/mock. Best-effort: only as root (needs CAP_SYS_ADMIN) and only if `unshare` exists;
+# otherwise warn loudly and continue unisolated. MOCKBUILD_ALL_MOUNTNS guards against a re-exec loop.
+# Build-free modes (--verify-repo, --finalize-xcat-dep) run no mock and are documented no-root, so they
+# skip the re-exec entirely -- no cgroup exposure, and no spurious non-root warning.
+my $mountns_build_free = grep { /^--(?:verify-repo|finalize-xcat-dep|install-deps)(?:=|$)/ } @ARGV;
+unless ($ENV{MOCKBUILD_ALL_MOUNTNS} || $mountns_build_free) {
+    if ($> != 0) {
+        warn "WARN: not root -- skipping mount-namespace isolation (host-cgroup propagation guard); "
+           . "run as root in CI so mock chroot teardown cannot unmount the host /sys/fs/cgroup\n";
+    } elsif (system('sh', '-c', 'command -v unshare >/dev/null 2>&1') != 0) {
+        warn "WARN: 'unshare' not found -- skipping mount-namespace isolation; mock chroot teardown "
+           . "may unmount the host /sys/fs/cgroup on a shared-propagation host\n";
+    } else {
+        $ENV{MOCKBUILD_ALL_MOUNTNS} = 1;
+        # Absolute path to self (resolved against cwd, which unshare preserves) so the re-exec'd perl
+        # finds a relative $0. A bare $PATH-only $0 isn't resolved (abs_path doesn't search $PATH), but
+        # a shell invocation yields a full $0 there anyway.
+        my $self = abs_path($0) // $0;
+        my @reexec = ('unshare', '--mount', '--propagation', 'slave', '--', $^X, $self, @ARGV);
+        exec { $reexec[0] } @reexec;
+        # exec only returns on failure -- fall through and run unisolated rather than abort the build.
+        warn "WARN: exec unshare failed ($!) -- continuing without mount-namespace isolation\n";
+        delete $ENV{MOCKBUILD_ALL_MOUNTNS};
+    }
+}
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path($script_dir);
@@ -46,17 +90,26 @@ my $parallel_targets = 1;   # 1 = serial (default; safe). 0/auto = all EL target
 my $max_parallel = 0;       # 0/auto = host nproc: global cap on concurrent mock builds (all targets)
 my $run_id     = '';
 my $build_timestamp;
-my $skip_install = 0;
+# CD version bump: when set, every xcat-dep package spec's Release gets a
+# ".snap<YYYYMMDDHHMM>.<build_number>" suffix so each pipeline run publishes a
+# fresh, monotonic NVR (deploy's additive rsync is a no-op otherwise). NOT applied
+# to xCAT-genesis-base (built from xcat-core, kept in lockstep with genesis-scripts).
+my $build_number;
+# Pinned goconserver upstream commit (xcat2/goconserver). goconserver 0.3.3 is unreleased (the
+# newest tag is v0.3.2), so it exists only on master -- pin an immutable SHA instead of the moving
+# branch so the build is reproducible. Bump this deliberately when uptaking a new goconserver.
+my $GOCONSERVER_REF = '6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f';
 my $skip_build = 0;
 my $skip_xcat_dep = 0;
 my $skip_perl = 0;
-my $skip_xcat = 0;
+my $install_deps = 0;
 my $skip_genesis = 0;
 my $skip_createrepo = 0;
 my $skip_tarball = 0;
 my $genesis_release = '';
 my $genesis_release_checksums;
 my $scrub_all_chroots = 0;
+my $keep_buildroots = 0;   # keep per-step mock chroots after build (default: --scrub=chroot each)
 my $dry_run = 0;
 my @extra_collect_dirs;
 my $repo_dep = '';
@@ -65,6 +118,18 @@ my $gpg_key_name = 'xCAT Signing Key';
 my $gpg_home = '';
 my $gpg_program = '';
 my $force_unlock = 0;
+# --finalize-xcat-dep: post-build cross-arch genesis provisioning (issue #7610). Takes the two
+# per-arch repo roots and cross-populates the noarch xCAT-genesis-base between them.
+my $finalize_xcat_dep = 0;
+my $x86_64_repo = '';
+my $ppc64le_repo = '';
+# --verify-repo=<repo>: standalone, build-free completeness + signature gate over one already-built
+# per-target repo (see verify_target_repo). Empty means "not in standalone verify mode". The target
+# is derived from the repo path (.../rh<N>/<arch> -> alma+epel-<N>-<arch>) or taken from --target.
+my $verify_repo = '';
+# --no-verify-repo suppresses the AUTOMATIC post-build gate deploy_target runs after each target is
+# finalized+signed (for iteration/debug). Verification is ON by default.
+my $no_verify_repo = 0;
 my @HELD_LOCKS;
 my $LOCK_OWNER_PID;
 my ($COMMON_STAGE, $COMMON_DESTINATION, $COMMON_BACKUP);
@@ -82,6 +147,11 @@ GetOptions(
     'gpg-key-name=s'    => \$gpg_key_name,
     'gpg-home=s'        => \$gpg_home,
     'force-unlock!'     => \$force_unlock,
+    'finalize-xcat-dep!' => \$finalize_xcat_dep,
+    'x86_64-repo=s'     => \$x86_64_repo,
+    'ppc64le-repo=s'    => \$ppc64le_repo,
+    'verify-repo=s'     => \$verify_repo,
+    'no-verify-repo!'   => \$no_verify_repo,
     'target=s'          => \$target,
     'nproc=i'           => \$nproc,
     'parallel-builds=i' => \$parallel_builds,
@@ -89,21 +159,27 @@ GetOptions(
     'max-parallel=i'    => \$max_parallel,
     'run-id=s'          => \$run_id,
     'build-timestamp=i' => \$build_timestamp,
-    'skip-install!'     => \$skip_install,
+    'build-number=i'    => \$build_number,
     'skip-build!'       => \$skip_build,
     'skip-xcat-dep!'    => \$skip_xcat_dep,
     'skip-perl!'        => \$skip_perl,
-    'skip-xcat!'        => \$skip_xcat,
+    'install-deps!'     => \$install_deps,
     'skip-genesis!'     => \$skip_genesis,
     'skip-createrepo!'  => \$skip_createrepo,
     'skip-tarball!'     => \$skip_tarball,
     'genesis-release=s' => \$genesis_release,
     'scrub-all-chroots!' => \$scrub_all_chroots,
+    'keep-buildroots!'  => \$keep_buildroots,
     'collect-dir=s@'    => \@extra_collect_dirs,
     'dry-run!'          => \$dry_run,
 ) or die usage();
 
-die "Run as root (uid=$>)\n" if $> != 0;
+die "Run as root (uid=$>)\n" if $> != 0 && !$finalize_xcat_dep && !$verify_repo;
+# --skip-build collects a prior build's artifacts from that build's per-target tree, so it must
+# know the target. Without --target the default is "all three EL targets", and each would collect
+# the same artifacts and cross-publish them into every repo (foreign-EL / foreign-arch rpms).
+die "--skip-build requires an explicit --target (collection is per-target)\n"
+    if $skip_build && $target eq '';
 die "--parallel-builds must be >= 1\n"
     if defined($parallel_builds) && $parallel_builds < 1;
 
@@ -124,6 +200,94 @@ $ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 if ($run_id eq '') {
     $run_id = strftime('%Y%m%d-%H%M%S', gmtime($SOURCE_DATE_EPOCH));
+}
+
+# --verify-repo=<repo>: a distinct, build-free completeness + signature gate over ONE already-built
+# per-target repo. The value is just the repo dir; the manifest comes from the script's existing
+# resolution (repo_root/packages-manifest.conf) and the gpg key/home from --gpg-key-name/--gpg-home.
+# The target is derived from the repo path (.../rh<N>/<arch> -> alma+epel-<N>-<arch>) unless --target
+# is given. Delegates the whole check to verify_target_repo (the SAME gate the auto-run uses), so it
+# exits 0 when complete or dies listing every problem. Runs alone -- no build, no lock, no root.
+if ($verify_repo ne '') {
+    require_command('rpm');
+    my $rdir = abs_path($verify_repo) or die "--verify-repo repo '$verify_repo' not found\n";
+    die "--verify-repo repo '$rdir' is not a directory\n" if !-d $rdir;
+    my $tgt = $target ne '' ? $target : derive_target_from_repo_path($rdir);
+    die "--verify-repo: cannot derive a target from repo path '$rdir'; pass --target\n"
+        if !defined($tgt) || $tgt eq '';
+    # sig_required=1: a standalone verify MUST assert the repomd signature (its documented contract),
+    # never silently skip it when no gpg key/home is configured (that would be a false PASS on sigs).
+    verify_target_repo($rdir, $tgt, undef, 1);   # manifest defaults to repo_root/packages-manifest.conf
+    exit 0;
+}
+
+# --finalize-xcat-dep: a distinct, build-free mode. After BOTH arch build hosts have
+# produced their per-EL repos (each carrying only its own xCAT-genesis-base), the x86_64
+# repo must ALSO ship the noarch xCAT-genesis-base-ppc64 (so an x86_64 MN can netboot ppc
+# nodes) and the ppc64le repo must ship xCAT-genesis-base-x86_64 -- the 2.17 behaviour
+# that issue #7610 regressed. This mode ONLY cross-copies the genesis-base rpm(s) between
+# the two repos (dropping any stale foreign-arch genesis) and re-indexes + re-signs the
+# affected repomd; it builds nothing and holds no output lock.
+if ($finalize_xcat_dep) {
+    die "--finalize-xcat-dep requires --x86_64-repo and --ppc64le-repo\n"
+        if $x86_64_repo eq '' || $ppc64le_repo eq '';
+    require_command('createrepo_c');
+    require_command('rpm');
+    require_command('rpmsign') if $gpg_sign;
+    require_command('gpg')     if $gpg_sign;
+    my $x86 = abs_path($x86_64_repo) or die "--x86_64-repo '$x86_64_repo' not found\n";
+    my $ppc = abs_path($ppc64le_repo) or die "--ppc64le-repo '$ppc64le_repo' not found\n";
+    die "--x86_64-repo '$x86' is not a directory\n" if !-d $x86;
+    die "--ppc64le-repo '$ppc' is not a directory\n" if !-d $ppc;
+    # Inject the per-rpm gpg re-sign and the repo re-index as callbacks so the finalize logic in
+    # MockBuildUtils stays free of this script's gpg/createrepo state.
+    finalize_xcat_dep($x86, $ppc,
+        sign => ($gpg_sign ? sub {
+            my ($rpm) = @_;
+            local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
+            run_simple("rpmsign --define " . sh_quote("%_gpg_name $gpg_key_name") . " --addsign " . sh_quote($rpm));
+        } : undef),
+        reindex => \&reindex_and_sign_repo,
+    );
+
+    # finalize just RE-INDEXED + RE-SIGNED each per-EL repo and cross-copied the foreign-arch genesis
+    # in -- i.e. it produced the FINAL shipped state, which the per-target gate in deploy_target (run
+    # earlier, pre-finalize) never saw. So run the SAME manifest completeness + signature gate here, on
+    # every finalized cell, so the build script verifies its own final output by default (no external
+    # --verify-repo needed). Suppressible with --no-verify-repo.
+    unless ($no_verify_repo) {
+        my %seen;
+        for my $root ($x86, $ppc) {
+            my @cells = (glob("$root/rh*/x86_64"), glob("$root/rh*/ppc64le"));
+            for my $d (sort @cells) {
+                next unless -d $d;
+                my $abs = abs_path($d);
+                next if $seen{$abs}++;
+                my $tgt = derive_target_from_repo_path($abs)
+                    or die "FATAL: finalize verify -- cannot derive target from '$abs'\n";
+                verify_target_repo($abs, $tgt);
+            }
+        }
+    }
+    exit 0;
+}
+
+# CD version bump. Rewrite every xcat-dep package spec's Release line in this
+# (freshly-checked-out, git-clean) tree so the built rpms carry a fresh, monotonic
+# NVR each run. Runs BEFORE any child builder is invoked. genesis-base lives under
+# xcat-core, not $repo_root, so it is untouched (stays in lockstep with the deployed
+# core's genesis-scripts).
+my $RELEASE_BUMP = '';
+if (defined $build_number) {
+    die "--build-number must be a non-negative integer\n" if $build_number < 0;
+    $RELEASE_BUMP = strftime('.snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH)) . ".$build_number";
+    # A dry run must not touch the tree. Report what would be stamped and leave the specs alone;
+    # $RELEASE_BUMP is still set so the rest of the (no-op) dry-run plan reflects it.
+    if ($dry_run) {
+        print "[dry-run] would stamp Release suffix '$RELEASE_BUMP' on xcat-dep specs under $repo_root (no files written)\n";
+    } else {
+        bump_dep_release_suffix($repo_root, $RELEASE_BUMP);
+    }
 }
 
 # Single output base for every NFS-shared write. Two hosts build in parallel on one NFS by
@@ -163,6 +327,28 @@ my ($rel) = $version_id =~ /^(\d+)/;
 die "Could not resolve ID from /etc/os-release\n" if $os_id eq '';
 die "Could not resolve major release from VERSION_ID='$version_id' in /etc/os-release\n"
     if !defined($rel) || $rel eq '';
+
+# --install-deps: make THIS host able to run the script, then exit. It has to come before the
+# require_command checks below -- those are the very things it installs, and a host that lacks them
+# would die here with no way to fix itself. Run once per build host, as root.
+#
+# The perl modules are re-checked by LOADING them afterwards rather than trusting the package
+# manager: a module that is still missing is exactly the failure this mode exists to prevent, and it
+# aborted CD runs mid-build twice (perl-File-Slurper on xcat-master-ub, perl-IPC-Cmd on
+# xcat-master-ppc), each time as a compile-time error inside XCAT::BuildUtils.
+if ($install_deps) {
+    die "--install-deps must run as root (uid=$>)\n" if $> != 0;
+    my @cmd = install_deps_command($os_id);
+    print_step("Install build prerequisites ($os_id)");
+    print "  " . join(' ', @cmd) . "\n";
+    run_command(@cmd);
+    my @modules = qw(File::Slurper IPC::Cmd Parallel::ForkManager Digest::SHA);
+    my @missing = missing_perl_modules(@modules);
+    die "FATAL: still missing after install: " . join(', ', @missing) . "\n" if @missing;
+    print "  perl modules present: " . join(', ', @modules) . "\n";
+    print "  host is ready\n";
+    exit 0;
+}
 
 for my $bin (qw(perl uname createrepo_c tar find rpm)) {
     require_command($bin);
@@ -281,6 +467,13 @@ sub build_one_target {
     my $rel = $profile->{rel};
     $arch = $profile->{arch};
 
+    # Per-target required set from packages-manifest.conf: build ONLY these packages, and fail the
+    # run if any of them fails. A package absent from this target's section is not built for it.
+    my %MANIFEST = read_manifest("$repo_root/packages-manifest.conf");
+    my %req = %{ $MANIFEST{$target} // {} };
+    die "FATAL: no manifest section for target '$target' in packages-manifest.conf\n"
+        if !%req;
+
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
 my $log_root     = "$run_root/build-logs";
@@ -289,6 +482,16 @@ my $summary_file = "$run_root/summary.txt";
 my $tarball      = "$output_root/mockbuild-all-$target-$run_id.tar.gz";
 my $srpm_repo_dir = "$run_root/repo-src";
 my $srpm_tarball  = "$output_root/mockbuild-all-$target-$run_id-srpm.tar.gz";
+
+# Each real build must start from a clean per-target tree. run_id is derived from the deterministic
+# commit timestamp, so re-runs of the same commit resolve to the SAME $run_root -- without a wipe, a
+# stale rpm or a stale perl status.txt from an earlier (possibly failed) run could be reused and mask
+# a failure (see mockbuild-perl-packages.pl, which reads per-package status files back). --skip-build
+# deliberately KEEPS the tree (it collects a prior build's artifacts); --dry-run writes nothing.
+if (!$skip_build && !$dry_run && -d $run_root) {
+    print "Cleaning stale per-target tree before build: $run_root\n";
+    remove_tree($run_root);
+}
 
 # All dep builders run natively on every arch. xnba-undi and grub2-xcat are noarch packagings of
 # committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
@@ -307,8 +510,10 @@ my %profile_builds = map { $_ => 1 } @{ $profile->{dep_builders} };
 
 my $perl_builder = "$repo_root/mockbuild-perl-packages.pl";
 
+# buildrpms.pl (in xcat-core) is only needed for the OS-dependent xCAT-genesis-base
+# build below; the full xCAT core is built separately by the xcat-core pipeline.
 die "Missing xCAT build script: $xcat_src/buildrpms.pl\n"
-    if !$skip_xcat && !-f "$xcat_src/buildrpms.pl";
+    if !$skip_genesis && !-f "$xcat_src/buildrpms.pl";
 
 my @active_dep_builders;
 for my $b (@dep_builders) {
@@ -359,12 +564,11 @@ print "parallel_builds:  " . (defined($parallel_builds) ? $parallel_builds : 'au
 print "skip_build:       $skip_build\n";
 print "skip_xcat_dep:    $skip_xcat_dep\n";
 print "skip_perl:        $skip_perl\n";
-print "skip_xcat:        $skip_xcat\n";
 print "skip_genesis:     $skip_genesis\n";
-print "skip_install:     $skip_install\n";
 print "skip_createrepo:  $skip_createrepo\n";
 print "skip_tarball:     $skip_tarball\n";
 print "scrub_all_chroots:$scrub_all_chroots\n";
+print "keep_buildroots:  $keep_buildroots\n";
 print "dry_run:          $dry_run\n";
 print "perl_builder:     $perl_builder\n";
 print "tarball:          $tarball\n";
@@ -394,6 +598,7 @@ if (!$skip_build) {
 
     if (!$skip_xcat_dep) {
         for my $builder (@active_dep_builders) {
+            next unless $req{ $builder->{name} };   # manifest: build only required dep packages
             my $name = $builder->{name};
             my $script = $builder->{script};
             my $step_result = "$build_root/$name";
@@ -409,19 +614,29 @@ if (!$skip_build) {
                 # host-local, run-scoped work dir so /tmp doesn't collide between runs
                 '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
-                ($skip_install ? '--skip-install' : ()),
+                # goconserver generates its spec at build time (from an upstream clone), so the
+                # in-tree spec Release bump above cannot reach it. Hand the CD suffix down so its
+                # NVR advances per run too, and pin the clone to an immutable commit (not the moving
+                # 'master') so the build is reproducible.
+                ($name eq 'goconserver'
+                    ? ('--go-ref', sh_quote($GOCONSERVER_REF),
+                       ($RELEASE_BUMP ne '' ? ('--release-suffix', sh_quote($RELEASE_BUMP)) : ()))
+                    : ()),
             );
             push @build_steps, {
                 id   => "xcat-dep:$name",
                 step => "Build xcat-dep: $name",
                 cmd  => $cmd,
                 log  => "$log_root/$name/run.log",
+                scrub_cfg       => $target,
+                scrub_uniqueext => $step_uniqueext,
             };
             push @collect_roots, $step_result;
         }
     }
 
-    if (!$skip_perl) {
+    my @perl_pkgs = sort grep { /^perl-/ } keys %req;   # manifest: perl packages required here
+    if (!$skip_perl && @perl_pkgs) {
         my $perl_result = "$build_root/perl/$arch";
         my $perl_log    = "$log_root/perl/$arch";
         my $perl_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, 'perl-list6');
@@ -429,19 +644,24 @@ if (!$skip_build) {
         # forks one mock build per perl package (~7), which -- multiplied by parallel EL targets --
         # oversubscribes the host.
         my $cmd = join(' ',
-            'perl', shell_quote($perl_builder),
-            '--mock-cfg', shell_quote($target),
+            'perl', sh_quote($perl_builder),
+            '--mock-cfg', sh_quote($target),
             ($profile->{forcearch}
-                ? ('--target-arch', shell_quote($arch), '--noarch-mock-cfg', shell_quote($profile->{noarch_cfg}))
+                ? ('--target-arch', sh_quote($arch), '--noarch-mock-cfg', sh_quote($profile->{noarch_cfg}))
                 : ()),
             ($profile->{epel} ? () : ('--epel-gap')),
-            '--mock-uniqueext', shell_quote($perl_uniqueext),
-            '--result-dir', shell_quote($perl_result),
-            '--log-dir', shell_quote($perl_log),
-            '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
+            '--mock-uniqueext', sh_quote($perl_uniqueext),
+            '--result-dir', sh_quote($perl_result),
+            '--log-dir', sh_quote($perl_log),
+            '--work-dir', sh_quote("/tmp/mockbuild-all-$run_id/perl-list6"),
+            '--packages', sh_quote(join(',', @perl_pkgs)),   # manifest: only required perl pkgs
             (($max_build_workers && $max_build_workers >= 1) ? ('--jobs', $max_build_workers) : ()),
             '--build-timestamp', $SOURCE_DATE_EPOCH,
-            ($skip_install ? '--skip-install' : ()),
+            # CD bump: the in-tree spec Release bump above only reaches the spec-mode perl
+            # packages; the srpm-mode ones (HTML-Form, IO-Stty, Net-Telnet) build from a
+            # committed .src.rpm, so hand the suffix down for the builder to re-stamp them.
+            ($RELEASE_BUMP ne '' ? ('--release-suffix', sh_quote($RELEASE_BUMP)) : ()),
+            ($keep_buildroots ? '--keep-buildroots' : ()),
         );
         push @build_steps, {
             id   => 'perl',
@@ -452,26 +672,9 @@ if (!$skip_build) {
         push @collect_roots, $perl_result;
     }
 
-    if (!$skip_xcat) {
-        # Own HOME per target (buildrpms.pl uses $HOME/rpmbuild) so parallel targets don't race.
-        my $xcat_home = "/tmp/mockbuild-all-$run_id/xcat-home";
-        my $mktree = join(' ', map { shell_quote("$xcat_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . shell_quote($xcat_home) . ' ' . join(' ',
-            'perl', shell_quote("$xcat_src/buildrpms.pl"),
-            '--target', shell_quote($target),
-            '--nproc', int($nproc),
-            '--force',
-            '--verbose',
-            '--xcat_dep_path', shell_quote($repo_root),
-        );
-        push @build_steps, {
-            id   => 'xcat',
-            step => 'Build xCAT packages',
-            cmd  => $cmd,
-            cwd  => $xcat_src,
-            log  => "$log_root/xcat-build.log",
-        };
-    }
+    # NOTE: this script builds ONLY xcat-dep (its dep packages, the perl packages, and
+    # the OS-dependent xCAT-genesis-base below). The full xCAT core is built separately
+    # by the xcat-core pipeline -- mockbuild-all no longer has a monolithic core-build path.
 
     # xCAT-genesis-base is OS-dependent (its initramfs bundles the build chroot's
     # kernel + glibc/busybox/perl), so it is built here, per target, and shipped
@@ -479,16 +682,28 @@ if (!$skip_build) {
     # (run in the xcat-core dir) derives the same snapYYYYMMDDHHMM Release from
     # xcat-core's Gitepoch, so it matches xCAT-genesis-scripts (built in core) and
     # the exact-version dependency genesis-scripts -> genesis-base resolves.
-    if (!$skip_genesis) {
+    if (!$skip_genesis && $req{'xCAT-genesis-base'}) {
         # buildrpms.pl stages sources in $HOME/rpmbuild (via rpmdev-setuptree). Give each
         # per-target genesis build its own HOME so parallel EL targets don't race on the shared
         # /root/rpmbuild tree (that race is what made concurrent genesis builds fail).
         my $genesis_home = "/tmp/mockbuild-all-$run_id/genesis-home";
         # buildrpms.pl's rpmdev-setuptree only runs during env setup, not per build, so create the
         # rpmbuild tree ourselves for this per-target HOME (else $HOME/rpmbuild/SOURCES is missing).
-        my $mktree = join(' ', map { shell_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
-        my $cmd = "mkdir -p $mktree && HOME=" . shell_quote($genesis_home) . ' ' . join(' ',
-            'perl', shell_quote("$xcat_src/buildrpms.pl"),
+        my $mktree = join(' ', map { sh_quote("$genesis_home/rpmbuild/$_") } qw(SOURCES SPECS BUILD BUILDROOT RPMS SRPMS));
+        # The genesis chroot (xCAT-genesis-base-<target>) is SHARED across runs -- buildrpms.pl builds it
+        # without a per-run --mock-uniqueext. mock's post-build scrub only runs on SUCCESS, so a killed
+        # or failFast-interrupted prior run leaves the chroot stunted (missing /bin/sh), and mock REUSES
+        # the corpse on the next run -> "FileNotFoundError: '/bin/sh'". Scrub it FIRST (best-effort: a
+        # no-op on the first run before the config exists) so mock recreates the chroot from the cached
+        # root; --scrub=bootstrap goes too (the genesis bootstrap chroot is part of the leak; genesis
+        # carries no --mock-uniqueext), so the fresh chroot re-bootstraps from the root cache. mock takes the buildroot lock for --scrub and BLOCKS (not
+        # skips) if a concurrent build holds it, but within a run the scrub is sequential before the
+        # build and the CD topology never runs a second same-target build at once; `timeout` bounds even
+        # a pathological wait so a stale lock can never hang the build.
+        my $genesis_scrub = "{ timeout 300 mock -r " . sh_quote("xCAT-genesis-base-$target")
+            . " --scrub=chroot --scrub=bootstrap >/dev/null 2>&1 || true; }";
+        my $cmd = "mkdir -p $mktree && $genesis_scrub && HOME=" . sh_quote($genesis_home) . ' ' . join(' ',
+            'perl', sh_quote("$xcat_src/buildrpms.pl"),
             '--package', 'xCAT-genesis-base',
             '--target', shell_quote($target),
             '--nproc', int($nproc),
@@ -502,6 +717,7 @@ if (!$skip_build) {
             cmd  => $cmd,
             cwd  => $xcat_src,
             log  => "$log_root/genesis-build.log",
+            scrub_cfg => "xCAT-genesis-base-$target",
         };
     }
 
@@ -512,44 +728,65 @@ if (!$skip_build) {
               ($max_build_workers && $max_build_workers >= 1) ? $max_build_workers
             : defined($parallel_builds)                       ? $parallel_builds
             :                                                   scalar(@build_steps);
-        run_build_steps_parallel(
-            steps         => \@build_steps,
-            max_processes => $effective_parallel_builds,
-        );
+        # Make --max-parallel a REAL cap. The perl builder is a single step that internally forks up
+        # to $effective_parallel_builds mock jobs of its own, so running it concurrently with the dep
+        # builders pushed live mock builds to ~2x the cap. Run it in its OWN phase, after the dep
+        # builders (which are quick) -- each phase then runs at most $effective_parallel_builds mock
+        # builds, so the cap holds, at a small bounded wall-clock cost. (The perl step sets no
+        # scrub_cfg and scrubs its own chroots; the scrub loop below still covers the dep/genesis steps.)
+        my @perl_steps    = grep { $_->{id} eq 'perl' } @build_steps;
+        my @nonperl_steps = grep { $_->{id} ne 'perl' } @build_steps;
+        my @failed;
+        push @failed, run_build_steps_parallel(
+            steps => \@nonperl_steps, max_processes => $effective_parallel_builds,
+        ) if @nonperl_steps;
+        push @failed, run_build_steps_parallel(
+            steps => \@perl_steps, max_processes => $effective_parallel_builds,
+        ) if @perl_steps;
+
+        # Reclaim each build step's mock chroot now that the step copied its RPMs/logs out to
+        # its --result-dir (collect_rpms reads those, never /var/lib/mock). mock's own cleanup
+        # leaves these chroots behind -- and keeps them entirely on failure -- so /var/lib/mock
+        # grows ~15-17G per run until the host fills and every dnf transaction fails for lack of
+        # space. Scrub each via `mock --scrub=chroot --scrub=bootstrap` (never rm): it takes the
+        # chroot lock, so a chroot still used by a concurrent build is refused and safely skipped.
+        # Both the build chroot and its per-uniqueext bootstrap are removed; the root cache stays
+        # for fast rebuilds. Perl packages are scrubbed inside mockbuild-perl-packages.pl (it
+        # derives its own per-package uniqueexts).
+        unless ($keep_buildroots) {
+            for my $s (@build_steps) {
+                next unless defined $s->{scrub_cfg};
+                (my $slug = $s->{id}) =~ s/[^\w.-]+/-/g;
+                scrub_buildroot($s->{scrub_cfg}, $s->{scrub_uniqueext}, "$log_root/scrub-$slug.log");
+            }
+        }
+
+        # Zero-tolerance: any build step that failed fails the whole run -- genesis included.
+        # (xcat-core #7696 is merged: buildrpms.pl now exits 0 iff it actually produced the
+        # genesis rpm, so there is no cosmetic non-zero exit left to tolerate. The old workaround
+        # -- ignore a genesis failure when a matching rpm already exists in dist/ -- is gone; a
+        # stale artifact from a previous build must never mask a failed genesis build.)
+        die "FATAL: required build step(s) failed for $target: @failed\n" if @failed;
     }
 }
 
+# The xCAT core is built by the xcat-core pipeline, NOT here -- so we deliberately do
+# NOT collect the xCAT dist tree. Only the OS-dependent xCAT-genesis-base rpm (built by
+# the genesis step above) is pulled out of it, individually, further below.
 my $xcat_rpms_dir = "$xcat_src/dist/$target/rpms";
-my $xcat_srpms_dir = "$xcat_src/dist/$target/srpms";
-
-# In monolithic mode (no --skip-xcat) the whole xCAT core built here (incl.
-# genesis-base) is collected into this repo. In the split pipeline (--skip-xcat,
-# core built separately) the orchestrator (cluster-test.pl) routes
-# xCAT-genesis-base from the xCAT dist tree into the per-EL dep repo itself --
-# robust to this script exiting non-zero on tolerated dep-builder failures -- so
-# we deliberately do NOT collect the xCAT dist tree here.
-if (!$skip_xcat) {
-    push @collect_roots, $xcat_rpms_dir;
-}
 
 if ($skip_build) {
-    push @collect_roots,
-        "$repo_root/build-output/list3/elilo-xcat",
-        "$repo_root/build-output/list3/grub2-xcat",
-        "$repo_root/build-output/list3/ipmitool-xcat",
-        "$repo_root/build-output/list3/syslinux-xcat",
-        "$repo_root/build-output/list3/xnba-undi",
-        "$repo_root/build-output/list5/goconserver/$arch",
-        "$repo_root/goconserver-build-$arch/results/rpm",
-        "$repo_root/build-output/list6/perl/$arch",
-        "$repo_root/perl-list6/$arch";
+    # Collect THIS target's previously-built artifacts from its own per-target build tree -- the
+    # same $build_root a normal build populates (collect_rpms recurses). NOT the legacy EL-agnostic
+    # build-output/list* dirs: those are scoped only by $arch, so an el8 rpm left there would be
+    # pulled into an el9/el10 repo, and with --target omitted the same rpms would be published into
+    # every EL repo. (--target is now required for --skip-build, see the option check above.)
+    push @collect_roots, $build_root;
 }
 
 push @collect_roots, @extra_collect_dirs;
 @collect_roots = uniq(@collect_roots);
-my @srpm_collect_roots = (!$skip_xcat)
-    ? uniq(@collect_roots, $xcat_srpms_dir)
-    : uniq(@collect_roots);
+my @srpm_collect_roots = uniq(@collect_roots);
 
 if ($genesis_release && !$dry_run) {
     remove_genesis_packages($repo_dir, 0);
@@ -569,13 +806,15 @@ my ($copied, $skipped_src, $missing_roots) = collect_rpms(
 # Assert on what this run BUILT, before the Genesis release is added: the release is
 # installed from a verified directory rather than built here, so counting it first would
 # let a run whose builders all failed reach createrepo and the deployable tree, and fail
-# much later in assert_required_deps naming packages instead of the failed builds.
+# much later in the repo gate (verify_target_repo), naming missing packages instead of the
+# failed builds.
 if (!$dry_run && $copied == 0) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
 
 # Ensure the OS-dependent xCAT-genesis-base rpm (built by the genesis step above)
-# lands in the dep repo even when the full xCAT core is built elsewhere (--skip-xcat).
+# lands in the dep repo -- pull it individually out of the xcat-core dist tree (the
+# rest of that tree, the full xCAT core, is built + published by the xcat-core pipeline).
 if (!$skip_genesis && !$dry_run) {
     for my $g (bsd_glob("$xcat_rpms_dir/xCAT-genesis-base-*.rpm")) {
         next if $g =~ /\.src\.rpm$/;
@@ -583,6 +822,27 @@ if (!$skip_genesis && !$dry_run) {
             or die "Failed to copy genesis-base $g -> $repo_dir: $!\n";
         $copied++;
     }
+}
+
+# Repo completeness -- every required package present at its pinned version (a '*' pin accepts any),
+# missing packages included -- is now gated ONCE, centrally, in deploy_target via verify_target_repo
+# (the single consolidated gate; it also runs under --skip-build and validates the deployed repo).
+# The only per-build check kept here is the CD --build-number bump: confirm it actually LANDED in the
+# built rpms' Release, since validating %{VERSION} alone can't catch a silently un-bumped NVR (which
+# deploy's additive rsync would then dedup away). Every built dep + perl package carries the suffix;
+# xCAT-genesis-base is intentionally NOT bumped (kept in lockstep with xcat-core's genesis-scripts).
+if (!$dry_run && $RELEASE_BUMP ne '') {
+    my @rmiss;
+    for my $pkg (required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep)) {
+        next if $pkg eq 'xCAT-genesis-base';
+        my $rel = rpm_release($repo_dir, $pkg);
+        next if !defined $rel;   # a missing rpm is caught by the completeness gate in deploy_target
+        push @rmiss, "$pkg: Release '$rel' is missing the CD bump '$RELEASE_BUMP'"
+            if index($rel, $RELEASE_BUMP) < 0;
+    }
+    die "FATAL: --build-number bump '$RELEASE_BUMP' did not land in built rpm(s) for $target:\n  "
+      . join("\n  ", @rmiss) . "\n" if @rmiss;
+    print "[manifest] Release bump '$RELEASE_BUMP' present on all built dep rpms for $target\n";
 }
 
 print_step('Collect source RPM artifacts');
@@ -735,16 +995,61 @@ sub deploy_target {
     my $dest  = "$repo_dep/rh$rel/$tarch";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
-    make_path($dest);
-    for my $rpm (bsd_glob("$src/*.rpm")) {
-        next if $rpm =~ /\.src\.rpm$/;
-        my $destination = "$dest/" . basename($rpm);
-        publish_file($rpm, $destination);
+
+    # Stage the cell in a sibling temp dir, sign+index+verify it THERE, then atomically swap it into
+    # place. This makes the deploy self-cleaning and atomic (PR #62 review #3):
+    #   - self-cleaning: the cell is rebuilt from scratch each run, so stale snap-NVR rpms from an
+    #     earlier build never accumulate. Previously deploy copied ADDITIVELY into an existing $dest
+    #     and relied on the pipeline pre-wiping rh<N>/<arch> -- a standalone run accumulated versions.
+    #   - atomic + verify-before-replace: a failed sign/index/verify leaves the previously-published
+    #     cell untouched, and no reader ever sees a half-written cell.
+    # The staging dir is a sibling of $dest, so the rename is a same-filesystem (atomic) move. The
+    # cross-arch genesis (--finalize-xcat-dep) runs later and re-populates the foreign-arch genesis,
+    # so rebuilding this single-arch cell from $src is correct.
+    make_path(dirname($dest));
+    my $stage = "$dest.stage.$$";
+    remove_tree($stage) if -d $stage;
+    make_path($stage);
+    my $ok = eval {
+        for my $rpm (bsd_glob("$src/*.rpm")) {
+            next if $rpm =~ /\.src\.rpm$/;
+            publish_file($rpm, "$stage/" . basename($rpm));
+        }
+        # --genesis-release: the release itself is published ONCE into <repo-dep>/common, not into
+        # each per-EL cell, so nothing from it is kept here -- drop any stale OpenEmbedded Genesis
+        # rpm an earlier layout left in the collection. On the STAGE, so the published cell is
+        # already correct when it is swapped in.
+        remove_genesis_packages($stage, 0) if $genesis_release;
+        sign_and_index_repo($stage);
+        write_dep_repo_metadata($stage, $rel, $tarch);
+        # Automatic completeness + signature gate on the freshly signed cell -- the single
+        # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
+        # manifest-required package is present at its pinned version, the repomd signature verifies,
+        # AND every rpm is signed by the key. Runs on the STAGE so a failure never lands in $dest.
+        # Suppressible with --no-verify-repo for iteration/debug.
+        verify_target_repo($stage, $tgt) unless $no_verify_repo;
+        1;
+    };
+    if (!$ok) {
+        my $err = $@;
+        remove_tree($stage);   # leave the previously-published cell exactly as it was
+        die $err;
     }
-    remove_genesis_packages($dest, 0) if $genesis_release;
-    assert_required_deps($dest, $info->{profile}{required});
-    sign_and_index_repo($dest);
-    write_dep_repo_metadata($dest, $rel, $tarch);
+
+    # Atomic replace: rename cannot overwrite a populated dir, so move the old cell aside, swap the
+    # staged cell in, then drop the old one. On a failed final rename, restore the old cell.
+    my $old = "$dest.old.$$";
+    remove_tree($old) if -d $old;
+    if (-d $dest) {
+        rename($dest, $old) or die "Failed to move old cell $dest aside: $!\n";
+    }
+    unless (rename($stage, $dest)) {
+        my $err = $!;
+        rename($old, $dest) if -d $old && !-d $dest;   # best-effort restore
+        die "Failed to swap staged cell into $dest: $err\n";
+    }
+    remove_tree($old) if -d $old;
+
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
     print "Deployed rh$rel/$tarch: $n rpms\n";
 }
@@ -763,10 +1068,52 @@ sub publish_genesis_common_repo {
     verify_genesis_release_packages('rpm', $COMMON_STAGE);
     sign_and_index_repo($COMMON_STAGE);
     write_common_repo_metadata($COMMON_STAGE);
+    # Gate the STAGE, so an incomplete shared repo is never swapped into place. Completeness only:
+    # the packages were verified against the release checksums as they were copied, and the deploy
+    # asserts every rpm's signature, but until now nothing checked that the repository being
+    # published actually carries the whole architecture set the manifest says it must.
+    verify_common_repo($COMMON_STAGE) unless $no_verify_repo;
     chmod(0755, $COMMON_STAGE)
       or die "Cannot make $COMMON_STAGE traversable: $!\n";
     replace_common_repository($COMMON_STAGE, $dest);
     print "Published common Genesis repository: $published rpms\n";
+}
+
+#--------------------------------------------------------------------------------
+
+=head3 verify_common_repo
+
+    Assert the shared OpenEmbedded Genesis repository carries every package the manifest's [common]
+    section requires, at a version satisfying its pin. [common] is not a build target: it describes
+    the one repository published beside the per-EL cells, which no [<target>] section covers.
+
+    Arguments:
+        $dir - the repository to check (the staging directory, before it is swapped into place)
+    Returns:
+        1, or dies listing every problem
+
+=cut
+
+#--------------------------------------------------------------------------------
+sub verify_common_repo {
+    my ($dir) = @_;
+    my $manifest = "$repo_root/packages-manifest.conf";
+    my %MAN = read_manifest($manifest);
+    my %req = %{ $MAN{common} // {} };
+    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
+        if !%req;
+
+    my @names       = sort keys %req;
+    my %present     = repo_present_versions($dir, \@names);
+    my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
+    my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
+    if (@problems) {
+        print "  - $_\n" for @problems;
+        die "FATAL: shared Genesis repo INCOMPLETE at $dir (" . scalar(@problems) . " problem(s))\n";
+    }
+    print "[verify-repo] common complete: " . scalar(@names)
+        . " packages present + EVR-satisfied in $dir\n";
+    return 1;
 }
 
 sub replace_common_repository {
@@ -842,8 +1189,8 @@ sub sign_and_index_repo {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         my $repomd = "$dir/repodata/repomd.xml";
         unlink "$repomd.asc" if -f "$repomd.asc";
-        run_simple(qq(gpg -a --detach-sign --default-key "$gpg_key_name" ) . shell_quote($repomd));
-        run_simple(qq(gpg -a --export "$gpg_key_name" > ) . shell_quote("$repomd.key"));
+        run_simple("gpg -a --detach-sign --default-key " . sh_quote($gpg_key_name) . ' ' . sh_quote($repomd));
+        run_simple("gpg -a --export " . sh_quote($gpg_key_name) . " > " . sh_quote("$repomd.key"));
     }
 }
 
@@ -852,6 +1199,9 @@ sub write_dep_repo_metadata {
     my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$tarch";
     my $gpgcheck = $gpg_sign ? 1 : 0;
     my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
+    # repo_gpgcheck=1 makes clients verify the DETACHED repomd.xml signature (repomd.xml.asc) against
+    # gpgkey before trusting the metadata -- sign_and_index_repo produces both, so enforce it. Mirrors
+    # gpgcheck: off when the repo is unsigned.
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
@@ -859,6 +1209,7 @@ name=xCAT 2 dependencies (rh$rel $tarch)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
+repo_gpgcheck=$gpgcheck
 $gpgkey_line
 EOF
     close $r;
@@ -938,11 +1289,30 @@ EOF
     close $b;
 }
 
+
+
+# Re-run createrepo_c on a repo whose rpm set changed, and (under --gpg-sign) re-sign +
+# re-export repomd. Does NOT re-sign the rpms (cross_copy_genesis already did the copied
+# one; the rest keep their build-time signatures).
+sub reindex_and_sign_repo {
+    my ($dir) = @_;
+    run_simple(createrepo_c_cmd($dir));
+    if ($gpg_sign) {
+        local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
+        my $repomd = "$dir/repodata/repomd.xml";
+        unlink "$repomd.asc" if -f "$repomd.asc";
+        run_simple("gpg -a --detach-sign --default-key " . sh_quote($gpg_key_name) . ' ' . sh_quote($repomd));
+        run_simple("gpg -a --export " . sh_quote($gpg_key_name) . " > " . sh_quote("$repomd.key"));
+    }
+}
+
 sub usage {
     return <<"USAGE";
 Usage: $0 [options]
 
-Build xcat-dep and xCAT RPMs, consolidate binary/source artifacts, run createrepo, and create tarballs.
+Build xcat-dep RPMs (dep packages, perl packages, and the OS-dependent xCAT-genesis-base),
+consolidate binary/source artifacts, run createrepo, and create tarballs. The full xCAT core
+is built separately by the xcat-core pipeline, not here.
 
 Options:
   --repo-root PATH        xcat-dep repository root (default: script directory)
@@ -954,6 +1324,25 @@ Options:
   --repo-dep PATH         Override the deployable output root; rh8/rh9/rh10/<arch> and common
                           are assembled and signed here (default: <output>/xcat-dep)
   --force-unlock          Remove a stale <output>/.lock before acquiring it
+  --finalize-xcat-dep     Post-build cross-arch genesis mode (builds nothing). Requires
+                          --x86_64-repo and --ppc64le-repo. For each matching <os>/x86_64 and
+                          <os>/ppc64le repo pair, copies the noarch xCAT-genesis-base-ppc64
+                          (the ppc64le genesis; xCAT names it -ppc64 via tarch, no big-endian
+                          code) into the x86_64 repo and xCAT-genesis-base-x86_64 into the
+                          ppc64le repo (dropping any stale foreign-arch genesis), then
+                          re-indexes + re-signs. Restores the 2.17 cross-arch genesis
+                          (issue #7610). Honors --gpg-sign/--gpg-key-name/--gpg-home. Use alone.
+  --x86_64-repo PATH      (finalize) x86_64 repo root holding <os>/x86_64 (e.g. rh9/x86_64)
+  --ppc64le-repo PATH     (finalize) ppc64le repo root holding <os>/ppc64le
+  --verify-repo PATH      Standalone completeness + signature gate over the per-target repo at PATH
+                          (builds nothing). Asserts every package packages-manifest.conf requires for
+                          the target is present at a version satisfying its pin AND that the repomd
+                          is signed by --gpg-key-name; exits 0 if complete, or lists each MISSING/
+                          VERSION/UNSIGNED/WRONGKEY problem and fails. The target is derived from the path
+                          (.../rh<N>/<arch> -> alma+epel-<N>-<arch>) unless --target is given; the
+                          manifest and gpg key/home come from the usual options. Use alone.
+  --no-verify-repo        Suppress the AUTOMATIC post-build completeness+signature gate that runs
+                          after each target's repo is finalized (default: verification ON)
   --gpg-sign              Sign RPMs and repomd.xml in every published repository
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
@@ -964,17 +1353,18 @@ Options:
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
   --parallel-builds N     Max concurrent top-level build steps within one EL target (default: auto)
   --parallel-targets N    Concurrent EL targets (rh8/rh9/rh10). 0/auto = all at once, 1 = serial,
-                          N = cap at N. Each target is fully output-isolated (default: auto)
+                          N = cap at N. Each target is fully output-isolated (default: 1 = serial)
   --max-parallel N        Global cap on concurrent mock builds across ALL targets, to avoid
                           oversubscribing the host. Split evenly across active targets.
                           0/auto = host nproc (default: auto)
   --run-id ID             Run identifier suffix (default: derived from build timestamp)
   --build-timestamp EPOCH Unix epoch for deterministic builds (default: Gitepoch or git log)
-  --skip-install          Skip install/smoke tests in child builder scripts
   --skip-build            Skip all build steps and only collect/create repo/tarballs
   --skip-xcat-dep         Skip xcat-dep mockbuild.pl package steps
   --skip-perl             Skip perl package build step
-  --skip-xcat             Skip xCAT buildrpms.pl step
+  --install-deps          Install this host's build prerequisites (package manager + the perl
+                          modules the script loads), verify each module now loads, then exit.
+                          Run once per build host, as root. Use alone.
   --skip-genesis          Skip the existing per-EL Genesis image build
   --skip-createrepo       Skip createrepo
   --skip-tarball          Skip binary/SRPM tarball creation
@@ -986,8 +1376,8 @@ Options:
 Notes:
   - Run this script as root on the build host.
   - ARCH is derived from: uname -m (or from the forcearch target)
-  - Top-level parallel queue includes xcat-dep mockbuild.pl steps, perl builder,
-    and ../xcat-core/buildrpms.pl.
+  - Top-level parallel queue includes xcat-dep mockbuild.pl steps, the perl builder,
+    and the xCAT-genesis-base build (../xcat-core/buildrpms.pl --package xCAT-genesis-base).
   - Child mockbuild scripts are invoked with per-step mock --uniqueext values
     to avoid lock collisions on the same mock config.
   - If --target is omitted, it is deduced from /etc/os-release:
@@ -1039,26 +1429,53 @@ sub run_step {
     }
 }
 
+# Scrub a single mock buildroot via mock's own --scrub (never rm). mock takes the buildroot lock for
+# the scrub, so a concurrent build holding it makes mock BLOCK until release rather than corrupt a live
+# chroot (this can never rm a chroot out from under a running build). Failures (already scrubbed or
+# config missing) are tolerated -- a cleanup hiccup must never fail the build. Scrubs both the
+# build chroot and its per-uniqueext bootstrap chroot (each build step gets its own bootstrap, so
+# both must go or /var/lib/mock still leaks). The shared root cache under /var/cache/mock is kept,
+# so rebuilds stay fast. $uniqueext is optional (genesis has none).
+sub scrub_buildroot {
+    my ($cfg, $uniqueext, $log) = @_;
+    return if !defined $cfg || $cfg eq '';
+    my $ext = (defined $uniqueext && $uniqueext ne '')
+        ? ' --uniqueext ' . sh_quote($uniqueext) : '';
+    eval {
+        run_step(
+            step => "Scrub chroot $cfg$ext",
+            cmd  => "mock -r " . sh_quote($cfg) . $ext . " --scrub=chroot --scrub=bootstrap",
+            log  => $log,
+        );
+        1;
+    } or do {
+        warn "WARN: chroot scrub failed (tolerated) for $cfg$ext: $@";
+    };
+}
+
 sub run_build_steps_parallel {
     my (%args) = @_;
     my $steps = $args{steps} // [];
     my $max_processes = $args{max_processes} // 1;
     return if !@{$steps};
 
-    # Individual dep-builder failures are TOLERATED (some packages are el-/arch-pinned or
-    # have dead upstream source URLs, e.g. elilo on el10, perl-Sys-Virt on el8, a moved grub2
-    # src.rpm). We collect whatever built and assert the REQUIRED set later (assert_required_deps),
-    # matching the historical build behaviour.
+    # Returns the ids of any steps that failed; the caller (build_one_target) enforces
+    # zero-tolerance -- ANY failed step fails the whole run, genesis included, with no special-case.
+    # We build only packages required for the target (per packages-manifest.conf), so there is no
+    # "expected to fail on this arch/el" case left to tolerate. There is likewise no genesis
+    # exception: since xcat-core #7696, buildrpms.pl exits 0 iff it produced the genesis rpm, so a
+    # non-zero genesis exit is a real failure (the old "tolerate if the rpm is already present"
+    # workaround is gone -- a stale artifact must never mask a failed build).
     if ($dry_run || $max_processes <= 1 || @{$steps} == 1) {
-        my $serial_failures = 0;
+        my @failed;
         for my $step (@{$steps}) {
             my $ok = eval { run_step(%{$step}); 1 };
             next if $ok;
-            $serial_failures++;
-            warn "WARN: build step failed (tolerated): $step->{step}\n" . ($@ // '');
+            warn "ERROR: build step failed: $step->{step}\n" . ($@ // '');
+            push @failed, (defined($step->{id}) && $step->{id} ne '' ? $step->{id} : $step->{step});
         }
-        assert_build_progress(scalar(@{$steps}), $serial_failures);
-        return;
+        assert_build_progress(scalar(@{$steps}), scalar(@failed));
+        return @failed;
     }
 
     my $workers = $max_processes;
@@ -1113,41 +1530,279 @@ sub run_build_steps_parallel {
             push @lines,
                 "$id (exit=$f->{exit}, signal=$f->{signal}, core_dump=$f->{core_dump})";
         }
-        # Tolerated: warn, don't die. The REQUIRED set is asserted after collection/deploy.
-        warn "WARN: some build steps failed (tolerated; required deps asserted after deploy):\n  "
-            . join("\n  ", @lines) . "\n";
+        warn "ERROR: build step(s) failed:\n  " . join("\n  ", @lines) . "\n";
     }
 
     assert_build_progress(scalar(@{$steps}), scalar(keys %failed));
+    my @failed_ids = sort keys %failed;
+    return @failed_ids;
 }
 
-# Individual failures are tolerated because some packages are el- or arch-pinned. ALL of them
+# The caller enforces zero tolerance per required package (verify_target_repo). ALL steps
 # failing is a different thing: the builder itself is unusable (no mock, a broken chroot, no
 # network), this invocation produced nothing, and every package the run would go on to publish
-# would come from somewhere other than this build.
+# would come from somewhere other than this build -- say that, instead of naming the missing
+# packages later.
 sub assert_build_progress {
     my ($attempted, $failures) = @_;
     return unless every_step_failed($attempted, $failures);
     die "FATAL: every build step failed ($failures/$attempted). Check the build logs.\n";
 }
 
-# have_rpm: is there a non-src rpm named <name>-... under $dir?
-sub have_rpm {
-    my ($dir, $name) = @_;
-    my @m = grep { !/\.src\.rpm$/ } bsd_glob("$dir/${name}-*.rpm");
-    return scalar(@m) > 0;
+
+
+
+
+
+
+# repo_present_versions: thin disk layer for the repo gate. Given a built repo dir and the list of
+# required package names, return %present = (name => rpm_version($dir, $name)) for each -- reusing the
+# EXISTING rpm_version so genesis's arch-suffixed naming resolves exactly as the in-line manifest pin
+# check does. rpm_version returns undef for an absent package, which verify_repo_packages then reports
+# as MISSING. Pure disk read; the decision itself lives in verify_repo_packages.
+sub repo_present_versions {
+    my ($dir, $names) = @_;
+    my %present;
+    $present{$_} = rpm_version($dir, $_) for @$names;
+    return %present;
 }
 
-# assert_required_deps: the per-EL dep repo is unusable without these (the target profile's
-# required set), so a MISSING one is fatal even though individual builder failures are
-# tolerated above. genesis-base is required unless --skip-genesis.
-sub assert_required_deps {
-    my ($dir, $required) = @_;
-    my @req = @{$required};
-    push @req, 'xCAT-genesis-base' unless $skip_genesis;
-    my @missing = grep { !have_rpm($dir, $_) } @req;
-    die "FATAL: required deps missing from $dir: @missing\n" if @missing;
-    print "[deps] required set present in $dir: @req\n";
+# gpg_key_fingerprint: resolve a gpg key NAME (e.g. "xCAT Signing Key") to its primary-key
+# fingerprint in the given keyring, so the expected and observed signing identities are compared in
+# the SAME form (a fingerprint). Falls back to the name itself when it cannot be resolved.
+sub gpg_key_fingerprint {
+    my ($keyname, $home) = @_;
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $out = `gpg$h --with-colons --fingerprint --list-keys ${\ sh_quote($keyname)} 2>/dev/null` // '';
+    # Collect the PRIMARY-key fingerprint of every key matching $keyname (the fpr line right after a
+    # 'pub' record; subkey fprs follow 'sub' and are ignored). Return undef -- not a guess -- when the
+    # key is absent (unresolved) or when MORE THAN ONE key matches the name (ambiguous): the caller
+    # then hard-fails SIGKEY rather than comparing against a possibly-wrong key.
+    my (@fprs, $want);
+    for my $line (split /\n/, $out) {
+        if    ($line =~ /^pub:/) { $want = 1; }
+        elsif ($line =~ /^sub:/) { $want = 0; }
+        elsif ($want && $line =~ /^fpr:+([0-9A-Fa-f]+):/) { push @fprs, $1; $want = 0; }
+    }
+    my $fingerprint;
+    $fingerprint = $fprs[0] if @fprs == 1;
+    return $fingerprint;
+}
+
+# gpg_key_ids: all acceptable key ids (lowercased) for a signing key NAME -- the primary key id AND
+# every subkey id, in both 16-hex (long) and 8-hex (short) forms. rpm header signatures report the
+# signing SUBKEY id, so the per-rpm gate accepts any id belonging to the key rather than one exact
+# fingerprint. Returns a hashref set (empty if the key can't be listed).
+sub gpg_key_ids {
+    my ($keyname, $home) = @_;
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $out = `gpg$h --with-colons --list-keys ${\ sh_quote($keyname)} 2>/dev/null` // '';
+    my %ids;
+    for my $line (split /\n/, $out) {
+        my @f = split /:/, $line;
+        next unless ($f[0] // '') =~ /^(?:pub|sub)$/ && defined $f[4] && $f[4] ne '';
+        my $id = $f[4];
+        $ids{ lc $id } = 1;
+        $ids{ lc substr($id, -16) } = 1 if length($id) > 16;
+        $ids{ lc substr($id, -8)  } = 1 if length($id) > 8;
+    }
+    return \%ids;
+}
+
+# rpm_signer_keyid: the signing key id (lowercased hex) of a built rpm's header signature, or undef
+# when the rpm is not signed. Reads the RSA (or DSA) header pgpsig and pulls the "Key ID <hex>" field.
+sub rpm_signer_keyid {
+    my ($rpm) = @_;
+    my $keyid;
+    for my $tag (qw(RSAHEADER DSAHEADER)) {
+        my $out = `rpm -qp --qf '%{$tag:pgpsig}' ${\ sh_quote($rpm)} 2>/dev/null` // '';
+        if ($out =~ /Key ID\s+([0-9A-Fa-f]+)/i) { $keyid = lc($1); last; }
+    }
+    return $keyid;
+}
+
+# rpm_evr: the single distinct EPOCH:VERSION-RELEASE of package $name's binary rpm(s) in $dir (epoch
+# defaults to 0 when the header carries none), or undef if none match. Mirrors rpm_version's dedup:
+# more than one distinct EVR means a stale artifact was not cleaned before the build (a version pin
+# could then pass against the wrong rpm). genesis's x86_64 + ppc64 rpms share one EVR, so a normal
+# pair is a single entry.
+sub rpm_evr {
+    my ($dir, $name) = @_;
+    my $glob = ($name eq 'xCAT-genesis-base')
+        ? "$dir/xCAT-genesis-base-*.rpm"
+        : "$dir/${name}-*.rpm";
+    my %evrs;
+    for my $f (sort glob($glob)) {
+        next if $f =~ /\.src\.rpm$/ || $f =~ /-debug(?:info|source)-/;
+        my $n = `rpm -qp --qf '%{name}' ${\ sh_quote($f)} 2>/dev/null`;
+        my $match = ($name eq 'xCAT-genesis-base')
+            ? ($n =~ /^xCAT-genesis-base-/) : ($n eq $name);
+        next unless $match;
+        my $evr = `rpm -qp --qf '%{epochnum}:%{version}-%{release}' ${\ sh_quote($f)} 2>/dev/null`;
+        chomp $evr;
+        $evrs{$evr} = 1 if $evr ne '';
+    }
+    my $evr;
+    return $evr unless %evrs;
+    die "Multiple EVRs of $name present in $dir: " . join(', ', sort keys %evrs)
+      . " (stale artifact not cleaned before the build)\n" if keys(%evrs) > 1;
+    ($evr) = keys %evrs;
+    return $evr;
+}
+
+# rpm_vercmp_segment: ONE rpmvercmp segment comparison via rpm's own lua binding, returning -1/0/1.
+# Used as the injected comparator for MockBuildUtils::evr_cmp so the EVR gate uses rpm's canonical
+# version algorithm (epoch/release composition is done in evr_cmp). Long-bracket the args so any
+# version char (. _ ~ ^ +) passes through literally; rpm versions never contain the ]==] sequence.
+sub rpm_vercmp_segment {
+    my ($a, $b) = @_;
+    $a = '' unless defined $a;
+    $b = '' unless defined $b;
+    my $out = `rpm --eval '%{lua:print(rpm.vercmp([==[$a]==],[==[$b]==]))}' 2>/dev/null`;
+    chomp $out;
+    die "FATAL: rpm.vercmp gave no result for '$a' vs '$b'\n" unless $out =~ /^-?\d+$/;
+    return $out <=> 0;
+}
+
+# verify_rpms_checksig: cryptographically verify EVERY binary rpm in $dir with `rpmkeys --checksig`
+# against an ISOLATED keyring holding only the signing key. This is the RPM-native integrity + origin
+# check: it verifies each rpm's header/payload digests AND that the signature is by this key (NOKEY /
+# NOT OK => a real failure, since the key IS imported). Returns @problems.
+sub verify_rpms_checksig {
+    my ($dir, $keyname, $home) = @_;
+    my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+    return () unless @rpms;
+    require_command('rpmkeys');
+    require_command('gpg');
+    my $tmpdb = tempdir('rpmkeys-XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $keyfile = "$tmpdb/pubkey.asc";
+    system("gpg$h --batch --yes -a --export " . sh_quote($keyname) . ' > ' . sh_quote($keyfile) . ' 2>/dev/null');
+    return ("SIGKEY: cannot export public key '$keyname' for rpmkeys --checksig") if !-s $keyfile;
+    my $dbopt = '--dbpath ' . sh_quote($tmpdb);
+    system("rpmkeys $dbopt --import " . sh_quote($keyfile) . ' >/dev/null 2>&1') == 0
+        or return ("SIGKEY: rpmkeys --import of '$keyname' into the temp keyring failed");
+    my @problems;
+    for my $rpm (@rpms) {
+        my $out = `rpmkeys $dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
+        push @problems, rpmkeys_checksig_problem(basename($rpm), $? >> 8, $out);
+    }
+    return @problems;
+}
+
+# repomd_observed_signer: run gpg --verify on the detached repomd signature and extract the identity
+# of the key that actually signed it, as a primary-key fingerprint (the last field of the VALIDSIG
+# status line). Returns '' when the .asc is absent or verification fails (both read as "unsigned").
+sub repomd_observed_signer {
+    my ($asc, $file, $home) = @_;
+    return '' unless -f $asc && -f $file;
+    my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
+    my $out = `gpg$h --status-fd=1 --verify ${\ sh_quote($asc)} ${\ sh_quote($file)} 2>/dev/null` // '';
+    # An EXPIRED or REVOKED key, or an expired signature, still emits VALIDSIG -- reject those
+    # explicitly so a no-longer-trustworthy signature is a problem, not a pass. A fully-good signature
+    # emits GOODSIG; the degraded cases emit EXPKEYSIG/REVKEYSIG/EXPSIG instead.
+    return '' if $out =~ /^\[GNUPG:\]\s+(?:EXPKEYSIG|REVKEYSIG|EXPSIG)\b/m;
+    for my $line (split /\n/, $out) {
+        # VALIDSIG <signing-fpr> <dates...> <primary-key-fpr>; the trailing field is the primary fpr.
+        if ($line =~ /^\[GNUPG:\]\s+VALIDSIG\s+(.*\S)\s*$/) {
+            my @f = split ' ', $1;
+            return $f[-1];
+        }
+    }
+    return '';
+}
+
+# verify_target_repo: the completeness + signature gate for ONE built per-target repo -- the single
+# source of truth for "is this repo shippable?", replacing the old assert_required_deps + in-line
+# version-pin loop. It does the IO (manifest parse, rpm_version, gpg --verify) and delegates every
+# DECISION to the two PURE helpers: verify_repo_packages (missing/version) and verify_repo_signature
+# (unsigned/wrongkey). Both problem lists are merged. Prints a one-line OK, or dies listing every
+# problem. Both the automatic post-build gate (deploy_target) and the standalone --verify-repo mode
+# call this, so there is exactly one gate implementation.
+sub verify_target_repo {
+    my ($dir, $tgt, $manifest, $sig_required) = @_;
+    $manifest //= "$repo_root/packages-manifest.conf";
+    my %MAN = read_manifest($manifest);
+    my %req = %{ $MAN{$tgt} // {} };
+    die "FATAL: no manifest section for target '$tgt' in $manifest\n" if !%req;
+    # The WHOLE manifest, deliberately -- the --skip-* flags are NOT applied here. They say what
+    # this INVOCATION built; they never say what the verified repository may be missing. Honouring
+    # them let a repo with no xCAT-genesis-base pass whenever the verifying run happened to carry
+    # --skip-genesis (PR #62 review). A package an earlier run built is still expected to be here.
+    my @names   = sort keys %req;
+    my %present     = repo_present_versions($dir, \@names);
+    # Full EPOCH:VERSION-RELEASE per package, so a manifest EVR constraint (e.g. genesis-base
+    # '>= 2:2.18.0', which %{VERSION}-only matching cannot enforce -- 2.* would accept a pre-2.18
+    # genesis) is checked with rpm's own version algorithm (PR #62 review). rpm_vercmp_segment is
+    # rpm's rpmvercmp; evr_cmp composes epoch/version/release around it.
+    my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
+    my %expected = map { $_ => $req{$_} } @names;
+    my @problems = verify_repo_packages(\%expected, \%present, \%present_evr, \&rpm_vercmp_segment);
+
+    # Signature gate: the IO (gpg) lives here; the decision is the pure verify_repo_signature. The
+    # pipeline always signs, so a signed repo's repomd MUST be signed by --gpg-key-name. We resolve
+    # that key to a fingerprint and extract the fingerprint that actually signed repomd, then compare.
+    # Skipped with a printed note only when no gpg key/home is configured (nothing to check against).
+    if ($gpg_sign || $gpg_home ne '') {
+        require_command('gpg');
+        my $repomd  = "$dir/repodata/repomd.xml";
+        my $asc     = "$repomd.asc";
+        my $exp_fpr = gpg_key_fingerprint($gpg_key_name, $gpg_home);
+        # STRICT: the CLI key MUST resolve to exactly one fingerprint so we can confirm it signed the
+        # repo. Undef => absent or ambiguous in the keyring -> we cannot verify -> hard fail, never a
+        # presence-only pass.
+        if (!defined $exp_fpr) {
+            push @problems, "SIGKEY: cannot resolve --gpg-key-name '$gpg_key_name' to a single fingerprint (in the $gpg_home keyring?)";
+        } else {
+            my %exp_sig = ('repomd' => $exp_fpr);
+            my %obs_sig = ('repomd' => repomd_observed_signer($asc, $repomd, $gpg_home));
+            push @problems, verify_repo_signature(\%exp_sig, \%obs_sig);
+
+            # Per-rpm signature gate: a signed repomd over an unsigned or foreign-signed rpm still
+            # makes DNF reject that package at install time, so verify EVERY binary rpm -- not just the
+            # metadata -- is signed by this key (rpm reports the signing subkey id; accept any id of
+            # the key). Closes the "approves a repo DNF later rejects" gap (PR #62 review #4).
+            require_command('rpm');
+            # (a) RPM-native crypto verification: rpmkeys --checksig against an isolated keyring
+            # holding only this key verifies every rpm's digests AND that the signature is by the key.
+            push @problems, verify_rpms_checksig($dir, $gpg_key_name, $gpg_home);
+            # (b) Explicit signer-id origin check kept alongside: assert each rpm's header signature
+            # key id is one of this key's ids (primary/subkey).
+            my $accept = gpg_key_ids($gpg_key_name, $gpg_home);
+            if (!%$accept) {
+                push @problems, "SIGKEY: cannot list key ids for '$gpg_key_name' to verify per-rpm signatures";
+            } else {
+                my @rpm_sigs = map { [ basename($_), rpm_signer_keyid($_) ] }
+                               grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+                push @problems, verify_rpm_signatures(\@rpm_sigs, $accept);
+            }
+        }
+    } elsif ($sig_required) {
+        # Standalone --verify-repo advertises a signature check; with no keyring we cannot resolve the
+        # CLI key or read the signer, so refuse rather than silently pass (which would be a false PASS).
+        push @problems, "SIGKEY: --verify-repo requires --gpg-key-name + --gpg-home to check the repomd signature (none configured)";
+    } else {
+        print "[verify-repo] $tgt: no gpg key/home configured -- skipping repomd signature check\n";
+    }
+
+    if (@problems) {
+        print "  - $_\n" for @problems;
+        die "FATAL: repo INCOMPLETE for $tgt at $dir (" . scalar(@problems) . " problem(s))\n";
+    }
+    print "[verify-repo] $tgt complete: " . scalar(@names)
+        . " required packages present + EVR-satisfied, repomd + every rpm checksig-verified, in $dir\n";
+    return 1;
+}
+
+# derive_target_from_repo_path: map a deployed per-target repo path .../rh<N>/<arch> to its manifest
+# target section name alma+epel-<N>-<arch>. Returns undef when the path lacks that rh<N>/<arch> tail,
+# so the standalone --verify-repo mode can require an explicit --target instead.
+sub derive_target_from_repo_path {
+    my ($dir) = @_;
+    my $tgt;
+    return $tgt unless defined $dir;
+    $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    return $tgt;
 }
 
 sub reset_staging_repo {
@@ -1338,42 +1993,19 @@ sub resolve_mock_cfg {
         'centos-stream' => 'centos-stream',
         rocky          => 'rocky',
     );
-    my $candidate = "${os_id}+epel-${rel}-${arch}";
-    my $rc = system("mock -r " . shell_quote($candidate) . " --print-root-path >/dev/null 2>&1");
-    if ($rc == 0) {
-        return $candidate;
-    }
-    if (exists $short_forms{$os_id}) {
-        my $short = $short_forms{$os_id};
-        $candidate = "${short}+epel-${rel}-${arch}";
-        $rc = system("mock -r " . shell_quote($candidate) . " --print-root-path >/dev/null 2>&1");
-        if ($rc == 0) {
-            print "Mock config resolved (short form): $candidate\n";
+    # Resolve by CONFIG-FILE existence, not by running `mock --print-root-path`: the latter can fail
+    # transiently (bootstrap chroot setup, a concurrent mock holding a lock) and made el10 flakily
+    # "resolve" to the long form that has no .cfg. Checking /etc/mock/<cfg>.cfg is deterministic.
+    for my $id ($os_id, (exists $short_forms{$os_id} ? ($short_forms{$os_id}) : ())) {
+        my $candidate = "${id}+epel-${rel}-${arch}";
+        if (-f "/etc/mock/${candidate}.cfg") {
+            print "Mock config resolved: $candidate\n" if $id ne $os_id;
             return $candidate;
         }
     }
-    die "Could not find mock config for ${os_id}+epel-${rel}-${arch}\n";
-}
-
-sub build_mock_uniqueext {
-    my ($run, $seq, $label) = @_;
-
-    my $run_part = defined($run) ? $run : 'run';
-    $run_part =~ s/[^A-Za-z0-9_.-]+/-/g;
-    $run_part =~ s/^-+|-+$//g;
-    $run_part = 'run' if $run_part eq '';
-    $run_part = substr($run_part, -24) if length($run_part) > 24;
-
-    my $label_part = defined($label) ? $label : 'step';
-    $label_part =~ s/[^A-Za-z0-9_.-]+/-/g;
-    $label_part =~ s/^-+|-+$//g;
-    $label_part = 'step' if $label_part eq '';
-    $label_part = substr($label_part, 0, 20) if length($label_part) > 20;
-
-    my $idx = defined($seq) ? int($seq) : 0;
-    $idx = 0 if $idx < 0;
-
-    return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
+    my $short = $short_forms{$os_id} // $os_id;
+    die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
+      . "(tried /etc/mock/${os_id}+epel-${rel}-${arch}.cfg and /etc/mock/${short}+epel-${rel}-${arch}.cfg)\n";
 }
 
 sub resolve_xcat_source {
@@ -1509,3 +2141,13 @@ sub uniq {
     my %seen;
     return grep { defined($_) && !$seen{$_}++ } @_;
 }
+
+sub slurp_chomp {
+    my ($path) = @_;
+    open my $fh, '<', $path or die "Cannot read $path: $!\n";
+    my $line = <$fh>;
+    close $fh;
+    chomp $line if defined $line;
+    return $line // '';
+}
+
