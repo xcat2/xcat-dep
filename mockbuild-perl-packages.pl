@@ -12,10 +12,13 @@ use Parallel::ForkManager;
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
 my $mock_cfg  = '';
+my $noarch_mock_cfg = '';
+my $target_arch = '';
 my $mock_uniqueext = '';
 my $result_dir = '';
 my $log_dir    = '';
 my $packages_csv = '';
+my $epel_gap = 0;
 my $jobs = 0;
 my $skip_install = 0;
 my $allow_erasing = 0;
@@ -24,10 +27,13 @@ my $build_timestamp;
 GetOptions(
     'work-dir=s'      => \$work_dir,
     'mock-cfg=s'      => \$mock_cfg,
+    'noarch-mock-cfg=s' => \$noarch_mock_cfg,
+    'target-arch=s'   => \$target_arch,
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'    => \$result_dir,
     'log-dir=s'       => \$log_dir,
     'packages=s'      => \$packages_csv,
+    'epel-gap!'       => \$epel_gap,
     'jobs=i'          => \$jobs,
     'skip-install!'   => \$skip_install,
     'allow-erasing!'  => \$allow_erasing,
@@ -45,6 +51,12 @@ if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
     $mock_cfg = resolve_mock_cfg($os_id, $arch);
 }
+# Arch of the rpms --mock-cfg produces: the host arch unless the config is a forcearch (cross)
+# one, e.g. rocky-10-riscv64-xcat built on x86_64 (see BUILD.md "riscv64"). The noarch packages
+# may be built in a native chroot of the same release instead of the emulated one (their rpms
+# are identical for every arch and emulated builds are slow).
+$target_arch = $arch if $target_arch eq '';
+$noarch_mock_cfg = $mock_cfg if $noarch_mock_cfg eq '';
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
     : '';
@@ -63,13 +75,44 @@ $SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
 $ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 if (!$result_dir) {
-    $result_dir = "$repo_root/build-output/list6/perl/$arch";
+    $result_dir = "$repo_root/build-output/list6/perl/$target_arch";
 }
 if (!$log_dir) {
-    $log_dir = "$repo_root/build-logs/list6/perl/$arch";
+    $log_dir = "$repo_root/build-logs/list6/perl/$target_arch";
 }
 
 my %meta = (
+    'perl-Crypt-Blowfish' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Crypt-Blowfish",
+        srpm_globs => [
+            "$repo_root/perl-Crypt-Blowfish/perl-Crypt-Blowfish-2.14-25.el10_0.src.rpm",
+            "$repo_root/perl-Crypt-Blowfish/perl-Crypt-Blowfish-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Crypt-Blowfish',
+        rpm_arch   => 'native',
+        module     => 'Crypt::Blowfish',
+        needs      => ['perl-Crypt-CBC'],   # optional tests (BuildRequires)
+    },
+    'perl-Crypt-CBC' => {
+        mode      => 'spec',
+        pkg_dir   => "$repo_root/perl-Crypt-CBC",
+        spec      => "$repo_root/perl-Crypt-CBC/perl-Crypt-CBC.spec",
+        rpm_name  => 'perl-Crypt-CBC',
+        rpm_arch  => 'noarch',
+        module    => 'Crypt::CBC',
+    },
+    'perl-Crypt-Rijndael' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Crypt-Rijndael",
+        srpm_globs => [
+            "$repo_root/perl-Crypt-Rijndael/perl-Crypt-Rijndael-1.13-10.fc29.src.rpm",
+            "$repo_root/perl-Crypt-Rijndael/perl-Crypt-Rijndael-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Crypt-Rijndael',
+        rpm_arch   => 'native',
+        module     => 'Crypt::Rijndael',
+    },
     'perl-Crypt-SSLeay' => {
         mode      => 'spec',
         pkg_dir   => "$repo_root/perl-Crypt-SSLeay",
@@ -77,6 +120,29 @@ my %meta = (
         rpm_name  => 'perl-Crypt-SSLeay',
         rpm_arch  => 'native',
         module    => 'Crypt::SSLeay',
+        needs     => ['perl-Path-Class'],   # Makefile.PL (configure_requires), EPEL-only on EL
+    },
+    'perl-Digest-SHA1' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Digest-SHA1",
+        srpm_globs => [
+            "$repo_root/perl-Digest-SHA1/perl-Digest-SHA1-2.13-23.fc28.src.rpm",
+            "$repo_root/perl-Digest-SHA1/perl-Digest-SHA1-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Digest-SHA1',
+        rpm_arch   => 'native',
+        module     => 'Digest::SHA1',
+    },
+    'perl-Expect' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Expect",
+        srpm_globs => [
+            "$repo_root/perl-Expect/perl-Expect-1.35-6.fc29.src.rpm",
+            "$repo_root/perl-Expect/perl-Expect-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Expect',
+        rpm_arch   => 'noarch',
+        module     => 'Expect',
     },
     'perl-HTML-Form' => {
         mode       => 'srpm',
@@ -108,6 +174,25 @@ my %meta = (
         rpm_arch   => 'noarch',
         module     => 'IO::Stty',
     },
+    'perl-Mail-Sender' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Mail-Sender",
+        srpm_globs => [
+            "$repo_root/perl-Mail-Sender/perl-Mail-Sender-0.903-7.fc29.src.rpm",
+            "$repo_root/perl-Mail-Sender/perl-Mail-Sender-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Mail-Sender',
+        rpm_arch   => 'noarch',
+        module     => 'Mail::Sender',
+    },
+    'perl-Net-DNS' => {
+        mode      => 'spec',
+        pkg_dir   => "$repo_root/perl-Net-DNS",
+        spec      => "$repo_root/perl-Net-DNS/Net-DNS.spec",
+        rpm_name  => 'perl-Net-DNS',
+        rpm_arch  => 'noarch',
+        module    => 'Net::DNS',
+    },
     'perl-Net-HTTPS-NB' => {
         mode      => 'spec',
         pkg_dir   => "$repo_root/perl-Net-HTTPS-NB",
@@ -115,6 +200,17 @@ my %meta = (
         rpm_name  => 'perl-Net-HTTPS-NB',
         rpm_arch  => 'noarch',
         module    => 'Net::HTTPS::NB',
+    },
+    'perl-Net-IP' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Net-IP",
+        srpm_globs => [
+            "$repo_root/perl-Net-IP/perl-Net-IP-1.26-30.el10_0.src.rpm",
+            "$repo_root/perl-Net-IP/perl-Net-IP-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Net-IP',
+        rpm_arch   => 'noarch',
+        module     => 'Net::IP',
     },
     'perl-Net-Telnet' => {
         mode       => 'srpm',
@@ -127,6 +223,28 @@ my %meta = (
         rpm_arch   => 'noarch',
         module     => 'Net::Telnet',
     },
+    'perl-Path-Class' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-Path-Class",
+        srpm_globs => [
+            "$repo_root/perl-Path-Class/perl-Path-Class-0.37-24.el10_0.src.rpm",
+            "$repo_root/perl-Path-Class/perl-Path-Class-*.src.rpm",
+        ],
+        rpm_name   => 'perl-Path-Class',
+        rpm_arch   => 'noarch',
+        module     => 'Path::Class',
+    },
+    'perl-SOAP-Lite' => {
+        mode       => 'srpm',
+        pkg_dir    => "$repo_root/perl-SOAP-Lite",
+        srpm_globs => [
+            "$repo_root/perl-SOAP-Lite/perl-SOAP-Lite-1.27-3.fc29.src.rpm",
+            "$repo_root/perl-SOAP-Lite/perl-SOAP-Lite-*.src.rpm",
+        ],
+        rpm_name   => 'perl-SOAP-Lite',
+        rpm_arch   => 'noarch',
+        module     => 'SOAP::Lite',
+    },
     'perl-Sys-Virt' => {
         mode      => 'spec',
         pkg_dir   => "$repo_root/perl-Sys-Virt",
@@ -137,6 +255,7 @@ my %meta = (
     },
 );
 
+# xcat-dep's own perl deps of xCAT, built for every EL and arch ("list6").
 my @default_order = qw(
     perl-Crypt-SSLeay
     perl-HTML-Form
@@ -147,7 +266,25 @@ my @default_order = qw(
     perl-Sys-Virt
 );
 
+# The perl deps of xCAT that EL takes from EPEL. Built only where there is no EPEL (riscv64,
+# --epel-gap); the x86_64/ppc64le repos keep getting them from EPEL. perl-Path-Class is a
+# build dep of perl-Crypt-SSLeay only. Not here although in the table: perl-SOAP-Lite (its
+# fc29 BuildRequires IO::SessionData, MIME::Lite, XML::Parser::Lite, Test::XML are EPEL-only
+# too, so it cannot be built or installed without EPEL; xCAT uses it for HP blades only).
+my @epel_gap_order = qw(
+    perl-Crypt-Blowfish
+    perl-Crypt-CBC
+    perl-Crypt-Rijndael
+    perl-Digest-SHA1
+    perl-Expect
+    perl-Mail-Sender
+    perl-Net-DNS
+    perl-Net-IP
+    perl-Path-Class
+);
+
 my @packages = @default_order;
+push @packages, @epel_gap_order if $epel_gap;
 if ($packages_csv ne '') {
     @packages = grep { $_ ne '' } map { s/^\s+|\s+$//gr } split /,/, $packages_csv;
 }
@@ -178,8 +315,11 @@ print "work_dir:    $work_dir\n";
 print "result_dir:  $result_dir\n";
 print "log_dir:     $log_dir\n";
 print "arch:        $arch\n";
+print "target_arch: $target_arch\n";
 print "mock_cfg:    $mock_cfg\n";
+print "noarch_mock_cfg: $noarch_mock_cfg\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
+print "epel_gap:    $epel_gap\n";
 print "packages:    " . join(', ', @packages) . "\n";
 print "jobs:        $jobs\n";
 print "skip_install:$skip_install\n";
@@ -187,6 +327,8 @@ print "allow_erasing:$allow_erasing\n";
 
 print_step("Mock config check");
 run("mock -r " . sh_quote($mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null");
+run("mock -r " . sh_quote($noarch_mock_cfg) . $mock_uniqueext_opt . " --print-root-path >/dev/null")
+    if $noarch_mock_cfg ne $mock_cfg;
 
 my @failed;
 my @passed;
@@ -204,28 +346,36 @@ $pm->run_on_finish(
     }
 );
 
-for my $idx (0 .. $#packages) {
-    my $pkg = $packages[$idx];
-    my $cfg = $meta{$pkg};
-    my $pkg_uniqueext = package_uniqueext($mock_uniqueext, $idx + 1, $pkg);
+# A package that 'needs' others (see %meta) is built after them, with their rpms installed into
+# its chroot, so the waves run one after the other; the packages of a wave build in parallel.
+my %selected = map { $_ => 1 } @packages;
+my $idx = 0;
+for my $wave (build_waves(\@packages)) {
+    for my $pkg (@{$wave}) {
+        my $cfg = $meta{$pkg};
+        my $pkg_uniqueext = package_uniqueext($mock_uniqueext, ++$idx, $pkg);
+        my @needs = grep { $selected{$_} } @{ $cfg->{needs} // [] };
 
-    my $pid = $pm->start($pkg);
-    next if $pid;
-    my $ok = build_package(
-        pkg           => $pkg,
-        cfg           => $cfg,
-        work_dir      => $work_dir,
-        result_dir    => $result_dir,
-        log_dir       => $log_dir,
-        mock_cfg      => $mock_cfg,
-        mock_uniqueext => $pkg_uniqueext,
-        arch          => $arch,
-        skip_install  => $skip_install,
-        allow_erasing => $allow_erasing,
-    );
-    $pm->finish($ok ? 0 : 1);
+        my $pid = $pm->start($pkg);
+        next if $pid;
+        my $ok = build_package(
+            pkg           => $pkg,
+            cfg           => $cfg,
+            work_dir      => $work_dir,
+            result_dir    => $result_dir,
+            log_dir       => $log_dir,
+            mock_cfg      => ($cfg->{rpm_arch} eq 'noarch' ? $noarch_mock_cfg : $mock_cfg),
+            mock_uniqueext => $pkg_uniqueext,
+            arch          => $target_arch,
+            host_arch     => $arch,
+            needs         => \@needs,
+            skip_install  => $skip_install,
+            allow_erasing => $allow_erasing,
+        );
+        $pm->finish($ok ? 0 : 1);
+    }
+    $pm->wait_all_children;
 }
-$pm->wait_all_children;
 
 for my $pkg (@packages) {
     my $status_file = "$log_dir/$pkg/status.txt";
@@ -252,10 +402,12 @@ for my $pkg (@packages) {
 open my $sfh, '>', "$log_dir/build-summary.txt"
     or die "Cannot write $log_dir/build-summary.txt: $!\n";
 print {$sfh} "mock_cfg=$mock_cfg\n";
+print {$sfh} "noarch_mock_cfg=$noarch_mock_cfg\n" if $noarch_mock_cfg ne $mock_cfg;
 print {$sfh} "mock_uniqueext=$mock_uniqueext\n" if $mock_uniqueext ne '';
-print {$sfh} "arch=$arch\n";
+print {$sfh} "arch=$target_arch\n";
 print {$sfh} "result_dir=$result_dir\n";
 print {$sfh} "log_dir=$log_dir\n";
+print {$sfh} "epel_gap=$epel_gap\n";
 print {$sfh} "packages=" . join(',', @packages) . "\n";
 print {$sfh} "passed=" . join(',', @passed) . "\n";
 print {$sfh} "failed=" . join(',', @failed) . "\n";
@@ -280,6 +432,8 @@ sub build_package {
     my $mock_cfg       = $args{mock_cfg};
     my $mock_uniqueext = $args{mock_uniqueext};
     my $arch           = $args{arch};
+    my $host_arch      = $args{host_arch} // $arch;
+    my $needs          = $args{needs} // [];
     my $skip_install   = $args{skip_install};
     my $allow_erasing  = $args{allow_erasing};
 
@@ -304,7 +458,9 @@ sub build_package {
 
     my $mock_uniqueext_opt = ' --uniqueext ' . sh_quote($mock_uniqueext);
     print_step("Build $pkg");
+    print "mock_cfg: $mock_cfg\n";
     print "mock_uniqueext: $mock_uniqueext\n";
+    print "needs: " . (@{$needs} ? join(', ', @{$needs}) : '(none)') . "\n";
 
     my $summary = '';
     my $ok = 0;
@@ -358,7 +514,7 @@ sub build_package {
 
             my $srpm_result = "$pkg_run_dir/srpm";
             make_path($srpm_result);
-            run(
+            run_mock(
                 "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
                 " --buildsrpm --spec " . sh_quote($spec) .
                 " --sources " . sh_quote($source_dir) .
@@ -373,9 +529,19 @@ sub build_package {
             $srpm_path = $srpms[-1];
         }
 
-        run(
+        # The rpms of the packages this one needs (built in an earlier wave) go into the chroot
+        # on top of the build requirements the chroot resolves itself.
+        my $additional_opt = '';
+        for my $need (@{$needs}) {
+            my @need_rpms = grep { !/\.src\.rpm$/ && !/-debug(?:info|source)-/ }
+                            sort glob("$result_dir/$need/*.rpm");
+            die "Needed package $need left no rpms in $result_dir/$need (build failed?)\n" if !@need_rpms;
+            $additional_opt .= " --additional-package " . sh_quote($_) for @need_rpms;
+        }
+
+        run_mock(
             "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
-            " --rebuild " . sh_quote($srpm_path) .
+            " --rebuild " . sh_quote($srpm_path) . $additional_opt .
             " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
             " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
             " --define " . sh_quote("_buildhost xcat-build") .
@@ -425,7 +591,22 @@ sub build_package {
             }
         }
 
-        if (!$skip_install) {
+        if (!$skip_install && $cfg->{rpm_arch} eq 'native' && $arch ne $host_arch) {
+            # A cross-built XS module cannot be loaded on this host: install the rpm into the
+            # (emulated) build chroot and import the module there.
+            my $module = $cfg->{module};
+            run_mock(
+                "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
+                " --install " . sh_quote($main_rpm) .
+                " > " . sh_quote("$pkg_log/smoke-chroot-install.log") . " 2>&1"
+            );
+            my $rc_mod = run_capture_rc(
+                "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
+                " -q --chroot -- perl -M$module -e 1",
+                "$pkg_log/smoke-perl-module.log");
+            die "Perl module import failed for $pkg ($module) in the $arch chroot, rc=$rc_mod\n" if $rc_mod != 0;
+        }
+        elsif (!$skip_install) {
             my $install_cmd = "dnf -y install ";
             $install_cmd .= "--allowerasing " if $allow_erasing;
             run($install_cmd . sh_quote($main_rpm));
@@ -455,6 +636,28 @@ sub build_package {
     return $ok;
 }
 
+# Order the selected packages in waves: a package comes after the selected packages it 'needs'
+# (installed into its chroot, see %meta). Needs outside the selection are ignored: the chroot
+# then has to provide the module itself (e.g. from EPEL).
+sub build_waves {
+    my ($pkgs) = @_;
+    my %selected = map { $_ => 1 } @{$pkgs};
+    my %done;
+    my @waves;
+    my @left = @{$pkgs};
+    while (@left) {
+        my @ready = grep {
+            my $p = $_;
+            !grep { $selected{$_} && !$done{$_} } @{ $meta{$p}{needs} // [] };
+        } @left;
+        die "Circular 'needs' among packages: @left\n" if !@ready;
+        push @waves, \@ready;
+        $done{$_} = 1 for @ready;
+        @left = grep { !$done{$_} } @left;
+    }
+    return @waves;
+}
+
 sub package_uniqueext {
     my ($base, $index, $pkg) = @_;
     my $tag = lc $pkg;
@@ -472,11 +675,18 @@ sub usage {
 Usage: $0 [options]
   --work-dir PATH      Temporary work dir (default: $work_dir)
   --mock-cfg NAME      Mock config (default: <ID>+epel-10-<ARCH>)
+  --noarch-mock-cfg NAME  Mock config for the noarch packages (default: --mock-cfg); with a
+                       forcearch --mock-cfg, a native config of the same release builds them
+                       without emulation
+  --target-arch ARCH   Arch of the rpms --mock-cfg produces (default: uname -m); a forcearch
+                       config such as rocky-10-riscv64-xcat needs it
   --mock-uniqueext TXT Optional mock --uniqueext suffix to isolate concurrent builds
   --jobs N             Number of parallel package workers (default: selected package count)
   --result-dir PATH    Output directory (default: build-output/list6/perl/<ARCH>)
   --log-dir PATH       Log directory (default: build-logs/list6/perl/<ARCH>)
   --packages LIST      Comma-separated subset of packages to build
+  --epel-gap           Also build the perl deps of xCAT that EL takes from EPEL (for an arch
+                       without EPEL, e.g. riscv64)
   --build-timestamp EPOCH  Unix epoch for SOURCE_DATE_EPOCH (deterministic builds)
   --skip-install       Skip dnf install + perl module import checks
   --allow-erasing      Allow dnf to erase conflicting packages during install smoke tests
@@ -572,6 +782,22 @@ sub capture {
     }
     chomp $out;
     return $out;
+}
+
+# mock exits 30 when its package manager failed (chroot init, build deps), which against public
+# mirrors is most often a transient download error (stale mirror metadata): retry such a run once.
+sub run_mock {
+    my ($cmd) = @_;
+    print "+ $cmd\n";
+    my $rc = system($cmd);
+    if ($rc != -1 && ($rc >> 8) == 30) {
+        print "mock failed with rc=30 (package manager); retrying once\n";
+        $rc = system($cmd);
+    }
+    if ($rc != 0) {
+        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+        die "Command failed (rc=$exit): $cmd\n";
+    }
 }
 
 sub run_capture_rc {

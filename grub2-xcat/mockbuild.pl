@@ -108,6 +108,15 @@ run(
     " | grep -F 'powerpc-ieee1275/core.elf' >/dev/null"
 );
 
+print_step("Verify riscv64 grub2 UEFI image");
+my $riscv_efi = "$pkg_dir/grubriscv64.efi";
+die "Missing required riscv64 grub2 image: $riscv_efi\n" if !-f $riscv_efi;
+# Read the PE header ourselves: file(1) only learned the RISC-V PE machine types in 5.38,
+# so an older build host (EL8 ships 5.33) would reject a perfectly good image.
+my $riscv_efi_type = pe_image_type($riscv_efi);
+die "Unexpected riscv64 grub2 image type: $riscv_efi is $riscv_efi_type, expected PE32+ RISC-V 64-bit\n"
+    if $riscv_efi_type ne 'PE32+ RISC-V 64-bit';
+
 print_step("Verify spec assets");
 for my $asset (@spec_assets) {
     my $path = "$pkg_dir/$asset";
@@ -143,7 +152,7 @@ print "Prep dry run passed. Applied patches: $patch_count\n";
 print_step("Build SRPM with mock");
 my $srpm_out = "$work_dir/srpm";
 make_path($srpm_out);
-run(
+run_mock(
     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --buildsrpm --spec " . sh_quote($spec_file) .
     " --sources " . sh_quote($pkg_dir) .
@@ -161,7 +170,7 @@ print "SRPM: $srpm\n";
 print_step("Rebuild RPM with mock");
 my $rpm_out = "$work_dir/rpm";
 make_path($rpm_out);
-run(
+run_mock(
     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --rebuild " . sh_quote($srpm) .
     " --resultdir " . sh_quote($rpm_out) .
@@ -197,6 +206,10 @@ run(
 run(
     "rpm -qpl " . sh_quote($main_rpm) .
     " | grep -Fx /tftpboot/boot/grub2/powerpc-ieee1275/core.elf >/dev/null"
+);
+run(
+    "rpm -qpl " . sh_quote($main_rpm) .
+    " | grep -Fx /tftpboot/boot/grub2/riscv64-efi/grubriscv64.efi >/dev/null"
 );
 print "Verified RPM name/arch/payload: $main_rpm\n";
 
@@ -241,6 +254,22 @@ if (!$skip_install) {
     die "Smoke check failed: rpm -qf returned $rc_qf\n" if $rc_qf != 0;
     die "Smoke check failed: core.elf and grub2.ppc differ (cmp rc=$rc_cmp)\n" if $rc_cmp != 0;
 
+    my $riscv_image = '/tftpboot/boot/grub2/riscv64-efi/grubriscv64.efi';
+    my $grub2riscv  = '/tftpboot/boot/grub2/grub2.riscv64';
+    die "Missing installed riscv64 grub2 image: $riscv_image\n" if !-f $riscv_image;
+    die "Missing installed post script output: $grub2riscv\n" if !-f $grub2riscv;
+    # The installed image must be the verified source image byte for byte, and %post must have
+    # copied it to grub2.riscv64.
+    my $rc_cmp_riscv_src = run_capture_rc("cmp -s " . sh_quote($riscv_efi) . " $riscv_image",
+                                          "$log_dir/smoke-cmp-riscv64-source.log");
+    my $rc_cmp_riscv     = run_capture_rc("cmp -s $riscv_image $grub2riscv", "$log_dir/smoke-cmp-riscv64.log");
+    die "Smoke check failed: installed grubriscv64.efi differs from the source image (cmp rc=$rc_cmp_riscv_src)\n"
+        if $rc_cmp_riscv_src != 0;
+    die "Smoke check failed: grubriscv64.efi and grub2.riscv64 differ (cmp rc=$rc_cmp_riscv)\n" if $rc_cmp_riscv != 0;
+    my $riscv_type = pe_image_type($grub2riscv);
+    die "riscv64 grub2 image type check failed: $grub2riscv is $riscv_type\n"
+        if $riscv_type ne 'PE32+ RISC-V 64-bit';
+
     my $core_out = slurp($file_core_log);
     my $qf_out   = slurp($qf_log);
 
@@ -257,6 +286,10 @@ if (!$skip_install) {
     print {$sfh} "rc_file_ppc=$rc_file_ppc\n";
     print {$sfh} "rc_qf=$rc_qf\n";
     print {$sfh} "rc_cmp=$rc_cmp\n";
+    print {$sfh} "grub2riscv64=$grub2riscv\n";
+    print {$sfh} "rc_cmp_riscv64_source=$rc_cmp_riscv_src\n";
+    print {$sfh} "type_riscv64=$riscv_type\n";
+    print {$sfh} "rc_cmp_riscv64=$rc_cmp_riscv\n";
     close $sfh;
 }
 
@@ -351,12 +384,48 @@ sub capture {
     return $out;
 }
 
+# mock exits 30 when its package manager failed (chroot init, build deps), which against public
+# mirrors is most often a transient download error (stale mirror metadata): retry such a run once.
+sub run_mock {
+    my ($cmd) = @_;
+    print "+ $cmd\n";
+    my $rc = system($cmd);
+    if ($rc != -1 && ($rc >> 8) == 30) {
+        print "mock failed with rc=30 (package manager); retrying once\n";
+        $rc = system($cmd);
+    }
+    if ($rc != 0) {
+        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+        die "Command failed (rc=$exit): $cmd\n";
+    }
+}
+
 sub run_capture_rc {
     my ($cmd, $log_file) = @_;
     my $full = "$cmd > " . sh_quote($log_file) . " 2>&1";
     print "+ $full\n";
     my $rc = system($full);
     return $rc == -1 ? 255 : ($rc >> 8);
+}
+
+# Image type of a PE file read from its headers, "PE32+ RISC-V 64-bit" for the grub2 UEFI
+# image riscv64 firmware loads (COFF machine 0x5064, optional header magic 0x20b); anything
+# else comes back as a short description for the error message.
+sub pe_image_type {
+    my ($path) = @_;
+    open my $fh, '<:raw', $path or die "Cannot read $path: $!\n";
+    my $buf = '';
+    return 'not an MZ/PE file' if read($fh, $buf, 2) != 2 || $buf ne 'MZ';
+    return 'truncated PE file' if !seek($fh, 0x3c, 0) || read($fh, $buf, 4) != 4;
+    my $pe_off = unpack('V', $buf);
+    return 'truncated PE file' if !seek($fh, $pe_off, 0) || read($fh, $buf, 26) != 26;
+    close $fh;
+    my ($sig, $machine, $magic) = unpack('a4 v x18 v', $buf);
+    return 'not a PE file' if $sig ne "PE\0\0";
+    my %machine_name = (0x5064 => 'RISC-V 64-bit', 0x5032 => 'RISC-V 32-bit',
+                        0x8664 => 'x86-64', 0xaa64 => 'Aarch64', 0x014c => 'Intel 80386');
+    my $format = $magic == 0x20b ? 'PE32+' : $magic == 0x10b ? 'PE32' : sprintf('PE (magic 0x%x)', $magic);
+    return "$format " . ($machine_name{$machine} // sprintf('machine 0x%04x', $machine));
 }
 
 sub slurp {

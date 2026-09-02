@@ -16,3 +16,21 @@ run the following cmd on a RHEL7-PPC64 node:
 
 
 2.Please update the %version or %release when any modification is made for the files 
+
+
+#riscv64:
+riscv64 nodes boot through UEFI firmware and grub2 only. The file
+grubriscv64.efi (Source2) is the unmodified grub2 UEFI image from the
+Rocky Linux 10 riscv64 BaseOS tree (the copy used for installation media
+and network boot, embedded prefix /EFI/BOOT):
+
+  path:       BaseOS/riscv64/os/EFI/BOOT/grubriscv64.efi (Rocky Linux 10.2)
+  built from: grub2-2.12-46.el10_2.rocky.0.1.src.rpm (GPL-3.0-or-later),
+              the same build as grub2-efi-riscv64-2.12-46.el10_2.rocky.0.1
+  sha256:     40baf4e65d20f73e6a5ec4f882d8a50450eaaf8b6688acf871824824ef0bad54
+
+It is installed as /tftpboot/boot/grub2/riscv64-efi/grubriscv64.efi and
+copied to /tftpboot/boot/grub2/grub2.riscv64 by the package scripts, which
+is the boot file xCAT hands to DHCP client architecture 27 (0x001b). To
+refresh it, take EFI/BOOT/grubriscv64.efi from the BaseOS tree of the EL10
+release you target and record the release, source rpm and sha256 here.

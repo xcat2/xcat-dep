@@ -1,1 +1,2 @@
 powerpc-ieee1275/* tftpboot/boot/grub2/powerpc-ieee1275/
+grubriscv64.efi tftpboot/boot/grub2/riscv64-efi/

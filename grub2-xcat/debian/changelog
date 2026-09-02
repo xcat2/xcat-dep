@@ -1,3 +1,10 @@
+grub2-xcat (2.12-2) unstable; urgency=low
+
+  * Ship the EL10 riscv64 grub2 UEFI image as riscv64-efi/grubriscv64.efi and
+    install it as /tftpboot/boot/grub2/grub2.riscv64 for riscv64 nodes
+
+ -- XCAT <xcat-user@lists.sourceforge.net>  Thu, 20 Aug 2026 12:00:00 +0000
+
 grub2-xcat (2.12-1) unstable; urgency=low
 
   * Bump version to satisfy xcat-server dependency (>= 2.02)
