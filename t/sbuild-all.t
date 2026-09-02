@@ -619,8 +619,6 @@ STUB
         'missing_perl_modules: an absent module is reported');
 }
 
-done_testing;
-
 # ---- every compiled dep must be buildable on every architecture xcat-dep supports -------------
 # A debian/control that names architectures explicitly silently excludes the ones it omits:
 # debhelper prints "No packages to build. Possible architecture mismatch: <arch>, want: <list>",
@@ -647,3 +645,5 @@ done_testing;
         }
     }
 }
+
+done_testing;
