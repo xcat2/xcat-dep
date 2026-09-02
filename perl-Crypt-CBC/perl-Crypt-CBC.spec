@@ -1,172 +1,212 @@
-#
-# spec file for package perl-Crypt-CBC
-#
-# Copyright (c) 2013 SUSE LINUX Products GmbH, Nuernberg, Germany.
-#
-# All modifications and additions to the file contributed by third parties
-# remain the property of their copyright owners, unless otherwise agreed
-# upon. The license for this file, and modifications and additions to the
-# file, is the same license as for the pristine package itself (unless the
-# license for the pristine package is not an Open Source License, in which
-# case the license is the MIT License). An "Open Source License" is a
-# license that conforms to the Open Source Definition (Version 1.9)
-# published by the Open Source Initiative.
-
-# Please submit bugfixes or comments via http://bugs.opensuse.org/
-#
-
-
-Name:           perl-Crypt-CBC
-Version:        2.33
-Release:        5.26
-%define cpan_name Crypt-CBC
-Summary:        Encrypt Data with Cipher Block Chaining Mode
-License:        GPL-1.0+ or Artistic-1.0
-Group:          Development/Libraries/Perl
-Url:            http://search.cpan.org/dist/Crypt-CBC/
-Source:         http://www.cpan.org/authors/id/L/LD/LDS/%{cpan_name}-%{version}.tar.gz
-BuildArch:      noarch
-BuildRoot:      %{_tmppath}/%{name}-%{version}-build
-BuildRequires:  perl
-BuildRequires:  perl-macros
-#BuildRequires: perl(Crypt::CBC)
-#BuildRequires: perl(Crypt::IDEA)
-%{perl_requires}
+Summary: Encrypt Data with Cipher Block Chaining Mode
+Name: perl-Crypt-CBC
+Version: 2.33
+Release: 21%{?dist}
+# Upstream confirms that they're under the same license as perl.
+# Wording in CBC.pm is less than clear, but still.
+License: GPL+ or Artistic
+Group: Development/Libraries
+URL: https://metacpan.org/release/Crypt-CBC
+Source0: https://cpan.metacpan.org/authors/id/L/LD/LDS/Crypt-CBC-%{version}.tar.gz
+BuildArch: noarch
+Requires: perl(:MODULE_COMPAT_%(eval "`%{__perl} -V:version`"; echo $version))
+# EL >= 8 buildroots have neither perl nor make by default
+BuildRequires: make
+BuildRequires: perl-interpreter
+BuildRequires: perl-generators
+BuildRequires: perl(bytes)
+BuildRequires: perl(constant)
+BuildRequires: perl(Digest::MD5) >= 2.00
+BuildRequires: perl(ExtUtils::MakeMaker)
+# Modules used for test suite, skipped when bootstrapping as
+# some of these modules use Crypt::CBC themselves
+# Crypt::CAST5 not yet packaged in Fedora
+# Crypt::IDEA is unavailable due to patents
+%if 0%{!?perl_bootstrap:1}
+BuildRequires: perl(Crypt::DES)
+%if ! (0%{?rhel} >= 7)
+BuildRequires: perl(Crypt::Blowfish)
+BuildRequires: perl(Crypt::Blowfish_PP)
+BuildRequires: perl(Crypt::Rijndael)
+%endif
+%endif
 
 %description
-This module is a Perl-only implementation of the cryptographic cipher block
-chaining mode (CBC). In combination with a block cipher such as DES or
-IDEA, you can encrypt and decrypt messages of arbitrarily long length. The
-encrypted messages are compatible with the encryption format used by the
-*OpenSSL* package.
-
-To use this module, you will first create a Crypt::CBC cipher object with
-new(). At the time of cipher creation, you specify an encryption key to use
-and, optionally, a block encryption algorithm. You will then call the
-start() method to initialize the encryption or decryption process, crypt()
-to encrypt or decrypt one or more blocks of data, and lastly finish(), to
-pad and encrypt the final block. For your convenience, you can call the
-encrypt() and decrypt() methods to operate on a whole data value at once.
+This is Crypt::CBC, a Perl-only implementation of the cryptographic
+cipher block chaining mode (CBC).  In combination with a block cipher
+such as Crypt::DES or Crypt::IDEA, you can encrypt and decrypt
+messages of arbitrarily long length.  The encrypted messages are
+compatible with the encryption format used by SSLeay.
 
 %prep
-%setup -q -n %{cpan_name}-%{version}
+%setup -q -n Crypt-CBC-%{version}
+chmod 644 eg/*.pl
 
 %build
 %{__perl} Makefile.PL INSTALLDIRS=vendor
-%{__make} %{?_smp_mflags}
-
-%check
-%{__make} test
+make
 
 %install
-%perl_make_install
-%perl_process_packlist
-%perl_gen_filelist
+rm -rf $RPM_BUILD_ROOT
+make pure_install DESTDIR=$RPM_BUILD_ROOT
+find $RPM_BUILD_ROOT -type f -name .packlist -exec rm -f {} ';'
+%{_fixperms} $RPM_BUILD_ROOT
 
-%files -f %{name}.files
-%defattr(-,root,root,755)
-%doc Changes Crypt-CBC-2.16-vulnerability.txt README
+%check
+make test
+
+%files
+%doc Changes README eg/
+%{perl_vendorlib}/Crypt/
+%{_mandir}/man3/*.3*
 
 %changelog
-* Tue Aug  6 2013 coolo@suse.com
-- updated to 2.33
-  - Fix minor RT bugs 83175 and 86455.
-* Mon Jun  3 2013 coolo@suse.com
-- updated to 2.32
-  - Fixes "Taint checks are turned on and your key is tainted" error when autogenerating salt and IV.
-  - Fixes to regular expressions to avoid rare failures to
-    correctly strip padding in decoded messages.
-  - Add padding type = "none".
-  - Both fixes contributed by Bas van Sisseren.
-* Fri Nov 18 2011 coolo@suse.com
-- use original .tar.gz
-* Fri Aug 26 2011 chris@computersalat.de
-- remove Author from desc
-- added bcond_with opt
-  o test optional pkgs via local build (osc build --with opt)
-- fix deps for CentOS
-- some spec cleanup
-* Wed Dec  8 2010 coolo@novell.com
-- avoid even more requires to avoid even more cycles
-* Tue Nov 30 2010 coolo@novell.com
-- remove extra requires to avoid cycle
-* Wed Nov 24 2010 chris@computersalat.de
-- recreated by cpanspec 1.78
-  o fix deps
-- noarch pkg
-* Sun Jan 10 2010 jengelh@medozas.de
-- enable parallel build
-* Fri Feb 27 2009 anicka@suse.cz
-- update to 2.30
-  * setting $cipher correctly
-* Thu Jun 19 2008 anicka@suse.cz
+* Thu Aug 20 2026 xCAT build - 2.33-21
+- Fedora spec from perl-Crypt-CBC-2.33-20.fc29.src.rpm, with BuildRequires make
+  and perl-interpreter so it builds in an EL10 buildroot
+
+* Fri Jul 13 2018 Fedora Release Engineering <releng@fedoraproject.org> - 2.33-20
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_29_Mass_Rebuild
+
+* Sat Jun 30 2018 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-19
+- Perl 5.28 re-rebuild of bootstrapped packages
+
+* Wed Jun 27 2018 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-18
+- Perl 5.28 rebuild
+
+* Thu Feb 08 2018 Fedora Release Engineering <releng@fedoraproject.org> - 2.33-17
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_28_Mass_Rebuild
+
+* Thu Jul 27 2017 Fedora Release Engineering <releng@fedoraproject.org> - 2.33-16
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_27_Mass_Rebuild
+
+* Wed Jun 07 2017 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-15
+- Perl 5.26 re-rebuild of bootstrapped packages
+
+* Sun Jun 04 2017 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-14
+- Perl 5.26 rebuild
+
+* Sat Feb 11 2017 Fedora Release Engineering <releng@fedoraproject.org> - 2.33-13
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_26_Mass_Rebuild
+
+* Wed May 18 2016 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-12
+- Perl 5.24 re-rebuild of bootstrapped packages
+
+* Sun May 15 2016 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-11
+- Perl 5.24 rebuild
+
+* Thu Feb 04 2016 Fedora Release Engineering <releng@fedoraproject.org> - 2.33-10
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_24_Mass_Rebuild
+
+* Thu Jun 18 2015 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.33-9
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_23_Mass_Rebuild
+
+* Wed Jun 10 2015 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-8
+- Perl 5.22 re-rebuild of bootstrapped packages
+
+* Wed Jun 03 2015 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-7
+- Perl 5.22 rebuild
+
+* Sun Sep 07 2014 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-6
+- Perl 5.20 re-rebuild of bootstrapped packages
+
+* Wed Aug 27 2014 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-5
+- Perl 5.20 rebuild
+
+* Sat Jun 07 2014 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.33-4
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_21_Mass_Rebuild
+
+* Wed Aug 14 2013 Jitka Plesnikova <jplesnik@redhat.com> - 2.33-3
+- Perl 5.18 re-rebuild of bootstrapped packages
+
+* Sat Aug 03 2013 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.33-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_20_Mass_Rebuild
+
+* Tue Jul 30 2013 Paul Howarth <paul@city-fan.org> - 2.33-1
+- Update to 2.33
+  - Fixes to regular expressions to avoid rare failures to correctly strip
+    padding in decoded messages
+  - Add padding type = "none"
+  - Fix "Taint checks are turned on and your key is tainted" error when
+    autogenerating salt and IV
+  - Fix minor bugs CPAN RT#83175 and CPAN RT#86455
+- Don't need to remove empty directories from the buildroot
+- Drop %%defattr, redundant since rpm 4.4
+- Use %%{_fixperms} macro rather than our own chmod incantation
+- Use DESTDIR rather than PERL_INSTALL_ROOT
+
+* Thu Jul 18 2013 Petr Pisar <ppisar@redhat.com> - 2.29-16
+- Perl 5.18 rebuild
+
+* Thu Feb 14 2013 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.29-15
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_19_Mass_Rebuild
+
+* Fri Jul 20 2012 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.29-14
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_18_Mass_Rebuild
+
+* Tue Jul 10 2012 Petr Pisar <ppisar@redhat.com> - 2.29-13
+- Perl 5.16 re-rebuild of bootstrapped packages
+
+* Mon Jun 11 2012 Petr Pisar <ppisar@redhat.com> - 2.29-12
+- Perl 5.16 rebuild
+
+* Mon Jun 11 2012 Marcela Mašláňová <mmaslano@redhat.com> - 2.29-11
+- Do not build-require Crypt::Blowfish, Crypt::Blowfish_PP, and Crypt::Rijndael
+  on RHEL >= 7
+- Resolves: rhbz#822812
+
+* Sat Apr 21 2012 Paul Howarth <paul@city-fan.org> - 2.29-10
+- BR: perl(bytes), perl(constant), perl(Digest::MD5) - required by module
+- BR: perl(Crypt::Blowfish), perl(Crypt::Blowfish_PP), perl(Crypt::DES),
+  perl(Crypt::Rijndael) for improved test coverage, except when bootstrapping
+
+* Fri Jan 13 2012 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.29-9
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_17_Mass_Rebuild
+
+* Fri Jun 17 2011 Marcela Mašláňová <mmaslano@redhat.com> - 2.29-8
+- Perl mass rebuild
+
+* Tue Feb 08 2011 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.29-7
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_15_Mass_Rebuild
+
+* Wed Dec 15 2010 Marcela Maslanova <mmaslano@redhat.com> - 2.29-6
+- Rebuild to fix problems with vendorarch/lib (#661697)
+
+* Fri Apr 30 2010 Marcela Maslanova <mmaslano@redhat.com> - 2.29-5
+- Mass rebuild with perl-5.12.0
+
+* Fri Dec  4 2009 Stepan Kasal <skasal@redhat.com> - 2.29-4
+- rebuild against perl 5.10.1
+
+* Sat Jul 25 2009 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.29-3
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_12_Mass_Rebuild
+
+* Thu Feb 26 2009 Fedora Release Engineering <rel-eng@lists.fedoraproject.org> - 2.29-2
+- Rebuilt for https://fedoraproject.org/wiki/Fedora_11_Mass_Rebuild
+
+* Fri Jul 11 2008 Tom "spot" Callawau <tcallawa@redhat.com> - 2.29-1
 - update to 2.29
-  * Fixed errors that occurred when encrypting/decrypting utf8
-  strings in Perl's more recent than 5.8.8.
-* Wed Apr  2 2008 anicka@suse.cz
-- update to 2.28
-  - Fixed bug in onesandzeroes test that causes it to fail
-  with Rijndael module is not installed.
-  - When taint mode is turned on and user is using a tainted key,
-  explicitly check tainting of key in order to avoid "cryptic"
-  failure messages from some crypt modules.
-  - Fixed onezeropadding test, which was not reporting
-  its test count properly.
-  - Fixed failure of oneandzeroes padding when plaintext size is
-  an even multiple of blocksize.
-  - Added new "rijndael_compat" padding method, which is compatible
-  with the oneandzeroes padding method used by Crypt::Rijndael in
-  CBC mode.
-* Mon Oct  8 2007 anicka@suse.cz
-- update to 2.24
-  * Fixed failure to run under taint checks with Crypt::Rijndael
-    or Crypt::OpenSSL::AES (and maybe other Crypt modules).
-  * Added checks for other implementations of CBC which add no
-    standard padding at all when cipher text is an even multiple
-    of the block size.
-* Tue Dec 12 2006 anicka@suse.cz
-- update to 2.22
-  * Fixed bug in which plaintext encrypted with the
-  - literal_key option could not be decrypted using a new
-  object created with the same -literal_key.
-  * Added documentation confirming that -literal_key must be
-  accompanied by a -header of 'none' and a manually specificied IV.
-* Thu Oct 19 2006 anicka@suse.cz
-- update to 2.21
-  * Fixed bug in which new() failed to work when first option is
-  - literal_key.
-  * Added ability to pass a preinitialized Crypt::* block cipher
-  object instead of the class name.
-* Thu Sep 14 2006 anicka@suse.cz
-- update to 2.19
-  * Renamed Crypt::CBC-2.16-vulnerability.txt so that
-    package installs correctly under Cygwin
-* Fri Jul 14 2006 anicka@suse.cz
-- update to 2.18
-  * added lots of documentation
-  * fixed using 8 byte IVs when generating the old-style RandomIV
-    style header for the Rijndael algorithm.
-  * versions 2.17 and higher will not decrypt messages
-    encrypted with versions 2.16 and lower unless you pass
-    an optional value 'randomiv' to the new() call
-* Wed Apr  5 2006 schubi@suse.de
-- Bug 153627 - VUL-0: perl-Crypt-CBC: ciphertext weakness when using certain block algorithms
-* Wed Jan 25 2006 mls@suse.de
-- converted neededforbuild to BuildRequires
-* Mon Jul 11 2005 schubi@suse.de
-- update to 2.14
-* Fri Apr 15 2005 schubi@suse.de
-- update to 2.12
-* Sun Jan 11 2004 adrian@suse.de
-- build as user
-* Fri Aug 22 2003 mjancar@suse.cz
-- require the perl version we build with
-* Fri Jul 18 2003 choeger@suse.de
-- use install_vendor and new %%perl_process_packlist macro
-* Tue Jun 17 2003 choeger@suse.de
-- updated filelist
-- update to version 2.08
-* Mon May 19 2003 choeger#@suse.de
-- remove installed (but unpackaged) file perllocal.pod
-* Wed Aug 14 2002 choeger@suse.de
-- new package, version 2.07
+
+* Mon Mar  3 2008 Tom "spot" Callaway <tcallawa@redhat.com> - 2.22-3
+- work around buildsystem burp
+
+* Fri Feb  8 2008 Tom "spot" Callaway <tcallawa@redhat.com> - 2.22-2
+- rebuild for new perl
+
+* Mon Oct 15 2007 Tom "spot" Callaway <tcallawa@redhat.com> - 2.22-1.1
+- add BR: perl(ExtUtils::MakeMaker)
+
+* Wed Feb 07 2007 Andreas Thienemann <andreas@bawue.net> - 2.22-1
+- Upgrade to 2.22
+
+* Fri Sep 08 2006 Andreas Thienemann <andreas@bawue.net> - 2.19-1
+- Upgrade to 2.19
+
+* Fri Feb 24 2006 Andreas Thienemann <andreas@bawue.net> - 2.17-1
+- Upgrade to 2.17
+
+* Thu Jul 14 2005 Andreas Thienemann <andreas@bawue.net> - 2.14-2
+- Remove execute permissions from example files
+
+* Thu Jul 14 2005 Andreas Thienemann <andreas@bawue.net> - 2.14-1
+- Initial package

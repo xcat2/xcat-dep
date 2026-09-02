@@ -16,6 +16,7 @@ my $spec_file  = "$pkg_dir/ipmitool.spec";
 my $source_file = '';
 my $work_dir = '/tmp/ipmitool-xcat-mockbuild';
 my $mock_cfg = '';
+my $target_arch = '';
 my $mock_uniqueext = '';
 my $result_dir = "$repo_root/build-output/list3/ipmitool-xcat";
 my $log_dir = "$repo_root/build-logs/list3/ipmitool-xcat";
@@ -25,6 +26,7 @@ GetOptions(
     'source-file=s'  => \$source_file,
     'work-dir=s'     => \$work_dir,
     'mock-cfg=s'     => \$mock_cfg,
+    'target-arch=s'  => \$target_arch,
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'   => \$result_dir,
     'log-dir=s'      => \$log_dir,
@@ -51,6 +53,9 @@ if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
     $mock_cfg = resolve_mock_cfg($os_id, '10', $arch);
 }
+# Arch of the rpms --mock-cfg produces: the host arch unless the config is a forcearch (cross)
+# one, e.g. rocky-10-riscv64-xcat built on x86_64 (see BUILD.md "riscv64").
+$target_arch = $arch if $target_arch eq '';
 my $mock_uniqueext_opt = $mock_uniqueext ne ''
     ? ' --uniqueext ' . sh_quote($mock_uniqueext)
     : '';
@@ -75,6 +80,7 @@ print "work_dir:   $work_dir\n";
 print "result_dir: $result_dir\n";
 print "log_dir:    $log_dir\n";
 print "mock_cfg:   $mock_cfg\n";
+print "target_arch:$target_arch\n";
 print "mock_uniqueext: " . ($mock_uniqueext ne '' ? $mock_uniqueext : '(none)') . "\n";
 print "source_file:$source_file\n";
 print "SOURCE_DATE_EPOCH: $SOURCE_DATE_EPOCH\n";
@@ -140,7 +146,7 @@ print "Patch application check passed. Applied patches: $patch_count\n";
 print_step("Build SRPM with mock");
 my $srpm_out = "$work_dir/srpm";
 make_path($srpm_out);
-run(
+run_mock(
     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --buildsrpm --spec " . sh_quote($spec_file) .
     " --sources " . sh_quote($pkg_dir) .
@@ -158,7 +164,7 @@ print "SRPM: $srpm\n";
 print_step("Rebuild RPM with mock");
 my $rpm_out = "$work_dir/rpm";
 make_path($rpm_out);
-run(
+run_mock(
     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
     " --rebuild " . sh_quote($srpm) .
     " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
@@ -167,7 +173,7 @@ run(
     " --resultdir " . sh_quote($rpm_out)
 );
 
-my @arch_rpms = sort glob("$rpm_out/*.${arch}.rpm");
+my @arch_rpms = sort glob("$rpm_out/*.${target_arch}.rpm");
 die "No architecture RPMs generated in $rpm_out\n" if !@arch_rpms;
 
 my $main_rpm = '';
@@ -184,7 +190,7 @@ print_step("Verify generated RPM");
 my $rpm_name = capture("rpm -qp --qf '%{NAME}' " . sh_quote($main_rpm));
 my $rpm_arch = capture("rpm -qp --qf '%{ARCH}' " . sh_quote($main_rpm));
 die "Unexpected RPM name: $rpm_name\n" if $rpm_name ne 'ipmitool-xcat';
-die "Unexpected RPM arch: $rpm_arch (expected $arch)\n" if $rpm_arch ne $arch;
+die "Unexpected RPM arch: $rpm_arch (expected $target_arch)\n" if $rpm_arch ne $target_arch;
 run(
     "rpm -qpl " . sh_quote($main_rpm) .
     " | grep -Fx /opt/xcat/bin/ipmitool-xcat >/dev/null"
@@ -203,6 +209,28 @@ for my $log (qw(build.log root.log state.log hw_info.log installed_pkgs.log)) {
         or die "Failed to copy $src to $log_dir: $!\n";
 }
 
+if ($target_arch ne $arch) {
+    # A cross-built rpm cannot be installed on this host: install it into the (emulated) build
+    # chroot instead and run the binary there.
+    print_step("Install RPM into the chroot and run smoke tests");
+    run_mock("mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt . " --install " . sh_quote($main_rpm)
+        . " > " . sh_quote("$log_dir/smoke-chroot-install.log") . " 2>&1");
+    my $bin = '/opt/xcat/bin/ipmitool-xcat';
+    my $version_log = "$log_dir/smoke-version.log";
+    my $rc_version  = run_capture_rc(
+        "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt . " -q --chroot -- " . sh_quote("$bin -V"),
+        $version_log);
+    die "Smoke check failed: -V in the chroot returned $rc_version\n" if $rc_version != 0;
+    my $version_out = slurp($version_log);
+    die "Version output missing expected version string\n"
+        if $version_out !~ /ipmitool-xcat version \Q$version\E/i;
+    my $summary = "$log_dir/smoke-summary.txt";
+    open my $sfh, '>', $summary or die "Cannot write $summary: $!\n";
+    print {$sfh} "binary=$bin (in chroot $mock_cfg)\n";
+    print {$sfh} "rc_version=$rc_version\n";
+    close $sfh;
+}
+
 print_step("Completed");
 print "Main RPM: $main_rpm\n";
 print "Artifacts: $result_dir\n";
@@ -215,6 +243,8 @@ Usage: $0 [options]
   --source-file FILE    Source filename stored in ipmitool/ (default: inferred from spec version)
   --work-dir PATH       Temporary work dir (default: $work_dir)
   --mock-cfg NAME       Mock config (default: <ID>+epel-10-<ARCH>)
+  --target-arch ARCH    Arch of the rpms --mock-cfg produces (default: uname -m); a forcearch
+                        config such as rocky-10-riscv64-xcat needs it
   --mock-uniqueext TXT  Optional mock --uniqueext suffix to isolate concurrent builds
   --result-dir PATH     Output RPM/SRPM directory (default: $result_dir)
   --log-dir PATH        Log directory (default: $log_dir)
@@ -292,6 +322,22 @@ sub capture {
     }
     chomp $out;
     return $out;
+}
+
+# mock exits 30 when its package manager failed (chroot init, build deps), which against public
+# mirrors is most often a transient download error (stale mirror metadata): retry such a run once.
+sub run_mock {
+    my ($cmd) = @_;
+    print "+ $cmd\n";
+    my $rc = system($cmd);
+    if ($rc != -1 && ($rc >> 8) == 30) {
+        print "mock failed with rc=30 (package manager); retrying once\n";
+        $rc = system($cmd);
+    }
+    if ($rc != 0) {
+        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+        die "Command failed (rc=$exit): $cmd\n";
+    }
 }
 
 sub run_capture_rc {

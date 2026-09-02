@@ -22,6 +22,7 @@ set -e
 case "$1" in
     purge|remove)
     rm /tftpboot/boot/grub2/grub2.ppc
+    rm -f /tftpboot/boot/grub2/grub2.riscv64
     ;;
     upgrade)
     ;;

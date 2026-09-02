@@ -5,3 +5,8 @@
 3. Run "rpmbuild -ba /usr/src/packages/SPECS/perl-Crypt-CBC.spec" which creates /usr/src/packages/RPMS/noarch/perl-Crypt-CBC-2.33-3.7.noarch.rpm
 
 For RHEL 8, run "rpmbuild --rebuild perl-Crypt-CBC-2.33-20.fc29.src.rpm".
+
+perl-Crypt-CBC.spec is now the Fedora spec of perl-Crypt-CBC-2.33-20.fc29.src.rpm with the
+BuildRequires an EL10 buildroot needs (make, perl-interpreter); the SUSE spec it replaces is in
+the git history. For RHEL 10 (EPEL-only there), run "rpmbuild -ba perl-Crypt-CBC.spec" with
+Crypt-CBC-2.33.tar.gz in SOURCES.

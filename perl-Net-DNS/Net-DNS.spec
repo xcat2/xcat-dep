@@ -14,16 +14,28 @@
 name:      perl-Net-DNS
 summary:   Net-DNS - Perl DNS resolver module
 version:   0.80
-release:   1
+release:   2
 vendor:    Olaf Kolkman <olaf@net-dns.org>
 packager:  Arix International <cpan2rpm@arix.com>
 license:   Artistic
 group:     Applications/CPAN
 url:       http://www.cpan.org
 buildroot: %{_tmppath}/%{name}-%{version}-%(id -u -n)
-buildarch: x86_64
+buildarch: noarch
 prefix:    %(echo %{_prefix})
 source:    Net-DNS-0.80.tar.gz
+
+# cpan2rpm specs carry no BuildRequires; an EL10 buildroot has neither perl nor make, and
+# perl-generators is what makes rpm compute the perl(...) Requires.
+BuildRequires: make
+BuildRequires: perl-interpreter
+BuildRequires: perl-generators
+BuildRequires: perl(ExtUtils::MakeMaker)
+BuildRequires: perl(Digest::HMAC)
+BuildRequires: perl(Digest::MD5)
+BuildRequires: perl(Digest::SHA)
+BuildRequires: perl(MIME::Base64)
+BuildRequires: perl(Test::More)
 
 %description
 Net::DNS is a collection of Perl modules that act as a Domain Name System
@@ -49,7 +61,8 @@ grep -rsl '^#!.*perl' . |
 grep -v '.bak$' |xargs --no-run-if-empty \
 %__perl -MExtUtils::MakeMaker -e 'MY->fixin(@ARGV)'
 CFLAGS="$RPM_OPT_FLAGS"
-%{__perl} Makefile.PL `%{__perl} -MExtUtils::MakeMaker -e ' print qq|PREFIX=%{buildroot}%{_prefix}| if \$ExtUtils::MakeMaker::VERSION =~ /5\.9[1-6]|6\.0[0-5]/ '`
+# --noxs: pure-perl Net::DNS (no compiled dn_expand), so one noarch rpm serves every arch
+%{__perl} Makefile.PL --noxs `%{__perl} -MExtUtils::MakeMaker -e ' print qq|PREFIX=%{buildroot}%{_prefix}| if \$ExtUtils::MakeMaker::VERSION =~ /5\.9[1-6]|6\.0[0-5]/ '`
 %{__make} 
 %if %maketest
 %{__make} test
@@ -126,5 +139,10 @@ find %{buildroot}%{_prefix}             \
 %defattr(-,root,root)
 
 %changelog
+* Thu Aug 20 2026 xCAT build - 0.80-2
+- Build the pure-perl module (--noxs) as noarch instead of an XS x86_64 rpm.
+- BuildRequires for an EL10 buildroot (make, perl-interpreter, perl-generators,
+  MakeMaker, Digest::HMAC/MD5/SHA, MIME::Base64, Test::More).
+
 * Tue Oct 28 2014 root@slesmn
 - Initial build.

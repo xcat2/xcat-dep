@@ -1,0 +1,6 @@
+perl-Path-Class (Path::Class) is only a build dependency: Crypt-SSLeay's Makefile.PL uses it
+(configure_requires), and EL10 has it in EPEL only. The source rpm is the EPEL 10 one (Fedora
+spec, Path-Class 0.37, noarch). mockbuild-perl-packages.pl builds it where there is no EPEL
+(--epel-gap) and installs it into the perl-Crypt-SSLeay build chroot.
+
+For RHEL 10, run "rpmbuild --rebuild perl-Path-Class-0.37-24.el10_0.src.rpm".

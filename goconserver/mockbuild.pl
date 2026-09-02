@@ -14,6 +14,7 @@ my $pkg_dir    = "$repo_root/goconserver";
 
 my $work_dir    = '/tmp/goconserver-mockbuild';
 my $mock_cfg    = '';
+my $target_arch = '';
 my $mock_uniqueext = '';
 my $result_dir  = "$repo_root/build-output/list5/goconserver";
 my $log_dir     = "$repo_root/build-logs/list5/goconserver";
@@ -29,6 +30,7 @@ my $build_timestamp;
 GetOptions(
     'work-dir=s'       => \$work_dir,
     'mock-cfg=s'       => \$mock_cfg,
+    'target-arch=s'    => \$target_arch,
     'mock-uniqueext=s' => \$mock_uniqueext,
     'result-dir=s'     => \$result_dir,
     'log-dir=s'        => \$log_dir,
@@ -41,13 +43,6 @@ GetOptions(
 
 die "Run as root (current uid=$>)\n" if $> != 0;
 
-# The Go compile happens INSIDE the mock chroot (BuildRequires: golang); the host only needs to
-# fetch the pinned source and drive mock. (No host `go` build any more -- that was the non-hermetic
-# path this rewrite removes.)
-for my $bin (qw(git rpm mock)) {
-    run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
-}
-
 my $arch = capture('uname -m');
 if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
@@ -56,6 +51,21 @@ if (!$mock_cfg) {
 
 my ($rel) = $mock_cfg =~ /-(\d+)-/;
 $rel //= '10';
+
+# --target-arch names the arch of the rpm to produce. It differs from the host arch only for a
+# forcearch target (rocky-10-riscv64-xcat on an x86_64 host; see BUILD.md "riscv64").
+$target_arch = $arch if $target_arch eq '';
+my %goarch = (x86_64 => 'amd64', aarch64 => 'arm64', ppc64le => 'ppc64le', s390x => 's390x', riscv64 => 'riscv64');
+my $cross = $target_arch ne $arch;
+die "No GOARCH known for target arch $target_arch\n" if $cross && !exists $goarch{$target_arch};
+
+# For the host arch the Go compile happens INSIDE the mock chroot (BuildRequires: golang), so the
+# host only fetches the pinned source and drives mock. A forcearch chroot would run that compile
+# under qemu, so the cross build instead cross-compiles on the host and packages the result with
+# rpmbuild --target.
+for my $bin (qw(git rpm), ($cross ? qw(go rpmbuild) : qw(mock))) {
+    run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
+}
 
 my $SOURCE_DATE_EPOCH;
 $SOURCE_DATE_EPOCH = $build_timestamp if defined $build_timestamp;
@@ -88,8 +98,9 @@ print "work_dir:     $work_dir\n";
 print "result_dir:   $result_dir\n";
 print "log_dir:      $log_dir\n";
 print "mock_cfg:     $mock_cfg (target dist tag: el$rel)\n";
-print "build_cfg:    $build_cfg (el10 -- portable static build for arch $arch)\n";
+print "build_cfg:    $build_cfg (el10 -- portable static build for arch $arch)\n" if !$cross;
 print "arch:         $arch\n";
+print "target_arch:  $target_arch" . ($cross ? " (GOARCH=$goarch{$target_arch}, rpmbuild --target)" : '') . "\n";
 print "version:      $version\n";
 print "go_ref:       $go_ref\n";
 print "release_suffix: " . ($release_suffix ne '' ? $release_suffix : '(none)') . "\n";
@@ -127,19 +138,7 @@ die "pinned go.mod/go.sum missing under $gomod_dir (regenerate per gomod/README.
 copy("$gomod_dir/go.mod", "$src_dir/go.mod") or die "copy go.mod: $!\n";
 copy("$gomod_dir/go.sum", "$src_dir/go.sum") or die "copy go.sum: $!\n";
 
-# --- Assemble SRPM sources: the source tree (go.mod/go.sum, no vendor) + the xcat-authored unit + config ---
-print_step("Assemble SRPM sources");
-my $srctop = "goconserver-$version";
-my $staged = "$work_dir/$srctop";
-remove_tree($staged) if -d $staged;
-run("cp -a " . sh_quote($src_dir) . " " . sh_quote($staged));
-my $sources_dir = "$work_dir/sources";
-make_path($sources_dir);
-my $tarball = "$sources_dir/goconserver-$version.tar.gz";
-run("tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
-    " -C " . sh_quote($work_dir) . " -czf " . sh_quote($tarball) . " " . sh_quote($srctop));
-
-write_file("$sources_dir/goconserver.service", <<'SERVICE');
+my $service_unit = <<'SERVICE';
 [Unit]
 Description=goconserver console server
 After=network.target
@@ -158,7 +157,7 @@ SERVICE
 # [server] block is read by the YAML parser as a sequence -> `panic: cannot unmarshal !!seq` at
 # startup -> systemd rate-limits the service to `failed`). On an xCAT MN, xCAT::Goconserver.pm
 # overwrites this with a cert-enabled config; this default only has to PARSE and start.
-write_file("$sources_dir/server.conf", <<'CONF');
+my $server_conf = <<'CONF';
 global:
   host: 0.0.0.0
   logfile: /var/log/goconserver/server.log
@@ -169,6 +168,27 @@ console:
   port: 12430
   log_timestamp: true
 CONF
+
+if ($cross) {
+    cross_build_and_package();
+    exit 0;
+}
+
+
+# --- Assemble SRPM sources: the source tree (go.mod/go.sum, no vendor) + the xcat-authored unit + config ---
+print_step("Assemble SRPM sources");
+my $srctop = "goconserver-$version";
+my $staged = "$work_dir/$srctop";
+remove_tree($staged) if -d $staged;
+run("cp -a " . sh_quote($src_dir) . " " . sh_quote($staged));
+my $sources_dir = "$work_dir/sources";
+make_path($sources_dir);
+my $tarball = "$sources_dir/goconserver-$version.tar.gz";
+run("tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
+    " -C " . sh_quote($work_dir) . " -czf " . sh_quote($tarball) . " " . sh_quote($srctop));
+
+write_file("$sources_dir/goconserver.service", $service_unit);
+write_file("$sources_dir/server.conf", $server_conf);
 
 # --- Spec: the Go compile runs in %build INSIDE the chroot; modules fetched from the proxy, pinned by go.sum ---
 print_step("Write spec");
@@ -289,19 +309,163 @@ print_step("Completed");
 print "Results in: $result_dir\n";
 exit 0;
 
+
+# A forcearch mock chroot runs every command through qemu, so an in-chroot Go compile would run the
+# whole toolchain emulated. For a foreign target arch the build cross-compiles on the host with the
+# same pinned go.mod/go.sum and lets rpmbuild --target name the arch. See BUILD.md ("riscv64").
+sub cross_build_and_package {
+    my $rpmbuild_top = "$work_dir/rpmbuild";
+    remove_tree($rpmbuild_top) if -d $rpmbuild_top;
+    make_path("$rpmbuild_top/$_") for qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS);
+
+    print_step("Cross-compile goconserver for $target_arch");
+    local $ENV{GOPATH}      = "$work_dir/gopath";
+    local $ENV{GOCACHE}     = "$work_dir/gocache";
+    local $ENV{GOMODCACHE}  = "$work_dir/gomodcache";
+    local $ENV{CGO_ENABLED} = '0';
+    local $ENV{GOFLAGS}     = '-mod=mod';
+    local $ENV{GOTOOLCHAIN} = 'local';
+    local $ENV{GOARCH}      = $goarch{$target_arch};
+
+    my $bin_dir = "$work_dir/bin";
+    make_path($bin_dir);
+    # rpm's brp-strip cannot strip a foreign-arch ELF, so the Go linker strips instead.
+    my $ldflags = "-X main.Version=$version -s -w";
+    for my $target (['goconserver', 'goconserver.go'], ['congo', 'cmd/congo.go']) {
+        my ($out, $main) = @{$target};
+        run("cd " . sh_quote($src_dir) . " && go build -trimpath -buildvcs=false -ldflags " .
+            sh_quote($ldflags) . " -o " . sh_quote("$bin_dir/$out") . " " . sh_quote($main) .
+            " >" . sh_quote("$log_dir/go-build-$out.log") . " 2>&1");
+        die "$out binary not built\n" if !-x "$bin_dir/$out";
+    }
+
+    print_step("Assemble SRPM sources");
+    my $srctop  = "goconserver-$version";
+    my $payload = "$work_dir/$srctop";
+    remove_tree($payload) if -d $payload;
+    make_path("$payload/usr/bin", "$payload/usr/lib/systemd/system", "$payload/etc/goconserver");
+    for my $out (qw(goconserver congo)) {
+        copy("$bin_dir/$out", "$payload/usr/bin/$out") or die "copy $out: $!\n";
+        chmod 0755, "$payload/usr/bin/$out";
+    }
+    write_file("$payload/usr/lib/systemd/system/goconserver.service", $service_unit);
+    write_file("$payload/etc/goconserver/server.conf", $server_conf);
+    run("tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
+        " -C " . sh_quote($work_dir) . " -czf " . sh_quote("$rpmbuild_top/SOURCES/$srctop.tar.gz") .
+        " " . sh_quote($srctop));
+
+    print_step("Write spec");
+    my $spec_file = "$rpmbuild_top/SPECS/goconserver.spec";
+    # The payload is already compiled, so there is no %build. rpm refuses a foreign 'BuildArch:'
+    # here; rpmbuild --target below sets the arch.
+    write_file($spec_file, <<"SPEC");
+# Go binaries carry no useful DWARF debugsource; the empty debuginfo subpackage otherwise fails
+# packaging ("Empty %files debugsourcefiles.list"). Disable it.
+%global debug_package %{nil}
+Name:           goconserver
+Version:        $version
+Release:        4.el$rel$release_suffix
+Summary:        Console server written in Go for xCAT
+License:        EPL-1.0
+URL:            https://github.com/xcat2/goconserver
+
+Source0:        goconserver-%{version}.tar.gz
+
+%description
+goconserver is a scalable console server written in Go. It provides
+console logging and management for xCAT cluster nodes.
+
+%prep
+%setup -q -n goconserver-%{version}
+
+%install
+install -Dm0755 usr/bin/goconserver %{buildroot}/usr/bin/goconserver
+install -Dm0755 usr/bin/congo       %{buildroot}/usr/bin/congo
+install -Dm0644 usr/lib/systemd/system/goconserver.service %{buildroot}/usr/lib/systemd/system/goconserver.service
+install -Dm0644 etc/goconserver/server.conf %{buildroot}/etc/goconserver/server.conf
+mkdir -p %{buildroot}/var/log/goconserver %{buildroot}/var/lib/goconserver
+
+%files
+/usr/bin/goconserver
+/usr/bin/congo
+/usr/lib/systemd/system/goconserver.service
+%config(noreplace) /etc/goconserver/server.conf
+%dir /var/log/goconserver
+%dir /var/lib/goconserver
+
+%changelog
+* Mon Aug 10 2026 xCAT build - $version-4.el$rel
+- Cross-compile on the build host (GOARCH=$goarch{$target_arch}) with the committed go.mod/go.sum,
+  and package with rpmbuild --target $target_arch. The forcearch chroot would run the Go toolchain
+  under qemu.
+- Ship /etc/goconserver/server.conf as YAML (the format the goconserver binary parses).
+- Replace archived github.com/kr/pty with github.com/creack/pty (console fork on modern Go).
+SPEC
+
+    print_step("Build RPM with rpmbuild --target $target_arch");
+    run("rpmbuild --define " . sh_quote("_topdir $rpmbuild_top") .
+        " --define " . sh_quote("use_source_date_epoch_as_buildtime 1") .
+        " --define " . sh_quote("clamp_mtime_to_source_date_epoch 1") .
+        " --define " . sh_quote("_buildhost xcat-build") .
+        " --target " . sh_quote($target_arch) .
+        " -ba " . sh_quote($spec_file) .
+        " >" . sh_quote("$log_dir/rpmbuild.log") . " 2>&1");
+
+    print_step("Collect results");
+    my @arch_rpms = sort glob("$rpmbuild_top/RPMS/$target_arch/goconserver-*.rpm");
+    die "No goconserver $target_arch rpm generated in $rpmbuild_top/RPMS\n" if !@arch_rpms;
+    for my $rpm (@arch_rpms, glob("$rpmbuild_top/SRPMS/*.src.rpm")) {
+        my $dest = "$result_dir/" . basename($rpm);
+        copy($rpm, $dest) or die "Failed to copy $rpm to $dest: $!\n";
+        print "Copied: $dest\n";
+    }
+
+    # The rpm cannot be installed on this host, and nothing else runs the cross-built binaries.
+    # Unpack it and run them through the binfmt_misc handler the forcearch chroot needs anyway.
+    print_step("Smoke test the $target_arch binaries (binfmt)");
+    my $smoke_root = "$work_dir/smoke-root";
+    remove_tree($smoke_root) if -d $smoke_root;
+    make_path($smoke_root);
+    run("cd " . sh_quote($smoke_root) . " && rpm2cpio " . sh_quote($arch_rpms[0]) .
+        " | cpio -idm --quiet >" . sh_quote("$log_dir/smoke-unpack.log") . " 2>&1");
+    for my $out (qw(goconserver congo)) {
+        my $path = "$smoke_root/usr/bin/$out";
+        die "Missing $path in the $target_arch rpm\n" if !-x $path;
+        # -h exits 0 or 1 depending on the subcommand parser; anything above that is a real failure.
+        my $rc = run_rc(sh_quote($path) . " -h >" . sh_quote("$log_dir/smoke-$out.log") . " 2>&1");
+        die "$out -h failed (rc=$rc): running a $target_arch binary on this $arch host needs the" .
+            " qemu-user-static binfmt handler\n" if $rc > 1;
+    }
+    print "Smoke tests passed ($target_arch binaries ran through binfmt).\n";
+
+    print_step("Completed");
+    print "Results in: $result_dir\n";
+    return;
+}
+
+sub run_rc {
+    my ($cmd) = @_;
+    print "+ $cmd\n";
+    my $rc = system($cmd);
+    return $rc == -1 ? 255 : ($rc >> 8);
+}
+
 sub usage {
     return <<"USAGE";
 Usage: $0 [options]
 
-Build the goconserver RPM inside a mock chroot: fetch the pinned source, overlay the committed
-go.mod/go.sum, and compile IN-CHROOT (modules downloaded at build time but pinned by go.sum -- no
-vendored tree, no `go mod tidy`). The compile runs in the el10 chroot for the host arch (goconserver
-is a CGO-free static binary; el8/el9 ship too old a Go), and the rpm is tagged with the target EL
-(4.el<rel>) so every EL repo gets an identical static binary.
+Build the goconserver RPM: fetch the pinned source, overlay the committed go.mod/go.sum, and
+compile (modules downloaded at build time but pinned by go.sum -- no vendored tree, no
+`go mod tidy`). For the host arch the compile runs IN-CHROOT, in the el10 chroot (goconserver is a
+CGO-free static binary; el8/el9 ship too old a Go). For a foreign --target-arch it cross-compiles on
+the host, because a forcearch chroot would run the Go toolchain under qemu. Either way the rpm is
+tagged with the target EL (4.el<rel>) so every EL repo gets an identical static binary.
 
 Options:
   --work-dir PATH       Working directory (default: /tmp/goconserver-mockbuild)
   --mock-cfg NAME       Target mock config (sets the EL dist tag; the build runs in its el10 peer)
+  --target-arch ARCH    Arch of the rpm to build (default: uname -m); another arch is
+                        cross-compiled (GOARCH) and packaged with rpmbuild --target
   --mock-uniqueext STR  Mock uniqueext (for concurrency isolation under mockbuild-all.pl)
   --result-dir PATH     Output directory for RPMs
   --log-dir PATH        Output directory for logs

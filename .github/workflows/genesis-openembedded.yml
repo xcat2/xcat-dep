@@ -23,7 +23,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             apt-utils createrepo-c dpkg-dev gnupg \
             libfile-slurper-perl \
-            libparallel-forkmanager-perl libperl-critic-perl rpm shellcheck
+            libparallel-forkmanager-perl libperl-critic-perl rpm
 
       - name: Run static checks
         run: |
@@ -33,6 +33,8 @@ jobs:
           perl -Ilib -c lib/XCAT/BuildUtils.pm
           perl -Ilib -c lib/XCAT/GenesisRelease.pm
           perl -c mockbuild-all.pl
+          perl -c BuildUtils.pm
+          perl -c sbuild-all.pl
           rpmspec -P \
             -D 'genesis_arch x86_64' \
             -D 'version 2.19.0' \
@@ -49,8 +51,6 @@ jobs:
             t/genesis_openembedded_release.t \
             t/genesis_openembedded_consumer.t \
             t/lib/XCAT/GenesisReleaseTest.pm
-          bash -n build-apt-repo.sh
-          shellcheck build-apt-repo.sh
 
       - name: Run package tests
         run: |
