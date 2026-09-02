@@ -66,8 +66,10 @@ perl ./mockbuild-all.pl \
   --genesis-release /path/to/xcat-genesis-release \
   [other build options]
 
-./build-apt-repo.sh \
-  --genesis-release /path/to/xcat-genesis-release
+perl ./sbuild-all.pl \
+  --genesis-release /path/to/xcat-genesis-release \
+  --publish --expect-arch "amd64 ppc64el" \
+  [other build options]
 ```
 
 The RPM builder publishes the binary packages once under `xcat-dep/common`.
@@ -78,17 +80,13 @@ new package set, metadata, signatures, and local setup files are ready.
 
 The APT builder publishes the DEBs once under
 `pool/main/xcat-genesis-openembedded`. Every suite indexes those same files.
-Genesis publication updates all suites together, so do not pass a `DIST`
-argument with `--genesis-release`. The input directories for every configured
-suite must already exist. Later suite rebuilds keep using the shared pool. Pass
-a new release only when replacing the Genesis packages.
+Genesis publication updates all suites together, so a run whose `--dists` omits
+one is refused. Later suite rebuilds keep using the shared pool. Pass a new
+release only when replacing the Genesis packages.
 
-APT metadata is generated in a temporary tree. New packages are copied into
-place before the metadata directories are replaced, and old packages are
-removed only after the new metadata is active. Rebuilt packages may keep the
-same filename; the previous files, signing key, and indexes are restored if
-publication fails. Use ``--force-unlock`` after an interrupted publisher to
-recover its saved repository and remove abandoned staging files.
+APT metadata is assembled in a side tree and swapped onto the published
+repository with a single rename, under one global publish lock, so a failed or
+interrupted publication leaves the previous repository exactly as it was.
 
 Both consumers require all seven architectures and verify package identities
 and checksums before publication. A management node can install an image for a

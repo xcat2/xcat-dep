@@ -15,10 +15,13 @@ To build elilo-xcat RPM:
 
 To build elilo-xcat DEB:
 ------------------------
-1. Login to Ubuntu x86 node
-2. git clone https://github.com/xcat2/xcat-dep
-3. cd xcat-dep/elilo
-4. apt install quilt
-5. apt install ./gnu-efi_3.0v-5_amd64.deb
-6. ./make_deb.sh
-7. Verify contents with dpkg -c <deb file>
+The Ubuntu/Debian build is now driven by the top-level sbuild-all.pl orchestrator, which builds
+each package inside the matching <codename>-<arch>-sbuild chroot from its maintained debian/
+packaging (build-deps such as quilt are installed inside the chroot automatically). The former
+./make_deb.sh has been removed.
+
+1. Login to an Ubuntu x86 build host
+2. git clone https://github.com/xcat2/xcat-dep; cd xcat-dep
+3. Build every package for a codename:  ./sbuild-all.pl --arch amd64 --dists noble
+   or this package alone:                ./elilo/sbuild.pl --codename noble --arch amd64 --result-dir <dir>
+4. Verify contents with dpkg -c <deb file>

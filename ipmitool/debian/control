@@ -2,7 +2,7 @@ Source: ipmitool-xcat
 Section: utils
 Priority: optional
 Maintainer: xCAT <xcat-user@lists.sourceforge.net>
-Build-Depends: debhelper (>= 13), libreadline-dev, libssl-dev, quilt
+Build-Depends: debhelper (>= 12), libreadline-dev, libssl-dev, quilt
 Standards-Version: 3.6.2.1
 
 Package: ipmitool-xcat

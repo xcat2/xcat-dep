@@ -24,12 +24,15 @@ RPM Option #2 Use the manual steps listed below:
 
 DEB Option #1
 
-1) git clone https://github.com/xcat2/xcat-dep.git
-2) apt install dpkg-dev debhelper libssl-dev quilt libreadline-dev
-3) cd xcat-dep/ipmitool
-4) ./make_deb.sh
-5) Will generate file ipmitool-xcat_<version>_<arch>.deb file in current directory
-6) Use debian/changelog file to update release version
+The Ubuntu/Debian build is now driven by the top-level sbuild-all.pl orchestrator, which builds
+each package inside the matching <codename>-<arch>-sbuild chroot (build-deps installed in the
+chroot automatically). The former ./make_deb.sh has been removed.
+
+1) git clone https://github.com/xcat2/xcat-dep.git; cd xcat-dep
+2) Build every package for a codename:  ./sbuild-all.pl --arch amd64 --dists noble
+   or this package alone:                ./ipmitool/sbuild.pl --codename noble --arch amd64 --result-dir <dir>
+3) Generates ipmitool-xcat_<version>_<arch>.deb into --result-dir
+4) Use debian/changelog file to update release version
 
 NOTE #1 
 HOW TO CREATE THESE PATCHES 
