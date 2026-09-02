@@ -17,6 +17,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
+                  supported_arches
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field genesis_deb_control
@@ -619,3 +620,30 @@ STUB
 }
 
 done_testing;
+
+# ---- every compiled dep must be buildable on every architecture xcat-dep supports -------------
+# A debian/control that names architectures explicitly silently excludes the ones it omits:
+# debhelper prints "No packages to build. Possible architecture mismatch: <arch>, want: <list>",
+# builds nothing, and the build then dies at ./configure. ipmitool-xcat did exactly that on
+# riscv64. The Architecture:all packages are the single-producer boot components and are excluded
+# here: they are built once on amd64 and never rebuilt per arch.
+{
+    my $root = "$FindBin::Bin/..";
+    for my $pkg (qw(ipmitool conserver goconserver)) {
+        my $ctl = "$root/$pkg/debian/control";
+        SKIP: {
+            skip "$pkg has no debian/control", 1 unless -f $ctl;
+            open my $fh, '<', $ctl or die "read $ctl: $!";
+            local $/; my $text = <$fh>; close $fh;
+            my @arch_lines = ($text =~ /^Architecture:\s*(.+)$/mg);
+            my @explicit = grep { !/^(?:any|all)$/ } map { s/^\s+|\s+$//gr } @arch_lines;
+            my @missing;
+            for my $line (@explicit) {
+                my %have = map { $_ => 1 } split /\s+/, $line;
+                push @missing, grep { !$have{$_} } grep { $_ ne 'amd64' } supported_arches();
+            }
+            is_deeply(\@missing, [],
+                "$pkg/debian/control builds on every supported arch (@{[join ' ', supported_arches()]})");
+        }
+    }
+}
