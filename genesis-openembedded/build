@@ -143,7 +143,7 @@ my @formats = $format eq 'all' ? qw(deb rpm) : ($format);
 write_binary(
     "$staging/release.manifest",
     "format=xcat-genesis-packages\n"
-      . "version=1\n"
+      . "version=2\n"
       . "xcat_version=$version\n"
       . "xcat_release=$release\n"
       . "xcat_revision=$revision\n"

@@ -20,8 +20,14 @@ our @EXPORT_OK = qw(
   verify_release_file
 );
 
-my @ARCHITECTURES = qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64);
+my @RELEASE_V1_ARCHITECTURES = qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64);
+my @RELEASE_V2_ARCHITECTURES = (@RELEASE_V1_ARCHITECTURES, 's390x');
+my @ARCHITECTURES = @RELEASE_V2_ARCHITECTURES;
 my %ARCHITECTURE = map { $_ => 1 } @ARCHITECTURES;
+my %RELEASE_ARCHITECTURES = (
+    1 => \@RELEASE_V1_ARCHITECTURES,
+    2 => \@RELEASE_V2_ARCHITECTURES,
+);
 
 sub architectures {
     return @ARCHITECTURES;
@@ -161,7 +167,7 @@ sub _validate_release {
     die "Unsupported Genesis package release format\n"
       unless $manifest->{format} eq 'xcat-genesis-packages';
     die "Unsupported Genesis package release version\n"
-      unless $manifest->{version} eq '1';
+      unless $RELEASE_ARCHITECTURES{ $manifest->{version} };
     die "Invalid xCAT version in release manifest\n"
       unless $manifest->{xcat_version} =~ /^\d+(?:\.\d+){1,3}$/;
     die "Invalid xCAT release in release manifest\n"
@@ -222,7 +228,8 @@ sub validate_complete_release {
     my ($directory) = @_;
     my $manifest = validate_release($directory);
     my %present = map { $_ => 1 } split(/,/, $manifest->{architectures});
-    my @missing = grep { !$present{$_} } @ARCHITECTURES;
+    my @required = @{ $RELEASE_ARCHITECTURES{ $manifest->{version} } };
+    my @missing = grep { !$present{$_} } @required;
     die "Genesis release is missing supported architectures: @missing\n" if @missing;
     return $manifest;
 }
