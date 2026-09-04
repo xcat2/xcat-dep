@@ -1055,8 +1055,6 @@ sub install_genesis_release_debs {
     return scalar(@files);
 }
 
-# verify_shared_pool($pool): assert the pool satisfies [shared]. [shared] must cover every supported
-# Genesis architecture.
 sub verify_shared_pool {
     my ($pool) = @_;
     my %shared = %{ $MANIFEST{shared} // {} };
