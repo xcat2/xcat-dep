@@ -100,8 +100,6 @@ my $gpg_key_id = 'xcat@megware.com';
 my $gpg_home = '';
 my $genesis_release = '';            # OpenEmbedded Genesis package release to publish alongside
 my $genesis_release_checksums;       # its verified SHA256SUMS, read once at startup
-my @genesis_release_architectures;
-my $genesis_release_version;
 # The OpenEmbedded Genesis debs are published ONCE, in a pool of their own that every suite indexes.
 # They are Architecture:all and identical for all suites, so a per-suite copy would multiply hundreds
 # of megabytes by the number of codenames for no gain.
@@ -320,9 +318,14 @@ if ($genesis_release ne '') {
     my $after = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
     die "FATAL: Genesis release changed during verification\n"
         unless XCAT::BuildUtils::hashes_equal($before, $after);
+    my %release_architecture = map { $_ => 1 }
+      split(/,/, $release_manifest->{architectures});
+    my @omitted = grep {
+        !$release_architecture{$_}
+    } XCAT::GenesisRelease::architectures();
+    die "FATAL: Genesis release version $release_manifest->{version} omits currently supported architectures: @omitted\n"
+      if @omitted;
     $genesis_release_checksums = $before;
-    @genesis_release_architectures = split(/,/, $release_manifest->{architectures});
-    $genesis_release_version = $release_manifest->{version};
     # Every suite's Packages index points into the shared Genesis pool, and publishing a release
     # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
     # files that no longer exist. Publish a release for all of them or for none.
@@ -1052,8 +1055,8 @@ sub install_genesis_release_debs {
     return scalar(@files);
 }
 
-# verify_shared_pool($pool): assert the pool carries every package declared by the verified release,
-# at a version satisfying the [shared] pin. [shared] must cover every supported Genesis architecture.
+# verify_shared_pool($pool): assert the pool satisfies [shared]. [shared] must cover every supported
+# Genesis architecture.
 sub verify_shared_pool {
     my ($pool) = @_;
     my %shared = %{ $MANIFEST{shared} // {} };
@@ -1073,19 +1076,8 @@ sub verify_shared_pool {
     die "FATAL: [shared] has unsupported packages: @manifest_unknown\n"
       if @manifest_unknown;
 
-    die "FATAL: Genesis release has no architectures\n"
-      unless @genesis_release_architectures;
-    my @names = map {
-        XCAT::GenesisRelease::deb_package_name($_)
-    } @genesis_release_architectures;
-    my %release_architecture = map { $_ => 1 } @genesis_release_architectures;
-    my @omitted = grep {
-        !$release_architecture{$_}
-    } XCAT::GenesisRelease::architectures();
-    print "WARNING: Genesis release version $genesis_release_version omits current architectures: @omitted\n"
-      if @omitted;
-    my %req = map { $_ => $shared{$_} } @names;
-    @names = sort @names;
+    my %req = %shared;
+    my @names = sort keys %req;
     my %present = map { $_ => deb_version($pool, $_) } @names;
     my @problems = verify_repo_packages(\%req, \%present);
     if (@problems) {
@@ -1499,10 +1491,11 @@ Publish an B<OpenEmbedded Genesis package release> alongside the packages this r
 release is produced separately (see F<genesis-openembedded/README.md>); this option only verifies it
 and copies the verified bytes into every selected suite.
 
-The release must be complete for its manifest version and must carry C<deb> packages. Version 1
-requires seven architectures; version 2 also requires C<s390x>. It is validated before any build or
-publish: its C<SHA256SUMS> is read, the shared verifier runs, and the checksums are read again -- a
-release rewritten together with its checksums while the verifier runs is rejected.
+The release must carry C<deb> packages for every currently supported architecture. Version 1
+remains readable but cannot replace the current eight-architecture repository because it lacks
+C<s390x>. The release is validated before any build or publish: its C<SHA256SUMS> is read, the
+shared verifier runs, and the checksums are read again -- a release rewritten together with its
+checksums while the verifier runs is rejected.
 
 The packages are published B<once>, into F<pool/main/xcat-genesis-openembedded>, and every suite's
 C<Packages> index points at that one copy: they are C<Architecture: all> and identical everywhere,

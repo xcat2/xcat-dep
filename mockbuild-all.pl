@@ -111,8 +111,6 @@ my $skip_createrepo = 0;
 my $skip_tarball = 0;
 my $genesis_release = '';
 my $genesis_release_checksums;
-my @genesis_release_architectures;
-my $genesis_release_version;
 my $scrub_all_chroots = 0;
 my $keep_buildroots = 0;   # keep per-step mock chroots after build (default: --scrub=chroot each)
 my $dry_run = 0;
@@ -379,9 +377,12 @@ if ($genesis_release ne '') {
     my $checksums_after = validated_release_checksums($genesis_release);
     die "Genesis release changed during verification\n"
       unless hashes_equal($checksums_before, $checksums_after);
+    my %release_architecture = map { $_ => 1 }
+      split(/,/, $manifest->{architectures});
+    my @omitted = grep { !$release_architecture{$_} } architectures();
+    die "Genesis release version $manifest->{version} omits currently supported architectures: @omitted\n"
+      if @omitted;
     $genesis_release_checksums = $checksums_before;
-    @genesis_release_architectures = split(/,/, $manifest->{architectures});
-    $genesis_release_version = $manifest->{version};
 }
 
 # An explicit --target builds just that target; otherwise build the current host
@@ -1091,9 +1092,8 @@ sub publish_genesis_common_repo {
 
 =head3 verify_common_repo
 
-    Assert the shared OpenEmbedded Genesis repository carries every package declared by the
-    verified release, at a version satisfying the [common] pin. [common] must describe every
-    currently supported Genesis architecture.
+    Assert the shared repository carries every package required by [common]. [common] must
+    describe every currently supported Genesis architecture.
 
     Arguments:
         $dir - the repository to check (the staging directory, before it is swapped into place)
@@ -1122,16 +1122,8 @@ sub verify_common_repo {
     die "FATAL: [common] has unsupported packages: @manifest_unknown\n"
       if @manifest_unknown;
 
-    die "FATAL: Genesis release has no architectures\n"
-      unless @genesis_release_architectures;
-    my @names = map { rpm_package_name($_) } @genesis_release_architectures;
-    my %release_architecture = map { $_ => 1 } @genesis_release_architectures;
-    my @omitted = grep { !$release_architecture{$_} } architectures();
-    print "WARNING: Genesis release version $genesis_release_version omits current architectures: @omitted\n"
-      if @omitted;
-    my %req = map { $_ => $common{$_} } @names;
-
-    @names          = sort @names;
+    my %req          = %common;
+    my @names        = sort keys %req;
     my %present     = repo_present_versions($dir, \@names);
     my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
     my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
