@@ -520,14 +520,17 @@ sub exercise_packager_from_unsearchable_cwd {
 sub exercise_builder_tmpdir {
     my $source = "$tmp/tmpdir-xcat-core";
     my $oe = "$source/xCAT-genesis-builder/oe";
-    make_path("$oe/kas");
+    make_path($oe);
     write_binary("$source/Version", "$version\n");
-    write_binary("$oe/kas/x86_64.yml", "header: {}\n");
     write_binary(
         "$oe/build",
         <<'BUILD',
 #!/bin/sh
 set -eu
+if [ "${1-}" = --list-architectures ]; then
+    printf '%s\n' x86_64
+    exit 0
+fi
 expected=$XCAT_GENESIS_WORK_DIR/build/tmp
 [ "${TMPDIR:-}" = "$expected" ] || exit 41
 mkdir -p "$TMPDIR/deploy"
