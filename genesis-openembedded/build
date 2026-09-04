@@ -66,9 +66,15 @@ for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/e
 }
 if ($requested{s390x}) {
     my $architecture_reporter = "$xcat_source/xCAT-genesis-builder/oe/build";
-    my $supported_output = eval {
-        capture_command($architecture_reporter, '--list-architectures');
-    };
+    my $probe_work = tempdir('xcat-genesis-capabilities.XXXXXX', TMPDIR => 1, CLEANUP => 1);
+    my $supported_output;
+    {
+        local $ENV{XCAT_GENESIS_WORK_DIR} = $probe_work;
+        local $ENV{TMPDIR} = $probe_work;
+        $supported_output = eval {
+            capture_command($architecture_reporter, '--list-architectures');
+        };
+    }
     my $report_error = $@;
     die "xcat-core source does not report supported Genesis architectures: $report_error"
       if $report_error;

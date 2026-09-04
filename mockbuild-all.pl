@@ -382,6 +382,7 @@ if ($genesis_release ne '') {
     my @omitted = grep { !$release_architecture{$_} } architectures();
     die "Genesis release version $manifest->{version} omits currently supported architectures: @omitted\n"
       if @omitted;
+    common_repository_requirements();
     $genesis_release_checksums = $checksums_before;
 }
 
@@ -1105,6 +1106,21 @@ sub publish_genesis_common_repo {
 #--------------------------------------------------------------------------------
 sub verify_common_repo {
     my ($dir) = @_;
+    my %req = %{ common_repository_requirements() };
+    my @names = sort keys %req;
+    my %present = repo_present_versions($dir, \@names);
+    my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
+    my @problems = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
+    if (@problems) {
+        print "  - $_\n" for @problems;
+        die "FATAL: shared Genesis repo INCOMPLETE at $dir (" . scalar(@problems) . " problem(s))\n";
+    }
+    print "[verify-repo] common complete: " . scalar(@names)
+        . " packages present + EVR-satisfied in $dir\n";
+    return 1;
+}
+
+sub common_repository_requirements {
     my $manifest = "$repo_root/packages-manifest.conf";
     my %MAN = read_manifest($manifest);
     my %common = %{ $MAN{common} // {} };
@@ -1121,19 +1137,7 @@ sub verify_common_repo {
       if @manifest_missing;
     die "FATAL: [common] has unsupported packages: @manifest_unknown\n"
       if @manifest_unknown;
-
-    my %req          = %common;
-    my @names        = sort keys %req;
-    my %present     = repo_present_versions($dir, \@names);
-    my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
-    my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
-    if (@problems) {
-        print "  - $_\n" for @problems;
-        die "FATAL: shared Genesis repo INCOMPLETE at $dir (" . scalar(@problems) . " problem(s))\n";
-    }
-    print "[verify-repo] common complete: " . scalar(@names)
-        . " packages present + EVR-satisfied in $dir\n";
-    return 1;
+    return \%common;
 }
 
 sub replace_common_repository {
