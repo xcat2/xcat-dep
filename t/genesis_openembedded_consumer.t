@@ -12,8 +12,10 @@ use POSIX ();
 use Test::More;
 use Time::HiRes qw(sleep);
 
+use lib "$FindBin::Bin/..";
 use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/lib";
+use BuildUtils qw(read_manifest);
 use XCAT::BuildUtils qw(
   capture_command
   command_exists
@@ -75,7 +77,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 69
+    skip 'APT repository tools are not installed', 70
       unless $^O eq 'linux'
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive');
@@ -321,11 +323,10 @@ sub run_apt_consumer {
 
 sub write_apt_manifest {
     my ($path, $mutate) = @_;
-    my $shipped = read_binary("$repo_root/debs-manifest.conf");
-    my ($section) = $shipped =~ /^\[shared\]\n([^\[]*)/ms;
-    BAIL_OUT('debs-manifest.conf has no [shared] section') unless defined $section;
-    my %shared = map { /^([^=]+)=(.*)$/ ? ($1 => $2) : () }
-      grep { length } split(/\n/, $section);
+    my %shipped = read_manifest("$repo_root/debs-manifest.conf");
+    BAIL_OUT('debs-manifest.conf has no [shared] section')
+      unless exists $shipped{shared};
+    my %shared = %{ $shipped{shared} };
     $mutate->(\%shared) if $mutate;
     make_path((File::Basename::dirname($path)));
     write_binary(
@@ -386,8 +387,14 @@ sub test_deb_consumer {
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
     my $log = "$tmp/deb-consumer.log";
+    my $manifest = "$tmp/deb-consumer.conf";
+    write_apt_manifest(
+        $manifest,
+        sub { $_[0]->{'xcat-release'} = '2.*' },
+    );
     my $status = run_apt_consumer(
         log => $log, output => $output, apt_dir => $apt_root,
+        manifest => $manifest,
         extra => [ '--genesis-release', $release_root ],
     );
     my $pool_package = "$shared_pool/$package";
@@ -565,6 +572,9 @@ sub test_version_1_deb_consumer {
     like(read_binary($log),
         qr/\[verify-repo\] shared pool complete: 7 packages present/,
         'the version 1 pool is gated against seven packages');
+    like(read_binary($log),
+        qr/WARNING: Genesis release version 1 omits current architectures: s390x/,
+        'version 1 APT publication reports its reduced architecture set');
 
     my $missing_manifest = "$tmp/deb-version-1-missing.conf";
     write_apt_manifest(

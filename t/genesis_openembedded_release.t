@@ -274,11 +274,20 @@ dies_like(sub { validate_release($missing_release) }, qr/Genesis release is miss
 SKIP: {
     skip 'git is not installed', 4 unless command_exists('git');
     my $source = "$tmp/dirty-xcat-core";
-    make_path("$source/xCAT-genesis-builder/oe/kas");
+    make_path("$source/xCAT-genesis-builder/oe");
     write_binary("$source/Version", "$version\n");
-    write_binary("$source/xCAT-genesis-builder/oe/build", "#!/bin/sh\nexit 99\n");
+    write_binary(
+        "$source/xCAT-genesis-builder/oe/build",
+        "#!/bin/sh\n"
+          . "if [ \"\${1-}\" = --list-architectures ]; then\n"
+          . "    printf '%s\\n' x86_64\n"
+          . "    exit 0\n"
+          . "fi\n"
+          . "exit 99\n",
+    );
+    chmod(0755, "$source/xCAT-genesis-builder/oe/build")
+      or die "Cannot make fixture build executable: $!";
     write_binary("$source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 99\n");
-    write_binary("$source/xCAT-genesis-builder/oe/kas/x86_64.yml", "header: {}\n");
     for my $command (
         [ 'git', '-C', $source, 'init', '-q' ],
         [ 'git', '-C', $source, 'add', '.' ],

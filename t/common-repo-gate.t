@@ -164,7 +164,11 @@ sub run_publish {
 
 # ---- a complete release publishes, and says it was gated -----------------------------------------
 {
-    my ($rc, $out, $common) = run_publish($RELEASE, 'full');
+    my ($rc, $out, $common) = run_publish(
+        $RELEASE,
+        'full',
+        sub { $_[0]->{'xCAT-release'} = '>= 2.0.0' },
+    );
     is($rc, 0, 'a complete release publishes') or diag($out);
     is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")), 8,
         'the published shared repo carries every architecture');
@@ -182,6 +186,8 @@ sub run_publish {
         'the version 1 repository does not require s390x');
     like($out, qr/\[verify-repo\] common complete: 7 packages present/,
         'the version 1 repository is gated against seven packages');
+    like($out, qr/WARNING: Genesis release version 1 omits current architectures: s390x/,
+        'version 1 publication reports its reduced architecture set');
 }
 
 {
