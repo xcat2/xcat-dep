@@ -90,8 +90,10 @@ interrupted publication leaves the previous repository exactly as it was.
 
 Both consumers verify package identities and checksums before publication.
 Version 2 releases require all eight architectures. Seven-architecture version
-1 releases remain publishable. A management node can install an image for a
-different target architecture.
+1 releases remain publishable. Building a version 2 release requires an
+xcat-core revision with the `s390x` OpenEmbedded target. Merge or deploy that
+xcat-core change first. A management node can install an image for a different
+target architecture.
 
 Without `--genesis-release`, both builders keep their existing behavior. The
 new packages do not provide, replace, or obsolete the old package names.
