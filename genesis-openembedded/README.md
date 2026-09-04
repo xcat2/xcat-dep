@@ -91,7 +91,9 @@ interrupted publication leaves the previous repository exactly as it was.
 Both consumers verify package identities and checksums before publication.
 Version 2 releases require all eight architectures. Version 1 remains readable,
 but current publishers refuse it because replacing the repository would remove
-`s390x`. Building `s390x` requires an xcat-core revision that reports the target.
+`s390x`. Builder and publisher hosts must use the same xcat-dep revision when
+the release format changes. Building `s390x` requires an xcat-core revision
+that reports the target.
 Merge or deploy that xcat-core change first. Builds for the other architectures
 still accept older xcat-core revisions. A management node can install an image
 for a different target architecture.
