@@ -10,34 +10,68 @@ use strict;
 use warnings;
 use Test::More;
 use FindBin qw($RealBin);
+use File::Basename qw(basename);
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Copy qw(copy);
 use lib "$RealBin/..";
+use lib "$RealBin/../lib";
+use lib "$RealBin/lib";
 use MockBuildUtils qw(read_manifest);
+use XCAT::BuildUtils qw(command_exists);
+use XCAT::GenesisRelease qw(architectures rpm_package_name);
+use XCAT::GenesisReleaseTest qw(
+  build_package_release
+  copy_tree
+  write_checksums
+  write_release_manifest
+);
 
 my $SCRIPT = "$RealBin/../mockbuild-all.pl";
-my $RELEASE = '/opt/xcat-ci-shared/builds/genesis-openembedded-initial-20260825/release';
+my $PACKAGER = "$RealBin/../genesis-openembedded/package";
 plan skip_all => 'mockbuild-all.pl not found'  unless -f $SCRIPT;
-plan skip_all => 'no Genesis release fixture'  unless -d "$RELEASE/rpm";
-# root, like every other test that drives mockbuild-all.pl: the script refuses to run otherwise,
-# and the CI builder (XCAT_GENESIS_CI) is root.
-plan skip_all => 'rpm tooling and a root Linux builder required'
-    unless $^O eq 'linux'
-    && $> == 0
-    && !system('sh', '-c', 'command -v rpm >/dev/null 2>&1')
-    && !system('sh', '-c', 'command -v createrepo_c >/dev/null 2>&1')
-    && !system('sh', '-c', 'command -v rpmbuild >/dev/null 2>&1');
+my @missing_requirements;
+push @missing_requirements, 'Linux' unless $^O eq 'linux';
+push @missing_requirements, 'root' unless $> == 0;
+for my $command (qw(createrepo_c gzip rpm rpmbuild tar)) {
+    push @missing_requirements, $command unless command_exists($command);
+}
+if (command_exists('tar')) {
+    my $tar_version = `tar --version 2>/dev/null`;
+    push @missing_requirements, 'GNU tar' unless $tar_version =~ /GNU tar/;
+}
+if (@missing_requirements) {
+    my $message = 'requires ' . join(', ', @missing_requirements);
+    BAIL_OUT($message) if $ENV{XCAT_GENESIS_CI};
+    plan skip_all => $message;
+}
 
 my $tmp = tempdir(CLEANUP => 1);
 my $target = 'alma+epel-10-' . do { my $m = `uname -m`; chomp $m; $m };
+my @architectures = architectures();
+my $architecture_count = scalar(@architectures);
+my $xcat_version = '2.19.0';
+my $xcat_release = 'snap202609040000';
+my $xcat_revision = 'c' x 40;
+my $source_date_epoch = 1788476400;
+my $RELEASE = build_package_release(
+    root => "$tmp/release-fixture",
+    format => 'rpm',
+    architectures => \@architectures,
+    packager => $PACKAGER,
+    version => $xcat_version,
+    release => $xcat_release,
+    revision => $xcat_revision,
+    epoch => $source_date_epoch,
+);
 
 # The shipped manifest must describe the shared repo, else nothing can gate it.
 {
     my %m = read_manifest("$RealBin/../packages-manifest.conf");
     ok($m{common} && %{ $m{common} }, 'the shipped manifest has a [common] section');
-    is(scalar(keys %{ $m{common} // {} }), 7,
-        '... naming every architecture the release must carry');
+    my @missing = grep { !exists $m{common}{ rpm_package_name($_) } } @architectures;
+    is_deeply(\@missing, [],
+        'the shared RPM manifest lists every Genesis architecture');
 }
 
 # fixture_rpm: a minimal noarch rpm, built once, standing in for a compiled dep.
@@ -71,7 +105,7 @@ SPEC
 
 # run_publish($release_dir) -> ($exit, $output, $common_dir)
 sub run_publish {
-    my ($release, $tag) = @_;
+    my ($release, $tag, $mutate_common) = @_;
     my $out = "$tmp/$tag";
     make_path("$out/root", "$out/collect");
     # Something to collect, so the run gets past the "built nothing" guard. It must NOT be an
@@ -83,6 +117,7 @@ sub run_publish {
     print $fh "[$target]\nipmitool-xcat=1.8.18\n";
     # the shared repo's own section, copied from the shipped manifest so the test uses the real one
     my %m = read_manifest("$RealBin/../packages-manifest.conf");
+    $mutate_common->($m{common}) if $mutate_common;
     print $fh "\n[common]\n";
     print $fh "$_=$m{common}{$_}\n" for sort keys %{ $m{common} // {} };
     close $fh;
@@ -97,11 +132,25 @@ sub run_publish {
     return ($? >> 8, $log, "$out/repo/common");
 }
 
+{
+    my $package = rpm_package_name('s390x');
+    my ($rc, $out, $common) = run_publish(
+        $RELEASE,
+        'unsatisfied-common',
+        sub { $_[0]->{$package} = '>= 99.0.0' },
+    );
+    isnt($rc, 0, 'an unsatisfied shared-repository requirement is refused');
+    like($out, qr/EVR \Q$package\E: repo has .* manifest requires >= 99\.0\.0/,
+        'the shared-repository gate names the unsatisfied requirement');
+    ok(!-d $common || !glob("$common/*.rpm"),
+        'a failed shared-repository gate publishes nothing');
+}
+
 # ---- a complete release publishes, and says it was gated -----------------------------------------
 {
     my ($rc, $out, $common) = run_publish($RELEASE, 'full');
     is($rc, 0, 'a complete release publishes') or diag($out);
-    is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")), 7,
+    is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")), $architecture_count,
         'the published shared repo carries every architecture');
     like($out, qr/\[verify-repo\] common complete/, 'the shared repo is gated against [common]');
 }
@@ -109,23 +158,45 @@ sub run_publish {
 # ---- an incomplete release is refused, and publishes nothing --------------------------------------
 {
     my $partial = "$tmp/partial-release";
+    my $missing_architecture = $architectures[-1];
+    my $missing_package = rpm_package_name($missing_architecture);
+    my @partial_architectures = grep { $_ ne $missing_architecture } @architectures;
     make_path("$partial/rpm", "$partial/srpm");
     for my $f (glob("$RELEASE/rpm/*.rpm"), glob("$RELEASE/srpm/*.rpm")) {
-        next if $f =~ /riscv64/;                        # drop one architecture
+        next if basename($f) =~ /^\Q$missing_package-\E/;
         my ($sub) = $f =~ m{/(rpm|srpm)/[^/]+$};
         copy($f, "$partial/$sub/") or die $!;
     }
-    copy("$RELEASE/release.manifest", $partial) or die $!;
-    # SHA256SUMS without the dropped arch, so the release itself still self-describes consistently
-    open my $in, '<', "$RELEASE/SHA256SUMS" or die $!;
-    open my $o, '>', "$partial/SHA256SUMS" or die $!;
-    while (<$in>) { print {$o} $_ unless /riscv64/ }
-    close $in; close $o;
+    write_release_manifest(
+        $partial, $xcat_version, $xcat_release, $xcat_revision, $source_date_epoch,
+        join(',', @partial_architectures), 'rpm',
+    );
+    write_checksums($partial);
 
     my ($rc, $out, $common) = run_publish($partial, 'partial');
     isnt($rc, 0, 'a release missing an architecture is refused');
+    like($out, qr/missing supported architectures: \Q$missing_architecture\E/,
+        'the completeness gate identifies the missing architecture');
     ok(!-d $common || !glob("$common/*.rpm"),
         '... and nothing is published into the shared repository');
+}
+
+{
+    my $inconsistent = "$tmp/inconsistent-release";
+    my $missing_package = rpm_package_name($architectures[-1]);
+    copy_tree($RELEASE, $inconsistent);
+    for my $directory (qw(rpm srpm)) {
+        my @packages = glob("$inconsistent/$directory/$missing_package-*");
+        unlink(@packages) == @packages or die "cannot remove package fixture\n";
+    }
+    write_checksums($inconsistent);
+
+    my ($rc, $out, $common) = run_publish($inconsistent, 'inconsistent');
+    isnt($rc, 0, 'a release inconsistent with its manifest is refused');
+    like($out, qr/Genesis release is missing:/,
+        'the release-layout gate reports the missing package');
+    ok(!-d $common || !glob("$common/*.rpm"),
+        'an inconsistent release publishes nothing');
 }
 
 done_testing();

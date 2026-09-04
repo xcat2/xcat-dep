@@ -53,7 +53,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 
 is_deeply(
     [ architectures() ],
-    [ qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64) ],
+    [ qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64 s390x) ],
     'supported architectures keep their exact xCAT names',
 );
 is(rpm_package_name('ppc64le'), 'xCAT-genesis-openembedded-ppc64le',
@@ -200,6 +200,32 @@ write_release_manifest(
 );
 write_checksums($complete_release);
 ok(validate_complete_release($complete_release), 'complete release can be published');
+
+my $legacy_release = "$tmp/legacy-release";
+copy_tree($complete_release, $legacy_release);
+for my $directory (qw(rpm srpm deb)) {
+    my @s390x_packages = glob("$legacy_release/$directory/*s390x*");
+    unlink(@s390x_packages) == @s390x_packages
+      or die "Cannot remove the s390x package fixture: $!\n";
+}
+write_release_manifest(
+    $legacy_release, $version, $release, $revision, $epoch,
+    'x86,x86_64,ppc64,ppc64le,armv7hf,aarch64,riscv64', 'deb,rpm', 1,
+);
+write_checksums($legacy_release);
+ok(validate_complete_release($legacy_release),
+    'complete version 1 releases remain publishable');
+
+my $unknown_release_version = "$tmp/unknown-release-version";
+copy_tree($complete_release, $unknown_release_version);
+write_release_manifest(
+    $unknown_release_version, $version, $release, $revision, $epoch,
+    join(',', architectures()), 'deb,rpm', 3,
+);
+write_checksums($unknown_release_version);
+dies_like(sub { validate_release($unknown_release_version) },
+    qr/Unsupported Genesis package release version/,
+    'unknown release manifest versions fail');
 
 my $deb_only_release = "$tmp/deb-only-release";
 make_path("$deb_only_release/deb");

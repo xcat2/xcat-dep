@@ -27,11 +27,9 @@ use XCAT::GenesisRelease qw(
   rpm_package_name
 );
 use XCAT::GenesisReleaseTest qw(
-  make_export
+  build_package_release
   run_capture
   write_forkmanager_stub
-  write_checksums
-  write_release_manifest
 );
 
 my $repo_root = abs_path("$FindBin::Bin/..");
@@ -397,7 +395,9 @@ sub test_deb_consumer {
     } architectures();
     is_deeply([ genesis_deb_names($shared_pool) ], \@expected_packages,
         'shared APT pool contains one complete Genesis release');
-    like(read_binary($log), qr/\[verify-repo\] shared pool complete: 7 packages present/,
+    my $architecture_count = scalar(architectures());
+    like(read_binary($log),
+        qr/\[verify-repo\] shared pool complete: \Q$architecture_count\E packages present/,
         'the shared pool is gated against the manifest\'s [shared] section');
     my @suite_packages;
     for my $codename (@APT_SUITES) {
@@ -996,6 +996,18 @@ SH
     is(read_binary($log), "x86_64\n", 'the activation helper runs mknb for one architecture');
 
     write_binary($log, '');
+    $status = run_capture($output, $driver, 's390x');
+    is($status, 0, 'the activation helper accepts s390x');
+    is(read_binary($log), "s390x\n", 'the activation helper runs mknb for s390x');
+
+    write_binary($log, '');
+    $status = run_capture($output, $driver, 'unsupported');
+    is($status, 0, 'an unsupported architecture does not fail the package transaction');
+    is(read_binary($log), '', 'an unsupported architecture does not run mknb');
+    like(read_binary($output), qr/Invalid Genesis architecture: unsupported/,
+        'the activation helper reports an unsupported architecture');
+
+    write_binary($log, '');
     local $ENV{XCAT_TEST_SERVICE_NODE} = 1;
     local $ENV{XCAT_TEST_SHAREDTFTP} = 1;
     $status = run_capture($output, $driver, 'ppc64le');
@@ -1011,50 +1023,16 @@ SH
 sub make_package_release {
     my ($root, $format, @requested_architectures) = @_;
     @requested_architectures = architectures() unless @requested_architectures;
-    my $release_root = "$root/release";
-    make_path($release_root);
-    for my $architecture (@requested_architectures) {
-        my $export = make_export("$root/exports/$architecture", $architecture);
-        my $packages = "$root/packages/$architecture";
-        die "Cannot package test release for $architecture\n"
-          if run_capture(
-            "$root/package-$architecture.log",
-            $packager,
-            '--architecture', $architecture,
-            '--export-dir', $export,
-            '--output-dir', $packages,
-            '--version', $version,
-            '--release', $release,
-            '--revision', $revision,
-            '--source-date-epoch', $epoch,
-            '--format', $format,
-          );
-        if ($format eq 'rpm') {
-            my $name = rpm_package_name($architecture);
-            make_path("$release_root/rpm", "$release_root/srpm");
-            copy(
-                "$packages/rpm/$name-$version-$release.noarch.rpm",
-                "$release_root/rpm/$name-$version-$release.noarch.rpm",
-            ) or die $!;
-            copy(
-                "$packages/srpm/$name-$version-$release.src.rpm",
-                "$release_root/srpm/$name-$version-$release.src.rpm",
-            ) or die $!;
-        } else {
-            my $name = deb_package_name($architecture);
-            make_path("$release_root/deb");
-            copy(
-                "$packages/deb/${name}_${version}-${release}_all.deb",
-                "$release_root/deb/${name}_${version}-${release}_all.deb",
-            ) or die $!;
-        }
-    }
-    write_release_manifest(
-        $release_root, $version, $release, $revision, $epoch,
-        join(',', @requested_architectures), $format,
+    return build_package_release(
+        root => $root,
+        format => $format,
+        architectures => \@requested_architectures,
+        packager => $packager,
+        version => $version,
+        release => $release,
+        revision => $revision,
+        epoch => $epoch,
     );
-    write_checksums($release_root);
-    return $release_root;
 }
 
 sub genesis_rpm_names {

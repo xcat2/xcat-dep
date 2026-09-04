@@ -48,6 +48,7 @@ jobs:
             lib/XCAT/GenesisRelease.pm \
             mockbuild-all.pl \
             t/build_utils.t \
+            t/common-repo-gate.t \
             t/genesis_openembedded_release.t \
             t/genesis_openembedded_consumer.t \
             t/lib/XCAT/GenesisReleaseTest.pm
@@ -57,3 +58,4 @@ jobs:
           prove -v t/build_utils.t
           prove -v -It/lib t/genesis_openembedded_release.t
           sudo -E prove -v -It/lib t/genesis_openembedded_consumer.t
+          sudo -E prove -v -It/lib t/common-repo-gate.t
