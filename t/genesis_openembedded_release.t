@@ -216,6 +216,19 @@ write_checksums($legacy_release);
 ok(validate_complete_release($legacy_release),
     'complete version 1 releases remain publishable');
 
+my $invalid_legacy_release = "$tmp/invalid-legacy-release";
+copy_tree($complete_release, $invalid_legacy_release);
+write_release_manifest(
+    $invalid_legacy_release, $version, $release, $revision, $epoch,
+    join(',', architectures()), 'deb,rpm', 1,
+);
+write_checksums($invalid_legacy_release);
+dies_like(
+    sub { validate_release($invalid_legacy_release) },
+    qr/Genesis architecture s390x is not valid in release version 1/,
+    'version 1 rejects the version 2 architecture vocabulary',
+);
+
 my $unknown_release_version = "$tmp/unknown-release-version";
 copy_tree($complete_release, $unknown_release_version);
 write_release_manifest(
@@ -259,12 +272,13 @@ dies_like(sub { validate_release($missing_release) }, qr/Genesis release is miss
     'incomplete architecture set fails');
 
 SKIP: {
-    skip 'git is not installed', 2 unless command_exists('git');
+    skip 'git is not installed', 4 unless command_exists('git');
     my $source = "$tmp/dirty-xcat-core";
-    make_path("$source/xCAT-genesis-builder/oe");
+    make_path("$source/xCAT-genesis-builder/oe/kas");
     write_binary("$source/Version", "$version\n");
     write_binary("$source/xCAT-genesis-builder/oe/build", "#!/bin/sh\nexit 99\n");
     write_binary("$source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 99\n");
+    write_binary("$source/xCAT-genesis-builder/oe/kas/x86_64.yml", "header: {}\n");
     for my $command (
         [ 'git', '-C', $source, 'init', '-q' ],
         [ 'git', '-C', $source, 'add', '.' ],
@@ -286,6 +300,19 @@ SKIP: {
     );
     like(read_binary($log), qr/xcat-core checkout is not clean/,
         'dirty checkout failure is explicit');
+
+    my $target_log = "$tmp/missing-target.log";
+    isnt(
+        run_capture(
+            $target_log, $builder, '--xcat-source', $source,
+            '--architecture', 's390x',
+            '--output-dir', "$tmp/missing-target-output",
+        ),
+        0,
+        'release builder rejects an unsupported xcat-core target',
+    );
+    like(read_binary($target_log), qr/does not support Genesis architecture s390x/,
+        'missing target failure identifies the required xcat-core support');
 }
 
 SKIP: {
@@ -484,8 +511,9 @@ sub exercise_packager_from_unsearchable_cwd {
 sub exercise_builder_tmpdir {
     my $source = "$tmp/tmpdir-xcat-core";
     my $oe = "$source/xCAT-genesis-builder/oe";
-    make_path($oe);
+    make_path("$oe/kas");
     write_binary("$source/Version", "$version\n");
+    write_binary("$oe/kas/x86_64.yml", "header: {}\n");
     write_binary(
         "$oe/build",
         <<'BUILD',

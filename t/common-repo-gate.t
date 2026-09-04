@@ -49,7 +49,6 @@ if (@missing_requirements) {
 my $tmp = tempdir(CLEANUP => 1);
 my $target = 'alma+epel-10-' . do { my $m = `uname -m`; chomp $m; $m };
 my @architectures = architectures();
-my $architecture_count = scalar(@architectures);
 my $xcat_version = '2.19.0';
 my $xcat_release = 'snap202609040000';
 my $xcat_revision = 'c' x 40;
@@ -85,8 +84,9 @@ write_checksums($VERSION_1_RELEASE);
 {
     my %m = read_manifest("$RealBin/../packages-manifest.conf");
     ok($m{common} && %{ $m{common} }, 'the shipped manifest has a [common] section');
-    my @missing = grep { !exists $m{common}{ rpm_package_name($_) } } @architectures;
-    is_deeply(\@missing, [],
+    my @expected = sort map { rpm_package_name($_) }
+      qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64 s390x);
+    is_deeply([ sort keys %{ $m{common} } ], \@expected,
         'the shared RPM manifest lists every Genesis architecture');
 }
 
@@ -166,19 +166,48 @@ sub run_publish {
 {
     my ($rc, $out, $common) = run_publish($RELEASE, 'full');
     is($rc, 0, 'a complete release publishes') or diag($out);
-    is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")), $architecture_count,
+    is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")), 8,
         'the published shared repo carries every architecture');
-    like($out, qr/\[verify-repo\] common complete/, 'the shared repo is gated against [common]');
+    like($out, qr/\[verify-repo\] common complete: 8 packages present/,
+        'the shared repo is gated against [common]');
 }
 
 {
     my ($rc, $out, $common) = run_publish($VERSION_1_RELEASE, 'version-1');
     is($rc, 0, 'a complete version 1 release publishes') or diag($out);
     is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")),
-        scalar(@version_1_architectures),
+        7,
         'the version 1 repository keeps its seven architectures');
     ok(!glob("$common/" . rpm_package_name('s390x') . '-*.rpm'),
         'the version 1 repository does not require s390x');
+    like($out, qr/\[verify-repo\] common complete: 7 packages present/,
+        'the version 1 repository is gated against seven packages');
+}
+
+{
+    my ($rc, $out, $common) = run_publish(
+        $VERSION_1_RELEASE,
+        'missing-current-package',
+        sub { delete $_[0]->{ rpm_package_name('s390x') } },
+    );
+    isnt($rc, 0, 'a version 1 release does not hide an incomplete current manifest');
+    like($out, qr/\[common\] is missing supported packages: .*s390x/,
+        'the manifest failure identifies the missing current package');
+    ok(!-d $common || !glob("$common/*.rpm"),
+        'an incomplete current manifest publishes nothing');
+}
+
+{
+    my ($rc, $out, $common) = run_publish(
+        $RELEASE,
+        'unknown-current-package',
+        sub { $_[0]->{'xCAT-genesis-openembedded-unknown'} = '>= 2.18.0' },
+    );
+    isnt($rc, 0, 'an unknown shared manifest package is refused');
+    like($out, qr/\[common\] has unsupported packages: xCAT-genesis-openembedded-unknown/,
+        'the manifest failure identifies the unknown package');
+    ok(!-d $common || !glob("$common/*.rpm"),
+        'an unknown shared manifest package publishes nothing');
 }
 
 # ---- an incomplete release is refused, and publishes nothing --------------------------------------

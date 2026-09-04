@@ -75,7 +75,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 62
+    skip 'APT repository tools are not installed', 69
       unless $^O eq 'linux'
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive');
@@ -301,14 +301,7 @@ sub run_apt_consumer {
     my $manifest = $args{manifest};
     unless ($manifest) {
         $manifest = "$args{output}/manifest.conf";
-        make_path($args{output});
-        # plus the shipped [shared] section verbatim: publishing a release gates the shared pool
-        # against it, and a manifest without it is refused rather than silently ungated.
-        my $shipped = read_binary("$repo_root/debs-manifest.conf");
-        my ($shared) = $shipped =~ /^(\[shared\]\n(?:[^\[]*))/ms;
-        BAIL_OUT('debs-manifest.conf has no [shared] section') unless $shared;
-        write_binary($manifest,
-            join('', map { "[$_-amd64]\nxcat-genesis-base=*\n" } @APT_SUITES) . "\n" . $shared);
+        write_apt_manifest($manifest);
     }
     return run_capture(
         $args{log},
@@ -323,6 +316,23 @@ sub run_apt_consumer {
         '--publish', '--expect-arch', 'amd64 ppc64el',
         ($args{verify} ? () : ('--no-verify-repo')),
         @{ $args{extra} // [] },
+    );
+}
+
+sub write_apt_manifest {
+    my ($path, $mutate) = @_;
+    my $shipped = read_binary("$repo_root/debs-manifest.conf");
+    my ($section) = $shipped =~ /^\[shared\]\n([^\[]*)/ms;
+    BAIL_OUT('debs-manifest.conf has no [shared] section') unless defined $section;
+    my %shared = map { /^([^=]+)=(.*)$/ ? ($1 => $2) : () }
+      grep { length } split(/\n/, $section);
+    $mutate->(\%shared) if $mutate;
+    make_path((File::Basename::dirname($path)));
+    write_binary(
+        $path,
+        join('', map { "[$_-amd64]\nxcat-genesis-base=*\n" } @APT_SUITES)
+          . "\n[shared]\n"
+          . join('', map { "$_=$shared{$_}\n" } sort keys %shared),
     );
 }
 
@@ -398,9 +408,8 @@ sub test_deb_consumer {
     } architectures();
     is_deeply([ genesis_deb_names($shared_pool) ], \@expected_packages,
         'shared APT pool contains one complete Genesis release');
-    my $architecture_count = scalar(architectures());
     like(read_binary($log),
-        qr/\[verify-repo\] shared pool complete: \Q$architecture_count\E packages present/,
+        qr/\[verify-repo\] shared pool complete: 8 packages present/,
         'the shared pool is gated against the manifest\'s [shared] section');
     my @suite_packages;
     for my $codename (@APT_SUITES) {
@@ -549,10 +558,55 @@ sub test_version_1_deb_consumer {
     my $pool = "$apt_root/pool/main/xcat-genesis-openembedded";
 
     is($status, 0, 'APT accepts a complete version 1 release');
-    is(scalar(genesis_deb_names($pool)), scalar(@release_architectures),
+    is(scalar(genesis_deb_names($pool)), 7,
         'the version 1 pool keeps its seven architectures');
     is(scalar(grep { /s390x/ } genesis_deb_names($pool)), 0,
         'the version 1 pool does not require s390x');
+    like(read_binary($log),
+        qr/\[verify-repo\] shared pool complete: 7 packages present/,
+        'the version 1 pool is gated against seven packages');
+
+    my $missing_manifest = "$tmp/deb-version-1-missing.conf";
+    write_apt_manifest(
+        $missing_manifest,
+        sub { delete $_[0]->{ deb_package_name('s390x') } },
+    );
+    my $missing_apt = "$tmp/apt-version-1-missing";
+    my $missing_output = "$tmp/deb-version-1-missing-output";
+    stage_apt_suites($missing_output, "$tmp/deb-version-1-missing-legacy");
+    my $missing_log = "$tmp/deb-version-1-missing.log";
+    my $missing_status = run_apt_consumer(
+        log => $missing_log, output => $missing_output, apt_dir => $missing_apt,
+        manifest => $missing_manifest,
+        extra => [ '--genesis-release', $release_root ],
+    );
+    isnt($missing_status, 0,
+        'a version 1 release does not hide an incomplete current shared manifest');
+    like(read_binary($missing_log), qr/\[shared\] is missing supported packages: .*s390x/,
+        'the shared manifest failure identifies the missing current package');
+    ok(!-d "$missing_apt/pool/main/xcat-genesis-openembedded",
+        'an incomplete shared manifest publishes nothing');
+
+    my $unknown_manifest = "$tmp/deb-version-1-unknown.conf";
+    write_apt_manifest(
+        $unknown_manifest,
+        sub { $_[0]->{'xcat-genesis-openembedded-unknown'} = '2.*' },
+    );
+    my $unknown_apt = "$tmp/apt-version-1-unknown";
+    my $unknown_output = "$tmp/deb-version-1-unknown-output";
+    stage_apt_suites($unknown_output, "$tmp/deb-version-1-unknown-legacy");
+    my $unknown_log = "$tmp/deb-version-1-unknown.log";
+    my $unknown_status = run_apt_consumer(
+        log => $unknown_log, output => $unknown_output, apt_dir => $unknown_apt,
+        manifest => $unknown_manifest,
+        extra => [ '--genesis-release', $release_root ],
+    );
+    isnt($unknown_status, 0, 'an unknown shared manifest package is refused');
+    like(read_binary($unknown_log),
+        qr/\[shared\] has unsupported packages: xcat-genesis-openembedded-unknown/,
+        'the shared manifest failure identifies the unknown package');
+    ok(!-d "$unknown_apt/pool/main/xcat-genesis-openembedded",
+        'an unknown shared manifest package publishes nothing');
 }
 
 sub test_signed_common_rpm_repository {
