@@ -119,9 +119,8 @@ SPEC
     return $FIXTURE;
 }
 
-# run_publish($release_dir) -> ($exit, $output, $common_dir)
 sub run_publish {
-    my ($release, $tag, $mutate_common) = @_;
+    my ($release, $tag, $mutate_common, $skip_repo_verification) = @_;
     my $out = "$tmp/$tag";
     make_path("$out/root", "$out/collect");
     # Something to collect, so the run gets past the "built nothing" guard. It must NOT be an
@@ -137,13 +136,16 @@ sub run_publish {
     print $fh "\n[common]\n";
     print $fh "$_=$m{common}{$_}\n" for sort keys %{ $m{common} // {} };
     close $fh;
-    my $cmd = join(' ', map { my $x = $_; $x =~ s/'/'"'"'/g; "'$x'" }
+    my @command =
         ($^X, $SCRIPT, '--repo-root', "$out/root", '--output', "$out/build",
          '--repo-dep', "$out/repo", '--target', $target, '--run-id', $tag,
          '--build-timestamp', '1787672536',
          '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
          '--skip-tarball',
-         '--collect-dir', "$out/collect", '--genesis-release', $release)) . ' 2>&1';
+         '--collect-dir', "$out/collect", '--genesis-release', $release);
+    push @command, '--no-verify-repo' if $skip_repo_verification;
+    my $cmd = join(' ', map { my $x = $_; $x =~ s/'/'"'"'/g; "'$x'" } @command)
+      . ' 2>&1';
     my $log = `$cmd`;
     return ($? >> 8, $log, "$out/repo/common");
 }
@@ -200,11 +202,25 @@ sub run_publish {
         'missing-current-package',
         sub { delete $_[0]->{ rpm_package_name('s390x') } },
     );
-    isnt($rc, 0, 'a version 1 release does not hide an incomplete current manifest');
+    isnt($rc, 0, 'a current release does not hide an incomplete manifest');
     like($out, qr/\[common\] is missing supported packages: .*s390x/,
         'the manifest failure identifies the missing current package');
     ok(!-d $common || !glob("$common/*.rpm"),
         'an incomplete current manifest publishes nothing');
+}
+
+{
+    my ($rc, $out, $common) = run_publish(
+        $RELEASE,
+        'missing-current-package-without-repo-verification',
+        sub { delete $_[0]->{ rpm_package_name('s390x') } },
+        1,
+    );
+    isnt($rc, 0, 'repository verification cannot disable the common manifest gate');
+    like($out, qr/\[common\] is missing supported packages: .*s390x/,
+        'the mandatory manifest gate identifies the missing package');
+    ok(!-d $common || !glob("$common/*.rpm"),
+        'the mandatory manifest gate publishes nothing');
 }
 
 {

@@ -214,7 +214,7 @@ write_release_manifest(
 );
 write_checksums($legacy_release);
 ok(validate_complete_release($legacy_release),
-    'complete version 1 releases remain publishable');
+    'complete version 1 releases remain readable');
 
 my $invalid_legacy_release = "$tmp/invalid-legacy-release";
 copy_tree($complete_release, $invalid_legacy_release);
@@ -272,14 +272,16 @@ dies_like(sub { validate_release($missing_release) }, qr/Genesis release is miss
     'incomplete architecture set fails');
 
 SKIP: {
-    skip 'git is not installed', 4 unless command_exists('git');
+    skip 'git is not installed', 9 unless command_exists('git');
     my $source = "$tmp/dirty-xcat-core";
-    make_path("$source/xCAT-genesis-builder/oe");
+    my $oe = "$source/xCAT-genesis-builder/oe";
+    make_path($oe);
     write_binary("$source/Version", "$version\n");
     write_binary(
         "$source/xCAT-genesis-builder/oe/build",
         "#!/bin/sh\n"
           . "if [ \"\${1-}\" = --list-architectures ]; then\n"
+          . "    mkdir -p \"\${XCAT_GENESIS_WORK_DIR:?}\"\n"
           . "    printf '%s\\n' x86_64\n"
           . "    exit 0\n"
           . "fi\n"
@@ -322,6 +324,38 @@ SKIP: {
     );
     like(read_binary($target_log), qr/does not support Genesis architecture s390x/,
         'missing target failure identifies the required xcat-core support');
+    ok(!-d "$oe/.work",
+        'the capability query does not create a work directory in xcat-core');
+
+    write_binary("$oe/build", "#!/bin/sh\nexit 23\n");
+    chmod(0755, "$oe/build") or die "Cannot update fixture build executable: $!";
+    my $failed_log = "$tmp/failed-query.log";
+    isnt(
+        run_capture(
+            $failed_log, $builder, '--xcat-source', $source,
+            '--architecture', 's390x',
+            '--output-dir', "$tmp/failed-query-output",
+        ),
+        0,
+        'release builder rejects a failed architecture query',
+    );
+    like(read_binary($failed_log), qr/does not report supported Genesis architectures/,
+        'failed architecture queries are reported');
+
+    write_binary("$oe/build", "#!/bin/sh\nexit 0\n");
+    chmod(0755, "$oe/build") or die "Cannot update fixture build executable: $!";
+    my $empty_log = "$tmp/empty-query.log";
+    isnt(
+        run_capture(
+            $empty_log, $builder, '--xcat-source', $source,
+            '--architecture', 's390x',
+            '--output-dir', "$tmp/empty-query-output",
+        ),
+        0,
+        'release builder rejects an empty architecture query',
+    );
+    like(read_binary($empty_log), qr/reported no supported Genesis architectures/,
+        'empty architecture queries are reported');
 }
 
 SKIP: {
@@ -528,7 +562,7 @@ sub exercise_builder_tmpdir {
 #!/bin/sh
 set -eu
 if [ "${1-}" = --list-architectures ]; then
-    printf '%s\n' x86_64
+    printf '%s\n' x86_64 s390x
     exit 0
 fi
 expected=$XCAT_GENESIS_WORK_DIR/build/tmp
@@ -582,7 +616,7 @@ EXPORT
         $status = run_capture(
             $log, $builder, '--xcat-source', $source,
             '--output-dir', $output, '--work-dir', $persistent_work,
-            '--format', 'deb',
+            '--format', 'deb', '--architecture', 's390x',
         );
     }
     is($status, 0, 'release builder isolates the OpenEmbedded tmpdir');
@@ -593,6 +627,6 @@ EXPORT
     is((stat($output))[2] & oct('07777'), oct('0755'),
         'release directory is readable by other users');
     my $built = validate_release($output);
-    is($built->{architectures}, 'x86_64', 'isolated build keeps the target architecture');
+    is($built->{architectures}, 's390x', 'isolated build keeps the target architecture');
     is($built->{formats}, 'deb', 'isolated build keeps the requested format');
 }

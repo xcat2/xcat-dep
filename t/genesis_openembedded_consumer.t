@@ -103,9 +103,13 @@ done_testing();
 sub write_target_manifest {
     my ($root, $target) = @_;
     make_path($root);
+    my %manifest = read_manifest("$repo_root/packages-manifest.conf");
+    my $common = join('', map { "$_=$manifest{common}{$_}\n" }
+      sort keys %{ $manifest{common} // {} });
     write_binary(
         "$root/packages-manifest.conf",
-        "[$target]\n" . rpm_package_name(capture_command('uname', '-m')) . "=*\n",
+        "[$target]\n" . rpm_package_name(capture_command('uname', '-m'))
+          . "=*\n\n[common]\n$common",
     );
 }
 
@@ -583,7 +587,7 @@ sub test_version_1_deb_consumer {
         extra => [ '--genesis-release', $current_release ],
     );
     isnt($missing_status, 0,
-        'a version 1 release does not hide an incomplete current shared manifest');
+        'a current release does not hide an incomplete shared manifest');
     like(read_binary($missing_log), qr/\[shared\] is missing supported packages: .*s390x/,
         'the shared manifest failure identifies the missing current package');
     ok(!-d "$missing_apt/pool/main/xcat-genesis-openembedded",
