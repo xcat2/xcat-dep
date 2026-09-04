@@ -387,14 +387,8 @@ sub test_deb_consumer {
 
     local $ENV{SOURCE_DATE_EPOCH} = $epoch;
     my $log = "$tmp/deb-consumer.log";
-    my $manifest = "$tmp/deb-consumer.conf";
-    write_apt_manifest(
-        $manifest,
-        sub { $_[0]->{'xcat-release'} = '2.*' },
-    );
     my $status = run_apt_consumer(
         log => $log, output => $output, apt_dir => $apt_root,
-        manifest => $manifest,
         extra => [ '--genesis-release', $release_root ],
     );
     my $pool_package = "$shared_pool/$package";
@@ -564,17 +558,15 @@ sub test_version_1_deb_consumer {
     );
     my $pool = "$apt_root/pool/main/xcat-genesis-openembedded";
 
-    is($status, 0, 'APT accepts a complete version 1 release');
-    is(scalar(genesis_deb_names($pool)), 7,
-        'the version 1 pool keeps its seven architectures');
-    is(scalar(grep { /s390x/ } genesis_deb_names($pool)), 0,
-        'the version 1 pool does not require s390x');
+    isnt($status, 0, 'APT refuses a version 1 release for the current repository');
     like(read_binary($log),
-        qr/\[verify-repo\] shared pool complete: 7 packages present/,
-        'the version 1 pool is gated against seven packages');
-    like(read_binary($log),
-        qr/WARNING: Genesis release version 1 omits current architectures: s390x/,
-        'version 1 APT publication reports its reduced architecture set');
+        qr/Genesis release version 1 omits currently supported architectures: s390x/,
+        'the version 1 refusal identifies the missing architecture');
+    ok(!-d $pool, 'a version 1 release publishes no shared pool');
+
+    my $current_release = make_package_release(
+        "$tmp/deb-current-manifest", 'deb', architectures(),
+    );
 
     my $missing_manifest = "$tmp/deb-version-1-missing.conf";
     write_apt_manifest(
@@ -588,7 +580,7 @@ sub test_version_1_deb_consumer {
     my $missing_status = run_apt_consumer(
         log => $missing_log, output => $missing_output, apt_dir => $missing_apt,
         manifest => $missing_manifest,
-        extra => [ '--genesis-release', $release_root ],
+        extra => [ '--genesis-release', $current_release ],
     );
     isnt($missing_status, 0,
         'a version 1 release does not hide an incomplete current shared manifest');
@@ -609,7 +601,7 @@ sub test_version_1_deb_consumer {
     my $unknown_status = run_apt_consumer(
         log => $unknown_log, output => $unknown_output, apt_dir => $unknown_apt,
         manifest => $unknown_manifest,
-        extra => [ '--genesis-release', $release_root ],
+        extra => [ '--genesis-release', $current_release ],
     );
     isnt($unknown_status, 0, 'an unknown shared manifest package is refused');
     like(read_binary($unknown_log),
@@ -617,6 +609,28 @@ sub test_version_1_deb_consumer {
         'the shared manifest failure identifies the unknown package');
     ok(!-d "$unknown_apt/pool/main/xcat-genesis-openembedded",
         'an unknown shared manifest package publishes nothing');
+
+    my $non_genesis_manifest = "$tmp/deb-non-genesis-missing.conf";
+    write_apt_manifest(
+        $non_genesis_manifest,
+        sub { $_[0]->{'xcat-release'} = '2.*' },
+    );
+    my $non_genesis_apt = "$tmp/apt-non-genesis-missing";
+    my $non_genesis_output = "$tmp/deb-non-genesis-missing-output";
+    stage_apt_suites($non_genesis_output, "$tmp/deb-non-genesis-missing-legacy");
+    my $non_genesis_log = "$tmp/deb-non-genesis-missing.log";
+    my $non_genesis_status = run_apt_consumer(
+        log => $non_genesis_log,
+        output => $non_genesis_output,
+        apt_dir => $non_genesis_apt,
+        manifest => $non_genesis_manifest,
+        extra => [ '--genesis-release', $current_release ],
+    );
+    isnt($non_genesis_status, 0, 'every shared manifest package is verified');
+    like(read_binary($non_genesis_log), qr/MISSING xcat-release/,
+        'the shared gate identifies a missing non-Genesis package');
+    ok(!-d "$non_genesis_apt/pool/main/xcat-genesis-openembedded",
+        'a missing non-Genesis package prevents APT publication');
 }
 
 sub test_signed_common_rpm_repository {

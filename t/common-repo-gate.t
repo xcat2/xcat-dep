@@ -164,11 +164,7 @@ sub run_publish {
 
 # ---- a complete release publishes, and says it was gated -----------------------------------------
 {
-    my ($rc, $out, $common) = run_publish(
-        $RELEASE,
-        'full',
-        sub { $_[0]->{'xCAT-release'} = '>= 2.0.0' },
-    );
+    my ($rc, $out, $common) = run_publish($RELEASE, 'full');
     is($rc, 0, 'a complete release publishes') or diag($out);
     is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")), 8,
         'the published shared repo carries every architecture');
@@ -178,21 +174,29 @@ sub run_publish {
 
 {
     my ($rc, $out, $common) = run_publish($VERSION_1_RELEASE, 'version-1');
-    is($rc, 0, 'a complete version 1 release publishes') or diag($out);
-    is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")),
-        7,
-        'the version 1 repository keeps its seven architectures');
-    ok(!glob("$common/" . rpm_package_name('s390x') . '-*.rpm'),
-        'the version 1 repository does not require s390x');
-    like($out, qr/\[verify-repo\] common complete: 7 packages present/,
-        'the version 1 repository is gated against seven packages');
-    like($out, qr/WARNING: Genesis release version 1 omits current architectures: s390x/,
-        'version 1 publication reports its reduced architecture set');
+    isnt($rc, 0, 'a version 1 release cannot replace the current repository');
+    like($out, qr/Genesis release version 1 omits currently supported architectures: s390x/,
+        'version 1 refusal identifies the missing architecture');
+    ok(!-d $common || !glob("$common/*.rpm"),
+        'a version 1 release publishes nothing');
 }
 
 {
     my ($rc, $out, $common) = run_publish(
-        $VERSION_1_RELEASE,
+        $RELEASE,
+        'missing-non-genesis-package',
+        sub { $_[0]->{'xCAT-release'} = '>= 2.0.0' },
+    );
+    isnt($rc, 0, 'every common manifest package is verified');
+    like($out, qr/MISSING xCAT-release/,
+        'the common gate identifies a missing non-Genesis package');
+    ok(!-d $common || !glob("$common/*.rpm"),
+        'a missing non-Genesis package prevents publication');
+}
+
+{
+    my ($rc, $out, $common) = run_publish(
+        $RELEASE,
         'missing-current-package',
         sub { delete $_[0]->{ rpm_package_name('s390x') } },
     );
