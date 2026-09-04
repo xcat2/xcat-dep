@@ -33,6 +33,8 @@ use XCAT::BuildUtils qw(
   shell_quote
 );
 use XCAT::GenesisRelease qw(
+  rpm_package_name
+  validate_complete_release
   validated_release_checksums
   verify_release_file
 );
@@ -108,6 +110,7 @@ my $skip_createrepo = 0;
 my $skip_tarball = 0;
 my $genesis_release = '';
 my $genesis_release_checksums;
+my @genesis_release_architectures;
 my $scrub_all_chroots = 0;
 my $keep_buildroots = 0;   # keep per-step mock chroots after build (default: --scrub=chroot each)
 my $dry_run = 0;
@@ -374,6 +377,8 @@ if ($genesis_release ne '') {
     die "Genesis release changed during verification\n"
       unless hashes_equal($checksums_before, $checksums_after);
     $genesis_release_checksums = $checksums_before;
+    my $manifest = validate_complete_release($genesis_release);
+    @genesis_release_architectures = split(/,/, $manifest->{architectures});
 }
 
 # An explicit --target builds just that target; otherwise build the current host
@@ -1099,11 +1104,16 @@ sub verify_common_repo {
     my ($dir) = @_;
     my $manifest = "$repo_root/packages-manifest.conf";
     my %MAN = read_manifest($manifest);
-    my %req = %{ $MAN{common} // {} };
+    my %common = %{ $MAN{common} // {} };
     die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
-        if !%req;
+        if !%common;
 
-    my @names       = sort keys %req;
+    my @names = map { rpm_package_name($_) } @genesis_release_architectures;
+    my @missing = grep { !exists($common{$_}) } @names;
+    die "FATAL: [common] is missing release packages: @missing\n" if @missing;
+    my %req = map { $_ => $common{$_} } @names;
+
+    @names          = sort @names;
     my %present     = repo_present_versions($dir, \@names);
     my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
     my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
@@ -2150,4 +2160,3 @@ sub slurp_chomp {
     chomp $line if defined $line;
     return $line // '';
 }
-

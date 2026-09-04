@@ -100,6 +100,7 @@ my $gpg_key_id = 'xcat@megware.com';
 my $gpg_home = '';
 my $genesis_release = '';            # OpenEmbedded Genesis package release to publish alongside
 my $genesis_release_checksums;       # its verified SHA256SUMS, read once at startup
+my @genesis_release_architectures;
 # The OpenEmbedded Genesis debs are published ONCE, in a pool of their own that every suite indexes.
 # They are Architecture:all and identical for all suites, so a per-suite copy would multiply hundreds
 # of megabytes by the number of codenames for no gain.
@@ -318,6 +319,8 @@ if ($genesis_release ne '') {
     die "FATAL: Genesis release changed during verification\n"
         unless XCAT::BuildUtils::hashes_equal($before, $after);
     $genesis_release_checksums = $before;
+    my $release_manifest = XCAT::GenesisRelease::validate_complete_release($genesis_release);
+    @genesis_release_architectures = split(/,/, $release_manifest->{architectures});
     # Every suite's Packages index points into the shared Genesis pool, and publishing a release
     # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
     # files that no longer exist. Publish a release for all of them or for none.
@@ -1054,10 +1057,16 @@ sub install_genesis_release_debs {
 # Completeness only -- the release checksums cover the bytes.
 sub verify_shared_pool {
     my ($pool) = @_;
-    my %req = %{ $MANIFEST{shared} // {} };
+    my %shared = %{ $MANIFEST{shared} // {} };
     die "FATAL: no [shared] section in $manifest -- cannot verify the shared Genesis pool\n"
-        if !%req;
-    my @names = sort keys %req;
+        if !%shared;
+    my @names = map {
+        XCAT::GenesisRelease::deb_package_name($_)
+    } @genesis_release_architectures;
+    my @missing = grep { !exists($shared{$_}) } @names;
+    die "FATAL: [shared] is missing release packages: @missing\n" if @missing;
+    my %req = map { $_ => $shared{$_} } @names;
+    @names = sort @names;
     my %present = map { $_ => deb_version($pool, $_) } @names;
     my @problems = verify_repo_packages(\%req, \%present);
     if (@problems) {
