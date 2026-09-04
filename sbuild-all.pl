@@ -101,6 +101,7 @@ my $gpg_home = '';
 my $genesis_release = '';            # OpenEmbedded Genesis package release to publish alongside
 my $genesis_release_checksums;       # its verified SHA256SUMS, read once at startup
 my @genesis_release_architectures;
+my $genesis_release_version;
 # The OpenEmbedded Genesis debs are published ONCE, in a pool of their own that every suite indexes.
 # They are Architecture:all and identical for all suites, so a per-suite copy would multiply hundreds
 # of megabytes by the number of codenames for no gain.
@@ -321,6 +322,7 @@ if ($genesis_release ne '') {
         unless XCAT::BuildUtils::hashes_equal($before, $after);
     $genesis_release_checksums = $before;
     @genesis_release_architectures = split(/,/, $release_manifest->{architectures});
+    $genesis_release_version = $release_manifest->{version};
     # Every suite's Packages index points into the shared Genesis pool, and publishing a release
     # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
     # files that no longer exist. Publish a release for all of them or for none.
@@ -1063,7 +1065,9 @@ sub verify_shared_pool {
     } XCAT::GenesisRelease::architectures();
     my %supported = map { $_ => 1 } @supported_names;
     my @manifest_missing = grep { !exists($shared{$_}) } @supported_names;
-    my @manifest_unknown = grep { !$supported{$_} } sort keys %shared;
+    my @manifest_unknown = grep {
+        /^xcat-genesis-openembedded-/ && !$supported{$_}
+    } sort keys %shared;
     die "FATAL: [shared] is missing supported packages: @manifest_missing\n"
       if @manifest_missing;
     die "FATAL: [shared] has unsupported packages: @manifest_unknown\n"
@@ -1074,6 +1078,12 @@ sub verify_shared_pool {
     my @names = map {
         XCAT::GenesisRelease::deb_package_name($_)
     } @genesis_release_architectures;
+    my %release_architecture = map { $_ => 1 } @genesis_release_architectures;
+    my @omitted = grep {
+        !$release_architecture{$_}
+    } XCAT::GenesisRelease::architectures();
+    print "WARNING: Genesis release version $genesis_release_version omits current architectures: @omitted\n"
+      if @omitted;
     my %req = map { $_ => $shared{$_} } @names;
     @names = sort @names;
     my %present = map { $_ => deb_version($pool, $_) } @names;

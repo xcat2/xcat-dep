@@ -64,10 +64,16 @@ $xcat_source = abs_path($xcat_source) or die "Cannot resolve xcat-core source\n"
 for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/export)) {
     die "xcat-core source is missing $path\n" unless -f "$xcat_source/$path";
 }
+my $architecture_reporter = "$xcat_source/xCAT-genesis-builder/oe/build";
+my $supported_output = eval {
+    capture_command($architecture_reporter, '--list-architectures');
+};
+die "xcat-core source does not report supported Genesis architectures\n"
+  if !defined($supported_output) || $@;
+my %supported_architecture = map { $_ => 1 } split(/\s+/, $supported_output);
 for my $architecture (@requested_architectures) {
-    my $machine = "xCAT-genesis-builder/oe/kas/$architecture.yml";
     die "xcat-core source does not support Genesis architecture $architecture\n"
-      unless -f "$xcat_source/$machine";
+      unless $supported_architecture{$architecture};
 }
 die "xcat-core checkout is not clean\n"
   if capture_command('git', '-C', $xcat_source, 'status', '--porcelain') ne '';

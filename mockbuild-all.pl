@@ -112,6 +112,7 @@ my $skip_tarball = 0;
 my $genesis_release = '';
 my $genesis_release_checksums;
 my @genesis_release_architectures;
+my $genesis_release_version;
 my $scrub_all_chroots = 0;
 my $keep_buildroots = 0;   # keep per-step mock chroots after build (default: --scrub=chroot each)
 my $dry_run = 0;
@@ -380,6 +381,7 @@ if ($genesis_release ne '') {
       unless hashes_equal($checksums_before, $checksums_after);
     $genesis_release_checksums = $checksums_before;
     @genesis_release_architectures = split(/,/, $manifest->{architectures});
+    $genesis_release_version = $manifest->{version};
 }
 
 # An explicit --target builds just that target; otherwise build the current host
@@ -1112,7 +1114,9 @@ sub verify_common_repo {
     my @supported_names = map { rpm_package_name($_) } architectures();
     my %supported = map { $_ => 1 } @supported_names;
     my @manifest_missing = grep { !exists($common{$_}) } @supported_names;
-    my @manifest_unknown = grep { !$supported{$_} } sort keys %common;
+    my @manifest_unknown = grep {
+        /^xCAT-genesis-openembedded-/ && !$supported{$_}
+    } sort keys %common;
     die "FATAL: [common] is missing supported packages: @manifest_missing\n"
       if @manifest_missing;
     die "FATAL: [common] has unsupported packages: @manifest_unknown\n"
@@ -1121,6 +1125,10 @@ sub verify_common_repo {
     die "FATAL: Genesis release has no architectures\n"
       unless @genesis_release_architectures;
     my @names = map { rpm_package_name($_) } @genesis_release_architectures;
+    my %release_architecture = map { $_ => 1 } @genesis_release_architectures;
+    my @omitted = grep { !$release_architecture{$_} } architectures();
+    print "WARNING: Genesis release version $genesis_release_version omits current architectures: @omitted\n"
+      if @omitted;
     my %req = map { $_ => $common{$_} } @names;
 
     @names          = sort @names;
