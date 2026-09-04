@@ -64,6 +64,22 @@ my $RELEASE = build_package_release(
     revision => $xcat_revision,
     epoch => $source_date_epoch,
 );
+my @version_1_architectures = grep { $_ ne 's390x' } @architectures;
+my $VERSION_1_RELEASE = build_package_release(
+    root => "$tmp/version-1-release-fixture",
+    format => 'rpm',
+    architectures => \@version_1_architectures,
+    packager => $PACKAGER,
+    version => $xcat_version,
+    release => $xcat_release,
+    revision => $xcat_revision,
+    epoch => $source_date_epoch,
+);
+write_release_manifest(
+    $VERSION_1_RELEASE, $xcat_version, $xcat_release, $xcat_revision,
+    $source_date_epoch, join(',', @version_1_architectures), 'rpm', 1,
+);
+write_checksums($VERSION_1_RELEASE);
 
 # The shipped manifest must describe the shared repo, else nothing can gate it.
 {
@@ -155,10 +171,20 @@ sub run_publish {
     like($out, qr/\[verify-repo\] common complete/, 'the shared repo is gated against [common]');
 }
 
+{
+    my ($rc, $out, $common) = run_publish($VERSION_1_RELEASE, 'version-1');
+    is($rc, 0, 'a complete version 1 release publishes') or diag($out);
+    is(scalar(grep { !/\.src\.rpm$/ } glob("$common/*.rpm")),
+        scalar(@version_1_architectures),
+        'the version 1 repository keeps its seven architectures');
+    ok(!glob("$common/" . rpm_package_name('s390x') . '-*.rpm'),
+        'the version 1 repository does not require s390x');
+}
+
 # ---- an incomplete release is refused, and publishes nothing --------------------------------------
 {
     my $partial = "$tmp/partial-release";
-    my $missing_architecture = $architectures[-1];
+    my $missing_architecture = 's390x';
     my $missing_package = rpm_package_name($missing_architecture);
     my @partial_architectures = grep { $_ ne $missing_architecture } @architectures;
     make_path("$partial/rpm", "$partial/srpm");
@@ -183,7 +209,7 @@ sub run_publish {
 
 {
     my $inconsistent = "$tmp/inconsistent-release";
-    my $missing_package = rpm_package_name($architectures[-1]);
+    my $missing_package = rpm_package_name('s390x');
     copy_tree($RELEASE, $inconsistent);
     for my $directory (qw(rpm srpm)) {
         my @packages = glob("$inconsistent/$directory/$missing_package-*");

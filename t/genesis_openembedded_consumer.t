@@ -29,7 +29,9 @@ use XCAT::GenesisRelease qw(
 use XCAT::GenesisReleaseTest qw(
   build_package_release
   run_capture
+  write_checksums
   write_forkmanager_stub
+  write_release_manifest
 );
 
 my $repo_root = abs_path("$FindBin::Bin/..");
@@ -73,11 +75,12 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 59
+    skip 'APT repository tools are not installed', 62
       unless $^O eq 'linux'
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive');
     test_deb_consumer();
+    test_version_1_deb_consumer();
     test_legacy_deb_consumer();
     test_partial_deb_release();
     test_publish_lock();
@@ -522,6 +525,34 @@ sub test_deb_consumer {
     is(digest_file("$collision/pool/main/xcat-genesis-openembedded/$package"),
         digest_file("$release_root/deb/$package"),
         'pooled package still matches the verified release');
+}
+
+sub test_version_1_deb_consumer {
+    my @release_architectures = grep { $_ ne 's390x' } architectures();
+    my $release_root = make_package_release(
+        "$tmp/deb-version-1", 'deb', @release_architectures,
+    );
+    write_release_manifest(
+        $release_root, $version, $release, $revision, $epoch,
+        join(',', @release_architectures), 'deb', 1,
+    );
+    write_checksums($release_root);
+
+    my $apt_root = "$tmp/apt-version-1";
+    my $output = "$tmp/deb-version-1-output";
+    stage_apt_suites($output, "$tmp/deb-version-1-legacy");
+    my $log = "$tmp/deb-version-1.log";
+    my $status = run_apt_consumer(
+        log => $log, output => $output, apt_dir => $apt_root,
+        extra => [ '--genesis-release', $release_root ],
+    );
+    my $pool = "$apt_root/pool/main/xcat-genesis-openembedded";
+
+    is($status, 0, 'APT accepts a complete version 1 release');
+    is(scalar(genesis_deb_names($pool)), scalar(@release_architectures),
+        'the version 1 pool keeps its seven architectures');
+    is(scalar(grep { /s390x/ } genesis_deb_names($pool)), 0,
+        'the version 1 pool does not require s390x');
 }
 
 sub test_signed_common_rpm_repository {
