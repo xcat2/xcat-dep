@@ -247,9 +247,9 @@ generation, and signing have succeeded. If a stopped publisher leaves staging
 or backup directories behind, rerun it with ``--force-unlock`` to recover the
 previous repository before starting a new publication.
 
-Repository publication requires a complete release for its manifest version.
-Version 1 contains seven architectures; version 2 also requires `s390x`. The
-packages are `noarch`, and each publication contains that release's full set.
+Repository publication requires all eight current architectures. Version 1
+remains readable but cannot replace the current repository because it lacks
+`s390x`. The packages are `noarch`, and each publication contains the full set.
 
 The release checksums cover the unsigned input packages. If repository signing
 is enabled, `rpmsign` changes the deployed RPM bytes after collection.
