@@ -178,9 +178,13 @@ sub _validate_release {
       unless $manifest->{source_date_epoch} =~ /^\d+$/;
 
     my @architectures = split(/,/, $manifest->{architectures});
+    my %version_architecture = map { $_ => 1 }
+      @{ $RELEASE_ARCHITECTURES{ $manifest->{version} } };
     my %seen_arch;
     for my $architecture (@architectures) {
         validate_architecture($architecture);
+        die "Genesis architecture $architecture is not valid in release version $manifest->{version}\n"
+          unless $version_architecture{$architecture};
         die "Duplicate release architecture: $architecture\n" if $seen_arch{$architecture}++;
     }
     die "Release manifest has no architectures\n" unless @architectures;

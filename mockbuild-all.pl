@@ -33,8 +33,9 @@ use XCAT::BuildUtils qw(
   shell_quote
 );
 use XCAT::GenesisRelease qw(
+  architectures
+  read_release_manifest
   rpm_package_name
-  validate_complete_release
   validated_release_checksums
   verify_release_file
 );
@@ -373,11 +374,11 @@ if ($genesis_release ne '') {
     # before with the one taken after is what closes that window.
     my $checksums_before = validated_release_checksums($genesis_release);
     run_command($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
+    my $manifest = read_release_manifest($genesis_release);
     my $checksums_after = validated_release_checksums($genesis_release);
     die "Genesis release changed during verification\n"
       unless hashes_equal($checksums_before, $checksums_after);
     $genesis_release_checksums = $checksums_before;
-    my $manifest = validate_complete_release($genesis_release);
     @genesis_release_architectures = split(/,/, $manifest->{architectures});
 }
 
@@ -1088,9 +1089,9 @@ sub publish_genesis_common_repo {
 
 =head3 verify_common_repo
 
-    Assert the shared OpenEmbedded Genesis repository carries every package the manifest's [common]
-    section requires, at a version satisfying its pin. [common] is not a build target: it describes
-    the one repository published beside the per-EL cells, which no [<target>] section covers.
+    Assert the shared OpenEmbedded Genesis repository carries every package declared by the
+    verified release, at a version satisfying the [common] pin. [common] must describe every
+    currently supported Genesis architecture.
 
     Arguments:
         $dir - the repository to check (the staging directory, before it is swapped into place)
@@ -1108,9 +1109,18 @@ sub verify_common_repo {
     die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
         if !%common;
 
+    my @supported_names = map { rpm_package_name($_) } architectures();
+    my %supported = map { $_ => 1 } @supported_names;
+    my @manifest_missing = grep { !exists($common{$_}) } @supported_names;
+    my @manifest_unknown = grep { !$supported{$_} } sort keys %common;
+    die "FATAL: [common] is missing supported packages: @manifest_missing\n"
+      if @manifest_missing;
+    die "FATAL: [common] has unsupported packages: @manifest_unknown\n"
+      if @manifest_unknown;
+
+    die "FATAL: Genesis release has no architectures\n"
+      unless @genesis_release_architectures;
     my @names = map { rpm_package_name($_) } @genesis_release_architectures;
-    my @missing = grep { !exists($common{$_}) } @names;
-    die "FATAL: [common] is missing release packages: @missing\n" if @missing;
     my %req = map { $_ => $common{$_} } @names;
 
     @names          = sort @names;

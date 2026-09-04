@@ -315,11 +315,11 @@ if ($genesis_release ne '') {
     require XCAT::GenesisRelease;
     my $before = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
     XCAT::BuildUtils::run_command($^X, $verifier, '--complete', '--format', 'deb', $genesis_release);
+    my $release_manifest = XCAT::GenesisRelease::read_release_manifest($genesis_release);
     my $after = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
     die "FATAL: Genesis release changed during verification\n"
         unless XCAT::BuildUtils::hashes_equal($before, $after);
     $genesis_release_checksums = $before;
-    my $release_manifest = XCAT::GenesisRelease::validate_complete_release($genesis_release);
     @genesis_release_architectures = split(/,/, $release_manifest->{architectures});
     # Every suite's Packages index points into the shared Genesis pool, and publishing a release
     # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
@@ -1050,21 +1050,30 @@ sub install_genesis_release_debs {
     return scalar(@files);
 }
 
-# verify_shared_pool($pool): assert the shared Genesis pool carries every package the manifest's
-# [shared] section requires, at a version satisfying its pin. [shared] is not a build target: it
-# describes the one pool every suite indexes, which no [<codename>-<arch>] section covers. Run on
-# the SIDE TREE, before it is swapped into place, so an incomplete pool is never published.
-# Completeness only -- the release checksums cover the bytes.
+# verify_shared_pool($pool): assert the pool carries every package declared by the verified release,
+# at a version satisfying the [shared] pin. [shared] must cover every supported Genesis architecture.
 sub verify_shared_pool {
     my ($pool) = @_;
     my %shared = %{ $MANIFEST{shared} // {} };
     die "FATAL: no [shared] section in $manifest -- cannot verify the shared Genesis pool\n"
         if !%shared;
+
+    my @supported_names = map {
+        XCAT::GenesisRelease::deb_package_name($_)
+    } XCAT::GenesisRelease::architectures();
+    my %supported = map { $_ => 1 } @supported_names;
+    my @manifest_missing = grep { !exists($shared{$_}) } @supported_names;
+    my @manifest_unknown = grep { !$supported{$_} } sort keys %shared;
+    die "FATAL: [shared] is missing supported packages: @manifest_missing\n"
+      if @manifest_missing;
+    die "FATAL: [shared] has unsupported packages: @manifest_unknown\n"
+      if @manifest_unknown;
+
+    die "FATAL: Genesis release has no architectures\n"
+      unless @genesis_release_architectures;
     my @names = map {
         XCAT::GenesisRelease::deb_package_name($_)
     } @genesis_release_architectures;
-    my @missing = grep { !exists($shared{$_}) } @names;
-    die "FATAL: [shared] is missing release packages: @missing\n" if @missing;
     my %req = map { $_ => $shared{$_} } @names;
     @names = sort @names;
     my %present = map { $_ => deb_version($pool, $_) } @names;
@@ -1480,10 +1489,10 @@ Publish an B<OpenEmbedded Genesis package release> alongside the packages this r
 release is produced separately (see F<genesis-openembedded/README.md>); this option only verifies it
 and copies the verified bytes into every selected suite.
 
-The release must be B<complete> (every supported Genesis architecture) and must carry C<deb>
-packages. It is validated before any build or publish: its C<SHA256SUMS> is read, the shared
-verifier runs, and the checksums are read again -- a release rewritten together with its checksums
-while the verifier runs is rejected.
+The release must be complete for its manifest version and must carry C<deb> packages. Version 1
+requires seven architectures; version 2 also requires C<s390x>. It is validated before any build or
+publish: its C<SHA256SUMS> is read, the shared verifier runs, and the checksums are read again -- a
+release rewritten together with its checksums while the verifier runs is rejected.
 
 The packages are published B<once>, into F<pool/main/xcat-genesis-openembedded>, and every suite's
 C<Packages> index points at that one copy: they are C<Architecture: all> and identical everywhere,
