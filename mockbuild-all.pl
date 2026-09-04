@@ -378,7 +378,7 @@ if ($genesis_release ne '') {
     die "Genesis release changed during verification\n"
       unless hashes_equal($checksums_before, $checksums_after);
     my %release_architecture = map { $_ => 1 }
-      split(/,/, $manifest->{architectures});
+      split m{,}xms, $manifest->{architectures};
     my @omitted = grep { !$release_architecture{$_} } architectures();
     die "Genesis release version $manifest->{version} omits currently supported architectures: @omitted\n"
       if @omitted;
@@ -1129,9 +1129,9 @@ sub common_repository_requirements {
 
     my @supported_names = map { rpm_package_name($_) } architectures();
     my %supported = map { $_ => 1 } @supported_names;
-    my @manifest_missing = grep { !exists($common{$_}) } @supported_names;
+    my @manifest_missing = grep { !exists $common{$_} } @supported_names;
     my @manifest_unknown = grep {
-        /^xCAT-genesis-openembedded-/ && !$supported{$_}
+        m{\AxCAT-genesis-openembedded-}xms && !$supported{$_}
     } sort keys %common;
     die "FATAL: [common] is missing supported packages: @manifest_missing\n"
       if @manifest_missing;

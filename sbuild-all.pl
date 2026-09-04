@@ -319,7 +319,7 @@ if ($genesis_release ne '') {
     die "FATAL: Genesis release changed during verification\n"
         unless XCAT::BuildUtils::hashes_equal($before, $after);
     my %release_architecture = map { $_ => 1 }
-      split(/,/, $release_manifest->{architectures});
+      split m{,}xms, $release_manifest->{architectures};
     my @omitted = grep {
         !$release_architecture{$_}
     } XCAT::GenesisRelease::architectures();
@@ -1065,9 +1065,9 @@ sub verify_shared_pool {
         XCAT::GenesisRelease::deb_package_name($_)
     } XCAT::GenesisRelease::architectures();
     my %supported = map { $_ => 1 } @supported_names;
-    my @manifest_missing = grep { !exists($shared{$_}) } @supported_names;
+    my @manifest_missing = grep { !exists $shared{$_} } @supported_names;
     my @manifest_unknown = grep {
-        /^xcat-genesis-openembedded-/ && !$supported{$_}
+        m{\Axcat-genesis-openembedded-}xms && !$supported{$_}
     } sort keys %shared;
     die "FATAL: [shared] is missing supported packages: @manifest_missing\n"
       if @manifest_missing;

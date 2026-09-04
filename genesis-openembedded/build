@@ -3,7 +3,9 @@
 use strict;
 use warnings;
 
+use Carp qw(croak);
 use Cwd qw(abs_path);
+use English qw(-no_match_vars);
 use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
@@ -75,14 +77,17 @@ if ($requested{s390x}) {
             capture_command($architecture_reporter, '--list-architectures');
         };
     }
-    my $report_error = $@;
-    die "xcat-core source does not report supported Genesis architectures: $report_error"
-      if $report_error;
-    die "xcat-core source reported no supported Genesis architectures\n"
-      unless defined($supported_output) && length($supported_output);
-    my %supported_architecture = map { $_ => 1 } split(/\s+/, $supported_output);
-    die "xcat-core source does not support Genesis architecture s390x\n"
-      unless $supported_architecture{s390x};
+    my $report_error = $EVAL_ERROR;
+    if ($report_error) {
+        croak "xcat-core source does not report supported Genesis architectures: $report_error";
+    }
+    if (!defined($supported_output) || !length $supported_output) {
+        die "xcat-core source reported no supported Genesis architectures\n";
+    }
+    my %supported_architecture = map { $_ => 1 } split m{\s+}xms, $supported_output;
+    if (!$supported_architecture{s390x}) {
+        die "xcat-core source does not support Genesis architecture s390x\n";
+    }
 }
 die "xcat-core checkout is not clean\n"
   if capture_command('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
