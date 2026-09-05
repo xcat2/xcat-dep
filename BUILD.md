@@ -265,7 +265,7 @@ The APT side takes the same option, on the run that **publishes**:
 
 ```bash
 ./sbuild-all.pl --skip-build --skip-genesis \
-  --publish --expect-arch "amd64 ppc64el" \
+  --publish --expect-arch "amd64 ppc64el riscv64" \
   --genesis-release /path/to/xcat-genesis-release \
   --gpg-sign --gpg-key-id <id> --gpg-home <gpg-home>
 ```
@@ -678,7 +678,7 @@ the two hosts can run at the same time. `--dists` may be omitted entirely — wi
 
 ```bash
 ./sbuild-all.pl --skip-build --skip-genesis \
-  --publish --expect-arch "amd64 ppc64el" \
+  --publish --expect-arch "amd64 ppc64el riscv64" \
   --gpg-sign --gpg-key-id xcat@example.com --gpg-home <gpg-home>
 ```
 
