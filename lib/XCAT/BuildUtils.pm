@@ -230,6 +230,29 @@ sub run_bounded {
     # whatever the scheduler does.
     POSIX::setpgid($pid, $pid);
 
+    # A signal to this process must reach the build too. Without this the orchestrator dies and
+    # releases its locks while schroot, mock and qemu keep writing into staging, so the next run
+    # races an orphan it cannot see.
+    my $reap_group = sub {
+        kill('TERM', -$pid);
+        for (1 .. 40) {
+            last if waitpid($pid, POSIX::WNOHANG()) == $pid;
+            Time::HiRes::sleep(0.5);
+        }
+        kill('KILL', -$pid);
+        waitpid($pid, 0);
+    };
+    my $forward = sub {
+        my ($sig) = @_;
+        $reap_group->();
+        # die by the same signal, so the caller's exit status says what happened
+        $SIG{$sig} = 'DEFAULT';
+        kill($sig, $$);
+    };
+    local $SIG{INT}  = $forward;
+    local $SIG{TERM} = $forward;
+    local $SIG{HUP}  = $forward;
+
     my $deadline = $t0 + $timeout;
     my $timed_out = 0;
     my $status;
@@ -246,15 +269,9 @@ sub run_bounded {
         print {$out} "\nFATAL: $label exceeded its ${timeout}s budget (ran ${el}s).\n";
         eval { stall_report($pid, sample => (defined $a{sample} ? $a{sample} : 20), out => $out); 1 }
           or print {$out} "stall report failed: $@";
-        kill('TERM', -$pid);
-        for (1 .. 40) {
-            last if waitpid($pid, POSIX::WNOHANG()) == $pid;
-            select(undef, undef, undef, 0.5);
-        }
-        kill('KILL', -$pid);
-        # Unconditional final reap: a child left unreaped keeps the group alive and the caller blocks
-        # on output that never ends.
-        waitpid($pid, 0);
+        # Unconditional final reap: a child left unreaped keeps the group alive and the caller
+        # blocks on output that never ends.
+        $reap_group->();
         return { ec => 124, timed_out => 1, elapsed => time - $t0 };
     }
 
