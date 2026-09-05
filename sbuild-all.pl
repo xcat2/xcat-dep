@@ -869,7 +869,7 @@ sub resolve_expect_arches {
             for my $d (glob("$staging/$cn/*")) {
                 next unless -d $d;
                 my $a = basename($d);
-                $u{$a} = 1 if $a =~ /^(amd64|ppc64el)$/;
+                $u{$a} = 1 if is_supported_arch($a);
             }
         }
         print "  expected arches (from the staged set): " . join(' ', sort keys %u) . "\n";
@@ -926,7 +926,7 @@ sub verify_assembled_repo {
         # pure verify_repo_arches can report both directions: expected-but-absent and present-but-
         # unexpected (a stale arch left behind in the tree).
         my %native;
-        for my $a (do { my %s = map { $_ => 1 } (@expected, qw(amd64 ppc64el)); sort keys %s }) {
+        for my $a (do { my %s = map { $_ => 1 } (@expected, supported_arches()); sort keys %s }) {
             my $idx = "$adir/dists/$cn/main/binary-$a/Packages";
             $native{$a} = 0;
             next unless -f $idx;
@@ -1438,7 +1438,7 @@ C<--skip-tarball>.
 
 =over 4
 
-=item B<--arch> C<amd64|ppc64el>
+=item B<--arch> C<amd64|ppc64el|riscv64>
 
 Host architecture. Default: C<dpkg --print-architecture>.
 
@@ -1552,7 +1552,7 @@ swap it onto C<--apt-dir> atomically. B<A build run does not publish unless this
 arches can build concurrently without racing each other on the shared repo. Defaults to on for a run
 that builds nothing (C<--skip-build>), which is the finalization step. C<--no-publish> forces it off.
 
-=item B<--expect-arch> C<< amd64|ppc64el >>
+=item B<--expect-arch> C<< amd64|ppc64el|riscv64 >>
 
 The architecture set the published repo must serve, stated explicitly. Repeatable, and each value may
 be a space/comma list (C<--expect-arch "amd64 ppc64el">). Used by the gate: an expected arch with no
