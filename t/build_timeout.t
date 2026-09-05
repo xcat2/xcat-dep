@@ -128,4 +128,54 @@ my $alive = 1;
 for (1 .. 50) { $alive = (-d "/proc/$gpid") ? 1 : 0; last unless $alive; select(undef, undef, undef, 0.2); }
 is($alive, 0, 'the grandchild is killed with the group, so nothing survives holding the pipe');
 
-done_testing();
+# A signal to the orchestrator must reach the build. Without forwarding, the wrapper dies and
+# releases its locks while the build keeps running and writing into staging, so the next run races
+# an orphan it cannot see. The child records its own pid, the wrapper is terminated, and the pid is
+# probed afterwards.
+{
+    my $dir = tempdir( CLEANUP => 1 );
+    my $pidfile = "$dir/child.pid";
+
+    my $wrapper = fork();
+    die "fork failed: $!" unless defined $wrapper;
+    if ( $wrapper == 0 ) {
+        # long budget: the bound must NOT be what ends this run -- the signal must be
+        run_bounded(
+            cmd     => "echo \$\$ > '$pidfile'; exec sleep 300",
+            timeout => 600,
+            label   => 'cancellation probe',
+            out     => \*STDERR,
+        );
+        POSIX::_exit(0);
+    }
+
+    my $child;
+    for ( 1 .. 100 ) {
+        if ( -s $pidfile ) {
+            open my $fh, '<', $pidfile or last;
+            chomp( $child = <$fh> // '' );
+            close $fh;
+            last if $child;
+        }
+        select( undef, undef, undef, 0.1 );
+    }
+
+  SKIP: {
+        skip 'child never reported its pid', 2 unless $child;
+        ok( kill( 0, $child ), 'the build is running before the wrapper is signalled' );
+
+        kill 'TERM', $wrapper;
+        waitpid( $wrapper, 0 );
+
+        my $alive = 1;
+        for ( 1 .. 100 ) {
+            $alive = kill( 0, $child );
+            last unless $alive;
+            select( undef, undef, undef, 0.1 );
+        }
+        ok( !$alive, 'terminating the wrapper reaps the build it started' );
+        kill 'KILL', $child if $alive;
+    }
+}
+
+done_testing;
