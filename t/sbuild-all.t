@@ -752,4 +752,50 @@ STUB
     ok( !genesis_in_manifest(), 'a target with no manifest section does not demand Genesis' );
 }
 
+# A foreign-architecture chroot is bootstrapped and built through qemu-user, so a missing binfmt
+# handler has to be reported here rather than deep inside debootstrap. The check is extracted from
+# the script and driven with the handler node redirected into a temporary tree.
+{
+    my $src = do {
+        open my $fh, '<', "$FindBin::Bin/../sbuild-all.pl" or die $!;
+        local $/; <$fh>;
+    };
+
+    my ($sub) = $src =~ /\n(sub ensure_foreign_arch_support \{\n.*?\n\})\n/ms;
+    BAIL_OUT('could not extract ensure_foreign_arch_support from sbuild-all.pl') unless defined $sub;
+
+    my ($map) = $src =~ /\n(my %BINFMT_HANDLER = \(.*?\);)\n/ms;
+    BAIL_OUT('could not extract the binfmt handler map') unless defined $map;
+
+    my $fake = tempdir( CLEANUP => 1 );
+    ( my $driver = "$map\n$sub" ) =~ s{/proc/sys/fs/binfmt_misc}{$fake}g;
+    ## no critic (BuiltinFunctions::ProhibitStringyEval)
+    eval "$driver 1" or die "failed to evaluate ensure_foreign_arch_support: $@";
+    ## use critic
+
+    my $host = `dpkg --print-architecture 2>/dev/null`;
+    chomp $host;
+
+  SKIP: {
+        skip 'needs dpkg to report a host architecture', 3 unless $host;
+
+        # the host's own architecture never needs emulation
+        eval { ensure_foreign_arch_support($host) };
+        is( $@, '', 'a native build does not ask for a binfmt handler' );
+
+        my $foreign = $host eq 'riscv64' ? 'ppc64el' : 'riscv64';
+        my $handler = $foreign eq 'riscv64' ? 'qemu-riscv64' : 'qemu-ppc64le';
+
+        eval { ensure_foreign_arch_support($foreign) };
+        like( $@, qr/binfmt handler is not registered/,
+            "a foreign $foreign build without the handler is refused" );
+
+        open my $fh, '>', "$fake/$handler" or die $!;
+        print {$fh} "enabled\ninterpreter /usr/libexec/qemu-binfmt/$handler\nflags: POF\n";
+        close $fh;
+        eval { ensure_foreign_arch_support($foreign) };
+        is( $@, '', "a foreign $foreign build with the handler registered proceeds" );
+    }
+}
+
 done_testing;
