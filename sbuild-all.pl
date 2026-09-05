@@ -74,6 +74,9 @@ my $build_number;
 # arches on their two hosts in parallel, "all 4 codenames per host" gives 8 concurrent build streams
 # (4 per host). N caps it to N; 1 forces serial.
 my $parallel_targets = 0;
+# Per-package wall-clock bound. undef = the arch-derived default in BuildUtils::chroot_build_timeout
+# (native vs qemu-user emulated); an explicit 0 disables the bound.
+my $build_timeout;
 my ($skip_build, $skip_install, $skip_genesis, $skip_xcat_dep) = (0,0,0,0);
 my $install_deps = 0;
 my ($skip_createrepo, $skip_tarball) = (0,0);
@@ -175,6 +178,7 @@ $spec{'apt-dir=s'}             = \$apt_dir;
 $spec{'mirror=s'}              = \$mirror;
 $spec{'gpg-key-id=s'}          = \$gpg_key_id;
 $spec{'parallel-targets=i'}    = \$parallel_targets;
+$spec{'build-timeout=i'}       = \$build_timeout;   # per-package wall-clock bound (0 = unbounded)
 $spec{'genesis-deb=s'}         = \@genesis_debs;
 $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
@@ -358,6 +362,10 @@ unless ($dry_run) {
     }
 }
 
+# The per-package builders are separate processes with their own CLI, so the bound travels to them in
+# the environment. Without it each one derives the same default from its chroot arch.
+$ENV{XCAT_DEP_BUILD_TIMEOUT} = $build_timeout if defined $build_timeout;
+
 print_step('Configuration');
 print "  repo-root:   $repo_root\n";
 print "  xcat-source: $xcat_src\n";
@@ -374,6 +382,10 @@ print "  publish:     " . ($publish
 print "  expect-arch: " . (@expect_arch ? "@expect_arch" : '(derive from the staged arch set)') . "\n"
     if $publish;
 print "  dry-run:     " . ($dry_run ? "yes" : "no") . "\n";
+print "  build-timeout: " . (defined $build_timeout
+    ? ($build_timeout > 0 ? "${build_timeout}s (explicit)" : 'disabled')
+    : BuildUtils::chroot_build_timeout(chroot_name($dist_list[0], $arch)) . "s (derived: "
+      . ($arch eq (do { my $h = `dpkg --print-architecture 2>/dev/null`; chomp $h; $h }) ? 'native' : 'emulated') . ")") . "\n";
 
 # ---------------------------------------------------------------------------------------------------
 # Helpers
@@ -1506,6 +1518,16 @@ CD identifiers; C<--build-timestamp> also sets C<SOURCE_DATE_EPOCH> for reproduc
 Per-codename build concurrency on this host. Default 0 = auto = build every requested codename in
 parallel (each in its own chroot); N caps it; 1 forces serial. With the two arches on their two hosts,
 the default gives 8 concurrent build streams for a 4-codename matrix (4 per host).
+
+=item B<--build-timeout> C<SECONDS>
+
+Wall-clock bound for ONE package build, passed to every per-package builder in
+C<XCAT_DEP_BUILD_TIMEOUT>. C<0> removes the bound. The default is derived from the target
+architecture: 900s for a native build, and ten times that for a foreign architecture, because
+qemu-user under TCG runs at roughly a tenth of native speed. When the bound expires the run prints
+the process tree of the build, each pid's kernel wchan and stack, its open socket count and the CPU
+ticks it used over a 20-second sample, then kills the whole process group. The sample is the
+evidence that separates a deadlocked build from a slow one.
 
 =item B<--skip-build> B<--skip-install> B<--skip-genesis> B<--skip-xcat-dep> B<--skip-createrepo> B<--skip-tarball>
 

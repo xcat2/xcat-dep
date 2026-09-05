@@ -15,7 +15,9 @@ package BuildUtils;
 use strict;
 use warnings;
 use Exporter 'import';
-use File::Basename qw(basename);
+use File::Basename qw(basename dirname);
+use lib dirname(__FILE__) . '/lib';
+use XCAT::BuildUtils qw(run_bounded emulated_build_timeout);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use Digest::MD5;
@@ -31,6 +33,7 @@ our @EXPORT_OK = qw(
     codename_to_version version_to_codename known_codenames
     supported_arches is_supported_arch
     chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
+    chroot_build_timeout
     control_field genesis_deb_control
     deb_field deb_version deb_hash cross_copy_genesis_deb
     build_deb_in_chroot
@@ -730,6 +733,20 @@ INNER
 # make_deb.sh); $build runs with CWD = the copied package dir and must leave its .deb(s) somewhere
 # under the build work tree. Dies on any failure -- including a chroot that is not disposable.
 #   %args: pkg, chroot, pkg_dir, result_dir, build_timestamp, build (required); extra_tools (arrayref, optional)
+# chroot_build_timeout($chroot): the wall-clock budget for one build in $chroot. The chroot is named
+# <codename>-<arch>-sbuild, so its arch says whether the build is native or runs through qemu-user.
+# XCAT_DEP_BUILD_TIMEOUT overrides it; sbuild-all.pl --build-timeout sets that variable, because the
+# per-package <dep>/sbuild.pl builders are separate processes with their own CLI. 0 disables the bound.
+sub chroot_build_timeout {
+    my ($chroot) = @_;
+    return int($ENV{XCAT_DEP_BUILD_TIMEOUT}) if defined $ENV{XCAT_DEP_BUILD_TIMEOUT}
+                                             && $ENV{XCAT_DEP_BUILD_TIMEOUT} =~ /^\d+$/;
+    my ($target_arch) = (($chroot // '') =~ /^.+-([^-]+)-sbuild$/);
+    my $host_arch = `dpkg --print-architecture 2>/dev/null`;
+    chomp $host_arch;
+    return emulated_build_timeout($target_arch, $host_arch);
+}
+
 sub build_deb_in_chroot {
     my (%a) = @_;
     defined $a{$_} or die "build_deb_in_chroot: missing '$_'\n"
@@ -760,8 +777,16 @@ sub build_deb_in_chroot {
             . sh_quote($a{pkg_dir}) . ' ' . sh_quote($a{result_dir}) . ' '
             . sh_quote($a{build_timestamp}) . ' ' . sh_quote($extra) . ' ' . sh_quote($b64);
     print "[$pkg] building in chroot $a{chroot} -> $a{result_dir} (SOURCE_DATE_EPOCH=$a{build_timestamp})\n";
-    my $rc = system('bash', '-c', $cmd);
-    my $ec = $rc == -1 ? -1 : ($rc >> 8);
+    # A build that deadlocks under qemu-user (a resolute goconserver `go build` did, with both Go
+    # pids in futex_wait and no CPU ticks at all) used to hang here forever, and a hung cell reads as
+    # "still running" rather than as a defect. Bound it, and print the process tree, each wchan and a
+    # CPU sample before the kill, so the failure says WHY it stopped.
+    my $timeout = defined $a{timeout} ? $a{timeout} : chroot_build_timeout($a{chroot});
+    my $r = run_bounded(cmd => $cmd, timeout => $timeout, label => "[$pkg] build in $a{chroot}",
+                        out => \*STDOUT);
+    die "[$pkg] build TIMED OUT after $r->{elapsed}s (budget ${timeout}s) -- see the stall report above\n"
+        if $r->{timed_out};
+    my $ec = $r->{ec};
     die "[$pkg] build failed (rc=$ec)\n" if $ec != 0;
     # The debs were copied from INSIDE the chroot; that only reaches the host if --result-dir is on a
     # bind-mounted path. Verify host-side so a mis-configured (chroot-local) result-dir fails LOUD.
