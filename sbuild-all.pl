@@ -652,6 +652,19 @@ sub convert_genesis_rpm {
     run("dpkg-deb --build " . sh_quote($pkgd) . " " . sh_quote("$outdir/${pkgname}_${ver}_all.deb"));
     return "$outdir/${pkgname}_${ver}_all.deb";
 }
+# genesis_in_manifest(): whether the legacy Genesis deb belongs to this run at all. It is named
+# per target in the manifest, and riscv64 does not name it: its Genesis is the OpenEmbedded package
+# published once into the shared pool. Without this, a plain --arch riscv64 run reaches
+# build_genesis and dies for want of a --genesis-deb it can never have, after the dep builds.
+sub genesis_in_manifest {
+    for my $cn (@dist_list) {
+        my $section = "$cn-$arch";
+        next unless $MANIFEST{$section};
+        return 1 if grep { /^xcat-genesis-base/ } keys %{ $MANIFEST{$section} };
+    }
+    return 0;
+}
+
 sub build_genesis {
     print_step('Genesis-base deb (maintained packaging preserved)');
     my $gen = "$output_root/$run_id/genesis"; wipe_tree($gen) if -d $gen; make_path($gen);
@@ -1287,7 +1300,7 @@ unless ($skip_build) {
     ensure_chroots();
     build_deps();
 }
-build_genesis()    unless $skip_genesis;
+build_genesis()    unless ($skip_genesis or !genesis_in_manifest());
 validate_manifest();
 publish_repo();      # no-op unless --publish (or a --skip-build finalization run); tarball is inside
 print_step("Completed ($arch: @dist_list)" . ($publish ? '' : ' -- staging only, not published'));
