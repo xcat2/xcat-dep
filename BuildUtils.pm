@@ -17,7 +17,10 @@ use warnings;
 use Exporter 'import';
 use File::Basename qw(basename dirname);
 use lib dirname(__FILE__) . '/lib';
-use XCAT::BuildUtils qw(run_bounded emulated_build_timeout);
+# XCAT::BuildUtils is loaded ON DEMAND, not imported here: it pulls in File::Slurper, which the
+# Ubuntu build hosts do not all carry. A compile-time import would make every caller depend on it --
+# including `sbuild-all.pl --install-deps`, the command whose whole job is to install that module on
+# a host that lacks it.
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use Digest::MD5;
@@ -744,7 +747,8 @@ sub chroot_build_timeout {
     my ($target_arch) = (($chroot // '') =~ /^.+-([^-]+)-sbuild$/);
     my $host_arch = `dpkg --print-architecture 2>/dev/null`;
     chomp $host_arch;
-    return emulated_build_timeout($target_arch, $host_arch);
+    require XCAT::BuildUtils;
+    return XCAT::BuildUtils::emulated_build_timeout($target_arch, $host_arch);
 }
 
 sub build_deb_in_chroot {
@@ -782,7 +786,8 @@ sub build_deb_in_chroot {
     # "still running" rather than as a defect. Bound it, and print the process tree, each wchan and a
     # CPU sample before the kill, so the failure says WHY it stopped.
     my $timeout = defined $a{timeout} ? $a{timeout} : chroot_build_timeout($a{chroot});
-    my $r = run_bounded(cmd => $cmd, timeout => $timeout, label => "[$pkg] build in $a{chroot}",
+    require XCAT::BuildUtils;
+    my $r = XCAT::BuildUtils::run_bounded(cmd => $cmd, timeout => $timeout, label => "[$pkg] build in $a{chroot}",
                         out => \*STDOUT);
     die "[$pkg] build TIMED OUT after $r->{elapsed}s (budget ${timeout}s) -- see the stall report above\n"
         if $r->{timed_out};
