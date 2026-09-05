@@ -717,4 +717,39 @@ STUB
         'a staged tree for an unsupported architecture is still ignored' );
 }
 
+# The legacy Genesis deb is named per target in the manifest, and riscv64 does not name it: its
+# Genesis is the OpenEmbedded package published once into the shared pool. build_genesis ran for
+# every architecture, so a plain --arch riscv64 run died for want of a --genesis-deb it can never
+# have -- and only after the dependency builds had finished.
+{
+    my $src = do {
+        open my $fh, '<', "$FindBin::Bin/../sbuild-all.pl" or die $!;
+        local $/; <$fh>;
+    };
+
+    my ($sub) = $src =~ /\n(sub genesis_in_manifest \{\n.*?\n\})\n/ms;
+    BAIL_OUT('could not extract genesis_in_manifest from sbuild-all.pl') unless defined $sub;
+
+    our %MANIFEST = (
+        'noble-amd64'   => { 'xcat-genesis-base' => '2.*', 'ipmitool-xcat' => '1.8.18-4' },
+        'noble-ppc64el' => { 'xcat-genesis-base' => '2.*' },
+        'noble-riscv64' => { 'ipmitool-xcat' => '1.8.18-4', 'goconserver' => '0.3.3-snap*' },
+    );
+    our @dist_list = ('noble');
+    our $arch;
+
+    ## no critic (BuiltinFunctions::ProhibitStringyEval)
+    eval "$sub 1" or die "failed to evaluate genesis_in_manifest: $@";
+    ## use critic
+
+    $arch = 'amd64';
+    ok( genesis_in_manifest(), 'amd64 names the legacy Genesis deb, so that phase runs' );
+    $arch = 'ppc64el';
+    ok( genesis_in_manifest(), 'ppc64el names it too' );
+    $arch = 'riscv64';
+    ok( !genesis_in_manifest(), 'riscv64 does not, so the legacy Genesis phase is skipped' );
+    $arch = 's390x';
+    ok( !genesis_in_manifest(), 'a target with no manifest section does not demand Genesis' );
+}
+
 done_testing;
