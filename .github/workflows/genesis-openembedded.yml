@@ -55,5 +55,6 @@ jobs:
       - name: Run package tests
         run: |
           prove -v t/build_utils.t
+          prove -v t/build_timeout.t
           prove -v -It/lib t/genesis_openembedded_release.t
           sudo -E prove -v -It/lib t/genesis_openembedded_consumer.t
