@@ -17,7 +17,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
-                  supported_arches
+                  supported_arches is_supported_arch
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field genesis_deb_control
@@ -681,6 +681,40 @@ STUB
             is($pin, $ver, "manifest pin $pkg=$pin matches $dir/debian/changelog");
         }
     }
+}
+
+# In publish mode with no --expect-arch, the expected set is discovered by scanning the staged
+# tree. That scan admitted a hardcoded amd64|ppc64el, so a staged riscv64 tree was dropped and
+# the arch never reached the code that writes its binary-<arch> index and names it in Release.
+# The scan is extracted from the script and driven here, so the test tracks the shipped code.
+{
+    my $src = do {
+        open my $fh, '<', "$FindBin::Bin/../sbuild-all.pl" or die $!;
+        local $/; <$fh>;
+    };
+
+    my ($scan) = $src =~ /\n(    my %u = \(\$arch => 1\);\n    if \(\$mode eq 'publish'\) \{\n.*?\n        \}\n)/ms;
+    BAIL_OUT('could not extract the staged-arch scan from sbuild-all.pl') unless defined $scan;
+
+    my $staging = tempdir( CLEANUP => 1 );
+    make_path("$staging/noble/$_") for qw(amd64 ppc64el riscv64 s390x);
+
+    my ( $arch, $mode ) = ( 'amd64', 'publish' );
+    my @dist_list = ('noble');
+    my %u;
+    ## no critic (BuiltinFunctions::ProhibitStringyEval)
+    # the extracted text ends inside the publish branch, so the brace closes it; the branch's
+    # print is deliberately left out, because it would land in the middle of the TAP stream
+    my $got = eval "$scan }\n[sort keys %u]";
+    ## use critic
+    die "failed to evaluate the staged-arch scan: $@" if $@;
+
+    is_deeply( $got, [ sort( supported_arches() ) ],
+        'every supported architecture staged for a codename is expected' );
+    ok( ( grep { $_ eq 'riscv64' } @$got ),
+        'a staged riscv64 tree reaches the expected set' );
+    ok( !( grep { $_ eq 's390x' } @$got ),
+        'a staged tree for an unsupported architecture is still ignored' );
 }
 
 done_testing;
