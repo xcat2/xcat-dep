@@ -470,6 +470,37 @@ sub ensure_disposable_chroot {
     return 1;
 }
 
+# A chroot for another architecture is bootstrapped and built through qemu-user: debootstrap's
+# second stage and every later build run the target's own binaries. Without a registered binfmt
+# handler that fails deep inside debootstrap, so it is checked here, where the message can name what
+# is missing.
+my %BINFMT_HANDLER = (
+    riscv64 => 'qemu-riscv64',
+    ppc64el => 'qemu-ppc64le',
+);
+
+sub ensure_foreign_arch_support {
+    my ($target) = @_;
+
+    my $host = `dpkg --print-architecture 2>/dev/null`;
+    chomp $host;
+    return if (!$host or $target eq $host);
+
+    my $handler = $BINFMT_HANDLER{$target} or return;
+    my $node    = "/proc/sys/fs/binfmt_misc/$handler";
+    my $enabled = 0;
+    if (open my $fh, '<', $node) {
+        local $/;
+        $enabled = (<$fh> // '') =~ /^enabled/m ? 1 : 0;
+        close $fh;
+    }
+    return if $enabled;
+
+    die "FATAL: building $target on a $host host runs the target's binaries through qemu-user,\n"
+      . "       but the $handler binfmt handler is not registered (looked at $node).\n"
+      . "       Install qemu-user-static and binfmt-support, then re-run.\n";
+}
+
 sub ensure_chroots {
     print_step('Ensure sbuild chroots (auto-init on first run)');
     die "FATAL: chroot init requires root (uid=$>)\n" if $> != 0 && !$dry_run;
@@ -487,6 +518,7 @@ sub ensure_chroots {
             next;
         }
         print "  chroot $name: MISSING -> creating\n";
+        ensure_foreign_arch_support($arch);
         # debootstrap may lack a script for a new codename -> fall back to the generic one.
         run("[ -e /usr/share/debootstrap/scripts/$cn ] || ln -sf gutsy /usr/share/debootstrap/scripts/$cn", nofail => 1);
         my $root = "/srv/chroot/$cn-$arch";
@@ -1319,9 +1351,10 @@ sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian ap
   sbuild-all.pl --arch amd64   --dists "focal jammy noble resolute" \
       --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm>
   sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" --skip-genesis
+  sbuild-all.pl --arch riscv64 --dists "focal jammy noble resolute"
 
   # STEP 2 -- ONCE, after every arch has staged: assemble, sign, gate and publish atomically:
-  sbuild-all.pl --skip-build --skip-genesis --publish --expect-arch "amd64 ppc64el" \
+  sbuild-all.pl --skip-build --skip-genesis --publish --expect-arch "amd64 ppc64el riscv64" \
       --gpg-sign --gpg-key-id xcat@megware.com --gpg-home <gpg-home>
 
   # build ONE Ubuntu version only:
@@ -1334,7 +1367,7 @@ sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian ap
 
   # verify an already-published tree out of band (signatures checked by DEFAULT):
   sbuild-all.pl --verify-repo <apt_dir> --dists "focal jammy noble resolute" \
-      --expect-arch "amd64 ppc64el" --gpg-key-id <id> --gpg-home <dir>
+      --expect-arch "amd64 ppc64el riscv64" --gpg-key-id <id> --gpg-home <dir>
 
   sbuild-all.pl --help        # option summary
   sbuild-all.pl --man         # this manual
@@ -1568,7 +1601,7 @@ that builds nothing (C<--skip-build>), which is the finalization step. C<--no-pu
 =item B<--expect-arch> C<< amd64|ppc64el|riscv64 >>
 
 The architecture set the published repo must serve, stated explicitly. Repeatable, and each value may
-be a space/comma list (C<--expect-arch "amd64 ppc64el">). Used by the gate: an expected arch with no
+be a space/comma list (C<--expect-arch "amd64 ppc64el riscv64">). Used by the gate: an expected arch with no
 native package is C<MISSING-ARCH>, an unexpected arch that published natives is C<UNEXPECTED-ARCH>,
 and C<Release> advertises exactly this set. Without it the gate falls back to the staged arch set when
 publishing, or to each codename's C<Release> C<Architectures:> when verifying standalone.
