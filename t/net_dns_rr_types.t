@@ -45,14 +45,44 @@ my ($version, $source);
 BAIL_OUT("$spec declares no version") unless defined $version;
 BAIL_OUT("$spec declares no source") unless defined $source;
 
+# Net::DNS moved the DNSSEC records, KEY included, into the core distribution at release 1.01.
+# Below that release the KEY record lives in the separate Net::DNS::SEC distribution, which
+# xcat-dep does not build.
+my $KEY_FLOOR = '1.01';
+
+# Compare two dotted versions field by field, numerically. Net::DNS pads the minor field
+# (0.80, 1.01, 1.47), so a numeric field compare orders the releases correctly.
+sub version_ge {
+    my ($got, $want) = @_;
+    my @g = split /\./, $got;
+    my @w = split /\./, $want;
+    while (@g || @w) {
+        my $a = @g ? shift(@g) : 0;
+        my $b = @w ? shift(@w) : 0;
+        return $a > $b ? 1 : 0 if $a != $b;
+    }
+    return 1;
+}
+
+ok(version_ge($version, $KEY_FLOOR),
+    "the spec builds Net::DNS $KEY_FLOOR or newer ($version), so KEY is in the core distribution");
+
 # Every target whose manifest section lists perl-Net-DNS builds it from this one spec, so the
 # records must work for all of them. A target that takes Net::DNS from EPEL is not listed.
 my %manifest = read_manifest("$root/packages-manifest.conf");
 my @targets  = grep { exists $manifest{$_}{'perl-Net-DNS'} } sort keys %manifest;
 BAIL_OUT('no manifest target builds perl-Net-DNS; this test covers nothing') unless @targets;
 
+# The pin is the second place the version is written down, and mockbuild-all.pl fails the run
+# when the built rpm does not match it. A pin below $KEY_FLOOR puts a Net::DNS without KEY back
+# into the repositories a service node reads, which have no EPEL copy to outrank it. An operator
+# pin (">= 0.80") accepts such a build too, so only an exact version is allowed here.
 for my $target (@targets) {
     my $pin = $manifest{$target}{'perl-Net-DNS'};
+    my $exact = $pin =~ /\A\d+(?:\.\d+)+\z/ ? 1 : 0;
+    ok($exact, "[$target] the perl-Net-DNS pin ($pin) names one exact version");
+    ok($exact && version_ge($pin, $KEY_FLOOR),
+        "[$target] the perl-Net-DNS pin ($pin) is $KEY_FLOOR or newer");
     ok(version_matches($version, $pin),
         "[$target] the perl-Net-DNS pin ($pin) accepts the version the spec builds ($version)");
 }
