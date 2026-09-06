@@ -333,7 +333,15 @@ sub run_bounded {
         return { ec => 124, timed_out => 1, elapsed => time - $t0 };
     }
 
-    return { ec => exit_status($status), timed_out => 0, elapsed => time - $t0 };
+    my $ec = exit_status($status);
+    # The leader can die without its descendants. A SIGKILL, or the OOM killer, takes the shell but
+    # leaves schroot and qemu in its process group, still holding the chroot and writing into
+    # staging after this call reports the build finished. They are not children of this process, so
+    # there is nothing to wait for: signal the group and move on.
+    kill('TERM', -$pid);
+    Time::HiRes::sleep(0.2);
+    kill('KILL', -$pid);
+    return { ec => $ec, timed_out => 0, elapsed => time - $t0 };
 }
 
 sub display_quote {
