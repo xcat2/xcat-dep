@@ -205,7 +205,7 @@ sub stall_report {
 # The command runs in its own process group: a build spawns schroot, mock, qemu and make, and only a
 # group signal reaches all of them. Signalling the group also means no child survives holding the
 # caller's stdout open, which would turn the timeout back into a hang one level up.
-#   %a: cmd (required), timeout (seconds; <=0 runs unbounded), label, sample, out
+#   %a: cmd (required), timeout (seconds; <=0 runs without a deadline), label, sample, out
 # Returns { ec, timed_out, elapsed }. ec is 124 on a timeout, matching timeout(1).
 sub run_bounded {
     my (%a) = @_;
@@ -214,11 +214,6 @@ sub run_bounded {
     my $label   = defined $a{label} ? $a{label} : 'command';
     my $out     = $a{out} || \*STDERR;
     my $t0      = time;
-
-    if ($timeout <= 0) {
-        my $rc = system('bash', '-c', $cmd);
-        return { ec => ($rc == -1 ? -1 : $rc >> 8), timed_out => 0, elapsed => time - $t0 };
-    }
 
     my $pid = fork();
     die "run_bounded: fork failed: $!\n" unless defined $pid;
@@ -253,14 +248,16 @@ sub run_bounded {
     local $SIG{TERM} = $forward;
     local $SIG{HUP}  = $forward;
 
-    my $deadline = $t0 + $timeout;
+    # An unbounded run still forks: it is the process group, not the deadline, that lets a signal
+    # to the orchestrator reach the build.
+    my $deadline = $timeout > 0 ? $t0 + $timeout : undef;
     my $timed_out = 0;
     my $status;
     while (1) {
         my $r = waitpid($pid, POSIX::WNOHANG());
         if ($r == $pid) { $status = $?; last; }
         if ($r == -1)   { $status = 0;  last; }
-        if (time >= $deadline) { $timed_out = 1; last; }
+        if (defined $deadline and time >= $deadline) { $timed_out = 1; last; }
         Time::HiRes::sleep(0.5);
     }
 
