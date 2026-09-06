@@ -81,9 +81,11 @@ sub install_deps_packages {
     # NOTE: no libipc-cmd-perl -- IPC::Cmd is CORE on Debian/Ubuntu (it ships in perl-modules) and
     # no such package exists, so naming it fails the whole install. That it is present is asserted
     # by the module probe, not by installing a package.
+    # A foreign-architecture chroot needs the binfmt handler these two packages register.
     return qw(perl libfile-slurper-perl libparallel-forkmanager-perl
               sbuild schroot debootstrap apt-utils dpkg-dev devscripts equivs quilt fakeroot
-              build-essential reprepro gnupg rsync wget git);
+              build-essential reprepro gnupg rsync wget git
+              qemu-user-static binfmt-support);
 }
 
 # install_deps_command(): the argv that installs them, non-interactively.
