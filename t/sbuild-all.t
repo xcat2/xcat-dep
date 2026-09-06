@@ -603,6 +603,12 @@ STUB
     for my $need (qw(libfile-slurper-perl libparallel-forkmanager-perl sbuild schroot apt-utils dpkg-dev)) {
         ok(scalar(grep { $_ eq $need } @pkgs), "prerequisites include $need");
     }
+    # ensure_foreign_arch_support() refuses to bootstrap a foreign chroot without the binfmt
+    # handler and names these two packages, so --install-deps has to be the fix it points at.
+    for my $need (qw(qemu-user-static binfmt-support)) {
+        ok(scalar(grep { $_ eq $need } @pkgs), "prerequisites include $need");
+    }
+
     my @cmd = install_deps_command();
     is($cmd[0], 'apt-get', 'installs with apt-get');
     ok(scalar(grep { $_ eq '-y' } @cmd), '... non-interactively');
