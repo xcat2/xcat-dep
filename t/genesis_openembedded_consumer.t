@@ -58,7 +58,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 64
+    skip 'RPM repository tools require a root Linux builder', 65
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
@@ -77,7 +77,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 70
+    skip 'APT repository tools are not installed', 63
       unless $^O eq 'linux'
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive');
@@ -792,7 +792,7 @@ sub test_partial_rpm_release {
     );
 
     isnt($status, 0, 'RPM repository rejects a partial Genesis release');
-    like(read_binary($log), qr/Genesis release is missing supported architectures/,
+    like(read_binary($log), qr/Genesis release version 2 omits currently supported architectures/,
         'RPM partial-release failure names the missing architectures');
     ok(-f $existing, 'partial release does not remove the deployed package');
 }
@@ -814,7 +814,7 @@ sub test_partial_deb_release {
     );
 
     isnt($status, 0, 'APT repository rejects a partial Genesis release');
-    like(read_binary($log), qr/Genesis release is missing supported architectures/,
+    like(read_binary($log), qr/Genesis release version 2 omits currently supported architectures/,
         'APT partial-release failure names the missing architectures');
     ok(-f $existing, 'partial DEB release does not remove the published package');
 }

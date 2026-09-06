@@ -256,7 +256,7 @@ sub run_publish {
 
     my ($rc, $out, $common) = run_publish($partial, 'partial');
     isnt($rc, 0, 'a release missing an architecture is refused');
-    like($out, qr/missing supported architectures: \Q$missing_architecture\E/,
+    like($out, qr/omits currently supported architectures: \Q$missing_architecture\E/,
         'the completeness gate identifies the missing architecture');
     ok(!-d $common || !glob("$common/*.rpm"),
         '... and nothing is published into the shared repository');
