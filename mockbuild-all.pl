@@ -34,6 +34,7 @@ use XCAT::BuildUtils qw(
 );
 use XCAT::GenesisRelease qw(
   architectures
+  rpm_package_prefix
   rpm_package_name
   validate_repository_packages
   validated_release_checksums
@@ -367,6 +368,7 @@ if ($genesis_release ne '') {
         unless -d $genesis_release;
     my $verifier = "$script_dir/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    common_repository_requirements();
     # Checksum, verify, checksum again. The verifier reads the tree it validates, so a
     # release rewritten together with its SHA256SUMS while the verifier runs would satisfy
     # both the verifier and any single pass taken afterwards; comparing the pass taken
@@ -376,7 +378,6 @@ if ($genesis_release ne '') {
     my $checksums_after = validated_release_checksums($genesis_release);
     die "Genesis release changed during verification\n"
       unless hashes_equal($checksums_before, $checksums_after);
-    common_repository_requirements();
     $genesis_release_checksums = $checksums_before;
 }
 
@@ -1124,7 +1125,7 @@ sub common_repository_requirements {
     return validate_repository_packages(
         \%common,
         'common',
-        'xCAT-genesis-openembedded-',
+        rpm_package_prefix(),
         map { rpm_package_name($_) } architectures(),
     );
 }

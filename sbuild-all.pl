@@ -1069,7 +1069,7 @@ sub shared_repository_requirements {
     return XCAT::GenesisRelease::validate_repository_packages(
         \%shared,
         'shared',
-        'xcat-genesis-openembedded-',
+        XCAT::GenesisRelease::deb_package_prefix(),
         map { XCAT::GenesisRelease::deb_package_name($_) }
           XCAT::GenesisRelease::architectures(),
     );

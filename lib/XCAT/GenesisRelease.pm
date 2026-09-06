@@ -8,10 +8,12 @@ use XCAT::BuildUtils qw(digest_file read_lines relative_files);
 
 our @EXPORT_OK = qw(
   architectures
+  deb_package_prefix
   deb_package_name
   minimum_release_version
   read_checksum_manifest
   read_release_manifest
+  rpm_package_prefix
   rpm_package_name
   validated_release_checksums
   validate_architecture
@@ -25,6 +27,8 @@ our @EXPORT_OK = qw(
 my @RELEASE_V1_ARCHITECTURES = qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64);
 my @RELEASE_V2_ARCHITECTURES = (@RELEASE_V1_ARCHITECTURES, 's390x');
 my @ARCHITECTURES = @RELEASE_V2_ARCHITECTURES;
+my $RPM_PACKAGE_PREFIX = 'xCAT-genesis-openembedded-';
+my $DEB_PACKAGE_PREFIX = 'xcat-genesis-openembedded-';
 my %ARCHITECTURE = map { $_ => 1 } @ARCHITECTURES;
 my %RELEASE_ARCHITECTURES = (
     1 => \@RELEASE_V1_ARCHITECTURES,
@@ -42,17 +46,25 @@ sub validate_architecture {
     return $architecture;
 }
 
+sub rpm_package_prefix {
+    return $RPM_PACKAGE_PREFIX;
+}
+
 sub rpm_package_name {
     my ($architecture) = @_;
     validate_architecture($architecture);
-    return "xCAT-genesis-openembedded-$architecture";
+    return $RPM_PACKAGE_PREFIX . $architecture;
+}
+
+sub deb_package_prefix {
+    return $DEB_PACKAGE_PREFIX;
 }
 
 sub deb_package_name {
     my ($architecture) = @_;
     validate_architecture($architecture);
     $architecture =~ tr/_/-/;
-    return "xcat-genesis-openembedded-$architecture";
+    return $DEB_PACKAGE_PREFIX . $architecture;
 }
 
 sub minimum_release_version {
