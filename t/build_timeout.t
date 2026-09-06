@@ -283,4 +283,49 @@ is($alive, 0, 'the grandchild is killed with the group, so nothing survives hold
     }
 }
 
+# The build must not inherit a blocked signal mask: run_bounded blocks INT, TERM and HUP across
+# the fork so a cancellation cannot land before its handler exists, and a child that kept that mask
+# would ignore the very signal the forwarding relies on.
+{
+    my $dir = tempdir( CLEANUP => 1 );
+    my $out = "$dir/mask";
+    my $r = run_bounded(
+        cmd     => "grep ^SigBlk /proc/self/status > '$out'",
+        timeout => 30,
+        label   => 'signal mask probe',
+        out     => \*STDERR,
+    );
+    is( $r->{ec}, 0, 'the probe ran' );
+  SKIP: {
+        skip 'no /proc/self/status on this host', 1 unless -s $out;
+        open my $fh, '<', $out or die $!;
+        my $line = <$fh>;
+        close $fh;
+        my ($mask) = $line =~ /SigBlk:\s*([0-9a-f]+)/;
+        my $blocked = hex( $mask // 'ffffffffffffffff' );
+        # bit n-1 is signal n: INT 2, TERM 15, HUP 1
+        my $handled = ( 1 << 1 ) | ( 1 << 14 ) | ( 1 << 0 );
+        is( $blocked & $handled, 0, 'the build starts with INT, TERM and HUP unblocked' );
+    }
+}
+
+# The caller's own mask must be restored: run_bounded blocks INT, TERM and HUP around the fork, and
+# leaving them blocked would make the orchestrator ignore a cancellation for the rest of the run.
+{
+    my $dir = tempdir( CLEANUP => 1 );
+    my $out = "$dir/caller-mask";
+    run_bounded( cmd => 'true', timeout => 30, label => 'mask restore probe', out => \*STDERR );
+    system("grep ^SigBlk /proc/self/status > '$out' 2>/dev/null");
+  SKIP: {
+        skip 'no /proc/self/status on this host', 1 unless -s $out;
+        open my $fh, '<', $out or die $!;
+        my $line = <$fh>;
+        close $fh;
+        my ($mask) = $line =~ /SigBlk:\s*([0-9a-f]+)/;
+        my $blocked = hex( $mask // 'ffffffffffffffff' );
+        my $handled = ( 1 << 1 ) | ( 1 << 14 ) | ( 1 << 0 );
+        is( $blocked & $handled, 0, 'the caller keeps INT, TERM and HUP unblocked afterwards' );
+    }
+}
+
 done_testing;
