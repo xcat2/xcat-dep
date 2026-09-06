@@ -594,7 +594,17 @@ sub build_one_codename {
             '>', sh_quote($log), '2>&1',
         );
         print "  [$cn] -> $pkg ($dir/sbuild.pl)\n";
-        my $ec = run($cmd, nofail => 1);
+        # run_bounded, not run(): it puts the builder in its own process group and forwards a
+        # signal to it. system() would leave the builder, its schroot session and qemu running
+        # after this worker died, holding the chroot and writing into staging. The wall-clock
+        # bound belongs to the builder itself, so this call only carries the cancellation.
+        print "+ $cmd\n";
+        my $ec = 0;
+        unless ($dry_run) {
+            require XCAT::BuildUtils;
+            $ec = XCAT::BuildUtils::run_bounded(cmd => $cmd, timeout => 0,
+                      label => "[$cn] $pkg", out => \*STDOUT)->{ec};
+        }
         if ($ec != 0) { warn "FATAL: [$cn] $pkg build failed (rc=$ec) -- see $log\n"; return 1; }
     }
     print "== [$cn] done ==\n";
@@ -633,7 +643,12 @@ sub build_deps {
             my $cn = shift @queue;
             my $pid = fork();
             die "FATAL: fork failed: $!\n" unless defined $pid;
-            if ($pid == 0) { exit(build_one_codename($cn)); }   # child
+            # The child must not inherit the parent's forwarder: its copy names sibling workers,
+            # which the parent already signals.
+            if ($pid == 0) {
+                $SIG{$_} = 'DEFAULT' for qw(INT TERM HUP);
+                exit(build_one_codename($cn));
+            }
             $pid2cn{$pid} = $cn; $running++;
         }
         my $pid = wait();
