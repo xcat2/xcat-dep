@@ -22,7 +22,7 @@ use lib dirname(__FILE__) . '/lib';
 # including `sbuild-all.pl --install-deps`, the command whose whole job is to install that module on
 # a host that lacks it.
 use File::Copy qw(copy);
-use File::Path qw(make_path);
+use File::Path qw(make_path remove_tree);
 use Digest::MD5;
 use MIME::Base64 qw(encode_base64);
 
@@ -769,7 +769,17 @@ sub build_deb_in_chroot {
       . "  hide a missing Build-Depends. Add 'union-type=overlay' to its /etc/schroot/chroot.d/ entry\n"
       . "  (or delete the chroot and let sbuild-all.pl re-create it).\n"
         unless chroot_is_disposable($cfg);
+    # Build into a private directory UNDER the result dir, and move the debs into it only after
+    # every check passes. The result dir is what a publish assembles from, and its gate gets no
+    # further than names and versions, so a deb that lands there before the smoke can be published
+    # whatever the smoke would have said -- including when a cancellation kills this process before
+    # any cleanup could run. Same filesystem, so the promotion is a rename.
     make_path($a{result_dir});
+    my $final = $a{result_dir};
+    remove_tree($_) for grep { -d $_ } glob("$final/.build-$pkg.*");
+    my $stage = "$final/.build-$pkg.$$";
+    remove_tree($stage) if -d $stage;
+    make_path($stage);
     my $extra = join(' ', @{ $a{extra_tools} || [] });
     my $b64   = encode_base64($a{build}, '');
 
@@ -780,9 +790,9 @@ sub build_deb_in_chroot {
 
     my $cmd = 'schroot -c ' . sh_quote($a{chroot}) . ' -u root -d / -- bash -c '
             . sh_quote($inner) . ' bash '
-            . sh_quote($a{pkg_dir}) . ' ' . sh_quote($a{result_dir}) . ' '
+            . sh_quote($a{pkg_dir}) . ' ' . sh_quote($stage) . ' '
             . sh_quote($a{build_timestamp}) . ' ' . sh_quote($extra) . ' ' . sh_quote($b64);
-    print "[$pkg] building in chroot $a{chroot} -> $a{result_dir} (SOURCE_DATE_EPOCH=$a{build_timestamp})\n";
+    print "[$pkg] building in chroot $a{chroot} -> $final (SOURCE_DATE_EPOCH=$a{build_timestamp})\n";
     # A build that deadlocks under qemu-user (a resolute goconserver `go build` did, with both Go
     # pids in futex_wait and no CPU ticks at all) used to hang here forever, and a hung cell reads as
     # "still running" rather than as a defect. Bound it, and print the process tree, each wchan and a
@@ -797,23 +807,22 @@ sub build_deb_in_chroot {
     die "[$pkg] build failed (rc=$ec)\n" if $ec != 0;
     # The debs were copied from INSIDE the chroot; that only reaches the host if --result-dir is on a
     # bind-mounted path. Verify host-side so a mis-configured (chroot-local) result-dir fails LOUD.
-    my @debs = glob("$a{result_dir}/*.deb");
-    die "[$pkg] build succeeded in the chroot but no .deb is visible at $a{result_dir} on the host\n"
+    my @debs = glob("$stage/*.deb");
+    die "[$pkg] build succeeded in the chroot but no .deb is visible at $stage on the host\n"
       . "  (is --result-dir on a path bind-mounted into the chroot, e.g. under /opt/xcat-ci-shared?)\n"
       unless @debs;
-    if ($a{smoke}) {
-        # The debs are already in staging, and the publish gate checks names and versions, not
-        # whether the binary runs. A deb that fails the smoke must not survive the failure, or the
-        # next publish ships exactly the broken binary the smoke exists to catch.
-        my $ok = eval { smoke_deb_in_chroot(%a, debs => \@debs); 1 };
-        unless ($ok) {
-            my $err = $@ || "unknown smoke failure\n";
-            unlink @debs;
-            die $err . "[$pkg] the debs were removed from $a{result_dir}: they did not pass the smoke\n";
-        }
+    smoke_deb_in_chroot(%a, result_dir => $stage, debs => \@debs) if $a{smoke};
+
+    # Everything passed: publish the debs by moving them where the assembly step looks.
+    my @published;
+    for my $deb (@debs) {
+        my $target = "$final/" . basename($deb);
+        rename($deb, $target) or die "[$pkg] could not publish $deb as $target: $!\n";
+        push @published, $target;
     }
-    print "[$pkg] OK (" . scalar(@debs) . " deb(s) in $a{result_dir})\n";
-    return scalar @debs;
+    remove_tree($stage);
+    print "[$pkg] OK (" . scalar(@published) . " deb(s) in $final)\n";
+    return scalar @published;
 }
 
 # smoke_deb_in_chroot(%a): install a produced deb into the chroot it was built in and run a command
