@@ -178,4 +178,52 @@ is($alive, 0, 'the grandchild is killed with the group, so nothing survives hold
     }
 }
 
+# The same must hold with no deadline. An unbounded run used to call system(), which leaves the
+# build in the orchestrator's own process group: a directed signal then killed the orchestrator and
+# left the build writing into staging.
+{
+    my $dir     = tempdir( CLEANUP => 1 );
+    my $pidfile = "$dir/child.pid";
+
+    my $wrapper = fork();
+    die "fork failed: $!" unless defined $wrapper;
+    if ( $wrapper == 0 ) {
+        run_bounded(
+            cmd     => "echo \$\$ > '$pidfile'; exec sleep 300",
+            timeout => 0,
+            label   => 'unbounded cancellation probe',
+            out     => \*STDERR,
+        );
+        POSIX::_exit(0);
+    }
+
+    my $child;
+    for ( 1 .. 100 ) {
+        if ( -s $pidfile ) {
+            open my $fh, '<', $pidfile or last;
+            chomp( $child = <$fh> // '' );
+            close $fh;
+            last if $child;
+        }
+        select( undef, undef, undef, 0.1 );
+    }
+
+  SKIP: {
+        skip 'child never reported its pid', 2 unless $child;
+        ok( kill( 0, $child ), 'the unbounded build is running before the wrapper is signalled' );
+
+        kill 'TERM', $wrapper;
+        waitpid( $wrapper, 0 );
+
+        my $alive = 1;
+        for ( 1 .. 100 ) {
+            $alive = kill( 0, $child );
+            last unless $alive;
+            select( undef, undef, undef, 0.1 );
+        }
+        ok( !$alive, 'terminating the wrapper reaps an unbounded build too' );
+        kill 'KILL', $child if $alive;
+    }
+}
+
 done_testing;
