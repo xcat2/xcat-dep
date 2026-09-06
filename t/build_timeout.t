@@ -16,7 +16,7 @@ use POSIX ();
 use Test::More;
 
 use lib "$FindBin::Bin/../lib", "$FindBin::Bin/..";
-use XCAT::BuildUtils qw(run_bounded emulated_build_timeout block_handled_signals restore_signal_mask);
+use XCAT::BuildUtils qw(run_bounded emulated_build_timeout block_handled_signals restore_signal_mask exit_status);
 use BuildUtils qw(chroot_build_timeout);
 
 my $tmp = tempdir(CLEANUP => 1);
@@ -343,6 +343,24 @@ is($alive, 0, 'the grandchild is killed with the group, so nothing survives hold
     restore_signal_mask($previous);
     select( undef, undef, undef, 0.2 );
     is_deeply( \@caught, ['TERM'], '... and arrives once the mask is restored' );
+}
+
+# A child the kernel kills leaves 0 in the high byte of its wait status. Reading only that byte
+# reports a cancelled or OOM-killed build as one that succeeded, which is what the orchestrators do
+# with the status wait() gives them.
+{
+    is( exit_status(0),    0,   'a child that exited 0 reports 0' );
+    is( exit_status(256),  1,   'a child that exited 1 reports 1' );
+    is( exit_status(65280), 255, 'a child that exited 255 reports 255' );
+    is( exit_status(15),   143, 'a child killed by TERM reports 128 plus the signal' );
+    is( exit_status(9),    137, 'a child killed by KILL reports 128 plus the signal' );
+    is( exit_status(139),  139, 'a segfault with a core dump still reports the signal' );
+
+    # The same status through the bounded path, so the helper and its caller agree.
+    my $r = run_bounded( cmd => 'kill -TERM $$', timeout => 30, label => 'signal exit',
+                         out => \*STDERR );
+    is( $r->{ec}, 143, 'run_bounded reports a signalled command the same way' );
+    is( $r->{timed_out}, 0, '... and does not call it a timeout' );
 }
 
 done_testing;
