@@ -607,8 +607,13 @@ STUB
         local $ENV{PATH} = "$fakebin:$ENV{PATH}";
         local $ENV{FAKE_SCHROOT_CONFIG} =
             "[noble-amd64-sbuild]\ntype=directory\ndirectory=/srv/chroot/noble-amd64\nunion-type=overlay\n";
-        open my $dfh, '>', "$work/out/fixture-xcat_1.8.18-4_amd64.deb" or die $!;
-        print $dfh "not really a deb\n"; close $dfh;
+        # A failed smoke removes the deb it rejected, so each case plants a fresh one.
+        my $plant = sub {
+            open my $dfh, '>', "$work/out/fixture-xcat_1.8.18-4_amd64.deb" or die $!;
+            print {$dfh} "not really a deb\n";
+            close $dfh;
+        };
+        $plant->();
 
         my %smoke = (deb => qr/^fixture-xcat_/, run => '/opt/xcat/bin/fixture-xcat -V',
                      expect => qr/fixture-xcat version 1\.8\.18/);
@@ -627,17 +632,27 @@ STUB
         ok(!$ok, 'a binary reporting another version fails the smoke');
         like($@, qr/does not match/, '... naming the expectation it missed');
 
+        # The debs are already in staging when the smoke runs, and the publish gate checks names
+        # and versions only. One left behind is the broken binary the smoke exists to catch.
+        is_deeply([ glob("$work/out/*.deb") ], [],
+            '... and the deb it rejected is gone from the result directory');
+        like($@, qr/were removed from/, '... which the failure says');
+
+        $plant->();
+
         local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.18';
         local $ENV{FAKE_SMOKE_RC}  = 3;
         $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
         ok(!$ok, 'a binary that cannot run fails the smoke even with matching output');
         like($@, qr/smoke failed \(rc=3\)/, '... reporting the exit status');
+        $plant->();
 
         delete local $ENV{FAKE_SMOKE_RC};
         $ok = eval { quiet { build_deb_in_chroot(@args,
                         smoke => { %smoke, deb => qr/^nosuchpkg_/ }) }; 1 };
         ok(!$ok, 'a smoke that names a deb the build never produced fails');
         like($@, qr/no produced deb matches/, '... instead of silently skipping the check');
+        $plant->();
 
         # --skip-install is what sbuild-all.pl passes to drop the smoke, so the same build with no
         # smoke must still succeed -- otherwise the tests above would pass for the wrong reason.
