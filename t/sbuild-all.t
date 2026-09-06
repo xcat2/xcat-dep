@@ -562,6 +562,12 @@ case "$1" in
   -l)       echo "chroot:noble-amd64-sbuild"; exit 0 ;;
   --config) printf '%s\n' "$FAKE_SCHROOT_CONFIG";  exit 0 ;;
 esac
+if [ -n "$FAKE_SMOKE_MARK" ]; then
+  case "$*" in
+    *"$FAKE_SMOKE_MARK"*) [ -n "$FAKE_SMOKE_OUT" ] && printf '%s\n' "$FAKE_SMOKE_OUT"
+                          exit ${FAKE_SMOKE_RC:-0} ;;
+  esac
+fi
 exit 0
 STUB
     close $fh;
@@ -591,6 +597,53 @@ STUB
         ok(!$ok, 'a disposable chroot gets past the guard (and then fails for another reason)');
         unlike($@, qr/is NOT disposable/, '... the failure is NOT the disposability guard');
         like($@, qr/no \.deb is visible/, '... it is the host-side "debs did not land" check');
+    }
+
+    # ---- the post-build smoke -------------------------------------------------------------------
+    # A cross-built binary runs only in the chroot, so the smoke is the ONLY check that the deb
+    # carries a runnable binary. Same stub, now standing in for the chroot session, with a deb
+    # planted so the build gets as far as the smoke.
+    {
+        local $ENV{PATH} = "$fakebin:$ENV{PATH}";
+        local $ENV{FAKE_SCHROOT_CONFIG} =
+            "[noble-amd64-sbuild]\ntype=directory\ndirectory=/srv/chroot/noble-amd64\nunion-type=overlay\n";
+        open my $dfh, '>', "$work/out/fixture-xcat_1.8.18-4_amd64.deb" or die $!;
+        print $dfh "not really a deb\n"; close $dfh;
+
+        my %smoke = (deb => qr/^fixture-xcat_/, run => '/opt/xcat/bin/fixture-xcat -V',
+                     expect => qr/fixture-xcat version 1\.8\.18/);
+        # The stub stands in for the whole chroot session, so it must answer the smoke without
+        # answering the build: only the smoke session carries the command being run.
+        local $ENV{FAKE_SMOKE_MARK} = $smoke{run};
+
+        local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.18';
+        my $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
+        ok($ok, 'a deb whose binary runs and reports the expected version passes the smoke')
+            or diag($@);
+        ok(!-e "$work/out/.smoke-fixture.log", '... and the smoke log is removed on success');
+
+        local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.17';
+        $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
+        ok(!$ok, 'a binary reporting another version fails the smoke');
+        like($@, qr/does not match/, '... naming the expectation it missed');
+
+        local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.18';
+        local $ENV{FAKE_SMOKE_RC}  = 3;
+        $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
+        ok(!$ok, 'a binary that cannot run fails the smoke even with matching output');
+        like($@, qr/smoke failed \(rc=3\)/, '... reporting the exit status');
+
+        delete local $ENV{FAKE_SMOKE_RC};
+        $ok = eval { quiet { build_deb_in_chroot(@args,
+                        smoke => { %smoke, deb => qr/^nosuchpkg_/ }) }; 1 };
+        ok(!$ok, 'a smoke that names a deb the build never produced fails');
+        like($@, qr/no produced deb matches/, '... instead of silently skipping the check');
+
+        # --skip-install is what sbuild-all.pl passes to drop the smoke, so the same build with no
+        # smoke must still succeed -- otherwise the tests above would pass for the wrong reason.
+        local $ENV{FAKE_SMOKE_OUT} = 'irrelevant';
+        $ok = eval { quiet { build_deb_in_chroot(@args) }; 1 };
+        ok($ok, 'without a smoke the same build succeeds');
     }
 }
 
