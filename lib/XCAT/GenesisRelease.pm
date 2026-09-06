@@ -17,6 +17,7 @@ our @EXPORT_OK = qw(
   validate_architecture
   validate_complete_release
   validate_export
+  validate_repository_packages
   validate_release
   verify_release_file
 );
@@ -63,6 +64,18 @@ sub minimum_release_version {
         return $version unless grep { !$supported{$_} } @architectures;
     }
     die "No release format supports the requested Genesis architectures\n";
+}
+
+sub validate_repository_packages {
+    my ($packages, $section, $prefix, @supported_names) = @_;
+    my %supported = map { $_ => 1 } @supported_names;
+    my @missing = grep { !exists $packages->{$_} } @supported_names;
+    my @unknown = grep {
+        index($_, $prefix) == 0 && !$supported{$_}
+    } sort keys %{$packages};
+    die "FATAL: [$section] is missing supported packages: @missing\n" if @missing;
+    die "FATAL: [$section] has unsupported packages: @unknown\n" if @unknown;
+    return $packages;
 }
 
 sub _read_key_values {

@@ -35,6 +35,7 @@ use XCAT::BuildUtils qw(
 use XCAT::GenesisRelease qw(
   architectures
   rpm_package_name
+  validate_repository_packages
   validated_release_checksums
   verify_release_file
 );
@@ -1120,17 +1121,12 @@ sub common_repository_requirements {
     die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
         if !%common;
 
-    my @supported_names = map { rpm_package_name($_) } architectures();
-    my %supported = map { $_ => 1 } @supported_names;
-    my @manifest_missing = grep { !exists $common{$_} } @supported_names;
-    my @manifest_unknown = grep {
-        m{\AxCAT-genesis-openembedded-}xms && !$supported{$_}
-    } sort keys %common;
-    die "FATAL: [common] is missing supported packages: @manifest_missing\n"
-      if @manifest_missing;
-    die "FATAL: [common] has unsupported packages: @manifest_unknown\n"
-      if @manifest_unknown;
-    return \%common;
+    return validate_repository_packages(
+        \%common,
+        'common',
+        'xCAT-genesis-openembedded-',
+        map { rpm_package_name($_) } architectures(),
+    );
 }
 
 sub replace_common_repository {

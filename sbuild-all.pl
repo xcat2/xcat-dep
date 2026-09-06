@@ -312,6 +312,7 @@ if ($genesis_release ne '') {
     # the verifier runs would satisfy both the verifier and any single pass taken afterwards.
     require XCAT::BuildUtils;
     require XCAT::GenesisRelease;
+    shared_repository_requirements();
     my $before = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
     XCAT::BuildUtils::run_command($^X, $verifier, '--complete', '--format', 'deb', $genesis_release);
     my $after = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
@@ -1049,24 +1050,7 @@ sub install_genesis_release_debs {
 
 sub verify_shared_pool {
     my ($pool) = @_;
-    my %shared = %{ $MANIFEST{shared} // {} };
-    die "FATAL: no [shared] section in $manifest -- cannot verify the shared Genesis pool\n"
-        if !%shared;
-
-    my @supported_names = map {
-        XCAT::GenesisRelease::deb_package_name($_)
-    } XCAT::GenesisRelease::architectures();
-    my %supported = map { $_ => 1 } @supported_names;
-    my @manifest_missing = grep { !exists $shared{$_} } @supported_names;
-    my @manifest_unknown = grep {
-        m{\Axcat-genesis-openembedded-}xms && !$supported{$_}
-    } sort keys %shared;
-    die "FATAL: [shared] is missing supported packages: @manifest_missing\n"
-      if @manifest_missing;
-    die "FATAL: [shared] has unsupported packages: @manifest_unknown\n"
-      if @manifest_unknown;
-
-    my %req = %shared;
+    my %req = %{ shared_repository_requirements() };
     my @names = sort keys %req;
     my %present = map { $_ => deb_version($pool, $_) } @names;
     my @problems = verify_repo_packages(\%req, \%present);
@@ -1076,6 +1060,19 @@ sub verify_shared_pool {
     }
     print "  [verify-repo] shared pool complete: " . scalar(@names) . " packages present\n";
     return 1;
+}
+
+sub shared_repository_requirements {
+    my %shared = %{ $MANIFEST{shared} // {} };
+    die "FATAL: no [shared] section in $manifest -- cannot verify the shared Genesis pool\n"
+        if !%shared;
+    return XCAT::GenesisRelease::validate_repository_packages(
+        \%shared,
+        'shared',
+        'xcat-genesis-openembedded-',
+        map { XCAT::GenesisRelease::deb_package_name($_) }
+          XCAT::GenesisRelease::architectures(),
+    );
 }
 
 sub assemble_into {
