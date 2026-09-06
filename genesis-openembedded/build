@@ -66,6 +66,8 @@ $xcat_source = abs_path($xcat_source) or die "Cannot resolve xcat-core source\n"
 for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/export)) {
     die "xcat-core source is missing $path\n" unless -f "$xcat_source/$path";
 }
+die "xcat-core checkout is not clean\n"
+  if capture_command('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
 if ($requested{s390x}) {
     my $architecture_reporter = "$xcat_source/xCAT-genesis-builder/oe/build";
     my $probe_work = tempdir('xcat-genesis-capabilities.XXXXXX', TMPDIR => 1, CLEANUP => 1);
@@ -89,8 +91,6 @@ if ($requested{s390x}) {
         die "xcat-core source does not support Genesis architecture s390x\n";
     }
 }
-die "xcat-core checkout is not clean\n"
-  if capture_command('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
 
 my $revision = capture_command('git', '-C', $xcat_source, 'rev-parse', 'HEAD');
 die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}$/;
@@ -165,10 +165,11 @@ for my $architecture (@requested_architectures) {
 }
 
 my @formats = $format eq 'all' ? qw(deb rpm) : ($format);
+my $manifest_version = $requested{s390x} ? 2 : 1;
 write_binary(
     "$staging/release.manifest",
     "format=xcat-genesis-packages\n"
-      . "version=2\n"
+      . "version=$manifest_version\n"
       . "xcat_version=$version\n"
       . "xcat_release=$release\n"
       . "xcat_revision=$revision\n"

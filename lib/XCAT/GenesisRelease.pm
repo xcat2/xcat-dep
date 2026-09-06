@@ -232,9 +232,9 @@ sub validate_complete_release {
     my ($directory) = @_;
     my $manifest = validate_release($directory);
     my %present = map { $_ => 1 } split(/,/, $manifest->{architectures});
-    my @required = @{ $RELEASE_ARCHITECTURES{ $manifest->{version} } };
-    my @missing = grep { !$present{$_} } @required;
-    die "Genesis release is missing supported architectures: @missing\n" if @missing;
+    my @missing = grep { !$present{$_} } @ARCHITECTURES;
+    die "Genesis release version $manifest->{version} omits currently supported architectures: @missing\n"
+      if @missing;
     return $manifest;
 }
 

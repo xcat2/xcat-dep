@@ -34,7 +34,6 @@ use XCAT::BuildUtils qw(
 );
 use XCAT::GenesisRelease qw(
   architectures
-  read_release_manifest
   rpm_package_name
   validated_release_checksums
   verify_release_file
@@ -373,15 +372,9 @@ if ($genesis_release ne '') {
     # before with the one taken after is what closes that window.
     my $checksums_before = validated_release_checksums($genesis_release);
     run_command($^X, $verifier, '--complete', '--format', 'rpm', $genesis_release);
-    my $manifest = read_release_manifest($genesis_release);
     my $checksums_after = validated_release_checksums($genesis_release);
     die "Genesis release changed during verification\n"
       unless hashes_equal($checksums_before, $checksums_after);
-    my %release_architecture = map { $_ => 1 }
-      split m{,}xms, $manifest->{architectures};
-    my @omitted = grep { !$release_architecture{$_} } architectures();
-    die "Genesis release version $manifest->{version} omits currently supported architectures: @omitted\n"
-      if @omitted;
     common_repository_requirements();
     $genesis_release_checksums = $checksums_before;
 }

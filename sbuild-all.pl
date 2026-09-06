@@ -314,17 +314,9 @@ if ($genesis_release ne '') {
     require XCAT::GenesisRelease;
     my $before = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
     XCAT::BuildUtils::run_command($^X, $verifier, '--complete', '--format', 'deb', $genesis_release);
-    my $release_manifest = XCAT::GenesisRelease::read_release_manifest($genesis_release);
     my $after = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
     die "FATAL: Genesis release changed during verification\n"
         unless XCAT::BuildUtils::hashes_equal($before, $after);
-    my %release_architecture = map { $_ => 1 }
-      split m{,}xms, $release_manifest->{architectures};
-    my @omitted = grep {
-        !$release_architecture{$_}
-    } XCAT::GenesisRelease::architectures();
-    die "FATAL: Genesis release version $release_manifest->{version} omits currently supported architectures: @omitted\n"
-      if @omitted;
     $genesis_release_checksums = $before;
     # Every suite's Packages index points into the shared Genesis pool, and publishing a release
     # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
@@ -1490,10 +1482,10 @@ release is produced separately (see F<genesis-openembedded/README.md>); this opt
 and copies the verified bytes into every selected suite.
 
 The release must carry C<deb> packages for every currently supported architecture. Version 1
-remains readable but cannot replace the current eight-architecture repository because it lacks
-C<s390x>. The release is validated before any build or publish: its C<SHA256SUMS> is read, the
-shared verifier runs, and the checksums are read again -- a release rewritten together with its
-checksums while the verifier runs is rejected.
+metadata remains readable, but a complete release now requires C<s390x>. The release is validated
+before any build or publish: its C<SHA256SUMS> is read, the shared verifier runs, and the checksums
+are read again -- a release rewritten together with its checksums while the verifier runs is
+rejected.
 
 The packages are published B<once>, into F<pool/main/xcat-genesis-openembedded>, and every suite's
 C<Packages> index points at that one copy: they are C<Architecture: all> and identical everywhere,
