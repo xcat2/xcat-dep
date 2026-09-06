@@ -801,8 +801,47 @@ sub build_deb_in_chroot {
     die "[$pkg] build succeeded in the chroot but no .deb is visible at $a{result_dir} on the host\n"
       . "  (is --result-dir on a path bind-mounted into the chroot, e.g. under /opt/xcat-ci-shared?)\n"
       unless @debs;
+    smoke_deb_in_chroot(%a, debs => \@debs) if $a{smoke};
     print "[$pkg] OK (" . scalar(@debs) . " deb(s) in $a{result_dir})\n";
     return scalar @debs;
+}
+
+# smoke_deb_in_chroot(%a): install a produced deb into the chroot it was built in and run a command
+# from it. A cross-built binary links against the TARGET's loader and libraries, neither of which
+# exists on the host, so the only place it can run is the chroot -- and a deb whose binary is the
+# wrong object, or cannot resolve a library, still builds green without this.
+#   %a{smoke}: { deb => qr/.../, run => 'shell command', expect => qr/.../ }
+sub smoke_deb_in_chroot {
+    my (%a) = @_;
+    my $s   = $a{smoke};
+    defined $s->{$_} or die "smoke_deb_in_chroot: missing smoke '$_'\n" for qw(deb run);
+    my ($deb) = grep { basename($_) =~ $s->{deb} } @{ $a{debs} };
+    die "[$a{pkg}] smoke: no produced deb matches $s->{deb} in $a{result_dir}\n" unless $deb;
+
+    my $timeout = chroot_build_timeout($a{chroot});
+    my $log     = "$a{result_dir}/.smoke-$a{pkg}.log";
+    # apt-get, not dpkg -i: it resolves the runtime dependencies the package declares, so a missing
+    # or wrong Depends fails here instead of on a node.
+    my $inner = "set -e\n"
+              . "apt-get -y --no-install-recommends install \"\$1\" >/dev/null 2>&1\n"
+              . $s->{run} . "\n";
+    my $cmd = 'schroot -c ' . sh_quote($a{chroot}) . ' -u root -d / -- bash -c '
+            . sh_quote($inner) . ' bash ' . sh_quote($deb)
+            . ' > ' . sh_quote($log) . ' 2>&1';
+    print "[$a{pkg}] smoke: " . basename($deb) . " in $a{chroot}: $s->{run}\n";
+    require XCAT::BuildUtils;
+    my $r = XCAT::BuildUtils::run_bounded(cmd => $cmd, timeout => $timeout,
+                        label => "[$a{pkg}] smoke in $a{chroot}", out => \*STDOUT);
+    my $out = '';
+    if (open my $lfh, '<', $log) { local $/; $out = <$lfh>; close $lfh; }
+    die "[$a{pkg}] smoke TIMED OUT after $r->{elapsed}s (budget ${timeout}s), log $log\n"
+        if $r->{timed_out};
+    die "[$a{pkg}] smoke failed (rc=$r->{ec}), log $log:\n$out\n" if $r->{ec} != 0;
+    die "[$a{pkg}] smoke ran but its output does not match $s->{expect}, log $log:\n$out\n"
+        if $s->{expect} and $out !~ $s->{expect};
+    unlink $log;
+    print "[$a{pkg}] smoke OK ($a{chroot} ran the packaged binary)\n";
+    return 1;
 }
 
 1;
