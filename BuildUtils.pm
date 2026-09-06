@@ -801,7 +801,17 @@ sub build_deb_in_chroot {
     die "[$pkg] build succeeded in the chroot but no .deb is visible at $a{result_dir} on the host\n"
       . "  (is --result-dir on a path bind-mounted into the chroot, e.g. under /opt/xcat-ci-shared?)\n"
       unless @debs;
-    smoke_deb_in_chroot(%a, debs => \@debs) if $a{smoke};
+    if ($a{smoke}) {
+        # The debs are already in staging, and the publish gate checks names and versions, not
+        # whether the binary runs. A deb that fails the smoke must not survive the failure, or the
+        # next publish ships exactly the broken binary the smoke exists to catch.
+        my $ok = eval { smoke_deb_in_chroot(%a, debs => \@debs); 1 };
+        unless ($ok) {
+            my $err = $@ || "unknown smoke failure\n";
+            unlink @debs;
+            die $err . "[$pkg] the debs were removed from $a{result_dir}: they did not pass the smoke\n";
+        }
+    }
     print "[$pkg] OK (" . scalar(@debs) . " deb(s) in $a{result_dir})\n";
     return scalar @debs;
 }
