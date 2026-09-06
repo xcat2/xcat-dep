@@ -363,4 +363,41 @@ is($alive, 0, 'the grandchild is killed with the group, so nothing survives hold
     is( $r->{timed_out}, 0, '... and does not call it a timeout' );
 }
 
+# The leader of the build's process group can die without its descendants: a SIGKILL or the OOM
+# killer takes the shell and leaves schroot and qemu behind, still holding the chroot. They are not
+# children of this process, so nothing waits for them and nothing reported them.
+{
+    my $dir     = tempdir( CLEANUP => 1 );
+    my $pidfile = "$dir/descendant.pid";
+    my $r = run_bounded(
+        cmd     => "sleep 300 & echo \$! > '$pidfile'; kill -KILL \$\$",
+        timeout => 60,
+        label   => 'leader killed while a descendant runs',
+        out     => \*STDERR,
+    );
+    is( $r->{ec}, 137, 'the leader is reported as killed by SIGKILL' );
+
+    my $descendant;
+    for ( 1 .. 30 ) {
+        if ( -s $pidfile ) {
+            open my $fh, '<', $pidfile or last;
+            chomp( $descendant = <$fh> // '' );
+            close $fh;
+            last if $descendant;
+        }
+        select( undef, undef, undef, 0.1 );
+    }
+  SKIP: {
+        skip 'the descendant never reported its pid', 1 unless $descendant;
+        my $alive = 1;
+        for ( 1 .. 50 ) {
+            $alive = kill( 0, $descendant );
+            last unless $alive;
+            select( undef, undef, undef, 0.1 );
+        }
+        ok( !$alive, 'the descendant does not outlive the call' );
+        kill 'KILL', $descendant if $alive;
+    }
+}
+
 done_testing;
