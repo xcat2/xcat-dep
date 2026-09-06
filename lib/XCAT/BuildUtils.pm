@@ -21,6 +21,8 @@ our @EXPORT_OK = qw(
   display_quote
   every_step_failed
   forward_signals_to_workers
+  block_handled_signals
+  restore_signal_mask
   hashes_equal
   print_step
   read_binary
@@ -200,6 +202,24 @@ sub stall_report {
     return $total;
 }
 
+# block_handled_signals(): block INT, TERM and HUP and return the previous mask, for the window
+# between forking a child and being able to signal it. A cancellation arriving in that window would
+# otherwise kill the parent under a handler that does not know the child yet, and the child would
+# keep running. A blocked signal stays pending and is delivered by restore_signal_mask().
+sub block_handled_signals {
+    my $handled  = POSIX::SigSet->new(POSIX::SIGINT(), POSIX::SIGTERM(), POSIX::SIGHUP());
+    my $previous = POSIX::SigSet->new();
+    POSIX::sigprocmask(POSIX::SIG_BLOCK(), $handled, $previous);
+    return $previous;
+}
+
+# restore_signal_mask($previous): put the mask back, delivering anything that arrived meanwhile.
+sub restore_signal_mask {
+    my ($previous) = @_;
+    POSIX::sigprocmask(POSIX::SIG_SETMASK(), $previous) if $previous;
+    return;
+}
+
 # forward_signals_to_workers(%a): return an INT/TERM/HUP handler that passes the signal on to the
 # forked workers, waits for them, then re-raises it. An orchestrator that dies without this releases
 # its locks while its workers keep building and writing into staging, and the next run races
@@ -239,18 +259,16 @@ sub run_bounded {
     # handler below would kill this process under the inherited handler and leave the new process
     # group running. A blocked signal stays pending and is delivered once the handler is in place.
     # The child restores the mask before exec, or the build would inherit a blocked TERM.
-    my $handled  = POSIX::SigSet->new(POSIX::SIGINT(), POSIX::SIGTERM(), POSIX::SIGHUP());
-    my $previous = POSIX::SigSet->new();
-    POSIX::sigprocmask(POSIX::SIG_BLOCK(), $handled, $previous);
+    my $previous = block_handled_signals();
 
     my $pid = fork();
     unless (defined $pid) {
-        POSIX::sigprocmask(POSIX::SIG_SETMASK(), $previous);
+        restore_signal_mask($previous);
         die "run_bounded: fork failed: $!\n";
     }
     if ($pid == 0) {
         POSIX::setpgid(0, 0);
-        POSIX::sigprocmask(POSIX::SIG_SETMASK(), $previous);
+        restore_signal_mask($previous);
         exec('bash', '-c', $cmd) or POSIX::_exit(127);
     }
     # setpgid from BOTH sides: whichever runs first wins, so the group exists before the first signal
@@ -279,7 +297,7 @@ sub run_bounded {
     local $SIG{INT}  = $forward;
     local $SIG{TERM} = $forward;
     local $SIG{HUP}  = $forward;
-    POSIX::sigprocmask(POSIX::SIG_SETMASK(), $previous);
+    restore_signal_mask($previous);
 
     # An unbounded run still forks: it is the process group, not the deadline, that lets a signal
     # to the orchestrator reach the build.

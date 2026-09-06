@@ -641,15 +641,24 @@ sub build_deps {
     while (@queue || $running) {
         while (@queue && $running < $max) {
             my $cn = shift @queue;
+            # Block the handled signals across the fork AND the registration below: a cancellation
+            # in between would reach a handler that does not know this worker yet, and the worker
+            # would keep building for hours while holding the per-arch lock.
+            my $previous = XCAT::BuildUtils::block_handled_signals();
             my $pid = fork();
-            die "FATAL: fork failed: $!\n" unless defined $pid;
+            unless (defined $pid) {
+                XCAT::BuildUtils::restore_signal_mask($previous);
+                die "FATAL: fork failed: $!\n";
+            }
             # The child must not inherit the parent's forwarder: its copy names sibling workers,
             # which the parent already signals.
             if ($pid == 0) {
                 $SIG{$_} = 'DEFAULT' for qw(INT TERM HUP);
+                XCAT::BuildUtils::restore_signal_mask($previous);
                 exit(build_one_codename($cn));
             }
             $pid2cn{$pid} = $cn; $running++;
+            XCAT::BuildUtils::restore_signal_mask($previous);
         }
         my $pid = wait();
         if ($pid > 0) {
