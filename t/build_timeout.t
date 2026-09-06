@@ -226,4 +226,61 @@ is($alive, 0, 'the grandchild is killed with the group, so nothing survives hold
     }
 }
 
+# forward_signals_to_workers: the orchestrator forks its own workers, so run_bounded's forwarding
+# never sees a signal sent to it. Two real processes stand in for a worker and the build it runs.
+{
+    my $dir     = tempdir( CLEANUP => 1 );
+    my $pidfile = "$dir/worker.pid";
+
+    my $wrapper = fork();
+    die "fork failed: $!" unless defined $wrapper;
+    if ( $wrapper == 0 ) {
+        my %kids;
+        my $worker = fork();
+        if ( defined $worker && $worker == 0 ) {
+            open my $fh, '>', $pidfile or POSIX::_exit(1);
+            print {$fh} "$$\n";
+            close $fh;
+            sleep 300;
+            POSIX::_exit(0);
+        }
+        $kids{$worker} = 1;
+        my $forward = XCAT::BuildUtils::forward_signals_to_workers(
+            pids => \%kids,
+            reap => sub { waitpid( $_, 0 ) for keys %kids },
+        );
+        local $SIG{TERM} = $forward;
+        sleep 300;
+        POSIX::_exit(0);
+    }
+
+    my $worker;
+    for ( 1 .. 100 ) {
+        if ( -s $pidfile ) {
+            open my $fh, '<', $pidfile or last;
+            chomp( $worker = <$fh> // '' );
+            close $fh;
+            last if $worker;
+        }
+        select( undef, undef, undef, 0.1 );
+    }
+
+  SKIP: {
+        skip 'worker never reported its pid', 2 unless $worker;
+        ok( kill( 0, $worker ), 'the worker is running before the orchestrator is signalled' );
+
+        kill 'TERM', $wrapper;
+        waitpid( $wrapper, 0 );
+
+        my $alive = 1;
+        for ( 1 .. 100 ) {
+            $alive = kill( 0, $worker );
+            last unless $alive;
+            select( undef, undef, undef, 0.1 );
+        }
+        ok( !$alive, 'signalling the orchestrator reaps its forked workers' );
+        kill 'KILL', $worker if $alive;
+    }
+}
+
 done_testing;
