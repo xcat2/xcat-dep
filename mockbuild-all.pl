@@ -27,6 +27,8 @@ use XCAT::BuildUtils qw(
   capture_command
   every_step_failed
   forward_signals_to_workers
+  block_handled_signals
+  restore_signal_mask
   hashes_equal
   read_lines
   emulated_build_timeout
@@ -444,9 +446,11 @@ my $tgt_fail = 0;
 my %tgt_kids;
 $tgt_pm->run_on_start(sub { $tgt_kids{ $_[0] } = 1 });
 $tgt_pm->run_on_finish(sub {
-    my ($pid, $exit) = @_;
+    my ($pid, $exit, $ident, $signal, $core_dump) = @_;
     delete $tgt_kids{$pid};
-    $tgt_fail++ if $exit;
+    # A worker killed by a signal exits with code 0 in this callback, so reading the code alone
+    # reports a target that died mid-deploy as built.
+    $tgt_fail++ if $exit or $signal or $core_dump;
 });
 my $tgt_forward = forward_signals_to_workers(
     pids => \%tgt_kids,
@@ -456,7 +460,19 @@ local $SIG{INT}  = $tgt_forward;
 local $SIG{TERM} = $tgt_forward;
 local $SIG{HUP}  = $tgt_forward;
 for my $tgt (@build_targets) {
-    $tgt_pm->start and next;
+    # ForkManager records the worker in run_on_start, which runs AFTER the fork, so the handler
+    # cannot signal a worker that arrives in between. Hold the signals across both -- but wait for
+    # a free slot FIRST, with them unblocked, or a cancellation would sit pending for as long as
+    # the pool stays full.
+    # max_procs 0 is ForkManager's no-fork mode, where asking for a slot is an error.
+    $tgt_pm->wait_for_available_procs(1) if $tgt_pm->max_procs;
+    my $orchestrator = $$;
+    my $previous     = block_handled_signals();
+    if ($tgt_pm->start) { restore_signal_mask($previous); next; }
+    # With one worker ForkManager does not fork at all, and this is still the orchestrator: only a
+    # real child drops the forwarder, whose copy names siblings the parent already signals.
+    $SIG{$_} = 'DEFAULT' for ($$ == $orchestrator ? () : qw(INT TERM HUP));
+    restore_signal_mask($previous);
     my $rc = 0;
     eval {
         my $info = build_one_target($tgt, $run_id, $per_target_builds);
@@ -1562,8 +1578,15 @@ sub run_build_steps_parallel {
         my $ident = delete $step_copy{id};
         $ident = $step_copy{step} if !defined($ident) || $ident eq '';
 
+        # Same window as the per-target workers, and the same rule about waiting for a slot with
+        # the signals unblocked.
+        $pm->wait_for_available_procs(1) if $pm->max_procs;
+        my $orchestrator = $$;
+        my $previous     = block_handled_signals();
         my $pid = $pm->start($ident);
-        next if $pid;
+        if ($pid) { restore_signal_mask($previous); next; }
+        $SIG{$_} = 'DEFAULT' for ($$ == $orchestrator ? () : qw(INT TERM HUP));
+        restore_signal_mask($previous);
 
         my $ok = eval {
             run_step(%step_copy);
