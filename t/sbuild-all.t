@@ -568,6 +568,15 @@ if [ -n "$FAKE_SMOKE_MARK" ]; then
                           exit ${FAKE_SMOKE_RC:-0} ;;
   esac
 fi
+# A build session leaves its debs in the result directory it was given, which is the private
+# staging directory build_deb_in_chroot creates and passes among the session arguments.
+if [ -n "$FAKE_BUILD_DEB" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      */.build-*) [ -d "$arg" ] && : > "$arg/$FAKE_BUILD_DEB" ;;
+    esac
+  done
+fi
 exit 0
 STUB
     close $fh;
@@ -601,19 +610,13 @@ STUB
 
     # ---- the post-build smoke -------------------------------------------------------------------
     # A cross-built binary runs only in the chroot, so the smoke is the ONLY check that the deb
-    # carries a runnable binary. Same stub, now standing in for the chroot session, with a deb
-    # planted so the build gets as far as the smoke.
+    # carries a runnable binary. The stub now leaves a deb behind like a real build session, so
+    # the build gets as far as the smoke.
     {
         local $ENV{PATH} = "$fakebin:$ENV{PATH}";
         local $ENV{FAKE_SCHROOT_CONFIG} =
             "[noble-amd64-sbuild]\ntype=directory\ndirectory=/srv/chroot/noble-amd64\nunion-type=overlay\n";
-        # A failed smoke removes the deb it rejected, so each case plants a fresh one.
-        my $plant = sub {
-            open my $dfh, '>', "$work/out/fixture-xcat_1.8.18-4_amd64.deb" or die $!;
-            print {$dfh} "not really a deb\n";
-            close $dfh;
-        };
-        $plant->();
+        local $ENV{FAKE_BUILD_DEB} = 'fixture-xcat_1.8.18-4_amd64.deb';
 
         my %smoke = (deb => qr/^fixture-xcat_/, run => '/opt/xcat/bin/fixture-xcat -V',
                      expect => qr/fixture-xcat version 1\.8\.18/);
@@ -627,32 +630,32 @@ STUB
             or diag($@);
         ok(!-e "$work/out/.smoke-fixture.log", '... and the smoke log is removed on success');
 
+        # The passing case above published its deb; clear it so the next assertion is about what
+        # THIS run leaves behind.
+        unlink glob("$work/out/*.deb");
+
         local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.17';
         $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
         ok(!$ok, 'a binary reporting another version fails the smoke');
         like($@, qr/does not match/, '... naming the expectation it missed');
 
-        # The debs are already in staging when the smoke runs, and the publish gate checks names
-        # and versions only. One left behind is the broken binary the smoke exists to catch.
+        # The publish gate checks names and versions only, so a deb the smoke rejected must never
+        # reach the directory a publish assembles from.
         is_deeply([ glob("$work/out/*.deb") ], [],
-            '... and the deb it rejected is gone from the result directory');
-        like($@, qr/were removed from/, '... which the failure says');
+            '... and no deb reaches the result directory');
 
-        $plant->();
 
         local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.18';
         local $ENV{FAKE_SMOKE_RC}  = 3;
         $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
         ok(!$ok, 'a binary that cannot run fails the smoke even with matching output');
         like($@, qr/smoke failed \(rc=3\)/, '... reporting the exit status');
-        $plant->();
 
         delete local $ENV{FAKE_SMOKE_RC};
         $ok = eval { quiet { build_deb_in_chroot(@args,
                         smoke => { %smoke, deb => qr/^nosuchpkg_/ }) }; 1 };
         ok(!$ok, 'a smoke that names a deb the build never produced fails');
         like($@, qr/no produced deb matches/, '... instead of silently skipping the check');
-        $plant->();
 
         # --skip-install is what sbuild-all.pl passes to drop the smoke, so the same build with no
         # smoke must still succeed -- otherwise the tests above would pass for the wrong reason.
