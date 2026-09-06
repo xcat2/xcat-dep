@@ -9,6 +9,7 @@ use XCAT::BuildUtils qw(digest_file read_lines relative_files);
 our @EXPORT_OK = qw(
   architectures
   deb_package_name
+  minimum_release_version
   read_checksum_manifest
   read_release_manifest
   rpm_package_name
@@ -51,6 +52,17 @@ sub deb_package_name {
     validate_architecture($architecture);
     $architecture =~ tr/_/-/;
     return "xcat-genesis-openembedded-$architecture";
+}
+
+sub minimum_release_version {
+    my @architectures = @_;
+    die "Release format selection requires a Genesis architecture\n" unless @architectures;
+    validate_architecture($_) for @architectures;
+    for my $version (sort { $a <=> $b } keys %RELEASE_ARCHITECTURES) {
+        my %supported = map { $_ => 1 } @{ $RELEASE_ARCHITECTURES{$version} };
+        return $version unless grep { !$supported{$_} } @architectures;
+    }
+    die "No release format supports the requested Genesis architectures\n";
 }
 
 sub _read_key_values {

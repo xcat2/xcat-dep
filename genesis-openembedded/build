@@ -3,9 +3,7 @@
 use strict;
 use warnings;
 
-use Carp qw(croak);
 use Cwd qw(abs_path);
-use English qw(-no_match_vars);
 use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
@@ -25,6 +23,7 @@ use XCAT::BuildUtils qw(
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
+  minimum_release_version
   rpm_package_name
   validate_architecture
   validate_release
@@ -68,6 +67,17 @@ for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/e
 }
 die "xcat-core checkout is not clean\n"
   if capture_command('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
+
+my $revision = capture_command('git', '-C', $xcat_source, 'rev-parse', 'HEAD');
+die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}$/;
+if ($xcat_ref ne '') {
+    die "Invalid xcat-core ref: $xcat_ref\n" unless $xcat_ref =~ /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
+    my $expected = capture_command(
+        'git', '-C', $xcat_source, 'rev-parse', '--verify', "$xcat_ref^{commit}",
+    );
+    die "xcat-core HEAD $revision does not match $xcat_ref ($expected)\n"
+      unless $revision eq $expected;
+}
 if ($requested{s390x}) {
     my $architecture_reporter = "$xcat_source/xCAT-genesis-builder/oe/build";
     my $probe_work = tempdir('xcat-genesis-capabilities.XXXXXX', TMPDIR => 1, CLEANUP => 1);
@@ -79,10 +89,9 @@ if ($requested{s390x}) {
             capture_command($architecture_reporter, '--list-architectures');
         };
     }
-    my $report_error = $EVAL_ERROR;
-    if ($report_error) {
-        croak "xcat-core source does not report supported Genesis architectures: $report_error";
-    }
+    my $report_error = $@;
+    die "xcat-core source does not report supported Genesis architectures: $report_error"
+      if $report_error;
     if (!defined($supported_output) || !length $supported_output) {
         die "xcat-core source reported no supported Genesis architectures\n";
     }
@@ -90,17 +99,6 @@ if ($requested{s390x}) {
     if (!$supported_architecture{s390x}) {
         die "xcat-core source does not support Genesis architecture s390x\n";
     }
-}
-
-my $revision = capture_command('git', '-C', $xcat_source, 'rev-parse', 'HEAD');
-die "Invalid xcat-core revision: $revision\n" unless $revision =~ /^[0-9a-f]{40}$/;
-if ($xcat_ref ne '') {
-    die "Invalid xcat-core ref: $xcat_ref\n" unless $xcat_ref =~ /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
-    my $expected = capture_command(
-        'git', '-C', $xcat_source, 'rev-parse', '--verify', "$xcat_ref^{commit}",
-    );
-    die "xcat-core HEAD $revision does not match $xcat_ref ($expected)\n"
-      unless $revision eq $expected;
 }
 
 my $version = read_first_line("$xcat_source/Version");
@@ -165,7 +163,7 @@ for my $architecture (@requested_architectures) {
 }
 
 my @formats = $format eq 'all' ? qw(deb rpm) : ($format);
-my $manifest_version = $requested{s390x} ? 2 : 1;
+my $manifest_version = minimum_release_version(@requested_architectures);
 write_binary(
     "$staging/release.manifest",
     "format=xcat-genesis-packages\n"
