@@ -16,7 +16,7 @@ use POSIX ();
 use Test::More;
 
 use lib "$FindBin::Bin/../lib", "$FindBin::Bin/..";
-use XCAT::BuildUtils qw(run_bounded emulated_build_timeout);
+use XCAT::BuildUtils qw(run_bounded emulated_build_timeout block_handled_signals restore_signal_mask);
 use BuildUtils qw(chroot_build_timeout);
 
 my $tmp = tempdir(CLEANUP => 1);
@@ -326,6 +326,23 @@ is($alive, 0, 'the grandchild is killed with the group, so nothing survives hold
         my $handled = ( 1 << 1 ) | ( 1 << 14 ) | ( 1 << 0 );
         is( $blocked & $handled, 0, 'the caller keeps INT, TERM and HUP unblocked afterwards' );
     }
+}
+
+# block_handled_signals holds a cancellation until the caller can act on it. This is the window
+# between forking a worker and being able to signal it: delivered there, the signal kills the parent
+# under a handler that does not know the child, and the child keeps building.
+{
+    my @caught;
+    local $SIG{TERM} = sub { push @caught, 'TERM' };
+
+    my $previous = block_handled_signals();
+    kill 'TERM', $$;
+    select( undef, undef, undef, 0.2 );
+    is_deeply( \@caught, [], 'a signal sent while blocked is not delivered' );
+
+    restore_signal_mask($previous);
+    select( undef, undef, undef, 0.2 );
+    is_deeply( \@caught, ['TERM'], '... and arrives once the mask is restored' );
 }
 
 done_testing;
