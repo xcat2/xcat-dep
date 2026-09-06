@@ -662,7 +662,10 @@ sub build_deps {
         }
         my $pid = wait();
         if ($pid > 0) {
-            my $ec = $? >> 8;
+            # A worker the kernel killed leaves 0 in the high byte, so the shifted status alone
+            # would record a cancelled or OOM-killed codename as built.
+            require XCAT::BuildUtils;
+            my $ec = XCAT::BuildUtils::exit_status($?);
             my $cn = delete $pid2cn{$pid} // '?';
             $fail{$cn} = $ec if $ec != 0;
             $running--;

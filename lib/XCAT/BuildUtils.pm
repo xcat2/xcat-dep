@@ -22,6 +22,7 @@ our @EXPORT_OK = qw(
   every_step_failed
   forward_signals_to_workers
   block_handled_signals
+  exit_status
   restore_signal_mask
   hashes_equal
   print_step
@@ -202,6 +203,15 @@ sub stall_report {
     return $total;
 }
 
+# exit_status($status): the exit code of a waited-for child, or 128 plus the signal that killed it.
+# A child killed by a signal has 0 in the high byte, so reading only that byte reports a build the
+# kernel terminated as a build that succeeded.
+sub exit_status {
+    my ($status) = @_;
+    return 0 unless defined $status;
+    return ($status & 127) ? 128 + ($status & 127) : $status >> 8;
+}
+
 # block_handled_signals(): block INT, TERM and HUP and return the previous mask, for the window
 # between forking a child and being able to signal it. A cancellation arriving in that window would
 # otherwise kill the parent under a handler that does not know the child yet, and the child would
@@ -323,8 +333,7 @@ sub run_bounded {
         return { ec => 124, timed_out => 1, elapsed => time - $t0 };
     }
 
-    my $ec = ($status & 127) ? 128 + ($status & 127) : $status >> 8;
-    return { ec => $ec, timed_out => 0, elapsed => time - $t0 };
+    return { ec => exit_status($status), timed_out => 0, elapsed => time - $t0 };
 }
 
 sub display_quote {
