@@ -417,7 +417,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'rpmbuild and rpm are not installed', 18
+    skip 'rpmbuild and rpm are not installed', 19
       unless command_exists('rpmbuild') && command_exists('rpm');
     exercise_packager('rpm');
 }
@@ -430,7 +430,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'dpkg-deb is not installed', 12 unless command_exists('dpkg-deb');
+    skip 'dpkg-deb is not installed', 14 unless command_exists('dpkg-deb');
     exercise_packager('deb');
 }
 
