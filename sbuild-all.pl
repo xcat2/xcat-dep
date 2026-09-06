@@ -50,7 +50,8 @@ use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifes
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
-                  codename_to_version known_codenames chroot_name chroot_sources_list
+                  codename_to_version known_codenames supported_arches is_supported_arch
+                  chroot_name chroot_sources_list
                   chroot_is_disposable
                   control_field genesis_deb_control
                   deb_field deb_version deb_hash cross_copy_genesis_deb);
@@ -73,6 +74,9 @@ my $build_number;
 # arches on their two hosts in parallel, "all 4 codenames per host" gives 8 concurrent build streams
 # (4 per host). N caps it to N; 1 forces serial.
 my $parallel_targets = 0;
+# Per-package wall-clock bound. undef = the arch-derived default in BuildUtils::chroot_build_timeout
+# (native vs qemu-user emulated); an explicit 0 disables the bound.
+my $build_timeout;
 my ($skip_build, $skip_install, $skip_genesis, $skip_xcat_dep) = (0,0,0,0);
 my $install_deps = 0;
 my ($skip_createrepo, $skip_tarball) = (0,0);
@@ -174,6 +178,7 @@ $spec{'apt-dir=s'}             = \$apt_dir;
 $spec{'mirror=s'}              = \$mirror;
 $spec{'gpg-key-id=s'}          = \$gpg_key_id;
 $spec{'parallel-targets=i'}    = \$parallel_targets;
+$spec{'build-timeout=i'}       = \$build_timeout;   # per-package wall-clock bound (0 = unbounded)
 $spec{'genesis-deb=s'}         = \@genesis_debs;
 $spec{'genesis-rpm=s'}         = \$genesis_rpm;
 $spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
@@ -220,16 +225,17 @@ $xcat_src  = abs_path($xcat_src) if -d $xcat_src;
 $manifest  ||= "$repo_root/debs-manifest.conf";
 $arch      ||= `dpkg --print-architecture 2>/dev/null`; chomp $arch;
 $arch      ||= 'amd64';
-die "FATAL: unsupported --arch '$arch' (amd64|ppc64el)\n" unless $arch =~ /^(amd64|ppc64el)$/;
-# Arch-aware chroot bootstrap mirror: ppc64el is NOT served by archive.ubuntu.com -- it lives on
-# ubuntu-ports. Only defaulted when --mirror was not given explicitly.
-$mirror    ||= ($arch eq 'ppc64el') ? 'http://ports.ubuntu.com/ubuntu-ports'
-                                     : 'http://br.archive.ubuntu.com/ubuntu';
+die "FATAL: unsupported --arch '$arch' (@{[join '|', supported_arches()]})\n" unless is_supported_arch($arch);
+# Arch-aware chroot bootstrap mirror: only amd64 is on archive.ubuntu.com. Every secondary
+# architecture -- ppc64el and riscv64 -- lives on ubuntu-ports. Only defaulted when --mirror was not
+# given explicitly.
+$mirror    ||= ($arch ne 'amd64') ? 'http://ports.ubuntu.com/ubuntu-ports'
+                                  : 'http://br.archive.ubuntu.com/ubuntu';
 
 # --target "<codename>-<arch>" pins a single codename (and cross-checks the arch); otherwise --dists.
 my @dist_list;
-if ($dists =~ /-(amd64|ppc64el)$/) {
-    my ($cn, $a) = $dists =~ /^(.+)-(amd64|ppc64el)$/;
+if ($dists =~ /-(@{[join '|', supported_arches()]})$/) {
+    my ($cn, $a) = $dists =~ /^(.+)-(@{[join '|', supported_arches()]})$/;
     die "FATAL: --target arch '$a' != host --arch '$arch'\n" if $a ne $arch;
     @dist_list = ($cn);
 } else {
@@ -243,7 +249,7 @@ for my $cn (@dist_list) {
 
 @expect_arch = grep { length } map { split /[\s,]+/ } @expect_arch;
 for my $a (@expect_arch) {
-    die "FATAL: unsupported --expect-arch '$a' (amd64|ppc64el)\n" unless $a =~ /^(amd64|ppc64el)$/;
+    die "FATAL: unsupported --expect-arch '$a' (@{[join '|', supported_arches()]})\n" unless is_supported_arch($a);
 }
 
 # ---------------------------------------------------------------------------------------------------
@@ -356,6 +362,10 @@ unless ($dry_run) {
     }
 }
 
+# The per-package builders are separate processes with their own CLI, so the bound travels to them in
+# the environment. Without it each one derives the same default from its chroot arch.
+$ENV{XCAT_DEP_BUILD_TIMEOUT} = $build_timeout if defined $build_timeout;
+
 print_step('Configuration');
 print "  repo-root:   $repo_root\n";
 print "  xcat-source: $xcat_src\n";
@@ -372,6 +382,10 @@ print "  publish:     " . ($publish
 print "  expect-arch: " . (@expect_arch ? "@expect_arch" : '(derive from the staged arch set)') . "\n"
     if $publish;
 print "  dry-run:     " . ($dry_run ? "yes" : "no") . "\n";
+print "  build-timeout: " . (defined $build_timeout
+    ? ($build_timeout > 0 ? "${build_timeout}s (explicit)" : 'disabled')
+    : BuildUtils::chroot_build_timeout(chroot_name($dist_list[0], $arch)) . "s (derived: "
+      . ($arch eq (do { my $h = `dpkg --print-architecture 2>/dev/null`; chomp $h; $h }) ? 'native' : 'emulated') . ")") . "\n";
 
 # ---------------------------------------------------------------------------------------------------
 # Helpers
@@ -456,6 +470,37 @@ sub ensure_disposable_chroot {
     return 1;
 }
 
+# A chroot for another architecture is bootstrapped and built through qemu-user: debootstrap's
+# second stage and every later build run the target's own binaries. Without a registered binfmt
+# handler that fails deep inside debootstrap, so it is checked here, where the message can name what
+# is missing.
+my %BINFMT_HANDLER = (
+    riscv64 => 'qemu-riscv64',
+    ppc64el => 'qemu-ppc64le',
+);
+
+sub ensure_foreign_arch_support {
+    my ($target) = @_;
+
+    my $host = `dpkg --print-architecture 2>/dev/null`;
+    chomp $host;
+    return if (!$host or $target eq $host);
+
+    my $handler = $BINFMT_HANDLER{$target} or return;
+    my $node    = "/proc/sys/fs/binfmt_misc/$handler";
+    my $enabled = 0;
+    if (open my $fh, '<', $node) {
+        local $/;
+        $enabled = (<$fh> // '') =~ /^enabled/m ? 1 : 0;
+        close $fh;
+    }
+    return if $enabled;
+
+    die "FATAL: building $target on a $host host runs the target's binaries through qemu-user,\n"
+      . "       but the $handler binfmt handler is not registered (looked at $node).\n"
+      . "       Install qemu-user-static and binfmt-support, then re-run.\n";
+}
+
 sub ensure_chroots {
     print_step('Ensure sbuild chroots (auto-init on first run)');
     die "FATAL: chroot init requires root (uid=$>)\n" if $> != 0 && !$dry_run;
@@ -473,6 +518,7 @@ sub ensure_chroots {
             next;
         }
         print "  chroot $name: MISSING -> creating\n";
+        ensure_foreign_arch_support($arch);
         # debootstrap may lack a script for a new codename -> fall back to the generic one.
         run("[ -e /usr/share/debootstrap/scripts/$cn ] || ln -sf gutsy /usr/share/debootstrap/scripts/$cn", nofail => 1);
         my $root = "/srv/chroot/$cn-$arch";
@@ -548,7 +594,17 @@ sub build_one_codename {
             '>', sh_quote($log), '2>&1',
         );
         print "  [$cn] -> $pkg ($dir/sbuild.pl)\n";
-        my $ec = run($cmd, nofail => 1);
+        # run_bounded, not run(): it puts the builder in its own process group and forwards a
+        # signal to it. system() would leave the builder, its schroot session and qemu running
+        # after this worker died, holding the chroot and writing into staging. The wall-clock
+        # bound belongs to the builder itself, so this call only carries the cancellation.
+        print "+ $cmd\n";
+        my $ec = 0;
+        unless ($dry_run) {
+            require XCAT::BuildUtils;
+            $ec = XCAT::BuildUtils::run_bounded(cmd => $cmd, timeout => 0,
+                      label => "[$cn] $pkg", out => \*STDOUT)->{ec};
+        }
         if ($ec != 0) { warn "FATAL: [$cn] $pkg build failed (rc=$ec) -- see $log\n"; return 1; }
     }
     print "== [$cn] done ==\n";
@@ -574,17 +630,42 @@ sub build_deps {
     my @queue = @dist_list;
     my (%pid2cn, %fail);
     my $running = 0;
+    require XCAT::BuildUtils;
+    my $forward = XCAT::BuildUtils::forward_signals_to_workers(
+        pids => \%pid2cn,
+        reap => sub { waitpid($_, 0) for keys %pid2cn },
+    );
+    local $SIG{INT}  = $forward;
+    local $SIG{TERM} = $forward;
+    local $SIG{HUP}  = $forward;
     while (@queue || $running) {
         while (@queue && $running < $max) {
             my $cn = shift @queue;
+            # Block the handled signals across the fork AND the registration below: a cancellation
+            # in between would reach a handler that does not know this worker yet, and the worker
+            # would keep building for hours while holding the per-arch lock.
+            my $previous = XCAT::BuildUtils::block_handled_signals();
             my $pid = fork();
-            die "FATAL: fork failed: $!\n" unless defined $pid;
-            if ($pid == 0) { exit(build_one_codename($cn)); }   # child
+            unless (defined $pid) {
+                XCAT::BuildUtils::restore_signal_mask($previous);
+                die "FATAL: fork failed: $!\n";
+            }
+            # The child must not inherit the parent's forwarder: its copy names sibling workers,
+            # which the parent already signals.
+            if ($pid == 0) {
+                $SIG{$_} = 'DEFAULT' for qw(INT TERM HUP);
+                XCAT::BuildUtils::restore_signal_mask($previous);
+                exit(build_one_codename($cn));
+            }
             $pid2cn{$pid} = $cn; $running++;
+            XCAT::BuildUtils::restore_signal_mask($previous);
         }
         my $pid = wait();
         if ($pid > 0) {
-            my $ec = $? >> 8;
+            # A worker the kernel killed leaves 0 in the high byte, so the shifted status alone
+            # would record a cancelled or OOM-killed codename as built.
+            require XCAT::BuildUtils;
+            my $ec = XCAT::BuildUtils::exit_status($?);
             my $cn = delete $pid2cn{$pid} // '?';
             $fail{$cn} = $ec if $ec != 0;
             $running--;
@@ -604,7 +685,8 @@ sub maintained_genesis_control {
     my $f = "$xcat_src/xCAT-genesis-builder/debian/control";
     return undef unless -f $f;
     local $/; open my $fh, '<', $f or return undef; my $t = <$fh>; close $fh;
-    if ($a eq 'ppc64el') { $t =~ s/amd64/ppc64el/g; }
+    # The tree carries the amd64 control; any other arch is the same text with the arch renamed.
+    $t =~ s/amd64/$a/g if $a ne 'amd64';
     return $t;
 }
 # convert_genesis_rpm($rpm, $pkgname, $arch, $outdir): rpm2cpio-extract the noarch genesis rpm and
@@ -637,6 +719,19 @@ sub convert_genesis_rpm {
     run("dpkg-deb --build " . sh_quote($pkgd) . " " . sh_quote("$outdir/${pkgname}_${ver}_all.deb"));
     return "$outdir/${pkgname}_${ver}_all.deb";
 }
+# genesis_in_manifest(): whether the legacy Genesis deb belongs to this run at all. It is named
+# per target in the manifest, and riscv64 does not name it: its Genesis is the OpenEmbedded package
+# published once into the shared pool. Without this, a plain --arch riscv64 run reaches
+# build_genesis and dies for want of a --genesis-deb it can never have, after the dep builds.
+sub genesis_in_manifest {
+    for my $cn (@dist_list) {
+        my $section = "$cn-$arch";
+        next unless $MANIFEST{$section};
+        return 1 if grep { /^xcat-genesis-base/ } keys %{ $MANIFEST{$section} };
+    }
+    return 0;
+}
+
 sub build_genesis {
     print_step('Genesis-base deb (maintained packaging preserved)');
     my $gen = "$output_root/$run_id/genesis"; wipe_tree($gen) if -d $gen; make_path($gen);
@@ -854,7 +949,7 @@ sub resolve_expect_arches {
             for my $d (glob("$staging/$cn/*")) {
                 next unless -d $d;
                 my $a = basename($d);
-                $u{$a} = 1 if $a =~ /^(amd64|ppc64el)$/;
+                $u{$a} = 1 if is_supported_arch($a);
             }
         }
         print "  expected arches (from the staged set): " . join(' ', sort keys %u) . "\n";
@@ -911,7 +1006,7 @@ sub verify_assembled_repo {
         # pure verify_repo_arches can report both directions: expected-but-absent and present-but-
         # unexpected (a stale arch left behind in the tree).
         my %native;
-        for my $a (do { my %s = map { $_ => 1 } (@expected, qw(amd64 ppc64el)); sort keys %s }) {
+        for my $a (do { my %s = map { $_ => 1 } (@expected, supported_arches()); sort keys %s }) {
             my $idx = "$adir/dists/$cn/main/binary-$a/Packages";
             $native{$a} = 0;
             next unless -f $idx;
@@ -1272,7 +1367,7 @@ unless ($skip_build) {
     ensure_chroots();
     build_deps();
 }
-build_genesis()    unless $skip_genesis;
+build_genesis()    unless ($skip_genesis or !genesis_in_manifest());
 validate_manifest();
 publish_repo();      # no-op unless --publish (or a --skip-build finalization run); tarball is inside
 print_step("Completed ($arch: @dist_list)" . ($publish ? '' : ' -- staging only, not published'));
@@ -1291,9 +1386,10 @@ sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian ap
   sbuild-all.pl --arch amd64   --dists "focal jammy noble resolute" \
       --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm>
   sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" --skip-genesis
+  sbuild-all.pl --arch riscv64 --dists "focal jammy noble resolute"
 
   # STEP 2 -- ONCE, after every arch has staged: assemble, sign, gate and publish atomically:
-  sbuild-all.pl --skip-build --skip-genesis --publish --expect-arch "amd64 ppc64el" \
+  sbuild-all.pl --skip-build --skip-genesis --publish --expect-arch "amd64 ppc64el riscv64" \
       --gpg-sign --gpg-key-id xcat@megware.com --gpg-home <gpg-home>
 
   # build ONE Ubuntu version only:
@@ -1306,7 +1402,7 @@ sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian ap
 
   # verify an already-published tree out of band (signatures checked by DEFAULT):
   sbuild-all.pl --verify-repo <apt_dir> --dists "focal jammy noble resolute" \
-      --expect-arch "amd64 ppc64el" --gpg-key-id <id> --gpg-home <dir>
+      --expect-arch "amd64 ppc64el riscv64" --gpg-key-id <id> --gpg-home <dir>
 
   sbuild-all.pl --help        # option summary
   sbuild-all.pl --man         # this manual
@@ -1423,7 +1519,7 @@ C<--skip-tarball>.
 
 =over 4
 
-=item B<--arch> C<amd64|ppc64el>
+=item B<--arch> C<amd64|ppc64el|riscv64>
 
 Host architecture. Default: C<dpkg --print-architecture>.
 
@@ -1504,6 +1600,16 @@ Per-codename build concurrency on this host. Default 0 = auto = build every requ
 parallel (each in its own chroot); N caps it; 1 forces serial. With the two arches on their two hosts,
 the default gives 8 concurrent build streams for a 4-codename matrix (4 per host).
 
+=item B<--build-timeout> C<SECONDS>
+
+Wall-clock bound for ONE package build, passed to every per-package builder in
+C<XCAT_DEP_BUILD_TIMEOUT>. C<0> removes the bound. The default is derived from the target
+architecture: 900s for a native build, and ten times that for a foreign architecture, because
+qemu-user under TCG runs at roughly a tenth of native speed. When the bound expires the run prints
+the process tree of the build, each pid's kernel wchan and stack, its open socket count and the CPU
+ticks it used over a 20-second sample, then kills the whole process group. The sample is the
+evidence that separates a deadlocked build from a slow one.
+
 =item B<--skip-build> B<--skip-install> B<--skip-genesis> B<--skip-xcat-dep> B<--skip-createrepo> B<--skip-tarball>
 
 Skip the corresponding phase(s). C<--skip-build --skip-genesis> is the finalization run (it publishes
@@ -1527,10 +1633,10 @@ swap it onto C<--apt-dir> atomically. B<A build run does not publish unless this
 arches can build concurrently without racing each other on the shared repo. Defaults to on for a run
 that builds nothing (C<--skip-build>), which is the finalization step. C<--no-publish> forces it off.
 
-=item B<--expect-arch> C<< amd64|ppc64el >>
+=item B<--expect-arch> C<< amd64|ppc64el|riscv64 >>
 
 The architecture set the published repo must serve, stated explicitly. Repeatable, and each value may
-be a space/comma list (C<--expect-arch "amd64 ppc64el">). Used by the gate: an expected arch with no
+be a space/comma list (C<--expect-arch "amd64 ppc64el riscv64">). Used by the gate: an expected arch with no
 native package is C<MISSING-ARCH>, an unexpected arch that published natives is C<UNEXPECTED-ARCH>,
 and C<Release> advertises exactly this set. Without it the gate falls back to the staged arch set when
 publishing, or to each codename's C<Release> C<Architectures:> when verifying standalone.

@@ -26,9 +26,14 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
 use XCAT::BuildUtils qw(
   capture_command
   every_step_failed
+  forward_signals_to_workers
+  block_handled_signals
+  restore_signal_mask
   hashes_equal
   read_lines
+  emulated_build_timeout
   require_command
+  run_bounded
   run_command
   shell_quote
 );
@@ -88,6 +93,9 @@ my $parallel_targets = 1;   # 1 = serial (default; safe). 0/auto = all EL target
                             # NOTE: parallel targets need every per-package mockbuild.pl to avoid
                             # shared-path writes (repo tarballs, $HOME/rpmbuild); serial is safe today.
 my $max_parallel = 0;       # 0/auto = host nproc: global cap on concurrent mock builds (all targets)
+# Per-build-step wall-clock bound for the dep and perl steps. undef = derived from the target arch
+# (a forcearch target is cross-built through qemu-user); an explicit 0 removes the bound.
+my $build_timeout;
 my $run_id     = '';
 my $build_timestamp;
 # CD version bump: when set, every xcat-dep package spec's Release gets a
@@ -157,6 +165,7 @@ GetOptions(
     'parallel-builds=i' => \$parallel_builds,
     'parallel-targets=i' => \$parallel_targets,
     'max-parallel=i'    => \$max_parallel,
+    'build-timeout=i'   => \$build_timeout,
     'run-id=s'          => \$run_id,
     'build-timestamp=i' => \$build_timestamp,
     'build-number=i'    => \$build_number,
@@ -432,12 +441,38 @@ print "parallel_targets: " . ($parallel_targets > 0 ? $parallel_targets : "auto(
 print "max_parallel:     $cap (per-target build workers: $per_target_builds)\n";
 my $tgt_pm = Parallel::ForkManager->new($tgt_workers <= 1 ? 0 : $tgt_workers);
 my $tgt_fail = 0;
+# A signal to this process must reach the forked workers. Without forwarding, the orchestrator exits
+# and releases its locks while the workers keep building and writing into the deploy tree.
+my %tgt_kids;
+$tgt_pm->run_on_start(sub { $tgt_kids{ $_[0] } = 1 });
 $tgt_pm->run_on_finish(sub {
-    my ($pid, $exit) = @_;
-    $tgt_fail++ if $exit;
+    my ($pid, $exit, $ident, $signal, $core_dump) = @_;
+    delete $tgt_kids{$pid};
+    # A worker killed by a signal exits with code 0 in this callback, so reading the code alone
+    # reports a target that died mid-deploy as built.
+    $tgt_fail++ if $exit or $signal or $core_dump;
 });
+my $tgt_forward = forward_signals_to_workers(
+    pids => \%tgt_kids,
+    reap => sub { $tgt_pm->wait_all_children },
+);
+local $SIG{INT}  = $tgt_forward;
+local $SIG{TERM} = $tgt_forward;
+local $SIG{HUP}  = $tgt_forward;
 for my $tgt (@build_targets) {
-    $tgt_pm->start and next;
+    # ForkManager records the worker in run_on_start, which runs AFTER the fork, so the handler
+    # cannot signal a worker that arrives in between. Hold the signals across both -- but wait for
+    # a free slot FIRST, with them unblocked, or a cancellation would sit pending for as long as
+    # the pool stays full.
+    # max_procs 0 is ForkManager's no-fork mode, where asking for a slot is an error.
+    $tgt_pm->wait_for_available_procs(1) if $tgt_pm->max_procs;
+    my $orchestrator = $$;
+    my $previous     = block_handled_signals();
+    if ($tgt_pm->start) { restore_signal_mask($previous); next; }
+    # With one worker ForkManager does not fork at all, and this is still the orchestrator: only a
+    # real child drops the forwarder, whose copy names siblings the parent already signals.
+    $SIG{$_} = 'DEFAULT' for ($$ == $orchestrator ? () : qw(INT TERM HUP));
+    restore_signal_mask($previous);
     my $rc = 0;
     eval {
         my $info = build_one_target($tgt, $run_id, $per_target_builds);
@@ -596,6 +631,15 @@ if (!$skip_build) {
     my @build_steps;
     my $build_step_seq = 0;
 
+    # Bound only what can run emulated. A forcearch target (rocky-10-riscv64-xcat) cross-builds every
+    # dep through qemu-user, where a deadlock burns no CPU and never returns. Native mock steps keep
+    # their present, unbounded behaviour: no measurement of them exists here, and a bound guessed for
+    # a step that legitimately runs long would turn a trusted cell red for no reason.
+    # --build-timeout overrides both; 0 removes the bound.
+    my $step_timeout = defined $build_timeout ? $build_timeout
+                     : $profile->{forcearch}  ? emulated_build_timeout($arch, $host_arch)
+                     :                          0;
+
     if (!$skip_xcat_dep) {
         for my $builder (@active_dep_builders) {
             next unless $req{ $builder->{name} };   # manifest: build only required dep packages
@@ -624,10 +668,11 @@ if (!$skip_build) {
                     : ()),
             );
             push @build_steps, {
-                id   => "xcat-dep:$name",
-                step => "Build xcat-dep: $name",
-                cmd  => $cmd,
-                log  => "$log_root/$name/run.log",
+                id      => "xcat-dep:$name",
+                step    => "Build xcat-dep: $name",
+                cmd     => $cmd,
+                timeout => $step_timeout,
+                log     => "$log_root/$name/run.log",
                 scrub_cfg       => $target,
                 scrub_uniqueext => $step_uniqueext,
             };
@@ -664,10 +709,13 @@ if (!$skip_build) {
             ($keep_buildroots ? '--keep-buildroots' : ()),
         );
         push @build_steps, {
-            id   => 'perl',
-            step => 'Build perl xcat-dep packages',
-            cmd  => $cmd,
-            log  => "$log_root/perl-build.log",
+            id      => 'perl',
+            step    => 'Build perl xcat-dep packages',
+            cmd     => $cmd,
+            # The perl builder forks its own mock jobs, so under forcearch it is emulated too. Give it
+            # the per-package budget times the number of packages it builds serially per worker.
+            timeout => ($step_timeout ? $step_timeout * scalar(@perl_pkgs) : 0),
+            log     => "$log_root/perl-build.log",
         };
         push @collect_roots, $perl_result;
     }
@@ -1351,6 +1399,12 @@ Options:
                           cross-builds that arch on this host); default is the host arch
                           across rh8, rh9 and rh10
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
+  --build-timeout SECONDS Wall-clock bound for one build step. Default: none for a native
+                          target, and 9000 for a forcearch (qemu-user) target, which runs at
+                          roughly a tenth of native speed. 0 removes the bound. On expiry the
+                          run prints the step's process tree, each pid's wchan and stack, and
+                          a 20-second CPU sample -- a deadlocked build uses no ticks -- then
+                          kills the whole process group.
   --parallel-builds N     Max concurrent top-level build steps within one EL target (default: auto)
   --parallel-targets N    Concurrent EL targets (rh8/rh9/rh10). 0/auto = all at once, 1 = serial,
                           N = cap at N. Each target is fully output-isolated (default: 1 = serial)
@@ -1422,9 +1476,15 @@ sub run_step {
         $full_cmd .= " > " . shell_quote($log) . " 2>&1";
     }
 
-    my $rc = system($full_cmd);
-    if ($rc != 0) {
-        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+    # A forcearch step cross-builds through qemu-user, where a deadlocked build consumes no CPU and
+    # never exits. Bound the steps that can run emulated, and report why the build stopped.
+    my $timeout = $args{timeout} || 0;
+    my $r = run_bounded(cmd => $full_cmd, timeout => $timeout, label => $step, out => \*STDOUT);
+    die "Step TIMED OUT after $r->{elapsed}s (budget ${timeout}s): $step\nCommand: $cmd\n"
+      . "  See the stall report above" . ($log ? " and $log" : '') . ".\n"
+        if $r->{timed_out};
+    if ($r->{ec} != 0) {
+        my $exit = $r->{ec} == -1 ? 255 : $r->{ec};
         die "Step failed (rc=$exit): $step\nCommand: $cmd\n";
     }
 }
@@ -1488,9 +1548,12 @@ sub run_build_steps_parallel {
 
     my %failed;
     my $pm = Parallel::ForkManager->new($workers);
+    my %kids;
+    $pm->run_on_start(sub { $kids{ $_[0] } = 1 });
     $pm->run_on_finish(
         sub {
             my ($pid, $exit_code, $ident, $signal, $core_dump) = @_;
+            delete $kids{$pid};
             return if $exit_code == 0 && $signal == 0 && !$core_dump;
             my $key = defined($ident) ? $ident : "pid:$pid";
             $failed{$key} = {
@@ -1501,13 +1564,29 @@ sub run_build_steps_parallel {
         }
     );
 
+    # Same reason as the per-target workers: a signal here must reach the builds these workers run.
+    my $forward = forward_signals_to_workers(
+        pids => \%kids,
+        reap => sub { $pm->wait_all_children },
+    );
+    local $SIG{INT}  = $forward;
+    local $SIG{TERM} = $forward;
+    local $SIG{HUP}  = $forward;
+
     for my $step (@{$steps}) {
         my %step_copy = %{$step};
         my $ident = delete $step_copy{id};
         $ident = $step_copy{step} if !defined($ident) || $ident eq '';
 
+        # Same window as the per-target workers, and the same rule about waiting for a slot with
+        # the signals unblocked.
+        $pm->wait_for_available_procs(1) if $pm->max_procs;
+        my $orchestrator = $$;
+        my $previous     = block_handled_signals();
         my $pid = $pm->start($ident);
-        next if $pid;
+        if ($pid) { restore_signal_mask($previous); next; }
+        $SIG{$_} = 'DEFAULT' for ($$ == $orchestrator ? () : qw(INT TERM HUP));
+        restore_signal_mask($previous);
 
         my $ok = eval {
             run_step(%step_copy);

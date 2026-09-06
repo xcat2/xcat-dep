@@ -15,9 +15,14 @@ package BuildUtils;
 use strict;
 use warnings;
 use Exporter 'import';
-use File::Basename qw(basename);
+use File::Basename qw(basename dirname);
+use lib dirname(__FILE__) . '/lib';
+# XCAT::BuildUtils is loaded ON DEMAND, not imported here: it pulls in File::Slurper, which the
+# Ubuntu build hosts do not all carry. A compile-time import would make every caller depend on it --
+# including `sbuild-all.pl --install-deps`, the command whose whole job is to install that module on
+# a host that lacks it.
 use File::Copy qw(copy);
-use File::Path qw(make_path);
+use File::Path qw(make_path remove_tree);
 use Digest::MD5;
 use MIME::Base64 qw(encode_base64);
 
@@ -29,7 +34,9 @@ our @EXPORT_OK = qw(
     parse_packages_index parse_release_architectures resolve_present_names
     index_has_native_arch control_binary_arch skip_arch_all_on
     codename_to_version version_to_codename known_codenames
+    supported_arches is_supported_arch
     chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
+    chroot_build_timeout
     control_field genesis_deb_control
     deb_field deb_version deb_hash cross_copy_genesis_deb
     build_deb_in_chroot
@@ -48,6 +55,17 @@ my %CODENAME_TO_VERSION = (
 my %VERSION_TO_CODENAME = reverse %CODENAME_TO_VERSION;
 
 sub known_codenames    { return sort keys %CODENAME_TO_VERSION; }
+
+# The dpkg architectures xcat-dep builds. amd64 is the native one and the single producer of the
+# Architecture:all packages; every other one is a secondary architecture, is served by
+# ubuntu-ports rather than archive.ubuntu.com, and is built through a qemu-user chroot when the
+# build host is amd64. Keep this the single source of truth: --arch, --target, --expect-arch and
+# the mirror choice all derive from it.
+my @ARCHES = qw(amd64 ppc64el riscv64);
+my %ARCH   = map { $_ => 1 } @ARCHES;
+
+sub supported_arches   { return @ARCHES; }
+sub is_supported_arch  { my ($a) = @_; return defined($a) && $ARCH{$a} ? 1 : 0; }
 sub codename_to_version { my ($c) = @_; return $CODENAME_TO_VERSION{$c // ''}; }
 sub version_to_codename { my ($v) = @_; return $VERSION_TO_CODENAME{$v // ''}; }
 
@@ -63,9 +81,11 @@ sub install_deps_packages {
     # NOTE: no libipc-cmd-perl -- IPC::Cmd is CORE on Debian/Ubuntu (it ships in perl-modules) and
     # no such package exists, so naming it fails the whole install. That it is present is asserted
     # by the module probe, not by installing a package.
+    # A foreign-architecture chroot needs the binfmt handler these two packages register.
     return qw(perl libfile-slurper-perl libparallel-forkmanager-perl
               sbuild schroot debootstrap apt-utils dpkg-dev devscripts equivs quilt fakeroot
-              build-essential reprepro gnupg rsync wget git);
+              build-essential reprepro gnupg rsync wget git
+              qemu-user-static binfmt-support);
 }
 
 # install_deps_command(): the argv that installs them, non-interactively.
@@ -718,6 +738,21 @@ INNER
 # make_deb.sh); $build runs with CWD = the copied package dir and must leave its .deb(s) somewhere
 # under the build work tree. Dies on any failure -- including a chroot that is not disposable.
 #   %args: pkg, chroot, pkg_dir, result_dir, build_timestamp, build (required); extra_tools (arrayref, optional)
+# chroot_build_timeout($chroot): the wall-clock budget for one build in $chroot. The chroot is named
+# <codename>-<arch>-sbuild, so its arch says whether the build is native or runs through qemu-user.
+# XCAT_DEP_BUILD_TIMEOUT overrides it; sbuild-all.pl --build-timeout sets that variable, because the
+# per-package <dep>/sbuild.pl builders are separate processes with their own CLI. 0 disables the bound.
+sub chroot_build_timeout {
+    my ($chroot) = @_;
+    return int($ENV{XCAT_DEP_BUILD_TIMEOUT}) if defined $ENV{XCAT_DEP_BUILD_TIMEOUT}
+                                             && $ENV{XCAT_DEP_BUILD_TIMEOUT} =~ /^\d+$/;
+    my ($target_arch) = (($chroot // '') =~ /^.+-([^-]+)-sbuild$/);
+    my $host_arch = `dpkg --print-architecture 2>/dev/null`;
+    chomp $host_arch;
+    require XCAT::BuildUtils;
+    return XCAT::BuildUtils::emulated_build_timeout($target_arch, $host_arch);
+}
+
 sub build_deb_in_chroot {
     my (%a) = @_;
     defined $a{$_} or die "build_deb_in_chroot: missing '$_'\n"
@@ -734,7 +769,17 @@ sub build_deb_in_chroot {
       . "  hide a missing Build-Depends. Add 'union-type=overlay' to its /etc/schroot/chroot.d/ entry\n"
       . "  (or delete the chroot and let sbuild-all.pl re-create it).\n"
         unless chroot_is_disposable($cfg);
+    # Build into a private directory UNDER the result dir, and move the debs into it only after
+    # every check passes. The result dir is what a publish assembles from, and its gate gets no
+    # further than names and versions, so a deb that lands there before the smoke can be published
+    # whatever the smoke would have said -- including when a cancellation kills this process before
+    # any cleanup could run. Same filesystem, so the promotion is a rename.
     make_path($a{result_dir});
+    my $final = $a{result_dir};
+    remove_tree($_) for grep { -d $_ } glob("$final/.build-$pkg.*");
+    my $stage = "$final/.build-$pkg.$$";
+    remove_tree($stage) if -d $stage;
+    make_path($stage);
     my $extra = join(' ', @{ $a{extra_tools} || [] });
     my $b64   = encode_base64($a{build}, '');
 
@@ -745,20 +790,77 @@ sub build_deb_in_chroot {
 
     my $cmd = 'schroot -c ' . sh_quote($a{chroot}) . ' -u root -d / -- bash -c '
             . sh_quote($inner) . ' bash '
-            . sh_quote($a{pkg_dir}) . ' ' . sh_quote($a{result_dir}) . ' '
+            . sh_quote($a{pkg_dir}) . ' ' . sh_quote($stage) . ' '
             . sh_quote($a{build_timestamp}) . ' ' . sh_quote($extra) . ' ' . sh_quote($b64);
-    print "[$pkg] building in chroot $a{chroot} -> $a{result_dir} (SOURCE_DATE_EPOCH=$a{build_timestamp})\n";
-    my $rc = system('bash', '-c', $cmd);
-    my $ec = $rc == -1 ? -1 : ($rc >> 8);
+    print "[$pkg] building in chroot $a{chroot} -> $final (SOURCE_DATE_EPOCH=$a{build_timestamp})\n";
+    # A build that deadlocks under qemu-user (a resolute goconserver `go build` did, with both Go
+    # pids in futex_wait and no CPU ticks at all) used to hang here forever, and a hung cell reads as
+    # "still running" rather than as a defect. Bound it, and print the process tree, each wchan and a
+    # CPU sample before the kill, so the failure says WHY it stopped.
+    my $timeout = defined $a{timeout} ? $a{timeout} : chroot_build_timeout($a{chroot});
+    require XCAT::BuildUtils;
+    my $r = XCAT::BuildUtils::run_bounded(cmd => $cmd, timeout => $timeout, label => "[$pkg] build in $a{chroot}",
+                        out => \*STDOUT);
+    die "[$pkg] build TIMED OUT after $r->{elapsed}s (budget ${timeout}s) -- see the stall report above\n"
+        if $r->{timed_out};
+    my $ec = $r->{ec};
     die "[$pkg] build failed (rc=$ec)\n" if $ec != 0;
     # The debs were copied from INSIDE the chroot; that only reaches the host if --result-dir is on a
     # bind-mounted path. Verify host-side so a mis-configured (chroot-local) result-dir fails LOUD.
-    my @debs = glob("$a{result_dir}/*.deb");
-    die "[$pkg] build succeeded in the chroot but no .deb is visible at $a{result_dir} on the host\n"
+    my @debs = glob("$stage/*.deb");
+    die "[$pkg] build succeeded in the chroot but no .deb is visible at $stage on the host\n"
       . "  (is --result-dir on a path bind-mounted into the chroot, e.g. under /opt/xcat-ci-shared?)\n"
       unless @debs;
-    print "[$pkg] OK (" . scalar(@debs) . " deb(s) in $a{result_dir})\n";
-    return scalar @debs;
+    smoke_deb_in_chroot(%a, result_dir => $stage, debs => \@debs) if $a{smoke};
+
+    # Everything passed: publish the debs by moving them where the assembly step looks.
+    my @published;
+    for my $deb (@debs) {
+        my $target = "$final/" . basename($deb);
+        rename($deb, $target) or die "[$pkg] could not publish $deb as $target: $!\n";
+        push @published, $target;
+    }
+    remove_tree($stage);
+    print "[$pkg] OK (" . scalar(@published) . " deb(s) in $final)\n";
+    return scalar @published;
+}
+
+# smoke_deb_in_chroot(%a): install a produced deb into the chroot it was built in and run a command
+# from it. A cross-built binary links against the TARGET's loader and libraries, neither of which
+# exists on the host, so the only place it can run is the chroot -- and a deb whose binary is the
+# wrong object, or cannot resolve a library, still builds green without this.
+#   %a{smoke}: { deb => qr/.../, run => 'shell command', expect => qr/.../ }
+sub smoke_deb_in_chroot {
+    my (%a) = @_;
+    my $s   = $a{smoke};
+    defined $s->{$_} or die "smoke_deb_in_chroot: missing smoke '$_'\n" for qw(deb run);
+    my ($deb) = grep { basename($_) =~ $s->{deb} } @{ $a{debs} };
+    die "[$a{pkg}] smoke: no produced deb matches $s->{deb} in $a{result_dir}\n" unless $deb;
+
+    my $timeout = chroot_build_timeout($a{chroot});
+    my $log     = "$a{result_dir}/.smoke-$a{pkg}.log";
+    # apt-get, not dpkg -i: it resolves the runtime dependencies the package declares, so a missing
+    # or wrong Depends fails here instead of on a node.
+    my $inner = "set -e\n"
+              . "apt-get -y --no-install-recommends install \"\$1\" >/dev/null 2>&1\n"
+              . $s->{run} . "\n";
+    my $cmd = 'schroot -c ' . sh_quote($a{chroot}) . ' -u root -d / -- bash -c '
+            . sh_quote($inner) . ' bash ' . sh_quote($deb)
+            . ' > ' . sh_quote($log) . ' 2>&1';
+    print "[$a{pkg}] smoke: " . basename($deb) . " in $a{chroot}: $s->{run}\n";
+    require XCAT::BuildUtils;
+    my $r = XCAT::BuildUtils::run_bounded(cmd => $cmd, timeout => $timeout,
+                        label => "[$a{pkg}] smoke in $a{chroot}", out => \*STDOUT);
+    my $out = '';
+    if (open my $lfh, '<', $log) { local $/; $out = <$lfh>; close $lfh; }
+    die "[$a{pkg}] smoke TIMED OUT after $r->{elapsed}s (budget ${timeout}s), log $log\n"
+        if $r->{timed_out};
+    die "[$a{pkg}] smoke failed (rc=$r->{ec}), log $log:\n$out\n" if $r->{ec} != 0;
+    die "[$a{pkg}] smoke ran but its output does not match $s->{expect}, log $log:\n$out\n"
+        if $s->{expect} and $out !~ $s->{expect};
+    unlink $log;
+    print "[$a{pkg}] smoke OK ($a{chroot} ran the packaged binary)\n";
+    return 1;
 }
 
 1;

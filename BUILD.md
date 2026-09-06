@@ -265,7 +265,7 @@ The APT side takes the same option, on the run that **publishes**:
 
 ```bash
 ./sbuild-all.pl --skip-build --skip-genesis \
-  --publish --expect-arch "amd64 ppc64el" \
+  --publish --expect-arch "amd64 ppc64el riscv64" \
   --genesis-release /path/to/xcat-genesis-release \
   --gpg-sign --gpg-key-id <id> --gpg-home <gpg-home>
 ```
@@ -586,9 +586,8 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
 - **Fresh staging + promote-on-success.** Everything is built + validated into a per-run staging tree
   first; the published apt repo is (re)assembled from staging ONLY after the complete expected set
   validates — a partial/failed build never reaches the repo and stale debs never accumulate.
-- **Build runs stage; publishing is a separate, locked, atomic step.** The two arches build
-  *concurrently* on their two hosts against the same `--apt-dir`, so an arch build run **never
-  publishes**: it fills staging and stops. Publishing happens with **`--publish`** (implied by
+- **Build runs stage; publishing is a separate, locked, atomic step.** The arches build
+  *concurrently* against the same `--apt-dir`, so an arch build run **never publishes**: it fills staging and stops. Publishing happens with **`--publish`** (implied by
   `--skip-build`, i.e. the finalization run). That step takes **one global publish lock** — not the
   per-arch build lock — assembles the whole tree into a **side directory**, runs the repo gate against
   *that* tree, and only then swaps it onto `--apt-dir` with a single `rename(2)`. Readers therefore
@@ -609,8 +608,10 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
   arch's `Packages` index. They are listed for **ppc64el too, as required-present**, so the gate
   verifies the ppc repo actually carries them (a ppc MN needs them for netboot, matching the EL
   manifest). `build_one_codename` **skips** an `Architecture:all` package on any non-amd64 arch
-  (detected via `control_binary_arch`), so ppc builds only the genuinely arch-specific compiled deps
-  (`ipmitool-xcat`, `conserver-xcat`, `goconserver`) yet still verifies the boot components.
+  (detected via `control_binary_arch`), so ppc64el and riscv64 build only the genuinely
+  arch-specific compiled deps (`ipmitool-xcat`, `conserver-xcat`, `goconserver`) yet still verify the
+  boot components they need. The riscv64 sections require `grub2-xcat` only: the x86 loaders
+  (`syslinux-xcat`, `elilo-xcat`, `xnba-undi`) are not part of a riscv64 repository.
 - **Fail-hard.** Any required chroot / package / artifact failure, or any version-pin mismatch, fails
   the whole run non-zero.
 - **Genesis keeps its maintained packaging.** A native `xcat-genesis-base` deb is INGESTED as-is when
@@ -623,7 +624,7 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
 ## Files
 
 - **`sbuild-all.pl`** — the orchestrator (run as **root** on the Ubuntu build host: the amd64 host for
-  `amd64`, the ppc host for `ppc64el`).
+  `amd64` and, through qemu-user, for `riscv64`; the ppc host for `ppc64el`).
 - **`BuildUtils.pm`** — shared, unit-tested helpers + the canonical CLI spec (mirrors `MockBuildUtils.pm`).
 - **`<dep>/sbuild.pl`** ×7 — per-package builders (mirror `<dep>/mockbuild.pl`); each drives its
   maintained `debian/` in the chroot and collects the `.deb`(s). Invoked by `sbuild-all.pl`.
@@ -647,6 +648,49 @@ probe is what asserts it is usable.
 
 The per-codename sbuild chroots are separate host state — see `ci/mk-dep-chroots.sh`.
 
+## riscv64: cross-building on an amd64 host
+
+There is no riscv64 Ubuntu build host in the xCAT build farm, so the riscv64 packages are
+cross-built on the amd64 host. `sbuild-all.pl` bootstraps a riscv64 `schroot` with
+`debootstrap --arch=riscv64`, and every command inside it -- debootstrap's second stage,
+`apt-get`, `dpkg-buildpackage` -- runs through the `qemu-riscv64` binfmt handler, so each package
+is compiled by the chroot's own riscv64 toolchain.
+
+`--install-deps` installs `qemu-user-static` and `binfmt-support` with the rest of the toolchain.
+Confirm the handler before the first riscv64 run:
+
+```bash
+cat /proc/sys/fs/binfmt_misc/qemu-riscv64        # enabled, flags: POF
+```
+
+The `F` flag is what makes the handler usable from a chroot: the kernel opens the interpreter when
+the handler is registered, so the static QEMU binary does not have to exist under the chroot root.
+Without a registered handler `sbuild-all.pl` refuses to create the chroot and names the handler and
+the packages that provide it, instead of failing deep inside debootstrap.
+
+`archive.ubuntu.com` carries amd64 and i386 only; every other architecture is on
+`ports.ubuntu.com/ubuntu-ports`. The bootstrap mirror is defaulted from `--arch`, so a riscv64 run
+needs no `--mirror`.
+
+| what | how |
+|---|---|
+| ipmitool-xcat, conserver-xcat | `dpkg-buildpackage` in the emulated riscv64 chroot |
+| goconserver | same chroot, compiled by the Go toolchain the chroot installs for riscv64 |
+| grub2-xcat (`Architecture:all`) | built once on amd64 and assembled into the riscv64 index; listed in the riscv64 manifest sections as required-present, because a riscv64 management node needs it to netboot |
+| syslinux-xcat, elilo-xcat, xnba-undi | not built and not required (x86 loaders) |
+| xcat-genesis-base | not built: no riscv64 section names it, and the build skips the step when the manifest does not ask for it, so `--skip-genesis` is unnecessary here |
+
+The riscv64 ipmitool-xcat deb is installed into the chroot that built it and
+`/opt/xcat/bin/ipmitool-xcat -V` runs there before the run is called good. A cross-built binary
+links against the target's loader and libraries, so the chroot is the only place it can run at all,
+and without that check a deb whose binary never executes still builds green.
+
+Emulated builds are slow. On an 8-core amd64 host, bootstrapping the noble riscv64 chroot took
+about 4 minutes and ipmitool-xcat about 12, against seconds natively, so plan a riscv64 run of the
+whole dependency set in hours rather than minutes. `--build-timeout` sets the per-package
+wall-clock bound. A build that deadlocks under qemu-user is killed with a stall report rather than
+hanging the pipeline, which is what goconserver did.
+
 ## Usage (per arch, as root on the matching build host)
 
 Run `sbuild-all.pl` on the build host for the arch you are building (amd64 on the x86 Ubuntu host,
@@ -668,17 +712,22 @@ finalization step publishes the assembled repo atomically.
 # ppc64el host — arch-specific deps only (the Architecture:all boot components and both genesis
 # debs come from the amd64 build):
 ./sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" --skip-genesis
+
+# riscv64 — cross-built on the amd64 host (there is no riscv64 build host); arch-specific deps
+# only, and the genesis step is skipped by the manifest rather than by a flag:
+./sbuild-all.pl --arch riscv64 --dists "focal jammy noble resolute"
 ```
 
 These runs touch **only** `staging/<codename>/<arch>/`; the apt tree at `--apt-dir` is left alone, so
-the two hosts can run at the same time. `--dists` may be omitted entirely — with no
+they can run at the same time. The build lock is per arch, so the amd64 and riscv64 runs can share
+one host. `--dists` may be omitted entirely — with no
 `--dists`/`--target`, **all supported codenames** are built (`focal jammy noble resolute`).
 
 ### Step 2 — publish once, after every arch has staged
 
 ```bash
 ./sbuild-all.pl --skip-build --skip-genesis \
-  --publish --expect-arch "amd64 ppc64el" \
+  --publish --expect-arch "amd64 ppc64el riscv64" \
   --gpg-sign --gpg-key-id xcat@example.com --gpg-home <gpg-home>
 ```
 
