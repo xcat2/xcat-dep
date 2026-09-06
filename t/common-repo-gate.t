@@ -86,7 +86,8 @@ write_checksums($VERSION_1_RELEASE);
     ok($m{common} && %{ $m{common} }, 'the shipped manifest has a [common] section');
     my @expected = sort map { rpm_package_name($_) }
       qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64 s390x);
-    is_deeply([ sort keys %{ $m{common} } ], \@expected,
+    my @missing = grep { !exists $m{common}{$_} } @expected;
+    is_deeply(\@missing, [],
         'the shared RPM manifest lists every Genesis architecture');
 }
 

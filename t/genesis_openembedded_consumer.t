@@ -304,6 +304,7 @@ SH
 sub run_apt_consumer {
     my (%args) = @_;
     my @dists = @{ $args{dists} // \@APT_SUITES };
+    my @build_mode = $args{build} ? ('--dry-run') : ('--skip-build');
     my $manifest = $args{manifest};
     unless ($manifest) {
         $manifest = "$args{output}/manifest.conf";
@@ -318,7 +319,7 @@ sub run_apt_consumer {
         '--manifest',    $manifest,
         '--dists',       join(' ', @dists),
         '--arch',        'amd64',
-        '--skip-build', '--skip-genesis', '--skip-tarball',
+        @build_mode, '--skip-genesis', '--skip-tarball',
         '--publish', '--expect-arch', 'amd64 ppc64el',
         ($args{verify} ? () : ('--no-verify-repo')),
         @{ $args{extra} // [] },
@@ -584,14 +585,15 @@ sub test_version_1_deb_consumer {
     my $missing_status = run_apt_consumer(
         log => $missing_log, output => $missing_output, apt_dir => $missing_apt,
         manifest => $missing_manifest,
+        build => 1,
         extra => [ '--genesis-release', $current_release ],
     );
     isnt($missing_status, 0,
         'a current release does not hide an incomplete shared manifest');
     like(read_binary($missing_log), qr/\[shared\] is missing supported packages: .*s390x/,
         'the shared manifest failure identifies the missing current package');
-    ok(!-d "$missing_apt/pool/main/xcat-genesis-openembedded",
-        'an incomplete shared manifest publishes nothing');
+    unlike(read_binary($missing_log), qr/Ensure sbuild chroots/,
+        'an incomplete shared manifest is rejected before building');
 
     my $unknown_manifest = "$tmp/deb-version-1-unknown.conf";
     write_apt_manifest(
