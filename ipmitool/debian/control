@@ -7,7 +7,7 @@ Standards-Version: 3.6.2.1
 
 Package: ipmitool-xcat
 Architecture: i386 amd64 ia64 ppc64el riscv64
-Depends: libc6 (>= 2.15), libssl3t64 | libssl3 | libssl1.1
+Depends: ${shlibs:Depends}, libc6 (>= 2.15), libssl3t64 | libssl3 | libssl1.1
 Suggests: openipmi
 Description: utility for IPMI control with kernel driver or LAN interface
  A utility for managing and configuring devices that support the
