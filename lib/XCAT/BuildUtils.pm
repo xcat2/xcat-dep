@@ -235,10 +235,22 @@ sub run_bounded {
     my $out     = $a{out} || \*STDERR;
     my $t0      = time;
 
+    # Block the handled signals across the fork. A cancellation landing between fork() and the
+    # handler below would kill this process under the inherited handler and leave the new process
+    # group running. A blocked signal stays pending and is delivered once the handler is in place.
+    # The child restores the mask before exec, or the build would inherit a blocked TERM.
+    my $handled  = POSIX::SigSet->new(POSIX::SIGINT(), POSIX::SIGTERM(), POSIX::SIGHUP());
+    my $previous = POSIX::SigSet->new();
+    POSIX::sigprocmask(POSIX::SIG_BLOCK(), $handled, $previous);
+
     my $pid = fork();
-    die "run_bounded: fork failed: $!\n" unless defined $pid;
+    unless (defined $pid) {
+        POSIX::sigprocmask(POSIX::SIG_SETMASK(), $previous);
+        die "run_bounded: fork failed: $!\n";
+    }
     if ($pid == 0) {
         POSIX::setpgid(0, 0);
+        POSIX::sigprocmask(POSIX::SIG_SETMASK(), $previous);
         exec('bash', '-c', $cmd) or POSIX::_exit(127);
     }
     # setpgid from BOTH sides: whichever runs first wins, so the group exists before the first signal
@@ -267,6 +279,7 @@ sub run_bounded {
     local $SIG{INT}  = $forward;
     local $SIG{TERM} = $forward;
     local $SIG{HUP}  = $forward;
+    POSIX::sigprocmask(POSIX::SIG_SETMASK(), $previous);
 
     # An unbounded run still forks: it is the process group, not the deadline, that lets a signal
     # to the orchestrator reach the build.
