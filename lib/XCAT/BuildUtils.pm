@@ -20,6 +20,7 @@ our @EXPORT_OK = qw(
   digest_manifest
   display_quote
   every_step_failed
+  forward_signals_to_workers
   hashes_equal
   print_step
   read_binary
@@ -197,6 +198,25 @@ sub stall_report {
         ? "--- no CPU ticks: the build is DEADLOCKED, not slow.\n"
         : "--- the build still consumes CPU: it exceeded the budget rather than deadlocking.\n";
     return $total;
+}
+
+# forward_signals_to_workers(%a): return an INT/TERM/HUP handler that passes the signal on to the
+# forked workers, waits for them, then re-raises it. An orchestrator that dies without this releases
+# its locks while its workers keep building and writing into staging, and the next run races
+# processes it cannot see. run_bounded covers the build inside ONE worker; this covers the workers.
+#   %a: pids (hashref keyed by live worker pid), reap (coderef that waits for them)
+sub forward_signals_to_workers {
+    my (%a) = @_;
+    my $pids = $a{pids} or die "forward_signals_to_workers: missing 'pids'\n";
+    my $reap = $a{reap} or die "forward_signals_to_workers: missing 'reap'\n";
+    return sub {
+        my ($sig) = @_;
+        kill($sig, keys %{$pids});
+        $reap->();
+        # die by the same signal, so the caller's exit status says what happened
+        $SIG{$sig} = 'DEFAULT';
+        kill($sig, $$);
+    };
 }
 
 # run_bounded(%a): run a shell command with a wall-clock budget. On expiry it prints a stall report

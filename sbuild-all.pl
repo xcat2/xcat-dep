@@ -620,6 +620,14 @@ sub build_deps {
     my @queue = @dist_list;
     my (%pid2cn, %fail);
     my $running = 0;
+    require XCAT::BuildUtils;
+    my $forward = XCAT::BuildUtils::forward_signals_to_workers(
+        pids => \%pid2cn,
+        reap => sub { waitpid($_, 0) for keys %pid2cn },
+    );
+    local $SIG{INT}  = $forward;
+    local $SIG{TERM} = $forward;
+    local $SIG{HUP}  = $forward;
     while (@queue || $running) {
         while (@queue && $running < $max) {
             my $cn = shift @queue;

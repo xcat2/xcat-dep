@@ -26,6 +26,7 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
 use XCAT::BuildUtils qw(
   capture_command
   every_step_failed
+  forward_signals_to_workers
   hashes_equal
   read_lines
   emulated_build_timeout
@@ -438,10 +439,22 @@ print "parallel_targets: " . ($parallel_targets > 0 ? $parallel_targets : "auto(
 print "max_parallel:     $cap (per-target build workers: $per_target_builds)\n";
 my $tgt_pm = Parallel::ForkManager->new($tgt_workers <= 1 ? 0 : $tgt_workers);
 my $tgt_fail = 0;
+# A signal to this process must reach the forked workers. Without forwarding, the orchestrator exits
+# and releases its locks while the workers keep building and writing into the deploy tree.
+my %tgt_kids;
+$tgt_pm->run_on_start(sub { $tgt_kids{ $_[0] } = 1 });
 $tgt_pm->run_on_finish(sub {
     my ($pid, $exit) = @_;
+    delete $tgt_kids{$pid};
     $tgt_fail++ if $exit;
 });
+my $tgt_forward = forward_signals_to_workers(
+    pids => \%tgt_kids,
+    reap => sub { $tgt_pm->wait_all_children },
+);
+local $SIG{INT}  = $tgt_forward;
+local $SIG{TERM} = $tgt_forward;
+local $SIG{HUP}  = $tgt_forward;
 for my $tgt (@build_targets) {
     $tgt_pm->start and next;
     my $rc = 0;
@@ -1519,9 +1532,12 @@ sub run_build_steps_parallel {
 
     my %failed;
     my $pm = Parallel::ForkManager->new($workers);
+    my %kids;
+    $pm->run_on_start(sub { $kids{ $_[0] } = 1 });
     $pm->run_on_finish(
         sub {
             my ($pid, $exit_code, $ident, $signal, $core_dump) = @_;
+            delete $kids{$pid};
             return if $exit_code == 0 && $signal == 0 && !$core_dump;
             my $key = defined($ident) ? $ident : "pid:$pid";
             $failed{$key} = {
@@ -1531,6 +1547,15 @@ sub run_build_steps_parallel {
             };
         }
     );
+
+    # Same reason as the per-target workers: a signal here must reach the builds these workers run.
+    my $forward = forward_signals_to_workers(
+        pids => \%kids,
+        reap => sub { $pm->wait_all_children },
+    );
+    local $SIG{INT}  = $forward;
+    local $SIG{TERM} = $forward;
+    local $SIG{HUP}  = $forward;
 
     for my $step (@{$steps}) {
         my %step_copy = %{$step};
