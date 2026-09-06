@@ -58,7 +58,7 @@ if ($ENV{XCAT_GENESIS_CI}) {
 }
 
 SKIP: {
-    skip 'RPM repository tools require a root Linux builder', 65
+    skip 'RPM repository tools require a root Linux builder', 64
       unless $^O eq 'linux'
       && $> == 0
       && command_exists('rpmbuild')
