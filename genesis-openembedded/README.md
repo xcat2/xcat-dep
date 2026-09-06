@@ -89,14 +89,13 @@ repository with a single rename, under one global publish lock, so a failed or
 interrupted publication leaves the previous repository exactly as it was.
 
 Both consumers verify package identities and checksums before publication.
-Version 2 releases require all eight architectures. Version 1 remains readable,
-but current publishers refuse it because replacing the repository would remove
-`s390x`. Builder and publisher hosts must use the same xcat-dep revision when
-the release format changes. Building `s390x` requires an xcat-core revision
-that reports the target.
-Merge or deploy that xcat-core change first. Builds for the other architectures
-still accept older xcat-core revisions. A management node can install an image
-for a different target architecture.
+Releases containing `s390x` use format version 2. Other releases keep version 1
+and remain readable by older tools. Current publishers require all eight
+architectures, so a version 1 release cannot replace the shared repository.
+Building `s390x` requires an xcat-core revision that reports the target. Merge
+or deploy that xcat-core change first. Builds for the other architectures still
+accept older xcat-core revisions. A management node can install an image for a
+different target architecture.
 
 Without `--genesis-release`, both builders keep their existing behavior. The
 new packages do not provide, replace, or obsolete the old package names.

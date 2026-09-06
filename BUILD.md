@@ -248,8 +248,9 @@ or backup directories behind, rerun it with ``--force-unlock`` to recover the
 previous repository before starting a new publication.
 
 Repository publication requires all eight current architectures. Version 1
-remains readable but cannot replace the current repository because it lacks
-`s390x`. The packages are `noarch`, and each publication contains the full set.
+release manifests remain readable, but they cannot replace the current
+repository because they lack `s390x`. The packages are `noarch`, and each
+publication contains the full set.
 
 The release checksums cover the unsigned input packages. If repository signing
 is enabled, `rpmsign` changes the deployed RPM bytes after collection.
