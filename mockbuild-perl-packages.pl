@@ -26,6 +26,7 @@ my $build_timestamp;
 # Net-Telnet), which build from a committed .src.rpm and so are NOT covered by mockbuild-all's
 # in-tree spec bump. Spec-mode packages get bumped in-tree upstream, so we leave those alone.
 my $release_suffix = '';
+my $list_packages  = 0;
 
 GetOptions(
     'work-dir=s'      => \$work_dir,
@@ -41,11 +42,20 @@ GetOptions(
     'jobs=i'          => \$jobs,
     'build-timestamp=i' => \$build_timestamp,
     'release-suffix=s'  => \$release_suffix,
+    'list-packages!'    => \$list_packages,
 ) or die usage();
 
-die "Run as root (current uid=$>)\n" if $> != 0;
+# --list-packages prints the set a run would build and exits before any host requirement, so a
+# test can hold the manifest to it without root, mock or a chroot. The host detection below
+# traces its commands on STDOUT; keep that off the list by sending it to STDERR until the list.
+my $list_out;
+if ($list_packages) {
+    open($list_out, '>&', \*STDOUT) or die "dup STDOUT: $!\n";
+    open(STDOUT, '>&', \*STDERR)   or die "redirect STDOUT: $!\n";
+}
+die "Run as root (current uid=$>)\n" if $> != 0 && !$list_packages;
 
-for my $bin (qw(mock rpmbuild rpm dnf perl bash grep)) {
+for my $bin ($list_packages ? () : qw(mock rpmbuild rpm dnf perl bash grep)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
@@ -294,6 +304,11 @@ if ($packages_csv ne '') {
 
 for my $pkg (@packages) {
     die "Unknown package in --packages: $pkg\n" if !exists $meta{$pkg};
+}
+
+if ($list_packages) {
+    print {$list_out} "$_\n" for @packages;
+    exit 0;
 }
 
 if ($jobs <= 0) {
