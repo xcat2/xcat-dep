@@ -17,6 +17,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   verify_repo_packages verify_repo_signature verify_repo_arches
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
+                  supported_arches is_supported_arch
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field genesis_deb_control
@@ -561,6 +562,21 @@ case "$1" in
   -l)       echo "chroot:noble-amd64-sbuild"; exit 0 ;;
   --config) printf '%s\n' "$FAKE_SCHROOT_CONFIG";  exit 0 ;;
 esac
+if [ -n "$FAKE_SMOKE_MARK" ]; then
+  case "$*" in
+    *"$FAKE_SMOKE_MARK"*) [ -n "$FAKE_SMOKE_OUT" ] && printf '%s\n' "$FAKE_SMOKE_OUT"
+                          exit ${FAKE_SMOKE_RC:-0} ;;
+  esac
+fi
+# A build session leaves its debs in the result directory it was given, which is the private
+# staging directory build_deb_in_chroot creates and passes among the session arguments.
+if [ -n "$FAKE_BUILD_DEB" ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      */.build-*) [ -d "$arg" ] && : > "$arg/$FAKE_BUILD_DEB" ;;
+    esac
+  done
+fi
 exit 0
 STUB
     close $fh;
@@ -591,6 +607,62 @@ STUB
         unlike($@, qr/is NOT disposable/, '... the failure is NOT the disposability guard');
         like($@, qr/no \.deb is visible/, '... it is the host-side "debs did not land" check');
     }
+
+    # ---- the post-build smoke -------------------------------------------------------------------
+    # A cross-built binary runs only in the chroot, so the smoke is the ONLY check that the deb
+    # carries a runnable binary. The stub now leaves a deb behind like a real build session, so
+    # the build gets as far as the smoke.
+    {
+        local $ENV{PATH} = "$fakebin:$ENV{PATH}";
+        local $ENV{FAKE_SCHROOT_CONFIG} =
+            "[noble-amd64-sbuild]\ntype=directory\ndirectory=/srv/chroot/noble-amd64\nunion-type=overlay\n";
+        local $ENV{FAKE_BUILD_DEB} = 'fixture-xcat_1.8.18-4_amd64.deb';
+
+        my %smoke = (deb => qr/^fixture-xcat_/, run => '/opt/xcat/bin/fixture-xcat -V',
+                     expect => qr/fixture-xcat version 1\.8\.18/);
+        # The stub stands in for the whole chroot session, so it must answer the smoke without
+        # answering the build: only the smoke session carries the command being run.
+        local $ENV{FAKE_SMOKE_MARK} = $smoke{run};
+
+        local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.18';
+        my $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
+        ok($ok, 'a deb whose binary runs and reports the expected version passes the smoke')
+            or diag($@);
+        ok(!-e "$work/out/.smoke-fixture.log", '... and the smoke log is removed on success');
+
+        # The passing case above published its deb; clear it so the next assertion is about what
+        # THIS run leaves behind.
+        unlink glob("$work/out/*.deb");
+
+        local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.17';
+        $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
+        ok(!$ok, 'a binary reporting another version fails the smoke');
+        like($@, qr/does not match/, '... naming the expectation it missed');
+
+        # The publish gate checks names and versions only, so a deb the smoke rejected must never
+        # reach the directory a publish assembles from.
+        is_deeply([ glob("$work/out/*.deb") ], [],
+            '... and no deb reaches the result directory');
+
+
+        local $ENV{FAKE_SMOKE_OUT} = 'fixture-xcat version 1.8.18';
+        local $ENV{FAKE_SMOKE_RC}  = 3;
+        $ok = eval { quiet { build_deb_in_chroot(@args, smoke => \%smoke) }; 1 };
+        ok(!$ok, 'a binary that cannot run fails the smoke even with matching output');
+        like($@, qr/smoke failed \(rc=3\)/, '... reporting the exit status');
+
+        delete local $ENV{FAKE_SMOKE_RC};
+        $ok = eval { quiet { build_deb_in_chroot(@args,
+                        smoke => { %smoke, deb => qr/^nosuchpkg_/ }) }; 1 };
+        ok(!$ok, 'a smoke that names a deb the build never produced fails');
+        like($@, qr/no produced deb matches/, '... instead of silently skipping the check');
+
+        # --skip-install is what sbuild-all.pl passes to drop the smoke, so the same build with no
+        # smoke must still succeed -- otherwise the tests above would pass for the wrong reason.
+        local $ENV{FAKE_SMOKE_OUT} = 'irrelevant';
+        $ok = eval { quiet { build_deb_in_chroot(@args) }; 1 };
+        ok($ok, 'without a smoke the same build succeeds');
+    }
 }
 
 # ---- --install-deps: the host prerequisites (the modules are what actually break a run) ----------
@@ -602,6 +674,12 @@ STUB
     for my $need (qw(libfile-slurper-perl libparallel-forkmanager-perl sbuild schroot apt-utils dpkg-dev)) {
         ok(scalar(grep { $_ eq $need } @pkgs), "prerequisites include $need");
     }
+    # ensure_foreign_arch_support() refuses to bootstrap a foreign chroot without the binfmt
+    # handler and names these two packages, so --install-deps has to be the fix it points at.
+    for my $need (qw(qemu-user-static binfmt-support)) {
+        ok(scalar(grep { $_ eq $need } @pkgs), "prerequisites include $need");
+    }
+
     my @cmd = install_deps_command();
     is($cmd[0], 'apt-get', 'installs with apt-get');
     ok(scalar(grep { $_ eq '-y' } @cmd), '... non-interactively');
@@ -616,6 +694,185 @@ STUB
         'missing_perl_modules: a loadable module is not reported');
     is_deeply([ missing_perl_modules('No::Such::Module::Here') ], ['No::Such::Module::Here'],
         'missing_perl_modules: an absent module is reported');
+}
+
+# ---- every compiled dep must be buildable on every architecture xcat-dep supports -------------
+# A debian/control that names architectures explicitly silently excludes the ones it omits:
+# debhelper prints "No packages to build. Possible architecture mismatch: <arch>, want: <list>",
+# builds nothing, and the build then dies at ./configure. ipmitool-xcat did exactly that on
+# riscv64. The Architecture:all packages are the single-producer boot components and are excluded
+# here: they are built once on amd64 and never rebuilt per arch.
+{
+    my $root = "$FindBin::Bin/..";
+    for my $pkg (qw(ipmitool conserver goconserver)) {
+        my $ctl = "$root/$pkg/debian/control";
+        SKIP: {
+            skip "$pkg has no debian/control", 1 unless -f $ctl;
+            open my $fh, '<', $ctl or die "read $ctl: $!";
+            local $/; my $text = <$fh>; close $fh;
+            my @arch_lines = ($text =~ /^Architecture:\s*(.+)$/mg);
+            my @explicit = grep { !/^(?:any|all)$/ } map { s/^\s+|\s+$//gr } @arch_lines;
+            my @missing;
+            for my $line (@explicit) {
+                my %have = map { $_ => 1 } split /\s+/, $line;
+                push @missing, grep { !$have{$_} } grep { $_ ne 'amd64' } supported_arches();
+            }
+            is_deeply(\@missing, [],
+                "$pkg/debian/control builds on every supported arch (@{[join ' ', supported_arches()]})");
+        }
+    }
+}
+
+# ---- every non-glob manifest pin must match the package's own debian/changelog --------------
+# debs-manifest.conf pins the exact deb version each package must produce, and the version comes
+# from that package's debian/changelog. Bumping the changelog without the pin does not fail the
+# build -- it fails the manifest VALIDATION, at the end, after every package has been compiled:
+#   FATAL: manifest validation failed:
+#     [noble-amd64] grub2-xcat: built 2.12-2, manifest pins 2.12-1
+# which is a whole build's worth of time to learn about a one-line edit. grub2-xcat drifted exactly
+# that way when the riscv64 UEFI image was added. Globbed pins are deliberate (goconserver's
+# revision is the CD stamp; xcat-genesis-base is not versioned by xcat-dep) and are skipped.
+{
+    my $root = "$FindBin::Bin/..";
+    my %dir_of = (
+        'ipmitool-xcat'  => 'ipmitool',
+        'conserver-xcat' => 'conserver',
+        'syslinux-xcat'  => 'syslinux',
+        'grub2-xcat'     => 'grub2-xcat',
+        'elilo-xcat'     => 'elilo',
+        'xnba-undi'      => 'xnba',
+    );
+    my %manifest = read_manifest("$root/debs-manifest.conf");
+    my %seen;
+    for my $section (sort keys %manifest) {
+        for my $pkg (sort keys %{ $manifest{$section} }) {
+            my $pin = $manifest{$section}{$pkg};
+            next if !defined $pin || $pin =~ /[*?]/;
+            my $dir = $dir_of{$pkg} or next;
+            my $cl  = "$root/$dir/debian/changelog";
+            next unless -f $cl;
+            open my $fh, '<', $cl or next;
+            my $first = <$fh>; close $fh;
+            my ($ver) = $first =~ /^\S+\s+\(([^)]+)\)/;
+            next if $seen{"$pkg=$pin=$ver"}++;
+            is($pin, $ver, "manifest pin $pkg=$pin matches $dir/debian/changelog");
+        }
+    }
+}
+
+# In publish mode with no --expect-arch, the expected set is discovered by scanning the staged
+# tree. That scan admitted a hardcoded amd64|ppc64el, so a staged riscv64 tree was dropped and
+# the arch never reached the code that writes its binary-<arch> index and names it in Release.
+# The scan is extracted from the script and driven here, so the test tracks the shipped code.
+{
+    my $src = do {
+        open my $fh, '<', "$FindBin::Bin/../sbuild-all.pl" or die $!;
+        local $/; <$fh>;
+    };
+
+    my ($scan) = $src =~ /\n(    my %u = \(\$arch => 1\);\n    if \(\$mode eq 'publish'\) \{\n.*?\n        \}\n)/ms;
+    BAIL_OUT('could not extract the staged-arch scan from sbuild-all.pl') unless defined $scan;
+
+    my $staging = tempdir( CLEANUP => 1 );
+    make_path("$staging/noble/$_") for qw(amd64 ppc64el riscv64 s390x);
+
+    my ( $arch, $mode ) = ( 'amd64', 'publish' );
+    my @dist_list = ('noble');
+    my %u;
+    ## no critic (BuiltinFunctions::ProhibitStringyEval)
+    # the extracted text ends inside the publish branch, so the brace closes it; the branch's
+    # print is deliberately left out, because it would land in the middle of the TAP stream
+    my $got = eval "$scan }\n[sort keys %u]";
+    ## use critic
+    die "failed to evaluate the staged-arch scan: $@" if $@;
+
+    is_deeply( $got, [ sort( supported_arches() ) ],
+        'every supported architecture staged for a codename is expected' );
+    ok( ( grep { $_ eq 'riscv64' } @$got ),
+        'a staged riscv64 tree reaches the expected set' );
+    ok( !( grep { $_ eq 's390x' } @$got ),
+        'a staged tree for an unsupported architecture is still ignored' );
+}
+
+# The legacy Genesis deb is named per target in the manifest, and riscv64 does not name it: its
+# Genesis is the OpenEmbedded package published once into the shared pool. build_genesis ran for
+# every architecture, so a plain --arch riscv64 run died for want of a --genesis-deb it can never
+# have -- and only after the dependency builds had finished.
+{
+    my $src = do {
+        open my $fh, '<', "$FindBin::Bin/../sbuild-all.pl" or die $!;
+        local $/; <$fh>;
+    };
+
+    my ($sub) = $src =~ /\n(sub genesis_in_manifest \{\n.*?\n\})\n/ms;
+    BAIL_OUT('could not extract genesis_in_manifest from sbuild-all.pl') unless defined $sub;
+
+    our %MANIFEST = (
+        'noble-amd64'   => { 'xcat-genesis-base' => '2.*', 'ipmitool-xcat' => '1.8.18-4' },
+        'noble-ppc64el' => { 'xcat-genesis-base' => '2.*' },
+        'noble-riscv64' => { 'ipmitool-xcat' => '1.8.18-4', 'goconserver' => '0.3.3-snap*' },
+    );
+    our @dist_list = ('noble');
+    our $arch;
+
+    ## no critic (BuiltinFunctions::ProhibitStringyEval)
+    eval "$sub 1" or die "failed to evaluate genesis_in_manifest: $@";
+    ## use critic
+
+    $arch = 'amd64';
+    ok( genesis_in_manifest(), 'amd64 names the legacy Genesis deb, so that phase runs' );
+    $arch = 'ppc64el';
+    ok( genesis_in_manifest(), 'ppc64el names it too' );
+    $arch = 'riscv64';
+    ok( !genesis_in_manifest(), 'riscv64 does not, so the legacy Genesis phase is skipped' );
+    $arch = 's390x';
+    ok( !genesis_in_manifest(), 'a target with no manifest section does not demand Genesis' );
+}
+
+# A foreign-architecture chroot is bootstrapped and built through qemu-user, so a missing binfmt
+# handler has to be reported here rather than deep inside debootstrap. The check is extracted from
+# the script and driven with the handler node redirected into a temporary tree.
+{
+    my $src = do {
+        open my $fh, '<', "$FindBin::Bin/../sbuild-all.pl" or die $!;
+        local $/; <$fh>;
+    };
+
+    my ($sub) = $src =~ /\n(sub ensure_foreign_arch_support \{\n.*?\n\})\n/ms;
+    BAIL_OUT('could not extract ensure_foreign_arch_support from sbuild-all.pl') unless defined $sub;
+
+    my ($map) = $src =~ /\n(my %BINFMT_HANDLER = \(.*?\);)\n/ms;
+    BAIL_OUT('could not extract the binfmt handler map') unless defined $map;
+
+    my $fake = tempdir( CLEANUP => 1 );
+    ( my $driver = "$map\n$sub" ) =~ s{/proc/sys/fs/binfmt_misc}{$fake}g;
+    ## no critic (BuiltinFunctions::ProhibitStringyEval)
+    eval "$driver 1" or die "failed to evaluate ensure_foreign_arch_support: $@";
+    ## use critic
+
+    my $host = `dpkg --print-architecture 2>/dev/null`;
+    chomp $host;
+
+  SKIP: {
+        skip 'needs dpkg to report a host architecture', 3 unless $host;
+
+        # the host's own architecture never needs emulation
+        eval { ensure_foreign_arch_support($host) };
+        is( $@, '', 'a native build does not ask for a binfmt handler' );
+
+        my $foreign = $host eq 'riscv64' ? 'ppc64el' : 'riscv64';
+        my $handler = $foreign eq 'riscv64' ? 'qemu-riscv64' : 'qemu-ppc64le';
+
+        eval { ensure_foreign_arch_support($foreign) };
+        like( $@, qr/binfmt handler is not registered/,
+            "a foreign $foreign build without the handler is refused" );
+
+        open my $fh, '>', "$fake/$handler" or die $!;
+        print {$fh} "enabled\ninterpreter /usr/libexec/qemu-binfmt/$handler\nflags: POF\n";
+        close $fh;
+        eval { ensure_foreign_arch_support($foreign) };
+        is( $@, '', "a foreign $foreign build with the handler registered proceeds" );
+    }
 }
 
 done_testing;

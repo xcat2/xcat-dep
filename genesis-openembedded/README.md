@@ -68,7 +68,7 @@ perl ./mockbuild-all.pl \
 
 perl ./sbuild-all.pl \
   --genesis-release /path/to/xcat-genesis-release \
-  --publish --expect-arch "amd64 ppc64el" \
+  --publish --expect-arch "amd64 ppc64el riscv64" \
   [other build options]
 ```
 

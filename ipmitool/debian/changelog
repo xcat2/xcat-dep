@@ -1,3 +1,10 @@
+ipmitool-xcat (1.8.18-5) unstable; urgency=low
+
+  * Depend on the shared libraries the binary links against. Readline and
+    ncurses were missing, so the package installed and then failed to run
+
+ -- XCAT <xcat-user@lists.sourceforge.net>  Sun, 06 Sep 2026 12:00:00 +0000
+
 ipmitool-xcat (1.8.18-4) unstable; urgency=low
   * Build with dependencies for either libssl1.0.0 or libssl1.1
 
