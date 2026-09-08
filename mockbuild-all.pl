@@ -651,9 +651,10 @@ if (!$skip_build) {
             my $step_result = "$build_root/$name";
             my $step_log    = "$log_root/$name";
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
+            my $mock_cfg = $builder->{noarch} ? $profile->{noarch_cfg} : $target;
             my $cmd = join(' ',
                 'perl', shell_quote($script),
-                '--mock-cfg', shell_quote($builder->{noarch} ? $profile->{noarch_cfg} : $target),
+                '--mock-cfg', shell_quote($mock_cfg),
                 ($profile->{forcearch} && !$builder->{noarch} ? ('--target-arch', shell_quote($arch)) : ()),
                 '--mock-uniqueext', shell_quote($step_uniqueext),
                 '--result-dir', shell_quote($step_result),
@@ -676,7 +677,7 @@ if (!$skip_build) {
                 cmd     => $cmd,
                 timeout => $step_timeout,
                 log     => "$log_root/$name/run.log",
-                scrub_cfg       => $target,
+                scrub_cfg       => $mock_cfg,
                 scrub_uniqueext => $step_uniqueext,
             };
             push @collect_roots, $step_result;
