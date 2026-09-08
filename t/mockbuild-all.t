@@ -12,6 +12,7 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
                       required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
+                      rpm_arch rpm_in_cell
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
@@ -255,6 +256,51 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     for my $boot (qw(elilo-xcat grub2-xcat syslinux-xcat xnba-undi)) {
         is($m{'rocky-10-riscv64-xcat'}{$boot}, $m{$ppc}{$boot},
             "$boot pinned in the riscv64 target as in the EL10 ppc64le target");
+    }
+}
+
+# ---- rpm_in_cell: only noarch and the cell's own architecture reach a target's repository ------
+# A noarch builder run in another architecture's chroot (the x86 boot loaders for riscv64 build in
+# rocky-10-x86_64) can emit that chroot's native rpms beside the noarch one, as syslinux does.
+{
+    is(rpm_arch('syslinux-xcat-6.03-1.noarch.rpm'), 'noarch', 'rpm_arch reads noarch');
+    is(rpm_arch('syslinux-extlinux-6.03-1.x86_64.rpm'), 'x86_64', 'rpm_arch reads x86_64');
+    is(rpm_arch('ipmitool-xcat-1.8.18-4.el10.riscv64.rpm'), 'riscv64', 'rpm_arch reads riscv64');
+    is(rpm_arch('not-an-rpm.txt'), undef, 'rpm_arch is undef for a non-rpm name');
+    ok( rpm_in_cell('syslinux-xcat-6.03-1.noarch.rpm', 'riscv64'), 'noarch belongs in the riscv64 cell');
+    ok( rpm_in_cell('ipmitool-xcat-1.8.18-4.el10.riscv64.rpm', 'riscv64'), 'a riscv64 rpm belongs in the riscv64 cell');
+    ok(!rpm_in_cell('syslinux-extlinux-6.03-1.x86_64.rpm', 'riscv64'), 'an x86_64 rpm does not belong in the riscv64 cell');
+    ok(!rpm_in_cell('syslinux-debuginfo-6.03-1.x86_64.rpm', 'riscv64'), '... nor its debuginfo');
+    ok( rpm_in_cell('syslinux-extlinux-6.03-1.x86_64.rpm', 'x86_64'), 'the same rpm belongs in the x86_64 cell');
+    ok(!rpm_in_cell('syslinux-xcat-6.03-1.noarch.rpm', undef), 'no target arch -> not kept (fail-safe)');
+
+    # With a real file the header decides, so a renamed rpm does not pass for another architecture.
+    SKIP: {
+        skip 'rpmbuild not available', 4 if system('command -v rpmbuild >/dev/null 2>&1') != 0;
+        my $tmp = tempdir(CLEANUP => 1);
+        my $build = sub {
+            my ($name, $buildarch) = @_;
+            my $spec = "$tmp/$name.spec";
+            open my $fh, '>', $spec or die;
+            print $fh "Name: $name\nVersion: 1.0\nRelease: 1\nSummary: fixture\nLicense: EPL\n"
+                    . ($buildarch ? "BuildArch: $buildarch\n" : '')
+                    . "%description\nfixture\n%install\nmkdir -p %{buildroot}/opt/t\necho x > %{buildroot}/opt/t/$name\n%files\n/opt/t/$name\n";
+            close $fh;
+            system("rpmbuild -bb --quiet --define '_topdir $tmp/rpmb-$name' --define '_rpmdir $tmp/out-$name' '$spec' >/dev/null 2>&1") == 0
+                or die "rpmbuild failed for $name";
+            my ($rpm) = glob("$tmp/out-$name/*/$name-*.rpm");
+            return $rpm;
+        };
+        my $host = `uname -m`; chomp $host;
+        my $noarch = $build->('cell-noarch', 'noarch');
+        my $native = $build->('cell-native', undef);
+        my $disguised_native = "$tmp/cell-native-1.0-1.noarch.rpm";
+        my $disguised_noarch = "$tmp/cell-noarch-1.0-1.$host.rpm";
+        require File::Copy; File::Copy::copy($native, $disguised_native) or die; File::Copy::copy($noarch, $disguised_noarch) or die;
+        is(rpm_arch($disguised_native), $host, 'the header names the architecture of a native rpm renamed as noarch');
+        ok(!rpm_in_cell($disguised_native, 'riscv64') || $host eq 'riscv64', '... so it does not enter the riscv64 cell');
+        is(rpm_arch($disguised_noarch), 'noarch', 'the header names noarch for a noarch rpm renamed as native');
+        ok( rpm_in_cell($disguised_noarch, 'riscv64'), '... so it enters the riscv64 cell');
     }
 }
 
