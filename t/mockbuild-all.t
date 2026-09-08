@@ -247,6 +247,15 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
     is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
         or diag("missing conserver-xcat in: @missing");
+
+    # The forcearch riscv64 target carries the noarch boot components the ppc64le EL10 target
+    # carries, at the same pins: a riscv64 MN serves the x86 nodes of a mixed cluster too.
+    my ($ppc) = grep { /^[a-z+]+-10-ppc64le$/ } @targets;
+    ok(defined $ppc, 'an EL10 ppc64le target section exists to compare against') or $ppc = '';
+    for my $boot (qw(elilo-xcat grub2-xcat syslinux-xcat xnba-undi)) {
+        is($m{'rocky-10-riscv64-xcat'}{$boot}, $m{$ppc}{$boot},
+            "$boot pinned in the riscv64 target as in the EL10 ppc64le target");
+    }
 }
 
 # ---- bump_dep_release_suffix: stamps xcat-dep specs, prunes nested xcat-core, idempotent --------
