@@ -453,7 +453,7 @@ missing, and then builds the `[rocky-10-riscv64-xcat]` section of `packages-mani
 | goconserver | cross-compiled on the host (`GOARCH=riscv64`), packaged with `rpmbuild --target riscv64` |
 | grub2-xcat (noarch) | built in the native, EPEL-free `rocky-10-x86_64` chroot |
 | perl list6 + EPEL gap (`--epel-gap`) | `mockbuild-perl-packages.pl --target-arch riscv64 --noarch-mock-cfg rocky-10-x86_64 --epel-gap`: XS modules in the riscv64 chroot, noarch modules in the native chroot |
-| elilo-xcat, syslinux-xcat, xnba-undi | not built (x86 bootloaders) |
+| elilo-xcat, syslinux-xcat, xnba-undi (noarch) | built in the native `rocky-10-x86_64` chroot, like grub2-xcat: a riscv64 management node serves the x86 nodes of a mixed cluster. The target is cross-built on x86_64 only, as its mock config states |
 
 There is no EPEL for riscv64, so the perl deps of xCAT that EL10 otherwise takes from EPEL
 are built here as well (`--epel-gap` in `mockbuild-perl-packages.pl`: perl-Crypt-Blowfish,
@@ -610,8 +610,8 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
   manifest). `build_one_codename` **skips** an `Architecture:all` package on any non-amd64 arch
   (detected via `control_binary_arch`), so ppc64el and riscv64 build only the genuinely
   arch-specific compiled deps (`ipmitool-xcat`, `conserver-xcat`, `goconserver`) yet still verify the
-  boot components they need. The riscv64 sections require `grub2-xcat` only: the x86 loaders
-  (`syslinux-xcat`, `elilo-xcat`, `xnba-undi`) are not part of a riscv64 repository.
+  boot components they need. The riscv64 sections require the same four boot components as
+  ppc64el: a riscv64 management node serves the x86 nodes of a mixed cluster.
 - **Fail-hard.** Any required chroot / package / artifact failure, or any version-pin mismatch, fails
   the whole run non-zero.
 - **Genesis keeps its maintained packaging.** A native `xcat-genesis-base` deb is INGESTED as-is when
@@ -677,7 +677,7 @@ needs no `--mirror`.
 | ipmitool-xcat, conserver-xcat | `dpkg-buildpackage` in the emulated riscv64 chroot |
 | goconserver | same chroot, compiled by the Go toolchain the chroot installs for riscv64 |
 | grub2-xcat (`Architecture:all`) | built once on amd64 and assembled into the riscv64 index; listed in the riscv64 manifest sections as required-present, because a riscv64 management node needs it to netboot |
-| syslinux-xcat, elilo-xcat, xnba-undi | not built and not required (x86 loaders) |
+| syslinux-xcat, elilo-xcat, xnba-undi (`Architecture:all`) | built once on amd64 and assembled into the riscv64 index; required-present like grub2-xcat, because a riscv64 management node serves the x86 nodes of a mixed cluster |
 | xcat-genesis-base | not built: no riscv64 section names it, and the build skips the step when the manifest does not ask for it, so `--skip-genesis` is unnecessary here |
 
 The riscv64 ipmitool-xcat deb is installed into the chroot that built it and
