@@ -396,17 +396,19 @@ my @build_targets = $target
 
 # What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
 # dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
-# another arch that has no EPEL: the x86-only bootloaders are not built for it, the EPEL-only
-# perl deps of xCAT are (mockbuild-perl-packages.pl --epel-gap), and the noarch deps are built
-# in the native, EPEL-free chroot of the same release (the rpms are identical for every arch
-# and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
+# another arch that has no EPEL: the EPEL-only perl deps of xCAT are built for it
+# (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them,
+# are built in the native, EPEL-free chroot of the same release (the rpms are identical for
+# every arch and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
 my %forcearch_targets = (
     'rocky-10-riscv64-xcat' => {
         rel          => 10,
         arch         => 'riscv64',
-        noarch_cfg   => "rocky-10-$host_arch",
-        dep_builders => [qw(grub2-xcat ipmitool-xcat goconserver conserver-xcat)],
-        required     => [qw(ipmitool-xcat grub2-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
+        noarch_cfg   => 'rocky-10-x86_64',
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
 );
 
@@ -532,11 +534,12 @@ if (!$skip_build && !$dry_run && -d $run_root) {
 # committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
 # step, so ppc builds them the same as x86 -- no cross-arch import. A forcearch target builds
 # only the builders its profile lists; the noarch ones run in the profile's native chroot.
+# syslinux-xcat is noarch too, and its spec builds on x86 and ppc64le only.
 my @dep_builders = (
     { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl", noarch => 1 },
     { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl", noarch => 1 },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
-    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
+    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl", noarch => 1 },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
