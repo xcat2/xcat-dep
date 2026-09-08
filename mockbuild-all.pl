@@ -15,7 +15,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
@@ -848,11 +848,13 @@ print_step('Collect RPM artifacts');
 print "collection roots:\n";
 print "  $_\n" for @collect_roots;
 
-my ($copied, $skipped_src, $missing_roots) = collect_rpms(
+my ($copied, $skipped_src, $missing_roots, $skipped_foreign) = collect_rpms(
     roots    => \@collect_roots,
     dest_dir => $repo_dir,
+    arch     => $arch,
     dry_run  => $dry_run,
 );
+print "skipped $skipped_foreign rpm(s) of another architecture\n" if $skipped_foreign;
 
 # Assert on what this run BUILT, before the Genesis release is added: the release is
 # installed from a verified directory rather than built here, so counting it first would
@@ -1970,11 +1972,13 @@ sub collect_rpms {
     my (%args) = @_;
     my $roots = $args{roots} // [];
     my $dest  = $args{dest_dir} // die "collect_rpms missing dest_dir\n";
+    my $cell_arch = $args{arch} // die "collect_rpms missing arch\n";
     my $is_dry = $args{dry_run} ? 1 : 0;
 
     my %seen;
     my $copied = 0;
     my $skipped_src = 0;
+    my $skipped_foreign = 0;
     my $missing_roots = 0;
 
     for my $root (@{$roots}) {
@@ -2002,6 +2006,10 @@ sub collect_rpms {
             my $base = basename($rpm);
             next if $genesis_release
               && $base =~ /^xCAT-genesis-openembedded-/;
+            if (!rpm_in_cell($rpm, $cell_arch)) {
+                $skipped_foreign++;
+                next;
+            }
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy: $rpm -> $dest/$base\n";
@@ -2014,7 +2022,7 @@ sub collect_rpms {
         }
     }
 
-    return ($copied, $skipped_src, $missing_roots);
+    return ($copied, $skipped_src, $missing_roots, $skipped_foreign);
 }
 
 sub collect_srpms {
