@@ -15,7 +15,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
@@ -856,7 +856,7 @@ my ($copied, $skipped_src, $missing_roots) = collect_rpms(
 # let a run whose builders all failed reach createrepo and the deployable tree, and fail
 # much later in the repo gate (verify_target_repo), naming missing packages instead of the
 # failed builds.
-if (!$dry_run && $copied == 0) {
+if (!$dry_run && $copied == 0 && @collect_roots) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
 
@@ -869,6 +869,31 @@ if (!$skip_genesis && !$dry_run) {
         copy($g, "$repo_dir/" . basename($g))
             or die "Failed to copy genesis-base $g -> $repo_dir: $!\n";
         $copied++;
+    }
+}
+
+# A skipped builder built nothing this run, so everything it published in the cell joins the run
+# repository here, ahead of the bump check, createrepo, the tarballs and the deploy gate.
+if (!$dry_run && ($skip_genesis || $skip_perl || $skip_xcat_dep)) {
+    my $published = "$repo_dep/rh$rel/$arch";
+    if (-d $published) {
+        my %skipped = (genesis => $skip_genesis, perl => $skip_perl, dep => $skip_xcat_dep);
+        # Only an rpm the configured key signed, by signer id and by rpmkeys --checksig, may be
+        # re-signed and republished; an unsigned run still requires the digests to verify.
+        my $trusted = \&rpm_digests_ok;
+        if ($gpg_sign || $gpg_home ne '') {
+            my ($dbopt, $problem) = rpmkeys_keyring($gpg_key_name, $gpg_home);
+            die "FATAL: $problem\n" if $problem;
+            my $accept = gpg_key_ids($gpg_key_name, $gpg_home);
+            $trusted = sub {
+                my $id = rpm_signer_keyid($_[0]);
+                return (defined $id && $accept->{$id} && !rpm_checksig_problem($_[0], $dbopt)) ? 1 : 0;
+            };
+        }
+        for my $base (carry_over_rpms($published, $repo_dir, \%skipped, [sort keys %req],
+                                      \&rpm_name, \&rpm_source_rpm, $trusted, $arch, \&rpm_arch)) {
+            print "[collect] $base kept from the published cell $published\n";
+        }
     }
 }
 
