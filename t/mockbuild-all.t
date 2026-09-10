@@ -11,7 +11,7 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
-                      required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
+                      required_pkgs skipped_builder carry_over_rpms source_package version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
@@ -58,6 +58,174 @@ is_deeply([required_pkgs(\@all, 1, 1, 1)], [],
     my @unfiltered = verify_repo_packages(\%pins, $present);
     is(scalar(@unfiltered), 1, 'gate: unfiltered, the absent genesis is flagged MISSING');
     like($unfiltered[0], qr/^MISSING xCAT-genesis-base\b/, 'gate: the flag names the absent genesis');
+}
+
+# ---- skipped_builder: which builder a source package belongs to, by the required_pkgs classes --
+{
+    my %perl = (genesis => 0, perl => 1, dep => 0);
+    my %dep  = (genesis => 0, perl => 0, dep => 1);
+    my %gen  = (genesis => 1, perl => 0, dep => 0);
+    ok( skipped_builder('perl-IO-Stty', \%perl),            '--skip-perl skips a perl source package');
+    ok(!skipped_builder('perl-IO-Stty', \%dep),             '... and --skip-xcat-dep does not');
+    ok( skipped_builder('syslinux', \%dep),                 '--skip-xcat-dep skips a dep source package');
+    ok(!skipped_builder('syslinux', \%perl),                '... and --skip-perl does not');
+    ok( skipped_builder('xCAT-genesis-base-x86_64', \%gen), '--skip-genesis skips the per-arch genesis source package');
+    ok( skipped_builder('xCAT-genesis-base', \%gen),        '... and the bare genesis name');
+    ok(!skipped_builder('xCAT-genesis-base-x86_64', \%dep), 'genesis is not a dep builder package');
+    ok(!skipped_builder('perl-IO-Stty', { genesis => 0, perl => 0, dep => 0 }), 'no skips -> nothing is skipped');
+    ok(!skipped_builder('xCAT-genesis-openembedded-riscv64', { genesis => 1, perl => 1, dep => 1 }),
+        'the OpenEmbedded Genesis belongs to no builder here, whatever is skipped');
+}
+
+# ---- source_package: the source package name of a source rpm file name ------------------------
+is(source_package('syslinux-6.03-1.el10.src.rpm'), 'syslinux', 'source_package strips version and release');
+is(source_package('xCAT-genesis-base-x86_64-2.19.0-snap1.noarch.src.rpm'), 'xCAT-genesis-base-x86_64',
+    'source_package keeps the per-arch genesis name');
+is(source_package('garbage'), undef, 'source_package is undef for a non source rpm name');
+
+# ---- carry_over_rpms: a skipped builder's published rpms stay, whatever the manifest names ------
+# Fixtures stand in for rpm headers: <name>-<version>-<release>.<arch>.rpm, source rpm from a map.
+my $name_of = sub { my $b = basename($_[0]); $b =~ s/-[^-]+-[^-]+\.[^.]+\.rpm\z//; $b };
+my %srpm_of = (
+    'syslinux-xcat'            => 'syslinux-6.03-1.el10.src.rpm',
+    'syslinux-extlinux'        => 'syslinux-6.03-1.el10.src.rpm',
+    'syslinux-debuginfo'       => 'syslinux-6.03-1.el10.src.rpm',
+    'elilo-xcat'               => 'elilo-xcat-3.14-4.el10.src.rpm',
+    'perl-IO-Stty'             => 'perl-IO-Stty-0.04-5.el10.src.rpm',
+    'perl-Sys-Virt'            => 'perl-Sys-Virt-11.10.0-1.el10.src.rpm',
+    'perl-Net-Telnet'          => 'perl-Net-Telnet-3.04-1.el10.src.rpm',
+    'xCAT-genesis-base-x86_64' => 'xCAT-genesis-base-x86_64-2.19.0-snap1.src.rpm',
+    'xCAT-genesis-openembedded-x86_64' => 'xCAT-genesis-openembedded-x86_64-2.19.0-1.src.rpm',
+);
+my $source_of = sub { $srpm_of{ $name_of->($_[0]) } };
+my $all_trusted = sub { 1 };
+my $arch_of = sub { my $b = basename($_[0]); $b =~ /\.([^.]+)\.rpm\z/ ? $1 : undef };
+# the target's manifest: syslinux-xcat stands for the whole syslinux build, perl-Net-Telnet was dropped
+my @manifest = qw(elilo-xcat syslinux-xcat perl-IO-Stty perl-Sys-Virt xCAT-genesis-base);
+my $put = sub {
+    my ($dir, $base, $content) = @_;
+    open my $fh, '>', "$dir/$base" or die "$dir/$base: $!";
+    print $fh $content;
+    close $fh;
+};
+my $slurp = sub { local $/; open my $fh, '<', $_[0] or return undef; my $c = <$fh>; $c };
+my $cell_with = sub {
+    my ($tmp, @extra) = @_;
+    my $cell = "$tmp/cell";
+    make_path($cell);
+    $put->($cell, 'syslinux-xcat-6.03-1.el10.x86_64.rpm',             'sysl-xcat');
+    $put->($cell, 'syslinux-extlinux-6.03-1.el10.x86_64.rpm',         'extlinux');
+    $put->($cell, 'syslinux-debuginfo-6.03-1.el10.x86_64.rpm',        'sysl-dbg');
+    $put->($cell, 'syslinux-6.03-1.el10.src.rpm',                     'sysl-src');
+    $put->($cell, 'elilo-xcat-3.14-4.el10.noarch.rpm',                'elilo');
+    $put->($cell, 'perl-IO-Stty-0.04-5.el10.noarch.rpm',              'stty');
+    $put->($cell, 'perl-Net-Telnet-3.04-1.el10.noarch.rpm',           'telnet-dropped');
+    $put->($cell, 'perl-Sys-Virt-11.10.0-1.el10.x86_64.rpm',          'virt-old');
+    $put->($cell, 'xCAT-genesis-base-x86_64-2.19.0-snap1.noarch.rpm', 'genesis');
+    $put->($cell, 'xCAT-genesis-openembedded-x86_64-2.19.0-1.noarch.rpm', 'oe-genesis');
+    $put->($cell, 'xCAT-genesis-openembedded-stale.noarch.rpm',          'stale, not an rpm');
+    $put->($cell, @$_) for @extra;
+    return $cell;
+};
+
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my $cell = $cell_with->($tmp);
+    my $stage = "$tmp/stage";
+    make_path($stage);
+    $put->($stage, 'perl-Sys-Virt-11.10.0-2.el10.x86_64.rpm', 'virt-built-now');
+
+    my @dep = carry_over_rpms($cell, $stage, { genesis => 0, perl => 0, dep => 1 }, \@manifest, $name_of, $source_of, $all_trusted, 'x86_64', $arch_of);
+    is_deeply(\@dep,
+        [qw(elilo-xcat-3.14-4.el10.noarch.rpm syslinux-debuginfo-6.03-1.el10.x86_64.rpm
+            syslinux-extlinux-6.03-1.el10.x86_64.rpm syslinux-xcat-6.03-1.el10.x86_64.rpm)],
+        '--skip-xcat-dep keeps every binary rpm of the dep builds, subpackages included');
+    is($slurp->("$stage/syslinux-extlinux-6.03-1.el10.x86_64.rpm"), 'extlinux', 'the kept rpm is the published file');
+    ok(!-e "$stage/syslinux-6.03-1.el10.src.rpm", 'source rpms are not carried');
+    ok(!-e "$stage/perl-IO-Stty-0.04-5.el10.noarch.rpm", 'a builder that ran contributes nothing from the published cell');
+    ok(!-e "$stage/xCAT-genesis-openembedded-x86_64-2.19.0-1.noarch.rpm",
+        'an OpenEmbedded Genesis left in the published cell is not carried under --skip-xcat-dep');
+
+    my @perl = carry_over_rpms($cell, $stage, { genesis => 0, perl => 1, dep => 0 }, \@manifest, $name_of, $source_of, $all_trusted, 'x86_64', $arch_of);
+    is_deeply(\@perl, [qw(perl-IO-Stty-0.04-5.el10.noarch.rpm)], '--skip-perl keeps the published perl rpms the run lacks');
+    ok(!-e "$stage/perl-Sys-Virt-11.10.0-1.el10.x86_64.rpm", 'a package the run already carries by name is not duplicated');
+    is($slurp->("$stage/perl-Sys-Virt-11.10.0-2.el10.x86_64.rpm"), 'virt-built-now', 'the staged build is untouched');
+    ok(!-e "$stage/perl-Net-Telnet-3.04-1.el10.noarch.rpm", 'a published package the target manifest no longer names is not republished');
+
+    my @gen = carry_over_rpms($cell, $stage, { genesis => 1, perl => 0, dep => 0 }, \@manifest, $name_of, $source_of, $all_trusted, 'x86_64', $arch_of);
+    is_deeply(\@gen, [qw(xCAT-genesis-base-x86_64-2.19.0-snap1.noarch.rpm)], '--skip-genesis keeps the published per-arch genesis rpm');
+
+    my @again = carry_over_rpms($cell, $stage, { genesis => 1, perl => 1, dep => 1 }, \@manifest, $name_of, $source_of, $all_trusted, 'x86_64', $arch_of);
+    is_deeply(\@again, [], 'a second carry-over finds everything staged already, and never the OpenEmbedded Genesis');
+}
+
+# ---- carry_over_rpms: a build the run already carries in part is never mixed with the old one ----
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my $cell = $cell_with->($tmp);
+    my $stage = "$tmp/stage";
+    make_path($stage);
+    $put->($stage, 'syslinux-xcat-6.04-1.el10.x86_64.rpm', 'sysl-xcat-new');
+    my @dep = carry_over_rpms($cell, $stage, { genesis => 0, perl => 0, dep => 1 }, \@manifest, $name_of, $source_of, $all_trusted, 'x86_64', $arch_of);
+    is_deeply(\@dep, [qw(elilo-xcat-3.14-4.el10.noarch.rpm)],
+        'a staged member of a build keeps every published member of that build out');
+    ok(!-e "$stage/syslinux-extlinux-6.03-1.el10.x86_64.rpm", '... so old subpackages never join a newer main package');
+}
+
+# ---- carry_over_rpms fails closed: a selected build is carried whole or the run stops -----------
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my $cell = $cell_with->($tmp);
+    my $stage = "$tmp/stage";
+    make_path($stage);
+    my $no_debuginfo = sub { basename($_[0]) !~ /debuginfo/ };
+    eval { carry_over_rpms($cell, $stage, { genesis => 0, perl => 0, dep => 1 }, \@manifest, $name_of, $source_of, $no_debuginfo, 'x86_64', $arch_of) };
+    like($@, qr/syslinux-debuginfo-6\.03-1\.el10\.x86_64\.rpm: not signed by the configured key/,
+        'a member of a selected build the key did not sign stops the carry-over and is named');
+    ok(!-e "$stage/syslinux-xcat-6.03-1.el10.x86_64.rpm", '... and nothing of that run was copied');
+    my @perl = carry_over_rpms($cell, $stage, { genesis => 0, perl => 1, dep => 0 }, \@manifest, $name_of, $source_of, $no_debuginfo, 'x86_64', $arch_of);
+    is_deeply(\@perl, [qw(perl-IO-Stty-0.04-5.el10.noarch.rpm perl-Sys-Virt-11.10.0-1.el10.x86_64.rpm)],
+        'an unsigned rpm of a build that is not selected does not matter');
+}
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my $cell = $cell_with->($tmp, [ 'perl-IO-Stty-0.04-6.el10.noarch.rpm', 'stty-6' ]);
+    my $stage = "$tmp/stage";
+    make_path($stage);
+    my $source_two = sub { my $n = $name_of->($_[0]); $n eq 'perl-IO-Stty' && $_[0] =~ /-6\.el10/ ? 'perl-IO-Stty-0.04-6.el10.src.rpm' : $srpm_of{$n} };
+    eval { carry_over_rpms($cell, $stage, { genesis => 0, perl => 1, dep => 0 }, \@manifest, $name_of, $source_two, $all_trusted, 'x86_64', $arch_of) };
+    like($@, qr/perl-IO-Stty: published more than once/, 'a package published at two versions stops the carry-over');
+    ok(!-e "$stage/perl-IO-Stty-0.04-5.el10.noarch.rpm" && !-e "$stage/perl-IO-Stty-0.04-6.el10.noarch.rpm", '... and neither version was copied');
+}
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my $cell = $cell_with->($tmp, [ 'perl-Sys-Virt-11.10.0-1.el10.ppc64le.rpm', 'virt-ppc' ]);
+    my $stage = "$tmp/stage";
+    make_path($stage);
+    my $source_ppc = sub { my $n = $name_of->($_[0]); $n eq 'perl-Sys-Virt' && $_[0] =~ /ppc64le/ ? 'perl-Sys-Virt-11.10.0-1.el10.src.rpm' : $srpm_of{$n} };
+    eval { carry_over_rpms($cell, $stage, { genesis => 0, perl => 1, dep => 0 }, \@manifest, $name_of, $source_ppc, $all_trusted, 'x86_64', $arch_of) };
+    like($@, qr/perl-Sys-Virt-11\.10\.0-1\.el10\.ppc64le\.rpm: architecture ppc64le is not x86_64 or noarch/,
+        'a member of a selected build built for another architecture stops the carry-over');
+}
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my $cell = $cell_with->($tmp, [ 'broken-1-1.x86_64.rpm', 'not an rpm' ]);
+    my $stage = "$tmp/stage";
+    make_path($stage);
+    eval { carry_over_rpms($cell, $stage, { genesis => 0, perl => 1, dep => 0 }, \@manifest, $name_of, $source_of, $all_trusted, 'x86_64', $arch_of) };
+    like($@, qr/broken-1-1\.x86_64\.rpm: header unreadable/, 'an rpm whose header cannot be read stops the carry-over');
+    unlike($@, qr/openembedded-stale/, '... while a stale OpenEmbedded file is never read');
+}
+
+# ---- carry_over_rpms: --output and --repo-dep paths may contain spaces --------------------------
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my ($cell, $stage) = ("$tmp/published cell", "$tmp/run repo");
+    make_path($cell, $stage);
+    $put->($cell, 'perl-IO-Stty-0.04-5.el10.noarch.rpm', 'stty');
+    my @copied = carry_over_rpms($cell, $stage, { genesis => 0, perl => 1, dep => 0 }, ['perl-IO-Stty'], $name_of, $source_of, $all_trusted, 'x86_64', $arch_of);
+    is_deeply(\@copied, [qw(perl-IO-Stty-0.04-5.el10.noarch.rpm)], 'a published cell path with a space is read');
+    ok(-f "$stage/perl-IO-Stty-0.04-5.el10.noarch.rpm", 'a run repository path with a space is written');
 }
 
 # ---- version_matches: exact + shell-glob pins ------------------------------------------------
