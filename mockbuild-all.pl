@@ -1751,22 +1751,34 @@ sub verify_rpms_checksig {
     my ($dir, $keyname, $home) = @_;
     my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
     return () unless @rpms;
+    my ($dbopt, $problem) = rpmkeys_keyring($keyname, $home);
+    return ($problem) if $problem;
+    return map { rpm_checksig_problem($_, $dbopt) } @rpms;
+}
+
+# rpmkeys_keyring: an isolated rpm keyring holding only the signing key, as the --dbpath option for
+# rpmkeys. Returns ($dbopt, undef), or (undef, $problem) when the key cannot be exported or imported.
+sub rpmkeys_keyring {
+    my ($keyname, $home) = @_;
     require_command('rpmkeys');
     require_command('gpg');
     my $tmpdb = tempdir('rpmkeys-XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
     my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
     my $keyfile = "$tmpdb/pubkey.asc";
     system("gpg$h --batch --yes -a --export " . sh_quote($keyname) . ' > ' . sh_quote($keyfile) . ' 2>/dev/null');
-    return ("SIGKEY: cannot export public key '$keyname' for rpmkeys --checksig") if !-s $keyfile;
+    return (undef, "SIGKEY: cannot export public key '$keyname' for rpmkeys --checksig") if !-s $keyfile;
     my $dbopt = '--dbpath ' . sh_quote($tmpdb);
     system("rpmkeys $dbopt --import " . sh_quote($keyfile) . ' >/dev/null 2>&1') == 0
-        or return ("SIGKEY: rpmkeys --import of '$keyname' into the temp keyring failed");
-    my @problems;
-    for my $rpm (@rpms) {
-        my $out = `rpmkeys $dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
-        push @problems, rpmkeys_checksig_problem(basename($rpm), $? >> 8, $out);
-    }
-    return @problems;
+        or return (undef, "SIGKEY: rpmkeys --import of '$keyname' into the temp keyring failed");
+    return ($dbopt, undef);
+}
+
+# rpm_checksig_problem: `rpmkeys --checksig` of one rpm against the keyring, as a problem string or
+# an empty list when its digests and signature verify with the signing key.
+sub rpm_checksig_problem {
+    my ($rpm, $dbopt) = @_;
+    my $out = `rpmkeys $dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
+    return rpmkeys_checksig_problem(basename($rpm), $? >> 8, $out);
 }
 
 # repomd_observed_signer: run gpg --verify on the detached repomd signature and extract the identity
