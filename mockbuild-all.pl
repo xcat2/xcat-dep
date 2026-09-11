@@ -15,7 +15,8 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
+                      carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
@@ -38,6 +39,10 @@ use XCAT::BuildUtils qw(
   shell_quote
 );
 use XCAT::GenesisRelease qw(
+  architectures
+  rpm_package_prefix
+  rpm_package_name
+  validate_repository_packages
   validated_release_checksums
   verify_release_file
 );
@@ -373,6 +378,7 @@ if ($genesis_release ne '') {
         unless -d $genesis_release;
     my $verifier = "$script_dir/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    common_repository_requirements();
     # Checksum, verify, checksum again. The verifier reads the tree it validates, so a
     # release rewritten together with its SHA256SUMS while the verifier runs would satisfy
     # both the verifier and any single pass taken afterwards; comparing the pass taken
@@ -396,17 +402,19 @@ my @build_targets = $target
 
 # What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
 # dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
-# another arch that has no EPEL: the x86-only bootloaders are not built for it, the EPEL-only
-# perl deps of xCAT are (mockbuild-perl-packages.pl --epel-gap), and the noarch deps are built
-# in the native, EPEL-free chroot of the same release (the rpms are identical for every arch
-# and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
+# another arch that has no EPEL: the EPEL-only perl deps of xCAT are built for it
+# (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them,
+# are built in the native, EPEL-free chroot of the same release (the rpms are identical for
+# every arch and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
 my %forcearch_targets = (
     'rocky-10-riscv64-xcat' => {
         rel          => 10,
         arch         => 'riscv64',
-        noarch_cfg   => "rocky-10-$host_arch",
-        dep_builders => [qw(grub2-xcat ipmitool-xcat goconserver conserver-xcat)],
-        required     => [qw(ipmitool-xcat grub2-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
+        noarch_cfg   => 'rocky-10-x86_64',
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
 );
 
@@ -532,11 +540,12 @@ if (!$skip_build && !$dry_run && -d $run_root) {
 # committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
 # step, so ppc builds them the same as x86 -- no cross-arch import. A forcearch target builds
 # only the builders its profile lists; the noarch ones run in the profile's native chroot.
+# syslinux-xcat is noarch too, and its spec builds on x86 and ppc64le only.
 my @dep_builders = (
     { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl", noarch => 1 },
     { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl", noarch => 1 },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
-    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
+    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl", noarch => 1 },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
@@ -648,9 +657,10 @@ if (!$skip_build) {
             my $step_result = "$build_root/$name";
             my $step_log    = "$log_root/$name";
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
+            my $mock_cfg = $builder->{noarch} ? $profile->{noarch_cfg} : $target;
             my $cmd = join(' ',
                 'perl', shell_quote($script),
-                '--mock-cfg', shell_quote($builder->{noarch} ? $profile->{noarch_cfg} : $target),
+                '--mock-cfg', shell_quote($mock_cfg),
                 ($profile->{forcearch} && !$builder->{noarch} ? ('--target-arch', shell_quote($arch)) : ()),
                 '--mock-uniqueext', shell_quote($step_uniqueext),
                 '--result-dir', shell_quote($step_result),
@@ -673,7 +683,7 @@ if (!$skip_build) {
                 cmd     => $cmd,
                 timeout => $step_timeout,
                 log     => "$log_root/$name/run.log",
-                scrub_cfg       => $target,
+                scrub_cfg       => $mock_cfg,
                 scrub_uniqueext => $step_uniqueext,
             };
             push @collect_roots, $step_result;
@@ -845,11 +855,13 @@ print_step('Collect RPM artifacts');
 print "collection roots:\n";
 print "  $_\n" for @collect_roots;
 
-my ($copied, $skipped_src, $missing_roots) = collect_rpms(
+my ($copied, $skipped_src, $missing_roots, $skipped_foreign) = collect_rpms(
     roots    => \@collect_roots,
     dest_dir => $repo_dir,
+    arch     => $arch,
     dry_run  => $dry_run,
 );
+print "skipped $skipped_foreign rpm(s) of another architecture\n" if $skipped_foreign;
 
 # Assert on what this run BUILT, before the Genesis release is added: the release is
 # installed from a verified directory rather than built here, so counting it first would
@@ -1156,9 +1168,8 @@ sub publish_genesis_common_repo {
 
 =head3 verify_common_repo
 
-    Assert the shared OpenEmbedded Genesis repository carries every package the manifest's [common]
-    section requires, at a version satisfying its pin. [common] is not a build target: it describes
-    the one repository published beside the per-EL cells, which no [<target>] section covers.
+    Assert the shared repository carries every package required by [common]. [common] must
+    describe every currently supported Genesis architecture.
 
     Arguments:
         $dir - the repository to check (the staging directory, before it is swapped into place)
@@ -1170,16 +1181,11 @@ sub publish_genesis_common_repo {
 #--------------------------------------------------------------------------------
 sub verify_common_repo {
     my ($dir) = @_;
-    my $manifest = "$repo_root/packages-manifest.conf";
-    my %MAN = read_manifest($manifest);
-    my %req = %{ $MAN{common} // {} };
-    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
-        if !%req;
-
-    my @names       = sort keys %req;
-    my %present     = repo_present_versions($dir, \@names);
+    my %req = %{ common_repository_requirements() };
+    my @names = sort keys %req;
+    my %present = repo_present_versions($dir, \@names);
     my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
-    my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
+    my @problems = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
     if (@problems) {
         print "  - $_\n" for @problems;
         die "FATAL: shared Genesis repo INCOMPLETE at $dir (" . scalar(@problems) . " problem(s))\n";
@@ -1187,6 +1193,21 @@ sub verify_common_repo {
     print "[verify-repo] common complete: " . scalar(@names)
         . " packages present + EVR-satisfied in $dir\n";
     return 1;
+}
+
+sub common_repository_requirements {
+    my $manifest = "$repo_root/packages-manifest.conf";
+    my %MAN = read_manifest($manifest);
+    my %common = %{ $MAN{common} // {} };
+    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
+        if !%common;
+
+    return validate_repository_packages(
+        \%common,
+        'common',
+        rpm_package_prefix(),
+        map { rpm_package_name($_) } architectures(),
+    );
 }
 
 sub replace_common_repository {
@@ -2004,11 +2025,13 @@ sub collect_rpms {
     my (%args) = @_;
     my $roots = $args{roots} // [];
     my $dest  = $args{dest_dir} // die "collect_rpms missing dest_dir\n";
+    my $cell_arch = $args{arch} // die "collect_rpms missing arch\n";
     my $is_dry = $args{dry_run} ? 1 : 0;
 
     my %seen;
     my $copied = 0;
     my $skipped_src = 0;
+    my $skipped_foreign = 0;
     my $missing_roots = 0;
 
     for my $root (@{$roots}) {
@@ -2036,6 +2059,10 @@ sub collect_rpms {
             my $base = basename($rpm);
             next if $genesis_release
               && $base =~ /^xCAT-genesis-openembedded-/;
+            if (!rpm_in_cell($rpm, $cell_arch)) {
+                $skipped_foreign++;
+                next;
+            }
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy: $rpm -> $dest/$base\n";
@@ -2048,7 +2075,7 @@ sub collect_rpms {
         }
     }
 
-    return ($copied, $skipped_src, $missing_roots);
+    return ($copied, $skipped_src, $missing_roots, $skipped_foreign);
 }
 
 sub collect_srpms {
@@ -2266,4 +2293,3 @@ sub slurp_chomp {
     chomp $line if defined $line;
     return $line // '';
 }
-

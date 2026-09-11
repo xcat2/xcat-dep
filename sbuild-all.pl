@@ -318,6 +318,7 @@ if ($genesis_release ne '') {
     # the verifier runs would satisfy both the verifier and any single pass taken afterwards.
     require XCAT::BuildUtils;
     require XCAT::GenesisRelease;
+    shared_repository_requirements();
     my $before = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
     XCAT::BuildUtils::run_command($^X, $verifier, '--complete', '--format', 'deb', $genesis_release);
     my $after = XCAT::GenesisRelease::validated_release_checksums($genesis_release);
@@ -1142,16 +1143,9 @@ sub install_genesis_release_debs {
     return scalar(@files);
 }
 
-# verify_shared_pool($pool): assert the shared Genesis pool carries every package the manifest's
-# [shared] section requires, at a version satisfying its pin. [shared] is not a build target: it
-# describes the one pool every suite indexes, which no [<codename>-<arch>] section covers. Run on
-# the SIDE TREE, before it is swapped into place, so an incomplete pool is never published.
-# Completeness only -- the release checksums cover the bytes.
 sub verify_shared_pool {
     my ($pool) = @_;
-    my %req = %{ $MANIFEST{shared} // {} };
-    die "FATAL: no [shared] section in $manifest -- cannot verify the shared Genesis pool\n"
-        if !%req;
+    my %req = %{ shared_repository_requirements() };
     my @names = sort keys %req;
     my %present = map { $_ => deb_version($pool, $_) } @names;
     my @problems = verify_repo_packages(\%req, \%present);
@@ -1161,6 +1155,19 @@ sub verify_shared_pool {
     }
     print "  [verify-repo] shared pool complete: " . scalar(@names) . " packages present\n";
     return 1;
+}
+
+sub shared_repository_requirements {
+    my %shared = %{ $MANIFEST{shared} // {} };
+    die "FATAL: no [shared] section in $manifest -- cannot verify the shared Genesis pool\n"
+        if !%shared;
+    return XCAT::GenesisRelease::validate_repository_packages(
+        \%shared,
+        'shared',
+        XCAT::GenesisRelease::deb_package_prefix(),
+        map { XCAT::GenesisRelease::deb_package_name($_) }
+          XCAT::GenesisRelease::architectures(),
+    );
 }
 
 sub assemble_into {
@@ -1567,10 +1574,11 @@ Publish an B<OpenEmbedded Genesis package release> alongside the packages this r
 release is produced separately (see F<genesis-openembedded/README.md>); this option only verifies it
 and copies the verified bytes into every selected suite.
 
-The release must be B<complete> (every supported Genesis architecture) and must carry C<deb>
-packages. It is validated before any build or publish: its C<SHA256SUMS> is read, the shared
-verifier runs, and the checksums are read again -- a release rewritten together with its checksums
-while the verifier runs is rejected.
+The release must carry C<deb> packages for every currently supported architecture. Version 1
+metadata remains readable, but a complete release now requires C<s390x>. The release is validated
+before any build or publish: its C<SHA256SUMS> is read, the shared verifier runs, and the checksums
+are read again -- a release rewritten together with its checksums while the verifier runs is
+rejected.
 
 The packages are published B<once>, into F<pool/main/xcat-genesis-openembedded>, and every suite's
 C<Packages> index points at that one copy: they are C<Architecture: all> and identical everywhere,

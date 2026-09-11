@@ -23,7 +23,7 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext
+    build_mock_uniqueext rpm_in_cell
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -114,13 +114,6 @@ sub rpm_name {
     my ($rpm) = @_;
     my $name = `rpm -qp --qf '%{name}' ${\ sh_quote($rpm)} 2>/dev/null`;
     return (defined $name && $name ne '') ? $name : undef;
-}
-
-# rpm_arch: the %{arch} header of one rpm file, undef when rpm cannot read it.
-sub rpm_arch {
-    my ($rpm) = @_;
-    my $arch = `rpm -qp --qf '%{arch}' ${\ sh_quote($rpm)} 2>/dev/null`;
-    return (defined $arch && $arch ne '') ? $arch : undef;
 }
 
 # rpm_digests_ok: whether the header and payload digests of one rpm file verify, signatures aside.
@@ -679,6 +672,32 @@ sub bump_dep_release_suffix {
 # their roots apart, so three concurrent el8/el9/el10 ppc64le goconserver builds race in one root.
 # When the id is too long, keep a readable leading token AND append a short digest of the FULL id, so
 # distinct ids always yield distinct uniqueext regardless of where in the string they differ.
+# rpm_arch($rpm): the architecture of an rpm. The header decides when the file can be read, so a
+# renamed file does not pass for another architecture; a bare file name falls back to its suffix.
+sub rpm_arch {
+    my ($rpm) = @_;
+    return unless defined $rpm;
+    if (-f $rpm) {
+        my $arch = `rpm -qp --qf '%{ARCH}' ${\ sh_quote($rpm)} 2>/dev/null`;
+        chomp $arch;
+        return $arch if $arch ne '';
+    }
+    my ($arch) = $rpm =~ /\.([A-Za-z0-9_]+)\.rpm$/;
+    return $arch;
+}
+
+# rpm_in_cell($rpm, $target_arch): whether an rpm belongs in the repository cell of $target_arch.
+# A noarch builder run in another architecture's chroot (the x86 boot loaders for riscv64) can
+# emit that chroot's native rpms beside the noarch one; only noarch and the cell's own
+# architecture are kept.
+sub rpm_in_cell {
+    my ($rpm, $target_arch) = @_;
+    my $arch = rpm_arch($rpm);
+    return 0 unless defined $arch && defined $target_arch;
+    return 1 if $arch eq 'noarch';
+    return $arch eq $target_arch ? 1 : 0;
+}
+
 sub build_mock_uniqueext {
     my ($run, $seq, $label) = @_;
 
