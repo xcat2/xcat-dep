@@ -328,8 +328,8 @@ SKIP: {
     my %m = read_manifest("$RealBin/../debs-manifest.conf");
     # Not every section is a build target: [shared] describes the ONE pool the OpenEmbedded Genesis
     # release is published into, which no builder produces. Target sections are <codename>-<arch>.
-    my @targets = grep { /^[a-z]+-(?:amd64|ppc64el)$/ } sort keys %m;
-    cmp_ok(scalar(@targets), '>=', 8, 'manifest has all 8 codename x arch target sections');
+    my @targets = grep { /^[a-z]+-(?:amd64|ppc64el|riscv64)$/ } sort keys %m;
+    cmp_ok(scalar(@targets), '>=', 12, 'manifest has all 12 codename x arch target sections');
     ok(!grep({ $_ eq 'shared' } @targets), 'the shared-pool section is not treated as a build target');
 
     # goconserver is a compiled dep built for EVERY target (both arches, all codenames).
@@ -338,11 +338,11 @@ SKIP: {
         or diag("missing goconserver in: @miss_go");
 
     # The noarch boot components (syslinux-xcat, grub2-xcat, elilo-xcat, xnba-undi) are Architecture:all
-    # single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target incl. ppc64el, so the
-    # gate verifies the ppc repo actually carries them (matches the EL manifest + the 2.16 ppc dep repo;
-    # a ppc MN needs them for netboot). It is the BUILD PHASE -- not the manifest -- that avoids
-    # rebuilding them on ppc (build_one_codename skips an Architecture:all package on non-amd64; see the
-    # control_binary_arch test below).
+    # single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target incl. ppc64el and
+    # riscv64, so the gate verifies those repos actually carry them (matches the EL manifest + the 2.16
+    # ppc dep repo; a ppc or riscv64 MN serves the x86 nodes of a mixed cluster). It is the BUILD PHASE
+    # -- not the manifest -- that avoids rebuilding them off amd64 (build_one_codename skips an
+    # Architecture:all package on non-amd64; see the control_binary_arch test below).
     for my $t (@targets) {
         for my $boot (qw(syslinux-xcat grub2-xcat elilo-xcat xnba-undi)) {
             ok(exists $m{$t}{$boot}, "$boot required-present on $t (arch:all, verified on every arch)");

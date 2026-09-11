@@ -15,7 +15,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
@@ -401,17 +401,19 @@ my @build_targets = $target
 
 # What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
 # dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
-# another arch that has no EPEL: the x86-only bootloaders are not built for it, the EPEL-only
-# perl deps of xCAT are (mockbuild-perl-packages.pl --epel-gap), and the noarch deps are built
-# in the native, EPEL-free chroot of the same release (the rpms are identical for every arch
-# and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
+# another arch that has no EPEL: the EPEL-only perl deps of xCAT are built for it
+# (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them,
+# are built in the native, EPEL-free chroot of the same release (the rpms are identical for
+# every arch and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
 my %forcearch_targets = (
     'rocky-10-riscv64-xcat' => {
         rel          => 10,
         arch         => 'riscv64',
-        noarch_cfg   => "rocky-10-$host_arch",
-        dep_builders => [qw(grub2-xcat ipmitool-xcat goconserver conserver-xcat)],
-        required     => [qw(ipmitool-xcat grub2-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
+        noarch_cfg   => 'rocky-10-x86_64',
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
 );
 
@@ -537,11 +539,12 @@ if (!$skip_build && !$dry_run && -d $run_root) {
 # committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
 # step, so ppc builds them the same as x86 -- no cross-arch import. A forcearch target builds
 # only the builders its profile lists; the noarch ones run in the profile's native chroot.
+# syslinux-xcat is noarch too, and its spec builds on x86 and ppc64le only.
 my @dep_builders = (
     { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl", noarch => 1 },
     { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl", noarch => 1 },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
-    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
+    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl", noarch => 1 },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
@@ -653,9 +656,10 @@ if (!$skip_build) {
             my $step_result = "$build_root/$name";
             my $step_log    = "$log_root/$name";
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
+            my $mock_cfg = $builder->{noarch} ? $profile->{noarch_cfg} : $target;
             my $cmd = join(' ',
                 'perl', shell_quote($script),
-                '--mock-cfg', shell_quote($builder->{noarch} ? $profile->{noarch_cfg} : $target),
+                '--mock-cfg', shell_quote($mock_cfg),
                 ($profile->{forcearch} && !$builder->{noarch} ? ('--target-arch', shell_quote($arch)) : ()),
                 '--mock-uniqueext', shell_quote($step_uniqueext),
                 '--result-dir', shell_quote($step_result),
@@ -678,7 +682,7 @@ if (!$skip_build) {
                 cmd     => $cmd,
                 timeout => $step_timeout,
                 log     => "$log_root/$name/run.log",
-                scrub_cfg       => $target,
+                scrub_cfg       => $mock_cfg,
                 scrub_uniqueext => $step_uniqueext,
             };
             push @collect_roots, $step_result;
@@ -850,11 +854,13 @@ print_step('Collect RPM artifacts');
 print "collection roots:\n";
 print "  $_\n" for @collect_roots;
 
-my ($copied, $skipped_src, $missing_roots) = collect_rpms(
+my ($copied, $skipped_src, $missing_roots, $skipped_foreign) = collect_rpms(
     roots    => \@collect_roots,
     dest_dir => $repo_dir,
+    arch     => $arch,
     dry_run  => $dry_run,
 );
+print "skipped $skipped_foreign rpm(s) of another architecture\n" if $skipped_foreign;
 
 # Assert on what this run BUILT, before the Genesis release is added: the release is
 # installed from a verified directory rather than built here, so counting it first would
@@ -1981,11 +1987,13 @@ sub collect_rpms {
     my (%args) = @_;
     my $roots = $args{roots} // [];
     my $dest  = $args{dest_dir} // die "collect_rpms missing dest_dir\n";
+    my $cell_arch = $args{arch} // die "collect_rpms missing arch\n";
     my $is_dry = $args{dry_run} ? 1 : 0;
 
     my %seen;
     my $copied = 0;
     my $skipped_src = 0;
+    my $skipped_foreign = 0;
     my $missing_roots = 0;
 
     for my $root (@{$roots}) {
@@ -2013,6 +2021,10 @@ sub collect_rpms {
             my $base = basename($rpm);
             next if $genesis_release
               && $base =~ /^xCAT-genesis-openembedded-/;
+            if (!rpm_in_cell($rpm, $cell_arch)) {
+                $skipped_foreign++;
+                next;
+            }
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy: $rpm -> $dest/$base\n";
@@ -2025,7 +2037,7 @@ sub collect_rpms {
         }
     }
 
-    return ($copied, $skipped_src, $missing_roots);
+    return ($copied, $skipped_src, $missing_roots, $skipped_foreign);
 }
 
 sub collect_srpms {
