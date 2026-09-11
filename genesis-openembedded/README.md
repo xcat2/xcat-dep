@@ -23,7 +23,7 @@ The packaging scripts use `File::Slurper` and `IPC::Cmd`. Install
 The default format is `all`, which produces RPM, SRPM, and DEB packages. Use
 `--format rpm` or `--format deb` when only one package family is needed. The
 supported image architectures are `x86`, `x86_64`, `ppc64`, `ppc64le`,
-`armv7hf`, `aarch64`, and `riscv64`.
+`armv7hf`, `aarch64`, `riscv64`, and `s390x`.
 
 Use `--architecture` for development builds. Repository publication requires a
 complete release built with `--all`.
@@ -88,8 +88,13 @@ APT metadata is assembled in a side tree and swapped onto the published
 repository with a single rename, under one global publish lock, so a failed or
 interrupted publication leaves the previous repository exactly as it was.
 
-Both consumers require all seven architectures and verify package identities
-and checksums before publication. A management node can install an image for a
+Both consumers verify package identities and checksums before publication.
+Releases containing `s390x` use format version 2. Other releases keep version 1
+and remain readable by older tools. Current publishers require all eight
+architectures, so a version 1 release cannot replace the shared repository.
+Building `s390x` requires an xcat-core revision that reports the target. Merge
+or deploy that xcat-core change first. Builds for the other architectures still
+accept older xcat-core revisions. A management node can install an image for a
 different target architecture.
 
 Without `--genesis-release`, both builders keep their existing behavior. The
@@ -113,4 +118,5 @@ Run the package tests on a Linux builder with RPM, DEB, and repository tools:
 prove t/build_utils.t
 prove -It/lib t/genesis_openembedded_release.t
 sudo -E prove -It/lib t/genesis_openembedded_consumer.t
+sudo -E prove -It/lib t/common-repo-gate.t
 ```

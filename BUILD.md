@@ -247,9 +247,10 @@ generation, and signing have succeeded. If a stopped publisher leaves staging
 or backup directories behind, rerun it with ``--force-unlock`` to recover the
 previous repository before starting a new publication.
 
-Repository publication requires a release containing every supported Genesis
-architecture. The packages are `noarch`, and the common repository contains
-the full set of target images.
+Repository publication requires all eight current architectures. Version 1
+release manifests remain readable, but they cannot replace the current
+repository because they lack `s390x`. The packages are `noarch`, and each
+publication contains the full set.
 
 The release checksums cover the unsigned input packages. If repository signing
 is enabled, `rpmsign` changes the deployed RPM bytes after collection.

@@ -38,6 +38,10 @@ use XCAT::BuildUtils qw(
   shell_quote
 );
 use XCAT::GenesisRelease qw(
+  architectures
+  rpm_package_prefix
+  rpm_package_name
+  validate_repository_packages
   validated_release_checksums
   verify_release_file
 );
@@ -373,6 +377,7 @@ if ($genesis_release ne '') {
         unless -d $genesis_release;
     my $verifier = "$script_dir/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    common_repository_requirements();
     # Checksum, verify, checksum again. The verifier reads the tree it validates, so a
     # release rewritten together with its SHA256SUMS while the verifier runs would satisfy
     # both the verifier and any single pass taken afterwards; comparing the pass taken
@@ -1131,9 +1136,8 @@ sub publish_genesis_common_repo {
 
 =head3 verify_common_repo
 
-    Assert the shared OpenEmbedded Genesis repository carries every package the manifest's [common]
-    section requires, at a version satisfying its pin. [common] is not a build target: it describes
-    the one repository published beside the per-EL cells, which no [<target>] section covers.
+    Assert the shared repository carries every package required by [common]. [common] must
+    describe every currently supported Genesis architecture.
 
     Arguments:
         $dir - the repository to check (the staging directory, before it is swapped into place)
@@ -1145,16 +1149,11 @@ sub publish_genesis_common_repo {
 #--------------------------------------------------------------------------------
 sub verify_common_repo {
     my ($dir) = @_;
-    my $manifest = "$repo_root/packages-manifest.conf";
-    my %MAN = read_manifest($manifest);
-    my %req = %{ $MAN{common} // {} };
-    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
-        if !%req;
-
-    my @names       = sort keys %req;
-    my %present     = repo_present_versions($dir, \@names);
+    my %req = %{ common_repository_requirements() };
+    my @names = sort keys %req;
+    my %present = repo_present_versions($dir, \@names);
     my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
-    my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
+    my @problems = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
     if (@problems) {
         print "  - $_\n" for @problems;
         die "FATAL: shared Genesis repo INCOMPLETE at $dir (" . scalar(@problems) . " problem(s))\n";
@@ -1162,6 +1161,21 @@ sub verify_common_repo {
     print "[verify-repo] common complete: " . scalar(@names)
         . " packages present + EVR-satisfied in $dir\n";
     return 1;
+}
+
+sub common_repository_requirements {
+    my $manifest = "$repo_root/packages-manifest.conf";
+    my %MAN = read_manifest($manifest);
+    my %common = %{ $MAN{common} // {} };
+    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
+        if !%common;
+
+    return validate_repository_packages(
+        \%common,
+        'common',
+        rpm_package_prefix(),
+        map { rpm_package_name($_) } architectures(),
+    );
 }
 
 sub replace_common_repository {
@@ -2229,4 +2243,3 @@ sub slurp_chomp {
     chomp $line if defined $line;
     return $line // '';
 }
-

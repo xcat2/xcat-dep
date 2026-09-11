@@ -39,7 +39,7 @@ genesis_run_mknb() {
 genesis_activation_main() {
     architecture=$1
     case "$architecture" in
-        x86|x86_64|ppc64|ppc64le|armv7hf|aarch64|riscv64) ;;
+        x86|x86_64|ppc64|ppc64le|armv7hf|aarch64|riscv64|s390x) ;;
         *)
             echo "Invalid Genesis architecture: $architecture" >&2
             return 0

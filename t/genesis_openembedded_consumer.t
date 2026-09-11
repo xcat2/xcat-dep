@@ -12,8 +12,10 @@ use POSIX ();
 use Test::More;
 use Time::HiRes qw(sleep);
 
+use lib "$FindBin::Bin/..";
 use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/lib";
+use BuildUtils qw(read_manifest);
 use XCAT::BuildUtils qw(
   capture_command
   command_exists
@@ -27,10 +29,10 @@ use XCAT::GenesisRelease qw(
   rpm_package_name
 );
 use XCAT::GenesisReleaseTest qw(
-  make_export
+  build_package_release
   run_capture
-  write_forkmanager_stub
   write_checksums
+  write_forkmanager_stub
   write_release_manifest
 );
 
@@ -75,11 +77,12 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 59
+    skip 'APT repository tools are not installed', 63
       unless $^O eq 'linux'
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive');
     test_deb_consumer();
+    test_version_1_deb_consumer();
     test_legacy_deb_consumer();
     test_partial_deb_release();
     test_publish_lock();
@@ -100,9 +103,13 @@ done_testing();
 sub write_target_manifest {
     my ($root, $target) = @_;
     make_path($root);
+    my %manifest = read_manifest("$repo_root/packages-manifest.conf");
+    my $common = join('', map { "$_=$manifest{common}{$_}\n" }
+      sort keys %{ $manifest{common} // {} });
     write_binary(
         "$root/packages-manifest.conf",
-        "[$target]\n" . rpm_package_name(capture_command('uname', '-m')) . "=*\n",
+        "[$target]\n" . rpm_package_name(capture_command('uname', '-m'))
+          . "=*\n\n[common]\n$common",
     );
 }
 
@@ -297,17 +304,11 @@ SH
 sub run_apt_consumer {
     my (%args) = @_;
     my @dists = @{ $args{dists} // \@APT_SUITES };
+    my @build_mode = $args{build} ? ('--dry-run') : ('--skip-build');
     my $manifest = $args{manifest};
     unless ($manifest) {
         $manifest = "$args{output}/manifest.conf";
-        make_path($args{output});
-        # plus the shipped [shared] section verbatim: publishing a release gates the shared pool
-        # against it, and a manifest without it is refused rather than silently ungated.
-        my $shipped = read_binary("$repo_root/debs-manifest.conf");
-        my ($shared) = $shipped =~ /^(\[shared\]\n(?:[^\[]*))/ms;
-        BAIL_OUT('debs-manifest.conf has no [shared] section') unless $shared;
-        write_binary($manifest,
-            join('', map { "[$_-amd64]\nxcat-genesis-base=*\n" } @APT_SUITES) . "\n" . $shared);
+        write_apt_manifest($manifest);
     }
     return run_capture(
         $args{log},
@@ -318,10 +319,26 @@ sub run_apt_consumer {
         '--manifest',    $manifest,
         '--dists',       join(' ', @dists),
         '--arch',        'amd64',
-        '--skip-build', '--skip-genesis', '--skip-tarball',
+        @build_mode, '--skip-genesis', '--skip-tarball',
         '--publish', '--expect-arch', 'amd64 ppc64el',
         ($args{verify} ? () : ('--no-verify-repo')),
         @{ $args{extra} // [] },
+    );
+}
+
+sub write_apt_manifest {
+    my ($path, $mutate) = @_;
+    my %shipped = read_manifest("$repo_root/debs-manifest.conf");
+    BAIL_OUT('debs-manifest.conf has no [shared] section')
+      unless exists $shipped{shared};
+    my %shared = %{ $shipped{shared} };
+    $mutate->(\%shared) if $mutate;
+    make_path((File::Basename::dirname($path)));
+    write_binary(
+        $path,
+        join('', map { "[$_-amd64]\nxcat-genesis-base=*\n" } @APT_SUITES)
+          . "\n[shared]\n"
+          . join('', map { "$_=$shared{$_}\n" } sort keys %shared),
     );
 }
 
@@ -397,7 +414,8 @@ sub test_deb_consumer {
     } architectures();
     is_deeply([ genesis_deb_names($shared_pool) ], \@expected_packages,
         'shared APT pool contains one complete Genesis release');
-    like(read_binary($log), qr/\[verify-repo\] shared pool complete: 7 packages present/,
+    like(read_binary($log),
+        qr/\[verify-repo\] shared pool complete: 8 packages present/,
         'the shared pool is gated against the manifest\'s [shared] section');
     my @suite_packages;
     for my $codename (@APT_SUITES) {
@@ -522,6 +540,103 @@ sub test_deb_consumer {
     is(digest_file("$collision/pool/main/xcat-genesis-openembedded/$package"),
         digest_file("$release_root/deb/$package"),
         'pooled package still matches the verified release');
+}
+
+sub test_version_1_deb_consumer {
+    my @release_architectures = grep { $_ ne 's390x' } architectures();
+    my $release_root = make_package_release(
+        "$tmp/deb-version-1", 'deb', @release_architectures,
+    );
+    write_release_manifest(
+        $release_root, $version, $release, $revision, $epoch,
+        join(',', @release_architectures), 'deb', 1,
+    );
+    write_checksums($release_root);
+
+    my $apt_root = "$tmp/apt-version-1";
+    my $output = "$tmp/deb-version-1-output";
+    stage_apt_suites($output, "$tmp/deb-version-1-legacy");
+    my $log = "$tmp/deb-version-1.log";
+    my $status = run_apt_consumer(
+        log => $log, output => $output, apt_dir => $apt_root,
+        extra => [ '--genesis-release', $release_root ],
+    );
+    my $pool = "$apt_root/pool/main/xcat-genesis-openembedded";
+
+    isnt($status, 0, 'APT refuses a version 1 release for the current repository');
+    like(read_binary($log),
+        qr/Genesis release version 1 omits currently supported architectures: s390x/,
+        'the version 1 refusal identifies the missing architecture');
+    ok(!-d $pool, 'a version 1 release publishes no shared pool');
+
+    my $current_release = make_package_release(
+        "$tmp/deb-current-manifest", 'deb', architectures(),
+    );
+
+    my $missing_manifest = "$tmp/deb-version-1-missing.conf";
+    write_apt_manifest(
+        $missing_manifest,
+        sub { delete $_[0]->{ deb_package_name('s390x') } },
+    );
+    my $missing_apt = "$tmp/apt-version-1-missing";
+    my $missing_output = "$tmp/deb-version-1-missing-output";
+    stage_apt_suites($missing_output, "$tmp/deb-version-1-missing-legacy");
+    my $missing_log = "$tmp/deb-version-1-missing.log";
+    my $missing_status = run_apt_consumer(
+        log => $missing_log, output => $missing_output, apt_dir => $missing_apt,
+        manifest => $missing_manifest,
+        build => 1,
+        extra => [ '--genesis-release', $current_release ],
+    );
+    isnt($missing_status, 0,
+        'a current release does not hide an incomplete shared manifest');
+    like(read_binary($missing_log), qr/\[shared\] is missing supported packages: .*s390x/,
+        'the shared manifest failure identifies the missing current package');
+    unlike(read_binary($missing_log), qr/Ensure sbuild chroots/,
+        'an incomplete shared manifest is rejected before building');
+
+    my $unknown_manifest = "$tmp/deb-version-1-unknown.conf";
+    write_apt_manifest(
+        $unknown_manifest,
+        sub { $_[0]->{'xcat-genesis-openembedded-unknown'} = '2.*' },
+    );
+    my $unknown_apt = "$tmp/apt-version-1-unknown";
+    my $unknown_output = "$tmp/deb-version-1-unknown-output";
+    stage_apt_suites($unknown_output, "$tmp/deb-version-1-unknown-legacy");
+    my $unknown_log = "$tmp/deb-version-1-unknown.log";
+    my $unknown_status = run_apt_consumer(
+        log => $unknown_log, output => $unknown_output, apt_dir => $unknown_apt,
+        manifest => $unknown_manifest,
+        extra => [ '--genesis-release', $current_release ],
+    );
+    isnt($unknown_status, 0, 'an unknown shared manifest package is refused');
+    like(read_binary($unknown_log),
+        qr/\[shared\] has unsupported packages: xcat-genesis-openembedded-unknown/,
+        'the shared manifest failure identifies the unknown package');
+    ok(!-d "$unknown_apt/pool/main/xcat-genesis-openembedded",
+        'an unknown shared manifest package publishes nothing');
+
+    my $non_genesis_manifest = "$tmp/deb-non-genesis-missing.conf";
+    write_apt_manifest(
+        $non_genesis_manifest,
+        sub { $_[0]->{'xcat-release'} = '2.*' },
+    );
+    my $non_genesis_apt = "$tmp/apt-non-genesis-missing";
+    my $non_genesis_output = "$tmp/deb-non-genesis-missing-output";
+    stage_apt_suites($non_genesis_output, "$tmp/deb-non-genesis-missing-legacy");
+    my $non_genesis_log = "$tmp/deb-non-genesis-missing.log";
+    my $non_genesis_status = run_apt_consumer(
+        log => $non_genesis_log,
+        output => $non_genesis_output,
+        apt_dir => $non_genesis_apt,
+        manifest => $non_genesis_manifest,
+        extra => [ '--genesis-release', $current_release ],
+    );
+    isnt($non_genesis_status, 0, 'every shared manifest package is verified');
+    like(read_binary($non_genesis_log), qr/MISSING xcat-release/,
+        'the shared gate identifies a missing non-Genesis package');
+    ok(!-d "$non_genesis_apt/pool/main/xcat-genesis-openembedded",
+        'a missing non-Genesis package prevents APT publication');
 }
 
 sub test_signed_common_rpm_repository {
@@ -679,7 +794,7 @@ sub test_partial_rpm_release {
     );
 
     isnt($status, 0, 'RPM repository rejects a partial Genesis release');
-    like(read_binary($log), qr/Genesis release is missing supported architectures/,
+    like(read_binary($log), qr/Genesis release version 2 omits currently supported architectures/,
         'RPM partial-release failure names the missing architectures');
     ok(-f $existing, 'partial release does not remove the deployed package');
 }
@@ -701,7 +816,7 @@ sub test_partial_deb_release {
     );
 
     isnt($status, 0, 'APT repository rejects a partial Genesis release');
-    like(read_binary($log), qr/Genesis release is missing supported architectures/,
+    like(read_binary($log), qr/Genesis release version 2 omits currently supported architectures/,
         'APT partial-release failure names the missing architectures');
     ok(-f $existing, 'partial DEB release does not remove the published package');
 }
@@ -996,6 +1111,18 @@ SH
     is(read_binary($log), "x86_64\n", 'the activation helper runs mknb for one architecture');
 
     write_binary($log, '');
+    $status = run_capture($output, $driver, 's390x');
+    is($status, 0, 'the activation helper accepts s390x');
+    is(read_binary($log), "s390x\n", 'the activation helper runs mknb for s390x');
+
+    write_binary($log, '');
+    $status = run_capture($output, $driver, 'unsupported');
+    is($status, 0, 'an unsupported architecture does not fail the package transaction');
+    is(read_binary($log), '', 'an unsupported architecture does not run mknb');
+    like(read_binary($output), qr/Invalid Genesis architecture: unsupported/,
+        'the activation helper reports an unsupported architecture');
+
+    write_binary($log, '');
     local $ENV{XCAT_TEST_SERVICE_NODE} = 1;
     local $ENV{XCAT_TEST_SHAREDTFTP} = 1;
     $status = run_capture($output, $driver, 'ppc64le');
@@ -1011,50 +1138,16 @@ SH
 sub make_package_release {
     my ($root, $format, @requested_architectures) = @_;
     @requested_architectures = architectures() unless @requested_architectures;
-    my $release_root = "$root/release";
-    make_path($release_root);
-    for my $architecture (@requested_architectures) {
-        my $export = make_export("$root/exports/$architecture", $architecture);
-        my $packages = "$root/packages/$architecture";
-        die "Cannot package test release for $architecture\n"
-          if run_capture(
-            "$root/package-$architecture.log",
-            $packager,
-            '--architecture', $architecture,
-            '--export-dir', $export,
-            '--output-dir', $packages,
-            '--version', $version,
-            '--release', $release,
-            '--revision', $revision,
-            '--source-date-epoch', $epoch,
-            '--format', $format,
-          );
-        if ($format eq 'rpm') {
-            my $name = rpm_package_name($architecture);
-            make_path("$release_root/rpm", "$release_root/srpm");
-            copy(
-                "$packages/rpm/$name-$version-$release.noarch.rpm",
-                "$release_root/rpm/$name-$version-$release.noarch.rpm",
-            ) or die $!;
-            copy(
-                "$packages/srpm/$name-$version-$release.src.rpm",
-                "$release_root/srpm/$name-$version-$release.src.rpm",
-            ) or die $!;
-        } else {
-            my $name = deb_package_name($architecture);
-            make_path("$release_root/deb");
-            copy(
-                "$packages/deb/${name}_${version}-${release}_all.deb",
-                "$release_root/deb/${name}_${version}-${release}_all.deb",
-            ) or die $!;
-        }
-    }
-    write_release_manifest(
-        $release_root, $version, $release, $revision, $epoch,
-        join(',', @requested_architectures), $format,
+    return build_package_release(
+        root => $root,
+        format => $format,
+        architectures => \@requested_architectures,
+        packager => $packager,
+        version => $version,
+        release => $release,
+        revision => $revision,
+        epoch => $epoch,
     );
-    write_checksums($release_root);
-    return $release_root;
 }
 
 sub genesis_rpm_names {
