@@ -15,7 +15,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
@@ -26,13 +26,22 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
 use XCAT::BuildUtils qw(
   capture_command
   every_step_failed
+  forward_signals_to_workers
+  block_handled_signals
+  restore_signal_mask
   hashes_equal
   read_lines
+  emulated_build_timeout
   require_command
+  run_bounded
   run_command
   shell_quote
 );
 use XCAT::GenesisRelease qw(
+  architectures
+  rpm_package_prefix
+  rpm_package_name
+  validate_repository_packages
   validated_release_checksums
   verify_release_file
 );
@@ -88,6 +97,9 @@ my $parallel_targets = 1;   # 1 = serial (default; safe). 0/auto = all EL target
                             # NOTE: parallel targets need every per-package mockbuild.pl to avoid
                             # shared-path writes (repo tarballs, $HOME/rpmbuild); serial is safe today.
 my $max_parallel = 0;       # 0/auto = host nproc: global cap on concurrent mock builds (all targets)
+# Per-build-step wall-clock bound for the dep and perl steps. undef = derived from the target arch
+# (a forcearch target is cross-built through qemu-user); an explicit 0 removes the bound.
+my $build_timeout;
 my $run_id     = '';
 my $build_timestamp;
 # CD version bump: when set, every xcat-dep package spec's Release gets a
@@ -157,6 +169,7 @@ GetOptions(
     'parallel-builds=i' => \$parallel_builds,
     'parallel-targets=i' => \$parallel_targets,
     'max-parallel=i'    => \$max_parallel,
+    'build-timeout=i'   => \$build_timeout,
     'run-id=s'          => \$run_id,
     'build-timestamp=i' => \$build_timestamp,
     'build-number=i'    => \$build_number,
@@ -364,6 +377,7 @@ if ($genesis_release ne '') {
         unless -d $genesis_release;
     my $verifier = "$script_dir/genesis-openembedded/verify-release";
     die "Genesis release verifier not found: $verifier\n" unless -x $verifier;
+    common_repository_requirements();
     # Checksum, verify, checksum again. The verifier reads the tree it validates, so a
     # release rewritten together with its SHA256SUMS while the verifier runs would satisfy
     # both the verifier and any single pass taken afterwards; comparing the pass taken
@@ -387,17 +401,19 @@ my @build_targets = $target
 
 # What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
 # dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
-# another arch that has no EPEL: the x86-only bootloaders are not built for it, the EPEL-only
-# perl deps of xCAT are (mockbuild-perl-packages.pl --epel-gap), and the noarch deps are built
-# in the native, EPEL-free chroot of the same release (the rpms are identical for every arch
-# and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
+# another arch that has no EPEL: the EPEL-only perl deps of xCAT are built for it
+# (mockbuild-perl-packages.pl --epel-gap), and the noarch deps, the x86 boot loaders among them,
+# are built in the native, EPEL-free chroot of the same release (the rpms are identical for
+# every arch and an emulated build is an order of magnitude slower). See BUILD.md ("riscv64").
 my %forcearch_targets = (
     'rocky-10-riscv64-xcat' => {
         rel          => 10,
         arch         => 'riscv64',
-        noarch_cfg   => "rocky-10-$host_arch",
-        dep_builders => [qw(grub2-xcat ipmitool-xcat goconserver conserver-xcat)],
-        required     => [qw(ipmitool-xcat grub2-xcat perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
+        noarch_cfg   => 'rocky-10-x86_64',
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                            perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
 );
 
@@ -432,12 +448,38 @@ print "parallel_targets: " . ($parallel_targets > 0 ? $parallel_targets : "auto(
 print "max_parallel:     $cap (per-target build workers: $per_target_builds)\n";
 my $tgt_pm = Parallel::ForkManager->new($tgt_workers <= 1 ? 0 : $tgt_workers);
 my $tgt_fail = 0;
+# A signal to this process must reach the forked workers. Without forwarding, the orchestrator exits
+# and releases its locks while the workers keep building and writing into the deploy tree.
+my %tgt_kids;
+$tgt_pm->run_on_start(sub { $tgt_kids{ $_[0] } = 1 });
 $tgt_pm->run_on_finish(sub {
-    my ($pid, $exit) = @_;
-    $tgt_fail++ if $exit;
+    my ($pid, $exit, $ident, $signal, $core_dump) = @_;
+    delete $tgt_kids{$pid};
+    # A worker killed by a signal exits with code 0 in this callback, so reading the code alone
+    # reports a target that died mid-deploy as built.
+    $tgt_fail++ if $exit or $signal or $core_dump;
 });
+my $tgt_forward = forward_signals_to_workers(
+    pids => \%tgt_kids,
+    reap => sub { $tgt_pm->wait_all_children },
+);
+local $SIG{INT}  = $tgt_forward;
+local $SIG{TERM} = $tgt_forward;
+local $SIG{HUP}  = $tgt_forward;
 for my $tgt (@build_targets) {
-    $tgt_pm->start and next;
+    # ForkManager records the worker in run_on_start, which runs AFTER the fork, so the handler
+    # cannot signal a worker that arrives in between. Hold the signals across both -- but wait for
+    # a free slot FIRST, with them unblocked, or a cancellation would sit pending for as long as
+    # the pool stays full.
+    # max_procs 0 is ForkManager's no-fork mode, where asking for a slot is an error.
+    $tgt_pm->wait_for_available_procs(1) if $tgt_pm->max_procs;
+    my $orchestrator = $$;
+    my $previous     = block_handled_signals();
+    if ($tgt_pm->start) { restore_signal_mask($previous); next; }
+    # With one worker ForkManager does not fork at all, and this is still the orchestrator: only a
+    # real child drops the forwarder, whose copy names siblings the parent already signals.
+    $SIG{$_} = 'DEFAULT' for ($$ == $orchestrator ? () : qw(INT TERM HUP));
+    restore_signal_mask($previous);
     my $rc = 0;
     eval {
         my $info = build_one_target($tgt, $run_id, $per_target_builds);
@@ -497,11 +539,12 @@ if (!$skip_build && !$dry_run && -d $run_root) {
 # committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
 # step, so ppc builds them the same as x86 -- no cross-arch import. A forcearch target builds
 # only the builders its profile lists; the noarch ones run in the profile's native chroot.
+# syslinux-xcat is noarch too, and its spec builds on x86 and ppc64le only.
 my @dep_builders = (
     { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl", noarch => 1 },
     { name => 'grub2-xcat',  script => "$repo_root/grub2-xcat/mockbuild.pl", noarch => 1 },
     { name => 'ipmitool-xcat', script => "$repo_root/ipmitool/mockbuild.pl" },
-    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl" },
+    { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl", noarch => 1 },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
@@ -596,6 +639,15 @@ if (!$skip_build) {
     my @build_steps;
     my $build_step_seq = 0;
 
+    # Bound only what can run emulated. A forcearch target (rocky-10-riscv64-xcat) cross-builds every
+    # dep through qemu-user, where a deadlock burns no CPU and never returns. Native mock steps keep
+    # their present, unbounded behaviour: no measurement of them exists here, and a bound guessed for
+    # a step that legitimately runs long would turn a trusted cell red for no reason.
+    # --build-timeout overrides both; 0 removes the bound.
+    my $step_timeout = defined $build_timeout ? $build_timeout
+                     : $profile->{forcearch}  ? emulated_build_timeout($arch, $host_arch)
+                     :                          0;
+
     if (!$skip_xcat_dep) {
         for my $builder (@active_dep_builders) {
             next unless $req{ $builder->{name} };   # manifest: build only required dep packages
@@ -604,9 +656,10 @@ if (!$skip_build) {
             my $step_result = "$build_root/$name";
             my $step_log    = "$log_root/$name";
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
+            my $mock_cfg = $builder->{noarch} ? $profile->{noarch_cfg} : $target;
             my $cmd = join(' ',
                 'perl', shell_quote($script),
-                '--mock-cfg', shell_quote($builder->{noarch} ? $profile->{noarch_cfg} : $target),
+                '--mock-cfg', shell_quote($mock_cfg),
                 ($profile->{forcearch} && !$builder->{noarch} ? ('--target-arch', shell_quote($arch)) : ()),
                 '--mock-uniqueext', shell_quote($step_uniqueext),
                 '--result-dir', shell_quote($step_result),
@@ -624,11 +677,12 @@ if (!$skip_build) {
                     : ()),
             );
             push @build_steps, {
-                id   => "xcat-dep:$name",
-                step => "Build xcat-dep: $name",
-                cmd  => $cmd,
-                log  => "$log_root/$name/run.log",
-                scrub_cfg       => $target,
+                id      => "xcat-dep:$name",
+                step    => "Build xcat-dep: $name",
+                cmd     => $cmd,
+                timeout => $step_timeout,
+                log     => "$log_root/$name/run.log",
+                scrub_cfg       => $mock_cfg,
                 scrub_uniqueext => $step_uniqueext,
             };
             push @collect_roots, $step_result;
@@ -664,10 +718,13 @@ if (!$skip_build) {
             ($keep_buildroots ? '--keep-buildroots' : ()),
         );
         push @build_steps, {
-            id   => 'perl',
-            step => 'Build perl xcat-dep packages',
-            cmd  => $cmd,
-            log  => "$log_root/perl-build.log",
+            id      => 'perl',
+            step    => 'Build perl xcat-dep packages',
+            cmd     => $cmd,
+            # The perl builder forks its own mock jobs, so under forcearch it is emulated too. Give it
+            # the per-package budget times the number of packages it builds serially per worker.
+            timeout => ($step_timeout ? $step_timeout * scalar(@perl_pkgs) : 0),
+            log     => "$log_root/perl-build.log",
         };
         push @collect_roots, $perl_result;
     }
@@ -797,11 +854,13 @@ print_step('Collect RPM artifacts');
 print "collection roots:\n";
 print "  $_\n" for @collect_roots;
 
-my ($copied, $skipped_src, $missing_roots) = collect_rpms(
+my ($copied, $skipped_src, $missing_roots, $skipped_foreign) = collect_rpms(
     roots    => \@collect_roots,
     dest_dir => $repo_dir,
+    arch     => $arch,
     dry_run  => $dry_run,
 );
+print "skipped $skipped_foreign rpm(s) of another architecture\n" if $skipped_foreign;
 
 # Assert on what this run BUILT, before the Genesis release is added: the release is
 # installed from a verified directory rather than built here, so counting it first would
@@ -1083,9 +1142,8 @@ sub publish_genesis_common_repo {
 
 =head3 verify_common_repo
 
-    Assert the shared OpenEmbedded Genesis repository carries every package the manifest's [common]
-    section requires, at a version satisfying its pin. [common] is not a build target: it describes
-    the one repository published beside the per-EL cells, which no [<target>] section covers.
+    Assert the shared repository carries every package required by [common]. [common] must
+    describe every currently supported Genesis architecture.
 
     Arguments:
         $dir - the repository to check (the staging directory, before it is swapped into place)
@@ -1097,16 +1155,11 @@ sub publish_genesis_common_repo {
 #--------------------------------------------------------------------------------
 sub verify_common_repo {
     my ($dir) = @_;
-    my $manifest = "$repo_root/packages-manifest.conf";
-    my %MAN = read_manifest($manifest);
-    my %req = %{ $MAN{common} // {} };
-    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
-        if !%req;
-
-    my @names       = sort keys %req;
-    my %present     = repo_present_versions($dir, \@names);
+    my %req = %{ common_repository_requirements() };
+    my @names = sort keys %req;
+    my %present = repo_present_versions($dir, \@names);
     my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
-    my @problems    = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
+    my @problems = verify_repo_packages(\%req, \%present, \%present_evr, \&rpm_vercmp_segment);
     if (@problems) {
         print "  - $_\n" for @problems;
         die "FATAL: shared Genesis repo INCOMPLETE at $dir (" . scalar(@problems) . " problem(s))\n";
@@ -1114,6 +1167,21 @@ sub verify_common_repo {
     print "[verify-repo] common complete: " . scalar(@names)
         . " packages present + EVR-satisfied in $dir\n";
     return 1;
+}
+
+sub common_repository_requirements {
+    my $manifest = "$repo_root/packages-manifest.conf";
+    my %MAN = read_manifest($manifest);
+    my %common = %{ $MAN{common} // {} };
+    die "FATAL: no [common] section in $manifest -- cannot verify the shared Genesis repository\n"
+        if !%common;
+
+    return validate_repository_packages(
+        \%common,
+        'common',
+        rpm_package_prefix(),
+        map { rpm_package_name($_) } architectures(),
+    );
 }
 
 sub replace_common_repository {
@@ -1351,6 +1419,12 @@ Options:
                           cross-builds that arch on this host); default is the host arch
                           across rh8, rh9 and rh10
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
+  --build-timeout SECONDS Wall-clock bound for one build step. Default: none for a native
+                          target, and 9000 for a forcearch (qemu-user) target, which runs at
+                          roughly a tenth of native speed. 0 removes the bound. On expiry the
+                          run prints the step's process tree, each pid's wchan and stack, and
+                          a 20-second CPU sample -- a deadlocked build uses no ticks -- then
+                          kills the whole process group.
   --parallel-builds N     Max concurrent top-level build steps within one EL target (default: auto)
   --parallel-targets N    Concurrent EL targets (rh8/rh9/rh10). 0/auto = all at once, 1 = serial,
                           N = cap at N. Each target is fully output-isolated (default: 1 = serial)
@@ -1422,9 +1496,15 @@ sub run_step {
         $full_cmd .= " > " . shell_quote($log) . " 2>&1";
     }
 
-    my $rc = system($full_cmd);
-    if ($rc != 0) {
-        my $exit = $rc == -1 ? 255 : ($rc >> 8);
+    # A forcearch step cross-builds through qemu-user, where a deadlocked build consumes no CPU and
+    # never exits. Bound the steps that can run emulated, and report why the build stopped.
+    my $timeout = $args{timeout} || 0;
+    my $r = run_bounded(cmd => $full_cmd, timeout => $timeout, label => $step, out => \*STDOUT);
+    die "Step TIMED OUT after $r->{elapsed}s (budget ${timeout}s): $step\nCommand: $cmd\n"
+      . "  See the stall report above" . ($log ? " and $log" : '') . ".\n"
+        if $r->{timed_out};
+    if ($r->{ec} != 0) {
+        my $exit = $r->{ec} == -1 ? 255 : $r->{ec};
         die "Step failed (rc=$exit): $step\nCommand: $cmd\n";
     }
 }
@@ -1488,9 +1568,12 @@ sub run_build_steps_parallel {
 
     my %failed;
     my $pm = Parallel::ForkManager->new($workers);
+    my %kids;
+    $pm->run_on_start(sub { $kids{ $_[0] } = 1 });
     $pm->run_on_finish(
         sub {
             my ($pid, $exit_code, $ident, $signal, $core_dump) = @_;
+            delete $kids{$pid};
             return if $exit_code == 0 && $signal == 0 && !$core_dump;
             my $key = defined($ident) ? $ident : "pid:$pid";
             $failed{$key} = {
@@ -1501,13 +1584,29 @@ sub run_build_steps_parallel {
         }
     );
 
+    # Same reason as the per-target workers: a signal here must reach the builds these workers run.
+    my $forward = forward_signals_to_workers(
+        pids => \%kids,
+        reap => sub { $pm->wait_all_children },
+    );
+    local $SIG{INT}  = $forward;
+    local $SIG{TERM} = $forward;
+    local $SIG{HUP}  = $forward;
+
     for my $step (@{$steps}) {
         my %step_copy = %{$step};
         my $ident = delete $step_copy{id};
         $ident = $step_copy{step} if !defined($ident) || $ident eq '';
 
+        # Same window as the per-target workers, and the same rule about waiting for a slot with
+        # the signals unblocked.
+        $pm->wait_for_available_procs(1) if $pm->max_procs;
+        my $orchestrator = $$;
+        my $previous     = block_handled_signals();
         my $pid = $pm->start($ident);
-        next if $pid;
+        if ($pid) { restore_signal_mask($previous); next; }
+        $SIG{$_} = 'DEFAULT' for ($$ == $orchestrator ? () : qw(INT TERM HUP));
+        restore_signal_mask($previous);
 
         my $ok = eval {
             run_step(%step_copy);
@@ -1888,11 +1987,13 @@ sub collect_rpms {
     my (%args) = @_;
     my $roots = $args{roots} // [];
     my $dest  = $args{dest_dir} // die "collect_rpms missing dest_dir\n";
+    my $cell_arch = $args{arch} // die "collect_rpms missing arch\n";
     my $is_dry = $args{dry_run} ? 1 : 0;
 
     my %seen;
     my $copied = 0;
     my $skipped_src = 0;
+    my $skipped_foreign = 0;
     my $missing_roots = 0;
 
     for my $root (@{$roots}) {
@@ -1920,6 +2021,10 @@ sub collect_rpms {
             my $base = basename($rpm);
             next if $genesis_release
               && $base =~ /^xCAT-genesis-openembedded-/;
+            if (!rpm_in_cell($rpm, $cell_arch)) {
+                $skipped_foreign++;
+                next;
+            }
             next if $seen{$base}++;
             if ($is_dry) {
                 print "DRY-RUN copy: $rpm -> $dest/$base\n";
@@ -1932,7 +2037,7 @@ sub collect_rpms {
         }
     }
 
-    return ($copied, $skipped_src, $missing_roots);
+    return ($copied, $skipped_src, $missing_roots, $skipped_foreign);
 }
 
 sub collect_srpms {
@@ -2150,4 +2255,3 @@ sub slurp_chomp {
     chomp $line if defined $line;
     return $line // '';
 }
-

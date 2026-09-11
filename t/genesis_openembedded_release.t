@@ -11,6 +11,7 @@ use Test::More;
 use lib "$FindBin::Bin/../lib";
 use lib "$FindBin::Bin/lib";
 use XCAT::BuildUtils qw(
+  capture_command
   command_exists
   digest_file
   read_binary
@@ -19,6 +20,7 @@ use XCAT::BuildUtils qw(
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
+  minimum_release_version
   rpm_package_name
   validated_release_checksums
   validate_architecture
@@ -53,13 +55,19 @@ if ($ENV{XCAT_GENESIS_CI}) {
 
 is_deeply(
     [ architectures() ],
-    [ qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64) ],
+    [ qw(x86 x86_64 ppc64 ppc64le armv7hf aarch64 riscv64 s390x) ],
     'supported architectures keep their exact xCAT names',
 );
 is(rpm_package_name('ppc64le'), 'xCAT-genesis-openembedded-ppc64le',
     'RPM package keeps ppc64le distinct');
 is(deb_package_name('x86_64'), 'xcat-genesis-openembedded-x86-64',
     'DEB package uses a legal spelling of x86_64');
+is(minimum_release_version('x86_64'), 1,
+    'legacy architectures use release format version 1');
+is(minimum_release_version('x86_64', 's390x'), 2,
+    's390x requires release format version 2');
+dies_like(sub { minimum_release_version() }, qr/requires a Genesis architecture/,
+    'release format selection requires an architecture');
 dies_like(sub { validate_architecture('ppc') }, qr/Unsupported Genesis architecture/,
     'legacy ppc alias is rejected');
 
@@ -181,7 +189,7 @@ like(
 );
 dies_like(
     sub { validate_complete_release($release_dir) },
-    qr/Genesis release is missing supported architectures/,
+    qr/Genesis release version 2 omits currently supported architectures/,
     'partial release cannot be published',
 );
 
@@ -200,6 +208,49 @@ write_release_manifest(
 );
 write_checksums($complete_release);
 ok(validate_complete_release($complete_release), 'complete release can be published');
+
+my $legacy_release = "$tmp/legacy-release";
+copy_tree($complete_release, $legacy_release);
+for my $directory (qw(rpm srpm deb)) {
+    my @s390x_packages = glob("$legacy_release/$directory/*s390x*");
+    unlink(@s390x_packages) == @s390x_packages
+      or die "Cannot remove the s390x package fixture: $!\n";
+}
+write_release_manifest(
+    $legacy_release, $version, $release, $revision, $epoch,
+    'x86,x86_64,ppc64,ppc64le,armv7hf,aarch64,riscv64', 'deb,rpm', 1,
+);
+write_checksums($legacy_release);
+ok(validate_release($legacy_release), 'version 1 releases remain readable');
+dies_like(
+    sub { validate_complete_release($legacy_release) },
+    qr/Genesis release version 1 omits currently supported architectures: s390x/,
+    'version 1 releases cannot replace the current repository',
+);
+
+my $invalid_legacy_release = "$tmp/invalid-legacy-release";
+copy_tree($complete_release, $invalid_legacy_release);
+write_release_manifest(
+    $invalid_legacy_release, $version, $release, $revision, $epoch,
+    join(',', architectures()), 'deb,rpm', 1,
+);
+write_checksums($invalid_legacy_release);
+dies_like(
+    sub { validate_release($invalid_legacy_release) },
+    qr/Genesis architecture s390x is not valid in release version 1/,
+    'version 1 rejects the version 2 architecture vocabulary',
+);
+
+my $unknown_release_version = "$tmp/unknown-release-version";
+copy_tree($complete_release, $unknown_release_version);
+write_release_manifest(
+    $unknown_release_version, $version, $release, $revision, $epoch,
+    join(',', architectures()), 'deb,rpm', 3,
+);
+write_checksums($unknown_release_version);
+dies_like(sub { validate_release($unknown_release_version) },
+    qr/Unsupported Genesis package release version/,
+    'unknown release manifest versions fail');
 
 my $deb_only_release = "$tmp/deb-only-release";
 make_path("$deb_only_release/deb");
@@ -233,11 +284,25 @@ dies_like(sub { validate_release($missing_release) }, qr/Genesis release is miss
     'incomplete architecture set fails');
 
 SKIP: {
-    skip 'git is not installed', 2 unless command_exists('git');
+    skip 'git is not installed', 13 unless command_exists('git');
     my $source = "$tmp/dirty-xcat-core";
-    make_path("$source/xCAT-genesis-builder/oe");
+    my $oe = "$source/xCAT-genesis-builder/oe";
+    my $capability_marker = "$tmp/capability-query-ran";
+    make_path($oe);
     write_binary("$source/Version", "$version\n");
-    write_binary("$source/xCAT-genesis-builder/oe/build", "#!/bin/sh\nexit 99\n");
+    write_binary(
+        "$source/xCAT-genesis-builder/oe/build",
+        "#!/bin/sh\n"
+          . "if [ \"\${1-}\" = --list-architectures ]; then\n"
+          . "    [ -z \"\${XCAT_TEST_CAPABILITY_MARKER-}\" ] || : >\"\$XCAT_TEST_CAPABILITY_MARKER\"\n"
+          . "    mkdir -p \"\${XCAT_GENESIS_WORK_DIR:?}\"\n"
+          . "    printf '%s\\n' x86_64\n"
+          . "    exit 0\n"
+          . "fi\n"
+          . "exit 99\n",
+    );
+    chmod(0755, "$source/xCAT-genesis-builder/oe/build")
+      or die "Cannot make fixture build executable: $!";
     write_binary("$source/xCAT-genesis-builder/oe/export", "#!/bin/sh\nexit 99\n");
     for my $command (
         [ 'git', '-C', $source, 'init', '-q' ],
@@ -248,22 +313,111 @@ SKIP: {
         die "Cannot prepare test repository\n"
           if run_capture("$tmp/git-fixture.log", @{$command});
     }
+    my $previous_revision = capture_command('git', '-C', $source, 'rev-parse', 'HEAD');
+    my $commit_source = sub {
+        my ($path, $message) = @_;
+        for my $command (
+            [ 'git', '-C', $source, 'add', $path ],
+            [ 'git', '-C', $source, '-c', 'user.name=xCAT test',
+              '-c', 'user.email=xcat-test@example.invalid', 'commit', '-qm', $message ],
+        ) {
+            die "Cannot update test repository\n"
+              if run_capture("$tmp/git-fixture.log", @{$command});
+        }
+    };
     write_binary("$source/untracked", "not part of the commit\n");
     my $log = "$tmp/dirty-source.log";
-    isnt(
-        run_capture(
-            $log, $builder, '--xcat-source', $source,
-            '--output-dir', "$tmp/dirty-output",
-        ),
-        0,
-        'release builder rejects untracked source files',
-    );
+    {
+        local $ENV{XCAT_TEST_CAPABILITY_MARKER} = $capability_marker;
+        isnt(
+            run_capture(
+                $log, $builder, '--xcat-source', $source,
+                '--architecture', 's390x',
+                '--output-dir', "$tmp/dirty-output",
+            ),
+            0,
+            'release builder rejects untracked source files',
+        );
+    }
     like(read_binary($log), qr/xcat-core checkout is not clean/,
         'dirty checkout failure is explicit');
+    ok(!-e $capability_marker,
+        'dirty source is rejected before its architecture helper runs');
+    unlink("$source/untracked") or die "Cannot clean the source fixture: $!\n";
+
+    write_binary("$source/revision-marker", "new revision\n");
+    $commit_source->('revision-marker', 'advance source revision');
+    my $ref_log = "$tmp/ref-mismatch.log";
+    {
+        local $ENV{XCAT_TEST_CAPABILITY_MARKER} = $capability_marker;
+        isnt(
+            run_capture(
+                $ref_log, $builder, '--xcat-source', $source,
+                '--xcat-ref', $previous_revision,
+                '--architecture', 's390x',
+                '--output-dir', "$tmp/ref-mismatch-output",
+            ),
+            0,
+            'release builder rejects a mismatched xcat-core revision',
+        );
+    }
+    like(read_binary($ref_log), qr/xcat-core HEAD .* does not match \Q$previous_revision\E/,
+        'revision mismatch failure is explicit');
+    ok(!-e $capability_marker,
+        'revision mismatch is rejected before the architecture helper runs');
+
+    my $target_log = "$tmp/missing-target.log";
+    {
+        local $ENV{XCAT_TEST_CAPABILITY_MARKER} = $capability_marker;
+        isnt(
+            run_capture(
+                $target_log, $builder, '--xcat-source', $source,
+                '--architecture', 's390x',
+                '--output-dir', "$tmp/missing-target-output",
+            ),
+            0,
+            'release builder rejects an unsupported xcat-core target',
+        );
+    }
+    like(read_binary($target_log), qr/does not support Genesis architecture s390x/,
+        'missing target failure identifies the required xcat-core support');
+    ok(-e $capability_marker, 'the architecture helper records a successful query');
+
+    write_binary("$oe/build", "#!/bin/sh\nexit 23\n");
+    chmod(0755, "$oe/build") or die "Cannot update fixture build executable: $!";
+    $commit_source->('xCAT-genesis-builder/oe/build', 'fail capability query');
+    my $failed_log = "$tmp/failed-query.log";
+    isnt(
+        run_capture(
+            $failed_log, $builder, '--xcat-source', $source,
+            '--architecture', 's390x',
+            '--output-dir', "$tmp/failed-query-output",
+        ),
+        0,
+        'release builder rejects a failed architecture query',
+    );
+    like(read_binary($failed_log), qr/does not report supported Genesis architectures/,
+        'failed architecture queries are reported');
+
+    write_binary("$oe/build", "#!/bin/sh\nexit 0\n");
+    chmod(0755, "$oe/build") or die "Cannot update fixture build executable: $!";
+    $commit_source->('xCAT-genesis-builder/oe/build', 'empty capability query');
+    my $empty_log = "$tmp/empty-query.log";
+    isnt(
+        run_capture(
+            $empty_log, $builder, '--xcat-source', $source,
+            '--architecture', 's390x',
+            '--output-dir', "$tmp/empty-query-output",
+        ),
+        0,
+        'release builder rejects an empty architecture query',
+    );
+    like(read_binary($empty_log), qr/reported no supported Genesis architectures/,
+        'empty architecture queries are reported');
 }
 
 SKIP: {
-    skip 'rpmbuild and rpm are not installed', 18
+    skip 'rpmbuild and rpm are not installed', 19
       unless command_exists('rpmbuild') && command_exists('rpm');
     exercise_packager('rpm');
 }
@@ -276,12 +430,12 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'dpkg-deb is not installed', 12 unless command_exists('dpkg-deb');
+    skip 'dpkg-deb is not installed', 14 unless command_exists('dpkg-deb');
     exercise_packager('deb');
 }
 
 SKIP: {
-    skip 'git and dpkg-deb are not installed', 6
+    skip 'git and dpkg-deb are not installed', 9
       unless command_exists('git') && command_exists('dpkg-deb');
     exercise_builder_tmpdir();
 }
@@ -465,6 +619,10 @@ sub exercise_builder_tmpdir {
         <<'BUILD',
 #!/bin/sh
 set -eu
+if [ "${1-}" = --list-architectures ]; then
+    printf '%s\n' x86_64 s390x
+    exit 0
+fi
 expected=$XCAT_GENESIS_WORK_DIR/build/tmp
 [ "${TMPDIR:-}" = "$expected" ] || exit 41
 mkdir -p "$TMPDIR/deploy"
@@ -516,7 +674,7 @@ EXPORT
         $status = run_capture(
             $log, $builder, '--xcat-source', $source,
             '--output-dir', $output, '--work-dir', $persistent_work,
-            '--format', 'deb',
+            '--format', 'deb', '--architecture', 's390x',
         );
     }
     is($status, 0, 'release builder isolates the OpenEmbedded tmpdir');
@@ -527,6 +685,18 @@ EXPORT
     is((stat($output))[2] & oct('07777'), oct('0755'),
         'release directory is readable by other users');
     my $built = validate_release($output);
-    is($built->{architectures}, 'x86_64', 'isolated build keeps the target architecture');
+    is($built->{architectures}, 's390x', 'isolated build keeps the target architecture');
     is($built->{formats}, 'deb', 'isolated build keeps the requested format');
+    is($built->{version}, 2, 'a release containing s390x uses format version 2');
+
+    my $legacy_output = "$tmp/tmpdir-legacy-release";
+    my $legacy_log = "$tmp/tmpdir-legacy-builder.log";
+    my $legacy_status = run_capture(
+        $legacy_log, $builder, '--xcat-source', $source,
+        '--output-dir', $legacy_output, '--work-dir', $persistent_work,
+        '--format', 'deb', '--architecture', 'x86_64',
+    );
+    is($legacy_status, 0, 'release builder keeps legacy targets buildable');
+    my $legacy = validate_release($legacy_output);
+    is($legacy->{version}, 1, 'a release without s390x uses format version 1');
 }
