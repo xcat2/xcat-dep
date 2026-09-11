@@ -106,6 +106,11 @@ Use these flags to skip specific operations:
   - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `xnba-undi`).
 - `--skip-perl`
   - Skips `<REPO_ROOT>/mockbuild-perl-packages.pl`.
+  - With any of the three flags above, the run repository, the tarball and the deployed cell keep
+    every rpm the skipped builder published, so the deploy gate still checks the whole manifest.
+    The run stops if that cell holds an rpm the signing key did not sign, or whose digests do
+    not verify when no key is configured, an rpm of another architecture, or a package at two
+    versions. The SRPM tarball holds only what the run built.
 - `--skip-build`
   - Skips all build steps; only runs collection/repo/tarball stages from existing artifact roots.
 - `--skip-createrepo`

@@ -16,6 +16,7 @@ use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
+                      carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
@@ -867,7 +868,7 @@ print "skipped $skipped_foreign rpm(s) of another architecture\n" if $skipped_fo
 # let a run whose builders all failed reach createrepo and the deployable tree, and fail
 # much later in the repo gate (verify_target_repo), naming missing packages instead of the
 # failed builds.
-if (!$dry_run && $copied == 0) {
+if (!$dry_run && $copied == 0 && @collect_roots) {
     die "No binary RPMs were collected. Check build logs and collection roots.\n";
 }
 
@@ -880,6 +881,31 @@ if (!$skip_genesis && !$dry_run) {
         copy($g, "$repo_dir/" . basename($g))
             or die "Failed to copy genesis-base $g -> $repo_dir: $!\n";
         $copied++;
+    }
+}
+
+# A skipped builder built nothing this run, so everything it published in the cell joins the run
+# repository here, ahead of the bump check, createrepo, the tarballs and the deploy gate.
+if (!$dry_run && ($skip_genesis || $skip_perl || $skip_xcat_dep)) {
+    my $published = "$repo_dep/rh$rel/$arch";
+    if (-d $published) {
+        my %skipped = (genesis => $skip_genesis, perl => $skip_perl, dep => $skip_xcat_dep);
+        # Only an rpm the configured key signed, by signer id and by rpmkeys --checksig, may be
+        # re-signed and republished; an unsigned run still requires the digests to verify.
+        my $trusted = \&rpm_digests_ok;
+        if ($gpg_sign || $gpg_home ne '') {
+            my ($dbopt, $problem) = rpmkeys_keyring($gpg_key_name, $gpg_home);
+            die "FATAL: $problem\n" if $problem;
+            my $accept = gpg_key_ids($gpg_key_name, $gpg_home);
+            $trusted = sub {
+                my $id = rpm_signer_keyid($_[0]);
+                return (defined $id && $accept->{$id} && !rpm_checksig_problem($_[0], $dbopt)) ? 1 : 0;
+            };
+        }
+        for my $base (carry_over_rpms($published, $repo_dir, \%skipped, [sort keys %req],
+                                      \&rpm_name, \&rpm_source_rpm, $trusted, $arch, \&rpm_arch)) {
+            print "[collect] $base kept from the published cell $published\n";
+        }
     }
 }
 
@@ -1771,22 +1797,34 @@ sub verify_rpms_checksig {
     my ($dir, $keyname, $home) = @_;
     my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
     return () unless @rpms;
+    my ($dbopt, $problem) = rpmkeys_keyring($keyname, $home);
+    return ($problem) if $problem;
+    return map { rpm_checksig_problem($_, $dbopt) } @rpms;
+}
+
+# rpmkeys_keyring: an isolated rpm keyring holding only the signing key, as the --dbpath option for
+# rpmkeys. Returns ($dbopt, undef), or (undef, $problem) when the key cannot be exported or imported.
+sub rpmkeys_keyring {
+    my ($keyname, $home) = @_;
     require_command('rpmkeys');
     require_command('gpg');
     my $tmpdb = tempdir('rpmkeys-XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
     my $h = ($home ne '') ? ' --homedir ' . sh_quote($home) : '';
     my $keyfile = "$tmpdb/pubkey.asc";
     system("gpg$h --batch --yes -a --export " . sh_quote($keyname) . ' > ' . sh_quote($keyfile) . ' 2>/dev/null');
-    return ("SIGKEY: cannot export public key '$keyname' for rpmkeys --checksig") if !-s $keyfile;
+    return (undef, "SIGKEY: cannot export public key '$keyname' for rpmkeys --checksig") if !-s $keyfile;
     my $dbopt = '--dbpath ' . sh_quote($tmpdb);
     system("rpmkeys $dbopt --import " . sh_quote($keyfile) . ' >/dev/null 2>&1') == 0
-        or return ("SIGKEY: rpmkeys --import of '$keyname' into the temp keyring failed");
-    my @problems;
-    for my $rpm (@rpms) {
-        my $out = `rpmkeys $dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
-        push @problems, rpmkeys_checksig_problem(basename($rpm), $? >> 8, $out);
-    }
-    return @problems;
+        or return (undef, "SIGKEY: rpmkeys --import of '$keyname' into the temp keyring failed");
+    return ($dbopt, undef);
+}
+
+# rpm_checksig_problem: `rpmkeys --checksig` of one rpm against the keyring, as a problem string or
+# an empty list when its digests and signature verify with the signing key.
+sub rpm_checksig_problem {
+    my ($rpm, $dbopt) = @_;
+    my $out = `rpmkeys $dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
+    return rpmkeys_checksig_problem(basename($rpm), $? >> 8, $out);
 }
 
 # repomd_observed_signer: run gpg --verify on the detached repomd signature and extract the identity
