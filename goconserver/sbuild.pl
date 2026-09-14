@@ -44,6 +44,8 @@ $build_timestamp = time() unless defined $build_timestamp;
 # The maintained debian/ is at ./debian in the copied package dir; the upstream source is cloned fresh
 # at the pinned SHA into ./gcsrc, the maintained debian/ copied in, and dpkg-buildpackage run there
 # (its .deb(s) land in the copied package dir, which the collector picks up).
+# The build script below is lifted by t/goconserver_cross_build.t and run with the commands it
+# calls shadowed. Keep the marker: the test dies when it can no longer find this region.
 my $build = <<'BUILD';
 set -e
 VERSION=0.3.3
