@@ -4,6 +4,7 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path cwd);
+use Errno qw(EEXIST ESTALE);
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Find qw(find);
@@ -322,9 +323,10 @@ $repo_dep = abs_path($repo_dep)
 
 # Fail-fast lock on the output base so a second run against the same --output aborts instead of
 # racing on the shared NFS tree. Held for the whole invocation; released by the exit handlers.
-acquire_output_lock($output_base, $force_unlock);
-acquire_repository_lock($repo_dep, $force_unlock)
-    if $repo_dep ne $output_base;
+my $output_locked = acquire_output_lock($output_base, $force_unlock);
+my $repository_locked = $repo_dep eq $output_base
+    ? $output_locked
+    : acquire_repository_lock($repo_dep, $force_unlock);
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
@@ -426,8 +428,10 @@ print_step('Targets to build');
 print "  $_\n" for @build_targets;
 print "output_base:      $output_base\n";
 print "deploy repo-dep:  $repo_dep\n";
-print "output lock:      $output_base/.lock (held)\n";
-print "repository lock:  $repo_dep/.lock (held)\n";
+print "output lock:      $output_base/.lock "
+  . ($output_locked ? "(held)" : "(a peer holds it)") . "\n";
+print "repository lock:  $repo_dep/.lock "
+  . ($repository_locked ? "(held)" : "(a peer holds it)") . "\n";
 print "gpg_sign:         $gpg_sign\n";
 print "gpg_key_name:     $gpg_key_name\n" if $gpg_sign;
 print "gpg_home:         " . ($gpg_home ne '' ? $gpg_home : '(default keyring)') . "\n" if $gpg_sign;
@@ -1417,7 +1421,9 @@ Options:
   --output-root PATH      Override the derived build tree root (default: <output>/mockbuild-all)
   --repo-dep PATH         Override the deployable output root; rh8/rh9/rh10/<arch> and common
                           are assembled and signed here (default: <output>/xcat-dep)
-  --force-unlock          Remove a stale <output>/.lock before acquiring it
+  --force-unlock          Remove a stale <output>/.lock before acquiring it. The lock
+                          never stops the run: a peer that keeps it is reported and the
+                          run goes on without it
   --finalize-xcat-dep     Post-build cross-arch genesis mode (builds nothing). Requires
                           --x86_64-repo and --ppc64le-repo. For each matching <os>/x86_64 and
                           <os>/ppc64le repo pair, copies the noarch xCAT-genesis-base-ppc64
@@ -2172,43 +2178,59 @@ sub resolve_xcat_source {
 # Fail-fast advisory lock on the output base. Uses an atomic mkdir (portable and reliable over
 # NFS, unlike flock) of "<base>/.lock". A second run against the same --output dies immediately
 # rather than racing on the shared tree. Only the process that created the lock removes it.
+#
+# --force-unlock is different: the per-arch runs of one build share a single --repo-dep, write
+# different architectures of it, and all pass that flag, so they remove and recreate this one
+# directory at the same time. The loser gets EEXIST, and on NFS a client whose cached handle
+# another host just removed gets ESTALE. Retry those, and if a peer still holds the lock, go on
+# without it. --force-unlock says the lock must not stop the run.
 sub acquire_named_lock {
     my ($base, $label, $force) = @_;
     my $lock = "$base/.lock";
-    if ($force && -d $lock) {
-        print "force-unlock: removing stale lock $lock\n";
-        _rmdir_lock($lock);
-    }
-    if (mkdir $lock) {
-        push(@HELD_LOCKS, $lock);
-        $LOCK_OWNER_PID //= $$;
-        my $host = capture_command('uname', '-n') || 'unknown';
-        if (open my $fh, '>', "$lock/owner") {
-            print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
-            close $fh;
+    my $announced = 0;
+    for (1 .. 10) {
+        if ($force && -d $lock) {
+            print "force-unlock: removing stale lock $lock\n" unless $announced++;
+            _rmdir_lock($lock);
         }
-        return;
+        if (mkdir $lock) {
+            push(@HELD_LOCKS, $lock);
+            $LOCK_OWNER_PID //= $$;
+            my $host = capture_command('uname', '-n') || 'unknown';
+            if (open my $fh, '>', "$lock/owner") {
+                print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
+                close $fh;
+            }
+            return 1;
+        }
+        # Read errno before the tests below overwrite it.
+        my $error = $!;
+        # mkdir failed: either it already exists (locked) or a real error.
+        if (-d $lock && !$force) {
+            my $info = '';
+            if (open my $fh, '<', "$lock/owner") { local $/; $info = <$fh>; close $fh; }
+            $info =~ s/\s+/ /g;
+            die "$label $base is locked ($lock): $info\n"
+              . "another mockbuild-all run owns it; use a different destination or --force-unlock if stale.\n";
+        }
+        die "Cannot create lock $lock: $error\n"
+          if $error != EEXIST && $error != ESTALE;
+        # Randomise the wait. Two runs that back off by the same amount keep colliding.
+        select(undef, undef, undef, 0.05 + rand(0.25));
     }
-    # mkdir failed: either it already exists (locked) or a real error.
-    if (-d $lock) {
-        my $info = '';
-        if (open my $fh, '<', "$lock/owner") { local $/; $info = <$fh>; close $fh; }
-        $info =~ s/\s+/ /g;
-        die "$label $base is locked ($lock): $info\n"
-          . "another mockbuild-all run owns it; use a different destination or --force-unlock if stale.\n";
-    }
-    die "Cannot create lock $lock: $!\n";
+    print "force-unlock: a peer keeps $lock; $label $base continues without the lock\n";
+    return 0;
 }
 
 sub acquire_output_lock {
     my ($base, $force) = @_;
-    acquire_named_lock($base, 'output', $force);
+    return acquire_named_lock($base, 'output', $force);
 }
 
 sub acquire_repository_lock {
     my ($base, $force) = @_;
     _recover_common_repository($base) if $force;
-    acquire_named_lock($base, 'repository', $force);
+    return acquire_named_lock($base, 'repository', $force);
 }
 
 sub _recover_common_repository {

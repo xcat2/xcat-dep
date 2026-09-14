@@ -10,10 +10,10 @@
 # one call, and that call removes the directory the peer holds and reports ESTALE.
 use strict;
 use warnings;
-use Test::More tests => 5;
+use Test::More tests => 7;
 use FindBin qw($RealBin);
 use File::Temp qw(tempdir);
-use Errno qw(ESTALE);
+use Errno qw(EEXIST ESTALE);
 
 my $script = "$RealBin/../mockbuild-all.pl";
 open my $in, '<', $script or die "Cannot read $script: $!";
@@ -34,6 +34,10 @@ mkdir $peer_lock or die "Cannot stage the peer lock $peer_lock: $!";
 my $held_base = tempdir(CLEANUP => 1);
 mkdir "$held_base/.lock" or die "Cannot stage the held lock $held_base/.lock: $!";
 
+# A peer that keeps winning the race: every mkdir under this base reports EEXIST.
+my $busy_base = tempdir(CLEANUP => 1);
+my $busy_lock = "$busy_base/.lock";
+
 # One stale-handle failure, on the peer lock only. Installed before the routines are compiled so
 # the override reaches them; the mkdir calls above are already compiled and use the real one.
 my $stale_left = 1;
@@ -41,6 +45,10 @@ my $stale_left = 1;
     no warnings 'once';
     *CORE::GLOBAL::mkdir = sub {
         my ($path, @mode) = @_;
+        if ($path eq $busy_lock) {
+            $! = EEXIST;
+            return 0;
+        }
         if ($stale_left && $path eq $peer_lock) {
             $stale_left = 0;
             rmdir $path;
@@ -68,6 +76,13 @@ my $error = $@;
 ok($acquired, 'a lost mkdir race under --force-unlock does not end the build') or diag($error);
 is($stale_left, 0, 'the staged stale handle was consumed, so the race did happen');
 ok(-d $peer_lock, 'the caller holds the lock after the retry');
+
+# A peer that keeps the lock must not end the build either. --force-unlock says the lock cannot
+# stop the run, and the per-arch runs write different architectures of the shared tree.
+my $gave_up = eval { LockUnderTest::acquire_named_lock($busy_base, 'repository', 1) };
+my $busy_error = $@;
+ok(defined($gave_up), 'a peer that keeps the lock does not end the build') or diag($busy_error);
+is($gave_up, 0, 'the run reports it does not hold the lock');
 
 # A real conflict must still stop the run: without --force-unlock a lock another run owns is fatal.
 eval { LockUnderTest::acquire_named_lock($held_base, 'repository', 0); 1 };
