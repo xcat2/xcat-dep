@@ -736,7 +736,7 @@ STUB
     };
 
     my ($scan) = $src =~ /\n(    my %u = \(\$arch => 1\);\n    if \(\$mode eq 'publish'\) \{\n.*?\n        \}\n)/ms;
-    BAIL_OUT('could not extract the staged-arch scan from sbuild-all.pl') unless defined $scan;
+    die('could not extract the staged-arch scan from sbuild-all.pl') unless defined $scan;
 
     my $staging = tempdir( CLEANUP => 1 );
     make_path("$staging/noble/$_") for qw(amd64 ppc64el riscv64 s390x);
@@ -770,7 +770,7 @@ STUB
     };
 
     my ($sub) = $src =~ /\n(sub genesis_in_manifest \{\n.*?\n\})\n/ms;
-    BAIL_OUT('could not extract genesis_in_manifest from sbuild-all.pl') unless defined $sub;
+    die('could not extract genesis_in_manifest from sbuild-all.pl') unless defined $sub;
 
     our %MANIFEST = (
         'noble-amd64'   => { 'xcat-genesis-base' => '2.*', 'ipmitool-xcat' => '1.8.18-4' },
@@ -804,10 +804,10 @@ STUB
     };
 
     my ($sub) = $src =~ /\n(sub ensure_foreign_arch_support \{\n.*?\n\})\n/ms;
-    BAIL_OUT('could not extract ensure_foreign_arch_support from sbuild-all.pl') unless defined $sub;
+    die('could not extract ensure_foreign_arch_support from sbuild-all.pl') unless defined $sub;
 
     my ($map) = $src =~ /\n(my %BINFMT_HANDLER = \(.*?\);)\n/ms;
-    BAIL_OUT('could not extract the binfmt handler map') unless defined $map;
+    die('could not extract the binfmt handler map') unless defined $map;
 
     my $fake = tempdir( CLEANUP => 1 );
     ( my $driver = "$map\n$sub" ) =~ s{/proc/sys/fs/binfmt_misc}{$fake}g;

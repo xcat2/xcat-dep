@@ -4,8 +4,8 @@
 # suite publishes three images per suite and lets apt pick the newest, which is the image of
 # another release.
 #
-# sbuild-all.pl also keeps an rpm->deb fallback: the EL image converted with rpm2cpio. That is how
-# an Ubuntu management node came to install an image built from an EL kernel, and it is removed.
+# sbuild-all.pl also kept an rpm->deb fallback, the EL image converted with rpm2cpio, which gave
+# an Ubuntu node an image built from an EL kernel. It is removed.
 use strict;
 use warnings;
 
