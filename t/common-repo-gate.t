@@ -42,7 +42,7 @@ if (command_exists('tar')) {
 }
 if (@missing_requirements) {
     my $message = 'requires ' . join(', ', @missing_requirements);
-    BAIL_OUT($message) if $ENV{XCAT_GENESIS_CI};
+    die($message) if $ENV{XCAT_GENESIS_CI};
     plan skip_all => $message;
 }
 

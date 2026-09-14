@@ -51,9 +51,9 @@ my @APT_SUITES = qw(focal jammy noble resolute);
 test_activation_helper();
 
 if ($ENV{XCAT_GENESIS_CI}) {
-    BAIL_OUT('CI requires Linux root') unless $^O eq 'linux' && $> == 0;
+    die('CI requires Linux root') unless $^O eq 'linux' && $> == 0;
     for my $command (qw(apt-ftparchive bash createrepo_c dpkg-deb gpg rpm rpmbuild)) {
-        BAIL_OUT("CI requires $command") unless command_exists($command);
+        die("CI requires $command") unless command_exists($command);
     }
 }
 
@@ -329,7 +329,7 @@ sub run_apt_consumer {
 sub write_apt_manifest {
     my ($path, $mutate) = @_;
     my %shipped = read_manifest("$repo_root/debs-manifest.conf");
-    BAIL_OUT('debs-manifest.conf has no [shared] section')
+    die('debs-manifest.conf has no [shared] section')
       unless exists $shipped{shared};
     my %shared = %{ $shipped{shared} };
     $mutate->(\%shared) if $mutate;
@@ -1083,7 +1083,7 @@ sub test_activation_helper {
     unlike($activation, qr/XCAT_GENESIS_ROOT/,
         'the root package helper has no environment-controlled execution root');
     $activation =~ s/\ngenesis_activation_main "\$\@"\s*\z/\n/
-      or BAIL_OUT('the activation helper has no reusable main boundary');
+      or die('the activation helper has no reusable main boundary');
 
     my $driver = "$tmp/activation-driver";
     my $log = "$tmp/activation.log";
