@@ -30,20 +30,20 @@ my @RECORDS = (
 
 my $root = "$RealBin/..";
 my $spec = "$root/perl-Net-DNS/Net-DNS.spec";
-BAIL_OUT("$spec is gone; this test covers nothing") unless -f $spec;
+die "$spec is gone; this test covers nothing" unless -f $spec;
 
 # The spec is the artifact here: it names the version built and the tarball it is built from.
 my ($version, $source);
 {
-    open my $fh, '<', $spec or BAIL_OUT("Cannot read $spec: $!");
+    open my $fh, '<', $spec or die "Cannot read $spec: $!";
     while (my $line = <$fh>) {
         $version = $1 if !defined($version) && $line =~ /^version:\s*(\S+)/i;
         $source  = $1 if !defined($source)  && $line =~ /^source:\s*(\S+)/i;
     }
     close $fh;
 }
-BAIL_OUT("$spec declares no version") unless defined $version;
-BAIL_OUT("$spec declares no source") unless defined $source;
+die "$spec declares no version" unless defined $version;
+die "$spec declares no source" unless defined $source;
 
 # Net::DNS moved the DNSSEC records, KEY included, into the core distribution at release 1.01.
 # Below that release the KEY record lives in the separate Net::DNS::SEC distribution, which
@@ -71,7 +71,7 @@ ok(version_ge($version, $KEY_FLOOR),
 # records must work for all of them. A target that takes Net::DNS from EPEL is not listed.
 my %manifest = read_manifest("$root/packages-manifest.conf");
 my @targets  = grep { exists $manifest{$_}{'perl-Net-DNS'} } sort keys %manifest;
-BAIL_OUT('no manifest target builds perl-Net-DNS; this test covers nothing') unless @targets;
+die 'no manifest target builds perl-Net-DNS; this test covers nothing' unless @targets;
 
 # The pin is the second place the version is written down, and mockbuild-all.pl fails the run
 # when the built rpm does not match it. A pin below $KEY_FLOOR puts a Net::DNS without KEY back
@@ -88,24 +88,24 @@ for my $target (@targets) {
 }
 
 my $tarball = "$root/perl-Net-DNS/$source";
-BAIL_OUT("$tarball is missing, so the spec cannot build") unless -f $tarball;
+die "$tarball is missing, so the spec cannot build" unless -f $tarball;
 
 my $tmp = tempdir(CLEANUP => 1);
 {
     my $tar = Archive::Tar->new;
-    $tar->read($tarball) or BAIL_OUT("Cannot read $tarball: " . Archive::Tar->error);
+    $tar->read($tarball) or die "Cannot read $tarball: " . Archive::Tar->error;
     $tar->setcwd($tmp);
-    $tar->extract or BAIL_OUT("Cannot extract $tarball: " . Archive::Tar->error);
+    $tar->extract or die "Cannot extract $tarball: " . Archive::Tar->error;
 }
 my ($libdir) = grep { -d } glob("$tmp/*/lib");
-BAIL_OUT("$tarball holds no lib/ directory") unless defined $libdir;
+die "$tarball holds no lib/ directory" unless defined $libdir;
 
 # The probe runs in its own perl so the extracted copy, and not a Net::DNS installed on the
 # build host, answers the calls. It reports the file it loaded, which the test checks.
 my $probe = "$tmp/probe.pl";
 {
-    open my $fh, '>', $probe or BAIL_OUT("Cannot write $probe: $!");
-    print {$fh} <<'PROBE' or BAIL_OUT("Cannot write $probe: $!");
+    open my $fh, '>', $probe or die "Cannot write $probe: $!";
+    print {$fh} <<'PROBE' or die "Cannot write $probe: $!";
 use strict;
 use warnings;
 use Net::DNS::RR;
@@ -129,7 +129,7 @@ my @out;
 {
     local $ENV{PERL5LIB} = '';
     open my $ph, '-|', $^X, "-I$libdir", $probe, map { $_->{rr} } @RECORDS
-        or BAIL_OUT("Cannot run the probe: $!");
+        or die "Cannot run the probe: $!";
     @out = <$ph>;
     close $ph;
 }
