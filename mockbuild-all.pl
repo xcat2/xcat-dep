@@ -5,6 +5,7 @@ use warnings;
 
 use Cwd qw(abs_path cwd);
 use Errno qw(EEXIST ESTALE);
+use Time::HiRes ();
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Find qw(find);
@@ -2216,7 +2217,7 @@ sub acquire_named_lock {
         die "Cannot create lock $lock: $error\n"
           if $error != EEXIST && $error != ESTALE;
         # Randomise the wait. Two runs that back off by the same amount keep colliding.
-        select(undef, undef, undef, 0.05 + rand(0.25));
+        Time::HiRes::sleep(0.05 + rand(0.25));
     }
     print "force-unlock: a peer keeps $lock; $label $base continues without the lock\n";
     return 0;
