@@ -1,0 +1,52 @@
+openEuler 24.03 LTS native build inputs
+
+This source supplies a build prerequisite for the native perl-DBD-Pg checks.
+The dependency repository does not select a PostgreSQL server for the normal
+xCAT/xCATsn closure. PostgreSQL backend runtime qualification is separate.
+
+Source RPM:
+https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/postgresql-15.6-1.oe2403.src.rpm
+SHA256: 0e1dd792cccf353f7a0d7f3f9d13b1a22a7ace0a428f4b197193b99c58081960
+
+Publisher key:
+https://repo.openeuler.org/openEuler-24.03-LTS/source/RPM-GPG-KEY-openEuler
+Fingerprint: 8AA16BF9F2CA5244010DCA963B477C60B675600B
+
+Verify the source RPM checksum, signature, and payload digests before extraction.
+Apply postgresql-15.6-openeuler-llvmjit-buildrequires.patch with patch -p1
+from the directory containing the extracted postgresql.spec.
+
+The patch makes the clang BuildRequires follow the existing llvmjit option.
+PostgreSQL uses clang to generate LLVM bitcode. Its normal C compiler selection
+uses gcc or cc, and its LLVM build paths are disabled when llvmjit is zero.
+JIT-enabled BuildRequires remain unchanged.
+
+Use the native openEuler build environment and these existing vendor options:
+
+    --define 'llvmjit 0' --define 'external_libpq 0'
+    --define 'runselftest 1' --define 'test 1'
+
+Keep the other vendor feature defaults, including SSL, GSSAPI, LDAP, PAM,
+SELinux, ICU, UUID, and procedural languages. Build as an unprivileged user;
+the regression tests require this. Retain the regression, contrib, procedural
+language, and postgresql-setup tests. Resolve all remaining BuildRequires from
+signed native packages before building.
+
+Use the vendor-default private libpq build. Its libraries have private SONAMEs.
+The external_libpq=1 branch in this SRPM has a stale patch that fails during
+normal preparation. Build DBD-Pg with the vendor libpq-devel package;
+postgresql-private-devel declares a conflict with that package.
+
+On ppc64le, use mock-configs/openeuler-24.03-ppc64le.cfg when invoking the
+existing mock build owner. The downloaded source RPM and generated packages
+are external build artifacts. This directory does not add a package builder.
+
+After building, verify package Provides/Requires, native architecture, and
+libpq linkage. Build the matching native DBD-Pg source RPM without changes:
+
+https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-DBD-Pg-3.18.0-1.oe2403.src.rpm
+SHA256: 5bb91b28459ee5754c031cf62471c86a887392587c261c8df61ab44e4c8caf09
+
+Retain its make test check. Validate xCAT schema initialization, SQL
+transactions, authentication, backup/restore, and reconnect behavior before
+using the resulting packages for management or service nodes.

@@ -1,0 +1,102 @@
+openEuler 24.03 LTS POWER inputs
+
+This GA target is a functional build profile. It does not establish maintained
+POWER service-pack support or physical platform qualification.
+
+The 24.03-ppc64le.inputs.json catalog pins the native source RPMs, publisher
+noarch RPMs, public key, spec patch, and spec definitions used by this target.
+Its outputs are RPM package names. The packages-manifest.conf POWER section
+selects the required runtime outputs; needs selects their build prerequisites.
+The build_inputs group supplies the additional same-GA noarch build packages.
+No binary package from another service pack or architecture is admitted.
+
+Use an exact native ppc64le openEuler 24.03 LTS builder. The target configuration
+uses the published OS repository, native vendor macros, and Mock simple
+isolation. POWER GA has no published Everything, update, or EPOL architecture
+repository. Individual GA noarch inputs are pinned from the publisher's other
+architecture repositories. Each must have a noarch header, a GA release suffix,
+a valid publisher signature, and no ELF file anywhere in its RPM payload.
+They retain their original bytes and signatures in the resulting repository.
+
+Run the existing owner through actual sudo from UID1000. The native Mock 2.2
+entry at /usr/libexec/mock/mock must precede consolehelper's /usr/bin/mock in
+sudo's PATH. The target fixes chrootuid and chrootgid at 1000. Do not synthesize
+SUDO_UID or USERHELPER_UID. Preserve the actual Mock build logs and confirm
+UID1000 for compiled packages. Genesis assembles a root filesystem as UID0;
+xNBA packages existing boot artifacts as UID0 and has no compilation or check
+section. These are the two packaging exceptions.
+
+    sudo perl mockbuild-all.pl --target openeuler-24.03-ppc64le \
+        --xcat-source /path/to/frozen/xcat-core \
+        --output /path/to/private/output --max-parallel 1 \
+        --gpg-sign --gpg-home /path/to/signing-home \
+        --gpg-key-name SIGNING_FINGERPRINT --build-timestamp SOURCE_EPOCH
+
+Freeze both source trees and record their hashes before running the owner.
+Use a fresh output/run identity. Do not modify input files while a build runs.
+The owner validates the complete graph and output ownership before starting
+Mock. It fetches all selected inputs, verifies them in a private publisher
+RPM database, and preserves the signed originals under native-inputs.
+
+The source RPM path in mockbuild-all.pl builds the prerequisites in dependency
+order. Publisher inputs precede source builds; existing owners run afterward.
+Dependencies on an existing owner and publisher dependency edges are rejected
+before acquisition because those phases cannot honor them. Patches and
+definitions use that same source path. Native results remain
+unsigned under native-results; signed copies populate native-prerequisites.
+Private configuration overlays bind that repository into subsequent Mock
+roots. Their paths and hashes are recorded in native-overlays.json. Publisher
+RPMs retain their publisher signatures; generated RPMs require the selected
+build signing key. Repository metadata is signed by the build key and exports
+both public keys. Neither key is imported into the builder's system RPMDB.
+
+Native Mock's procenv plugin requires a procenv package that GA OS lacks.
+The procenv source is therefore built first with only that diagnostic plugin
+disabled in a recorded private overlay. Its normal vendor checks and UID1000
+build remain enabled. All subsequent roots enable the plugin and obtain the
+newly signed native procenv package. No package feature or test is disabled.
+
+The final repository collects the manifest-selected native/publisher outputs
+and the established script-owner outputs. PostgreSQL and its source helper
+chain remain in the private prerequisite repository; the normal xCAT/xCATsn
+closure does not select a PostgreSQL server. Native perl-DBD-Pg is required by
+the service image profiles. Its unchanged vendor check needs PostgreSQL.
+The PostgreSQL patch and vendor options are described in ../postgresql/Build-notes.
+Those options preserve normal SQL, authentication, backup, and reconnect
+features. Runtime backend validation is a separate gate from package builds.
+
+Bootstrapping the build tools
+
+The catalog's bootstrap_inputs records the native source chain needed when
+Mock and the owner Perl modules are absent. It includes the unchanged official
+24.03 SP3 File-Slurper source RPM because GA publishes no such source package.
+Rebuild that source on GA; do not install its SP3 binary RPM.
+
+The input verifier uses only core Perl modules. It can fetch and verify these
+inputs before Mock is installed:
+
+    perl -Ilib -MXCAT::NativeInputs=load_inputs,stage_inputs -e '
+        my ($root, $stage) = @ARGV;
+        my %required = map { $_ => "*" } qw(mock perl-Params-Util
+            python3-psutil python3-pyroute2 perl-PerlIO-utf8_strict
+            perl-File-Slurper procenv);
+        stage_inputs(load_inputs($root, \%required), $stage);
+    ' "$PWD" /path/to/new/private/input-stage
+
+Use a disposable exact-GA installroot for bootstrap builds. Install rpm-build,
+dnf-plugins-core, gcc, make, and each source's full BuildRequires through strict
+signed native repositories. Extract the verified source with rpm -i and a
+private _topdir; use dnf builddep on the extracted spec. Run normal rpmbuild -ba
+as UID1000 without changing the vendor spec or disabling its check section.
+Build native perl-Params-Util before users of perl-Module-Build; build
+perl-PerlIO-utf8_strict before perl-File-Slurper. Build python-psutil and
+python-pyroute2 before installing Mock. Build procenv for Mock diagnostics.
+The pinned noarch group supplies the missing pure Perl/Python prerequisites.
+Retain unsigned outputs, vendor check logs, native architecture, full RPM
+Provides/Requires, and the original-source and output hashes. Sign copies and
+verify them against a private RPMDB before making them available to DNF.
+
+Install the resulting native Mock, its runtime prerequisites, and the owner
+Perl modules inside the disposable builder. Use the existing mockbuild-all.pl
+owner for subsequent target/package builds. The bootstrap instructions do not
+replace its scheduler, collector, signature gate, or repository layout.
