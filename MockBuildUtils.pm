@@ -21,6 +21,7 @@ our @EXPORT_OK = qw(
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     build_mock_uniqueext
+    openeuler_build_target openeuler_repo_subdir
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -30,6 +31,7 @@ our @EXPORT_OK = qw(
 sub install_deps_packages {
     my ($os_id) = @_;
     $os_id = '' unless defined $os_id;
+    return (install_deps_packages(''), '/usr/bin/systemd-nspawn') if lc($os_id) eq 'openeuler';
     # The perl modules are what actually break a run; the rest is the toolchain the script drives.
     return qw(perl perl-File-Slurper perl-IPC-Cmd perl-Parallel-ForkManager perl-Digest-SHA
               mock createrepo_c tar findutils rpm rpm-build rpm-sign rpmdevtools gnupg2 wget git)
@@ -46,7 +48,29 @@ sub install_deps_command {
     my @pkgs = install_deps_packages($os_id);
     return ('zypper', '--non-interactive', 'install', '--no-recommends', @pkgs)
         if $os_id =~ /^(?:opensuse|sles|sled)/;
+    return ('dnf', '--setopt=gpgcheck=1', '--setopt=*.gpgcheck=1', '--setopt=strict=1', '--setopt=install_weak_deps=False', '-y', 'install', @pkgs)
+        if lc($os_id) eq 'openeuler';
     return ('dnf', '-y', 'install', @pkgs);
+}
+
+sub openeuler_build_target {
+    my ($os, $arch) = @_;
+    return undef unless lc($os->{ID} // '') eq 'openeuler';
+    my $version = $os->{VERSION} || $os->{VERSION_ID} || '';
+    if ($version =~ /\A(20|22|24)\.03\s+\(LTS(?:-SP([1-9][0-9]*))?\)\z/) {
+        $version = "$1.03" . (defined($2) ? "sp$2" : '');
+    }
+    my $target = "openeuler-$version-$arch";
+    openeuler_repo_subdir($target);
+    return $target;
+}
+
+sub openeuler_repo_subdir {
+    my ($target) = @_;
+    return undef unless defined($target) && $target =~ /\Aopeneuler-/;
+    die "Unsupported openEuler build target '$target'\n"
+        unless $target =~ /\Aopeneuler-((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)-(x86_64|ppc64le)\z/;
+    return "openeuler$1/$2";
 }
 
 # missing_perl_modules(@modules): those that cannot be loaded, in order. The point of --install-deps

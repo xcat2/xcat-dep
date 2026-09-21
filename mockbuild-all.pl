@@ -13,6 +13,7 @@ use File::Temp qw(tempdir tempfile);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use POSIX qw(strftime);
+use JSON::PP;
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
@@ -20,11 +21,13 @@ use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-                      build_mock_uniqueext rpmkeys_checksig_problem);
+                      build_mock_uniqueext rpmkeys_checksig_problem
+                      openeuler_build_target openeuler_repo_subdir);
 # print_step and sh_quote come from MockBuildUtils above; XCAT::BuildUtils carries the same
 # print_step, so it is deliberately NOT imported here (one definition, no redefinition warning).
 use XCAT::BuildUtils qw(
   capture_command
+  digest_file
   every_step_failed
   hashes_equal
   read_lines
@@ -36,6 +39,7 @@ use XCAT::GenesisRelease qw(
   validated_release_checksums
   verify_release_file
 );
+use XCAT::NativeInputs qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust);
 
 # --- Mount-namespace isolation: guard the host cgroup against mock teardown propagation ----------
 # mock mounts /sys/fs/cgroup into every build chroot. On these systemd build hosts every mount is
@@ -133,6 +137,7 @@ my $no_verify_repo = 0;
 my @HELD_LOCKS;
 my $LOCK_OWNER_PID;
 my ($COMMON_STAGE, $COMMON_DESTINATION, $COMMON_BACKUP);
+my %NATIVE_PLANS;
 for my $sig (qw(INT TERM HUP)) {
     $SIG{$sig} = sub { exit 1; };
 }
@@ -347,6 +352,9 @@ if ($install_deps) {
     die "FATAL: still missing after install: " . join(', ', @missing) . "\n" if @missing;
     print "  perl modules present: " . join(', ', @modules) . "\n";
     print "  host is ready\n";
+    if (lc($os_id) eq 'openeuler') {
+        install_mock_cfg(basename($_, '.cfg')) for glob("$repo_root/mock-configs/openeuler-*.cfg");
+    }
     exit 0;
 }
 
@@ -381,8 +389,10 @@ if ($genesis_release ne '') {
 # ONLY the host arch (uname -m) -- the other arch is produced on its own build host --
 # except for the forcearch targets (%forcearch_targets, --target only), which are
 # cross-built here through qemu-user-static.
+my $native_target = openeuler_build_target(\%os, $host_arch);
 my @build_targets = $target
     ? ($target)
+    : defined($native_target) ? ($native_target)
     : map { resolve_mock_cfg($os_id, $_, $host_arch) } (8, 9, 10);
 
 # What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
@@ -473,6 +483,14 @@ sub build_one_target {
     my %req = %{ $MANIFEST{$target} // {} };
     die "FATAL: no manifest section for target '$target' in packages-manifest.conf\n"
         if !%req;
+    my $native = $target eq 'openeuler-24.03-ppc64le' ? load_inputs($repo_root, \%req) : undef;
+    $NATIVE_PLANS{$target} = $native if $native;
+    if ($native) {
+        die "Native POWER collection requires signing and verification\n"
+            if !$gpg_sign || $no_verify_repo;
+        die "Native POWER inputs require a complete owner run\n"
+            if $skip_build || $skip_xcat_dep || $skip_perl || @extra_collect_dirs;
+    }
 
 my $run_root     = "$output_root/$run_id";
 my $build_root   = "$run_root/build-results";
@@ -505,6 +523,8 @@ my @dep_builders = (
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
+    { name => 'python3-scp', srpm => "$repo_root/python-scp/python-scp-0.14.5-1.oe2403.src.rpm",
+      sha256 => '3461d2a3fe0122cac2893d8465ad1271ae21e5570a31d4402e3f887ef545a0e8' },
 );
 my %profile_builds = map { $_ => 1 } @{ $profile->{dep_builders} };
 
@@ -518,11 +538,16 @@ die "Missing xCAT build script: $xcat_src/buildrpms.pl\n"
 my @active_dep_builders;
 for my $b (@dep_builders) {
     next if !$profile_builds{$b->{name}};
+    if ($b->{srpm}) {
+        push @active_dep_builders, $b if $req{$b->{name}};
+        next;
+    }
     if (-f $b->{script}) {
         push @active_dep_builders, $b;
         next;
     }
     print "WARN: missing dep builder script, skipping: $b->{script}\n";
+    die "Missing native owner script: $b->{script}\n" if $native && $req{$b->{name}};
 }
 die "Missing perl builder script: $perl_builder\n"
     if !$skip_perl && !$perl_builder;
@@ -576,8 +601,34 @@ print "srpm_repo_dir:    $srpm_repo_dir\n";
 print "srpm_tarball:     $srpm_tarball\n";
 
 my @collect_roots;
+my @native_source_roots;
+
+if ($native && !$dry_run) {
+    stage_inputs($native, "$run_root/native-inputs");
+}
+
+if (!$skip_build && !$skip_xcat_dep) {
+    for my $builder (grep { $_->{srpm} } @active_dep_builders) {
+        my $source = $builder->{srpm};
+        die "Missing source RPM: $source\n" unless -f $source;
+        die "Source RPM SHA256 mismatch: $source\n" unless digest_file($source) eq $builder->{sha256};
+        next if $dry_run;
+        my $stage_dir = "$run_root/source-rpms/$builder->{name}";
+        make_path($stage_dir);
+        my $staged = "$stage_dir/" . basename($source);
+        copy($source, $staged) or die "Cannot stage source RPM $source: $!\n";
+        die "Staged source RPM SHA256 mismatch: $staged\n" unless digest_file($staged) eq $builder->{sha256};
+        $builder->{srpm} = $staged;
+    }
+}
 
 install_mock_cfg($target);
+
+if ($native) {
+    my ($runtime, $sources) = build_native_inputs($native, $target, \%req, $run_root, $log_root);
+    push @collect_roots, $runtime;
+    push @native_source_roots, @$sources;
+}
 
 if ($scrub_all_chroots) {
     run_step(
@@ -604,7 +655,10 @@ if (!$skip_build) {
             my $step_result = "$build_root/$name";
             my $step_log    = "$log_root/$name";
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
-            my $cmd = join(' ',
+            my $cmd = $builder->{srpm}
+                ? source_rpm_build_command($builder, $target, $step_uniqueext, $step_result, $step_log,
+                    "$run_root/source-rpms/$name")
+                : join(' ',
                 'perl', shell_quote($script),
                 '--mock-cfg', shell_quote($builder->{noarch} ? $profile->{noarch_cfg} : $target),
                 ($profile->{forcearch} && !$builder->{noarch} ? ('--target-arch', shell_quote($arch)) : ()),
@@ -614,13 +668,10 @@ if (!$skip_build) {
                 # host-local, run-scoped work dir so /tmp doesn't collide between runs
                 '--work-dir', shell_quote("/tmp/mockbuild-all-$run_id/$name"),
                 '--build-timestamp', $SOURCE_DATE_EPOCH,
-                # goconserver generates its spec at build time (from an upstream clone), so the
-                # in-tree spec Release bump above cannot reach it. Hand the CD suffix down so its
-                # NVR advances per run too, and pin the clone to an immutable commit (not the moving
-                # 'master') so the build is reproducible.
-                ($name eq 'goconserver'
-                    ? ('--go-ref', sh_quote($GOCONSERVER_REF),
-                       ($RELEASE_BUMP ne '' ? ('--release-suffix', sh_quote($RELEASE_BUMP)) : ()))
+                ($name eq 'goconserver' ? ('--go-ref', sh_quote($GOCONSERVER_REF)) : ()),
+                # Generated specs need the same release suffix as in-tree specs.
+                (($name eq 'goconserver' || $name eq 'xnba-undi') && $RELEASE_BUMP ne ''
+                    ? ('--release-suffix', sh_quote($RELEASE_BUMP))
                     : ()),
             );
             push @build_steps, {
@@ -630,12 +681,13 @@ if (!$skip_build) {
                 log  => "$log_root/$name/run.log",
                 scrub_cfg       => $target,
                 scrub_uniqueext => $step_uniqueext,
+                ($native ? (native_results => {$name => $step_result}) : ()),
             };
             push @collect_roots, $step_result;
         }
     }
 
-    my @perl_pkgs = sort grep { /^perl-/ } keys %req;   # manifest: perl packages required here
+    my @perl_pkgs = sort grep { /^perl-/ && (!$native || $native->{nodes}{$_}{type} eq 'owner') } keys %req;
     if (!$skip_perl && @perl_pkgs) {
         my $perl_result = "$build_root/perl/$arch";
         my $perl_log    = "$log_root/perl/$arch";
@@ -668,6 +720,7 @@ if (!$skip_build) {
             step => 'Build perl xcat-dep packages',
             cmd  => $cmd,
             log  => "$log_root/perl-build.log",
+            ($native ? (native_results => {map { $_ => "$perl_result/$_" } @perl_pkgs}) : ()),
         };
         push @collect_roots, $perl_result;
     }
@@ -711,6 +764,7 @@ if (!$skip_build) {
             '--verbose',
             '--xcat_dep_path', shell_quote($repo_root),
         );
+        $cmd = native_owner_command($native, $target, $cmd, 0) if $native;
         push @build_steps, {
             id   => 'genesis',
             step => 'Build xCAT-genesis-base (per-target, OS-dependent)',
@@ -718,10 +772,16 @@ if (!$skip_build) {
             cwd  => $xcat_src,
             log  => "$log_root/genesis-build.log",
             scrub_cfg => "xCAT-genesis-base-$target",
+            ($native ? (native_results => {'xCAT-genesis-base' => "$xcat_src/dist/$target/rpms"}) : ()),
         };
     }
 
     if (@build_steps) {
+        if ($native) {
+            for my $step (grep { $_->{id} ne 'genesis' } @build_steps) {
+                $step->{cmd} = native_owner_command($native, $target, $step->{cmd}, 1000);
+            }
+        }
         # Prefer the caller-supplied cap (global budget / active targets). Fall back to the old
         # behaviour (all steps at once) only when unset.
         my $effective_parallel_builds =
@@ -767,6 +827,20 @@ if (!$skip_build) {
         # -- ignore a genesis failure when a matching rpm already exists in dist/ -- is gone; a
         # stale artifact from a previous build must never mask a failed genesis build.)
         die "FATAL: required build step(s) failed for $target: @failed\n" if @failed;
+        if ($native && !$dry_run) {
+            for my $step (@build_steps) {
+                for my $name (sort keys %{$step->{native_results} // {}}) {
+                    my $directory = $step->{native_results}{$name};
+                    die "Missing native owner result: $directory\n" unless -d $directory;
+                    my @rpms;
+                    find({no_chdir => 1, wanted => sub {
+                        push @rpms, $File::Find::name if -f $_ && /\.rpm\z/ && !/\.src\.rpm\z/
+                            && ($name ne 'xCAT-genesis-base' || basename($_) =~ /^xCAT-genesis-base-/);
+                    }}, $directory);
+                    validate_outputs($native->{nodes}{$name}, \@rpms, 1);
+                }
+            }
+        }
     }
 }
 
@@ -787,6 +861,7 @@ if ($skip_build) {
 push @collect_roots, @extra_collect_dirs;
 @collect_roots = uniq(@collect_roots);
 my @srpm_collect_roots = uniq(@collect_roots);
+push @srpm_collect_roots, @native_source_roots;
 
 if ($genesis_release && !$dry_run) {
     remove_genesis_packages($repo_dir, 0);
@@ -835,6 +910,7 @@ if (!$dry_run && $RELEASE_BUMP ne '') {
     my @rmiss;
     for my $pkg (required_pkgs([sort keys %req], $skip_genesis, $skip_perl, $skip_xcat_dep)) {
         next if $pkg eq 'xCAT-genesis-base';
+        next if $native && $native->{nodes}{$pkg} && $native->{nodes}{$pkg}{type} eq 'publisher';
         my $rel = rpm_release($repo_dir, $pkg);
         next if !defined $rel;   # a missing rpm is caught by the completeness gate in deploy_target
         push @rmiss, "$pkg: Release '$rel' is missing the CD bump '$RELEASE_BUMP'"
@@ -940,6 +1016,21 @@ print "SRPM Tarball:          $srpm_tarball\n" if !$skip_tarball;
 # which dep builders run and which rpms the deployed repo must contain.
 sub target_profile {
     my ($target) = @_;
+    if (my $native = openeuler_repo_subdir($target)) {
+        my ($version, $arch) = $target =~ /\Aopeneuler-(.*)-([^-]+)\z/;
+        die "Native target '$target' requires a $arch build host, found $host_arch\n"
+            unless $arch eq $host_arch;
+        return {
+            rel          => $version,
+            arch         => $arch,
+            noarch_cfg   => $target,
+            forcearch    => 0,
+            epel         => 0,
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi python3-scp)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+                                perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
+        };
+    }
     if (my $fa = $forcearch_targets{$target}) {
         return {
             %{$fa},
@@ -969,9 +1060,11 @@ sub target_profile {
 # overwrite one the host already has.
 sub install_mock_cfg {
     my ($cfg) = @_;
-    my $src = "$repo_root/mock-configs/$cfg.cfg";
+    install_mock_cfg('templates/openeuler-lts-xcat') if $cfg =~ /^openeuler-/;
+    my $extension = $cfg =~ m{^templates/} ? 'tpl' : 'cfg';
+    my $src = "$repo_root/mock-configs/$cfg.$extension";
     return if !-f $src;
-    my $dst = "/etc/mock/$cfg.cfg";
+    my $dst = "/etc/mock/$cfg.$extension";
     if (-f $dst) {
         die "$dst differs from $src: the build would not use the configuration shipped in this"
           . " tree. Remove or update the host copy (it is never overwritten here) and rerun.\n"
@@ -984,6 +1077,145 @@ sub install_mock_cfg {
     chmod 0644, $dst;
 }
 
+sub source_rpm_build_command {
+    my ($builder, $target, $uniqueext, $result, $log, $work) = @_;
+    my $cfg = "$work/mock-deterministic.cfg";
+    if (!$dry_run) {
+        make_path($work, $result);
+        open my $fh, '>', $cfg or die "Cannot write $cfg: $!\n";
+        print {$fh} "include('/etc/mock/$target.cfg')\n";
+        print {$fh} "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$SOURCE_DATE_EPOCH'\n";
+        close $fh or die "Cannot close $cfg: $!\n";
+    }
+    my $mock = join(' ', 'mock', '-r', sh_quote($cfg), '--uniqueext', sh_quote($uniqueext),
+        '--define', sh_quote('use_source_date_epoch_as_buildtime 1'),
+        '--define', sh_quote('clamp_mtime_to_source_date_epoch 1'),
+        '--define', sh_quote('_buildhost xcat-build'));
+    $mock .= join('', map { ' --define ' . sh_quote($_) } @{$builder->{defines} // []});
+    my $srpm = sh_quote($builder->{srpm});
+    my $prefix = '';
+    if ($RELEASE_BUMP ne '' || @{$builder->{patches} // []} || @{$builder->{defines} // []}) {
+        my $top = "$work/restamp";
+        if (!$dry_run) {
+            make_path(map { "$top/$_" } qw(BUILD BUILDROOT RPMS SOURCES SPECS SRPMS));
+        }
+        run_step(step => "Unpack source RPM: $builder->{name}",
+            cmd => 'rpm -i --define ' . sh_quote("_topdir $top") . " $srpm",
+            log => "$log/srpm-unpack.log");
+        my @specs = $dry_run ? ("$top/SPECS/*.spec") : bsd_glob("$top/SPECS/*.spec");
+        die "Expected one spec in source RPM: $builder->{srpm}\n" unless @specs == 1;
+        bump_dep_release_suffix($top, $RELEASE_BUMP) if !$dry_run && $RELEASE_BUMP ne '';
+        for my $patch (@{$builder->{patches} // []}) {
+            my $path = $patch->{staged} // $patch->{absolute_path};
+            die "Source patch SHA256 mismatch: $path\n" unless digest_file($path) eq $patch->{sha256};
+            run_step(step => "Apply native source patch: $builder->{name}",
+                cmd => 'patch --batch --fuzz=0 -p1 -d ' . sh_quote("$top/SPECS")
+                    . ' -i ' . sh_quote($path), log => "$log/spec-patch.log");
+        }
+        my $restamped = "$work/restamp-srpm";
+        make_path($restamped) unless $dry_run;
+        $prefix = "$mock --buildsrpm --spec " . sh_quote($specs[0])
+            . ' --sources ' . sh_quote("$top/SOURCES") . ' --resultdir ' . sh_quote($restamped)
+            . ' && set -- ' . sh_quote($restamped) . '/*.src.rpm'
+            . ' && test "$#" -eq 1 && test -f "$1" && ';
+        $srpm = '"$1"';
+    }
+    return $prefix . "$mock --rebuild $srpm --resultdir " . sh_quote($result);
+}
+
+sub native_owner_command {
+    my ($plan, $target, $command, $uid) = @_;
+    my $overlay = $plan->{overlays}{$uid} // die "Missing native mock overlay\n";
+    my $script = 'mount --bind ' . sh_quote($overlay) . ' ' . sh_quote("/etc/mock/$target.cfg")
+        . ' && exec sh -c ' . sh_quote($command);
+    return 'unshare --mount --propagation private -- sh -c ' . sh_quote($script);
+}
+
+sub native_overlay {
+    my ($plan, $target, $work, $prereqs) = @_;
+    $plan->{overlays} = {1000 => "$work/native-1000.cfg", 0 => "$work/native-genesis-0.cfg",
+        procenv => "$work/native-procenv-bootstrap.cfg"};
+    return if $dry_run;
+    my $base = "$work/native-base.cfg";
+    copy("/etc/mock/$target.cfg", $base) or die "Cannot snapshot native mock configuration: $!\n";
+    my $url = $prereqs;
+    $url =~ s{([^A-Za-z0-9_./~-])}{sprintf('%%%02X', ord($1))}ge;
+    my $repo = "\n[xcat-native-inputs]\nname=xCAT native build prerequisites\nbaseurl=file://$url\n"
+        . "gpgkey=file://$url/repodata/repomd.xml.key\ngpgcheck=1\nrepo_gpgcheck=1\n"
+        . "enabled=1\nskip_if_unavailable=0\n";
+    for my $key (1000, 0, 'procenv') {
+        my $uid = $key eq 'procenv' ? 1000 : $key;
+        open my $fh, '>', $plan->{overlays}{$key} or die "Cannot write native overlay: $!\n";
+        print {$fh} 'include(' . JSON::PP->new->encode($base) . ")\n";
+        print {$fh} "config_opts['chrootuid'] = $uid\nconfig_opts['chrootgid'] = 1000\n";
+        print {$fh} "config_opts['dnf.conf'] += \"\"\"$repo\"\"\"\n";
+        print {$fh} "config_opts['plugin_conf']['bind_mount_enable'] = True\n";
+        print {$fh} "config_opts['plugin_conf']['procenv_enable'] = " . ($key eq 'procenv' ? 'False' : 'True') . "\n";
+        print {$fh} "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append("
+            . '(' . JSON::PP->new->encode($prereqs) . ', ' . JSON::PP->new->encode($prereqs) . "))\n";
+        close $fh or die "Cannot close native overlay: $!\n";
+    }
+    open my $ledger, '>', "$work/native-overlays.json" or die "Cannot record native overlays: $!\n";
+    print {$ledger} JSON::PP->new->canonical->pretty->encode({base => {path => $base, sha256 => digest_file($base)},
+        overlays => [map { {purpose => $_, path => $plan->{overlays}{$_}, sha256 => digest_file($plan->{overlays}{$_})} } (1000, 0, 'procenv')]});
+    close $ledger or die "Cannot close native overlay ledger: $!\n";
+}
+
+sub build_native_inputs {
+    my ($plan, $target, $req, $work, $logs) = @_;
+    my $prereqs = "$work/native-prerequisites";
+    my $runtime = "$work/native-runtime";
+    my @source_roots;
+    make_path($prereqs, $runtime) unless $dry_run;
+    for my $name (@{$plan->{order}}) {
+        my $node = $plan->{nodes}{$name};
+        next unless $node->{type} eq 'publisher';
+        next if $dry_run;
+        verify_input($plan, $node, $node->{staged}, $plan->{trust_db});
+        copy($node->{staged}, "$prereqs/" . basename($node->{staged})) or die "Cannot stage publisher RPM: $!\n";
+        if ($req->{$name}) {
+            copy($node->{staged}, "$runtime/" . basename($node->{staged})) or die "Cannot collect publisher RPM: $!\n";
+        }
+    }
+    sign_and_index_repo($prereqs, $plan) unless $dry_run;
+    native_overlay($plan, $target, $work, $prereqs);
+    my $sequence = 0;
+    for my $name (@{$plan->{order}}) {
+        my $node = $plan->{nodes}{$name};
+        next unless $node->{type} eq 'srpm';
+        my $result = "$work/native-results/$name";
+        my $log = "$logs/native/$name";
+        my $uniqueext = build_mock_uniqueext("$target-$run_id", ++$sequence, $name);
+        my %builder = (%$node, srpm => $node->{staged} // "$work/native-inputs/$name/" . basename($node->{url}));
+        my $command = source_rpm_build_command(\%builder, $target, $uniqueext, $result, $log,
+            "$work/native-source/$name");
+        run_step(step => "Build native prerequisite: $name", log => "$log/run.log",
+            cmd => native_owner_command($plan, $target, $command, $name eq 'procenv' ? 'procenv' : 1000));
+        next if $dry_run;
+        my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$result/*.rpm");
+        validate_outputs($node, \@rpms, 1);
+        for my $rpm (@rpms) {
+            my $base = basename($rpm);
+            die "Conflicting native prerequisite artifact: $base\n" if -e "$prereqs/$base";
+            copy($rpm, "$prereqs/$base") or die "Cannot stage native prerequisite: $!\n";
+            my $id = rpm_identity($rpm);
+            copy($rpm, "$runtime/$base") or die "Cannot collect native output: $!\n" if $req->{$id->{name}};
+        }
+        sign_and_index_repo($prereqs, $plan);
+        my @problems = verify_rpms_checksig($prereqs, $gpg_key_name, $gpg_home, $plan);
+        die "Native prerequisite signature failure: @problems\n" if @problems;
+        open my $ledger, '>>', "$work/native-results.jsonl" or die "Cannot record native result: $!\n";
+        print {$ledger} JSON::PP->new->canonical->encode({name => $name, source_sha256 => $node->{sha256},
+            defines => $node->{defines} // [], patches => [map { {path => $_->{path}, sha256 => $_->{sha256}} } @{$node->{patches} // []}],
+            outputs => [map { {name => rpm_identity($_)->{name}, unsigned_path => $_,
+                unsigned_sha256 => digest_file($_), signed_sha256 => digest_file("$prereqs/" . basename($_))} } @rpms]}) . "\n";
+        close $ledger or die "Cannot close native result ledger: $!\n";
+        push @source_roots, $result;
+        scrub_buildroot($target, $uniqueext, "$log/scrub.log") unless $keep_buildroots;
+    }
+    return ($runtime, \@source_roots);
+}
+
 # Assemble the built per-target repo into the deployable, signed per-EL layout
 # <repo-dep>/rh<rel>/<arch>: copy the binary rpms, sign, createrepo, and drop the
 # xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to xcat.org).
@@ -992,7 +1224,8 @@ sub deploy_target {
     my $rel   = $info->{rel};
     my $src   = $info->{repo_dir};
     my $tarch = $info->{profile}{arch};
-    my $dest  = "$repo_dep/rh$rel/$tarch";
+    my $subdir = openeuler_repo_subdir($tgt) // "rh$rel/$tarch";
+    my $dest  = "$repo_dep/$subdir";
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
 
@@ -1020,8 +1253,8 @@ sub deploy_target {
         # rpm an earlier layout left in the collection. On the STAGE, so the published cell is
         # already correct when it is swapped in.
         remove_genesis_packages($stage, 0) if $genesis_release;
-        sign_and_index_repo($stage);
-        write_dep_repo_metadata($stage, $rel, $tarch);
+        sign_and_index_repo($stage, $NATIVE_PLANS{$tgt});
+        write_dep_repo_metadata($stage, $rel, $tarch, $subdir);
         # Automatic completeness + signature gate on the freshly signed cell -- the single
         # consolidated gate (verify_target_repo, the same one --verify-repo runs). Asserts every
         # manifest-required package is present at its pinned version, the repomd signature verifies,
@@ -1051,7 +1284,7 @@ sub deploy_target {
     remove_tree($old) if -d $old;
 
     my $n = scalar(grep { !/\.src\.rpm$/ } bsd_glob("$dest/*.rpm"));
-    print "Deployed rh$rel/$tarch: $n rpms\n";
+    print "Deployed $subdir: $n rpms\n";
 }
 
 sub publish_genesis_common_repo {
@@ -1176,8 +1409,22 @@ sub createrepo_c_cmd {
 }
 
 sub sign_and_index_repo {
-    my ($dir) = @_;
+    my ($dir, $native) = @_;
     my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
+    if ($native) {
+        my @built;
+        for my $rpm (@rpms) {
+            my $id = rpm_identity($rpm);
+            my $owner = $native->{outputs}{$id->{name}} // die "Undeclared native output: $id->{name}\n";
+            my $node = $native->{nodes}{$owner};
+            if ($node->{type} eq 'publisher') {
+                die "Publisher input changed before signing: $rpm\n" unless digest_file($rpm) eq $node->{sha256};
+            } else {
+                push @built, $rpm;
+            }
+        }
+        @rpms = @built;
+    }
     if ($gpg_sign && @rpms) {
         local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
         run_simple('rpmsign --define ' . shell_quote("%_gpg_name $gpg_key_name")
@@ -1191,21 +1438,26 @@ sub sign_and_index_repo {
         unlink "$repomd.asc" if -f "$repomd.asc";
         run_simple("gpg -a --detach-sign --default-key " . sh_quote($gpg_key_name) . ' ' . sh_quote($repomd));
         run_simple("gpg -a --export " . sh_quote($gpg_key_name) . " > " . sh_quote("$repomd.key"));
+        if ($native) {
+            run_simple('cat ' . sh_quote($native->{publisher_key}) . ' >> ' . sh_quote("$repomd.key"));
+        }
     }
 }
 
 sub write_dep_repo_metadata {
-    my ($dir, $rel, $tarch) = @_;
-    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/rh$rel/$tarch";
-    my $gpgcheck = $gpg_sign ? 1 : 0;
-    my $gpgkey_line = $gpg_sign ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
+    my ($dir, $rel, $tarch, $subdir) = @_;
+    $subdir //= "rh$rel/$tarch";
+    my $baseurl = "https://xcat.org/files/xcat/repos/yum/devel/xcat-dep/$subdir";
+    my $gpgcheck = $gpg_sign || $subdir =~ /^openeuler/ ? 1 : 0;
+    my $gpgkey_line = $gpgcheck ? "gpgkey=$baseurl/repodata/repomd.xml.key" : "# gpgkey=";
+    my $label = $subdir =~ /^openeuler/ ? $subdir : "rh$rel $tarch";
     # repo_gpgcheck=1 makes clients verify the DETACHED repomd.xml signature (repomd.xml.asc) against
     # gpgkey before trusting the metadata -- sign_and_index_repo produces both, so enforce it. Mirrors
     # gpgcheck: off when the repo is unsigned.
     open my $r, '>', "$dir/xcat-dep.repo" or die "Cannot write $dir/xcat-dep.repo: $!\n";
     print {$r} <<"EOF";
 [xcat-dep]
-name=xCAT 2 dependencies (rh$rel $tarch)
+name=xCAT 2 dependencies ($label)
 baseurl=$baseurl
 enabled=1
 gpgcheck=$gpgcheck
@@ -1215,7 +1467,7 @@ EOF
     close $r;
 
     write_local_repo_helper($dir);
-    write_buildinfo($dir, "rh$rel/$tarch");
+    write_buildinfo($dir, $subdir);
 }
 
 sub write_common_repo_metadata {
@@ -1273,6 +1525,10 @@ sub write_buildinfo {
     my $build_time = strftime("%a %b %e %H:%M:%S %Z %Y", gmtime($SOURCE_DATE_EPOCH));
     my $build_machine = `hostname`; chomp $build_machine;
     my $commit = `git -C "$repo_root" rev-parse HEAD 2>/dev/null`; chomp $commit;
+    if (!$commit && -f "$repo_root/Gitinfo") {
+        ($commit) = read_lines("$repo_root/Gitinfo");
+        $commit =~ s/\s+\z// if defined($commit);
+    }
     $commit ||= 'unknown';
     my $commit_short = substr($commit, 0, 7);
     my $release = strftime('snap%Y%m%d%H%M', gmtime($SOURCE_DATE_EPOCH));
@@ -1339,7 +1595,9 @@ Options:
                           the target is present at a version satisfying its pin AND that the repomd
                           is signed by --gpg-key-name; exits 0 if complete, or lists each MISSING/
                           VERSION/UNSIGNED/WRONGKEY problem and fails. The target is derived from the path
-                          (.../rh<N>/<arch> -> alma+epel-<N>-<arch>) unless --target is given; the
+                          (.../rh<N>/<arch> -> alma+epel-<N>-<arch>, or
+                          .../openeuler<releaseSP>/<arch> -> openeuler-<releaseSP>-<arch>)
+                          unless --target is given; the
                           manifest and gpg key/home come from the usual options. Use alone.
   --no-verify-repo        Suppress the AUTOMATIC post-build completeness+signature gate that runs
                           after each target's repo is finalized (default: verification ON)
@@ -1349,7 +1607,12 @@ Options:
   --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>, or a forcearch
                           config from mock-configs/ such as rocky-10-riscv64-xcat, which
                           cross-builds that arch on this host); default is the host arch
-                          across rh8, rh9 and rh10
+                          across rh8, rh9 and rh10. On openEuler the default retains the exact
+                          host release and service pack, e.g. openeuler-24.03sp3-x86_64.
+                          Native targets require the matching host architecture and deploy to
+                          <repo-dep>/openeuler<releaseSP>/<arch> with signature checks enabled.
+                          The build host must provide mock and its Perl dependencies; openEuler
+                          24.03 LTS-SP3 can build older releases in their exact native targets.
   --nproc N               Parallel jobs for buildrpms.pl (default: 1)
   --parallel-builds N     Max concurrent top-level build steps within one EL target (default: auto)
   --parallel-targets N    Concurrent EL targets (rh8/rh9/rh10). 0/auto = all at once, 1 = serial,
@@ -1669,7 +1932,7 @@ sub rpm_vercmp_segment {
 # check: it verifies each rpm's header/payload digests AND that the signature is by this key (NOKEY /
 # NOT OK => a real failure, since the key IS imported). Returns @problems.
 sub verify_rpms_checksig {
-    my ($dir, $keyname, $home) = @_;
+    my ($dir, $keyname, $home, $native) = @_;
     my @rpms = grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
     return () unless @rpms;
     require_command('rpmkeys');
@@ -1682,9 +1945,27 @@ sub verify_rpms_checksig {
     my $dbopt = '--dbpath ' . sh_quote($tmpdb);
     system("rpmkeys $dbopt --import " . sh_quote($keyfile) . ' >/dev/null 2>&1') == 0
         or return ("SIGKEY: rpmkeys --import of '$keyname' into the temp keyring failed");
+    my $publisher_db;
+    if ($native) {
+        my $trust = tempdir('native-publisher-XXXXXXXX', TMPDIR => 1, CLEANUP => 1);
+        my $ok = eval { $publisher_db = publisher_trust($native, $trust); 1; };
+        return ("SIGKEY: $@") unless $ok;
+    }
     my @problems;
     for my $rpm (@rpms) {
-        my $out = `rpmkeys $dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
+        my $rpm_dbopt = $dbopt;
+        if ($native) {
+            my $id = rpm_identity($rpm);
+            my $owner = $native->{outputs}{$id->{name}};
+            if (!$owner) { push @problems, "Undeclared native output: $id->{name}"; next; }
+            my $node = $native->{nodes}{$owner};
+            if ($node->{type} eq 'publisher') {
+                my $ok = eval { verify_input($native, $node, $rpm, $publisher_db); 1; };
+                push @problems, $@ unless $ok;
+                next;
+            }
+        }
+        my $out = `rpmkeys $rpm_dbopt --checksig -v ${\ sh_quote($rpm)} 2>&1`;
         push @problems, rpmkeys_checksig_problem(basename($rpm), $? >> 8, $out);
     }
     return @problems;
@@ -1725,6 +2006,7 @@ sub verify_target_repo {
     my %MAN = read_manifest($manifest);
     my %req = %{ $MAN{$tgt} // {} };
     die "FATAL: no manifest section for target '$tgt' in $manifest\n" if !%req;
+    my $native;
     # The WHOLE manifest, deliberately -- the --skip-* flags are NOT applied here. They say what
     # this INVOCATION built; they never say what the verified repository may be missing. Honouring
     # them let a repo with no xCAT-genesis-base pass whenever the verifying run happened to carry
@@ -1738,6 +2020,10 @@ sub verify_target_repo {
     my %present_evr = map { $_ => rpm_evr($dir, $_) } @names;
     my %expected = map { $_ => $req{$_} } @names;
     my @problems = verify_repo_packages(\%expected, \%present, \%present_evr, \&rpm_vercmp_segment);
+    if ($tgt eq 'openeuler-24.03-ppc64le') {
+        eval { $native = load_inputs($repo_root, \%req); 1 }
+            or push @problems, "Native input catalog: $@";
+    }
 
     # Signature gate: the IO (gpg) lives here; the decision is the pure verify_repo_signature. The
     # pipeline always signs, so a signed repo's repomd MUST be signed by --gpg-key-name. We resolve
@@ -1765,7 +2051,7 @@ sub verify_target_repo {
             require_command('rpm');
             # (a) RPM-native crypto verification: rpmkeys --checksig against an isolated keyring
             # holding only this key verifies every rpm's digests AND that the signature is by the key.
-            push @problems, verify_rpms_checksig($dir, $gpg_key_name, $gpg_home);
+            push @problems, verify_rpms_checksig($dir, $gpg_key_name, $gpg_home, $native);
             # (b) Explicit signer-id origin check kept alongside: assert each rpm's header signature
             # key id is one of this key's ids (primary/subkey).
             my $accept = gpg_key_ids($gpg_key_name, $gpg_home);
@@ -1773,7 +2059,7 @@ sub verify_target_repo {
                 push @problems, "SIGKEY: cannot list key ids for '$gpg_key_name' to verify per-rpm signatures";
             } else {
                 my @rpm_sigs = map { [ basename($_), rpm_signer_keyid($_) ] }
-                               grep { !/\.src\.rpm$/ } glob("$dir/*.rpm");
+                               grep { !/\.src\.rpm$/ && (!$native || !native_publisher_rpm($native, $_)) } glob("$dir/*.rpm");
                 push @problems, verify_rpm_signatures(\@rpm_sigs, $accept);
             }
         }
@@ -1794,6 +2080,13 @@ sub verify_target_repo {
     return 1;
 }
 
+sub native_publisher_rpm {
+    my ($plan, $rpm) = @_;
+    my $id = rpm_identity($rpm);
+    my $owner = $plan->{outputs}{$id->{name}} // return 0;
+    return $plan->{nodes}{$owner}{type} eq 'publisher';
+}
+
 # derive_target_from_repo_path: map a deployed per-target repo path .../rh<N>/<arch> to its manifest
 # target section name alma+epel-<N>-<arch>. Returns undef when the path lacks that rh<N>/<arch> tail,
 # so the standalone --verify-repo mode can require an explicit --target instead.
@@ -1802,6 +2095,9 @@ sub derive_target_from_repo_path {
     my $tgt;
     return $tgt unless defined $dir;
     $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    if ($dir =~ m{/openeuler((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)/(x86_64|ppc64le)/*$}) {
+        $tgt = "openeuler-$1-$2";
+    }
     return $tgt;
 }
 
@@ -2150,4 +2446,3 @@ sub slurp_chomp {
     chomp $line if defined $line;
     return $line // '';
 }
-
