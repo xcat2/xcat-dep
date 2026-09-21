@@ -241,12 +241,14 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     # Not every section is a build target: [common] describes the SHARED repository the
     # OpenEmbedded Genesis release is published into, which no builder produces. Target sections are
     # the ones named after a mock config (<id>+epel-<rel>-<arch>, opensuse-leap-<ver>-<arch>).
-    my @targets = grep { /^[a-z0-9.+-]+-\d+(?:\.\d+)?-[a-z0-9_]+$/ } sort keys %m;
+    my @targets = grep { !/^openeuler-/ && /^[a-z0-9.+-]+-\d+(?:\.\d+)?-[a-z0-9_]+$/ } sort keys %m;
     cmp_ok(scalar(@targets), '>=', 1, 'packages-manifest.conf has at least one target section');
     ok(!grep({ $_ eq 'common' } @targets), 'the shared-repo section is not treated as a build target');
     my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
-    is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
+    is_deeply(\@missing, [], 'conserver-xcat is present in every legacy manifest target section')
         or diag("missing conserver-xcat in: @missing");
+    my @native_missing = grep { /^openeuler-/ && !exists $m{$_}{goconserver} } sort keys %m;
+    is_deeply(\@native_missing, [], 'native manifest targets retain goconserver');
 }
 
 # ---- bump_dep_release_suffix: stamps xcat-dep specs, prunes nested xcat-core, idempotent --------
