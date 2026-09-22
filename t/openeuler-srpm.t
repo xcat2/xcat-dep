@@ -1,9 +1,10 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
+use Cwd qw(abs_path cwd);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
+use File::Spec;
 use File::Temp qw(tempdir);
 use FindBin qw($RealBin);
 use JSON::PP qw(decode_json);
@@ -31,6 +32,11 @@ my $key_home = "$tmp/gnupg";
 my $key_name = 'source-contract@example.invalid';
 make_path("$tmp/bin", "$tmp/fixture/SPECS", $key_home);
 chmod 0700, $key_home;
+if ($ENV{XCAT_TEST_GENESIS_SIGNING_ONLY}) {
+    test_genesis_signing();
+    done_testing();
+    exit;
+}
 is(run_capture("$tmp/key.log", 'gpg', '--homedir', $key_home, '--batch', '--pinentry-mode', 'loopback',
     '--passphrase', '', '--quick-generate-key', $key_name, 'rsa2048', 'sign', '0'), 0,
     'create a private ephemeral signing identity for the repository gate')
@@ -130,7 +136,7 @@ PERL
     local $ENV{GNUPGHOME} = $opt{env_home} // '';
     my @options = @{$opt{options} // []};
     unshift @options, '--gpg-sign', '--gpg-key-name', $key_name,
-        ($opt{default_home} ? () : ('--gpg-home', $key_home))
+        ($opt{default_home} ? () : ('--gpg-home', $opt{key_home} // $key_home))
         if !$opt{unsigned} && $selected =~ /^openeuler-/;
     my $rc = run_capture("$tmp/$name.log", @namespace, $^X, $collector,
         '--repo-root', $root, '--xcat-source', $root, '--target', $selected,
@@ -258,22 +264,33 @@ my $incomplete = scenario('incomplete', success => 1, packages => "python3-scp=0
 isnt($incomplete->{rc}, 0, 'a successful source rebuild does not bypass the manifest gate');
 like($incomplete->{log}, qr/MISSING closure-gap\b/, 'the manifest gate identifies the missing required package');
 
-for my $home ('explicit', 'default', 'environment') {
-    my $result = scenario("genesis-$home", packages => 'xCAT-genesis-base=2.19.0',
-        default_home => $home ne 'explicit', env_home => $home eq 'environment' ? $key_home : '',
-        options => ['--dry-run', '--no-skip-genesis', '--skip-xcat-dep']);
-    is($result->{rc}, 0, "$home keyring native Genesis planning completes") or diag($result->{log});
-    my ($command) = grep { /^\+ .*buildrpms\.pl/ } split /\n/, $result->{log};
-    my $home_path = $home eq 'default' ? "$result->{root}/.gnupg" : $key_home;
-    like($command // '', qr/--gpg-sign --gpg-key-name '\Q$key_name\E' --gpg-home '\Q$home_path\E'/,
-        "$home parent signing identity reaches the Genesis child despite its private HOME");
-    is_deeply($result->{calls}, [], "$home Genesis planning runs no mock command");
-}
-my $legacy_genesis = scenario('genesis-legacy', target => 'alma+epel-9-x86_64', packages => 'xCAT-genesis-base=2.19.0',
-    options => ['--dry-run', '--no-skip-genesis', '--skip-xcat-dep', '--gpg-sign', '--gpg-home', $key_home, '--gpg-key-name', $key_name]);
-is($legacy_genesis->{rc}, 0, 'legacy signed owner still plans Genesis');
-my ($legacy_command) = grep { /^\+ .*buildrpms\.pl/ } split /\n/, $legacy_genesis->{log};
-like($legacy_command // '', qr/--package xCAT-genesis-base/, 'legacy plan contains the production child command');
-unlike($legacy_command // '', qr/--gpg-(?:sign|home|key-name)/, 'legacy Genesis child invocation remains unchanged');
-
+test_genesis_signing();
 done_testing();
+
+sub test_genesis_signing {
+    for my $home ('explicit', 'default', 'environment', 'relative-explicit', 'relative-environment', 'relative-missing') {
+        my $relative = File::Spec->abs2rel($key_home, cwd());
+        $relative .= '/not-created' if $home eq 'relative-missing';
+        my $environment = $home =~ /environment/ ? ($home eq 'environment' ? $key_home : $relative) : '';
+        my $result = scenario("genesis-$home", packages => 'xCAT-genesis-base=2.19.0',
+            missing => 1, default_home => ($home eq 'default' || $home =~ /environment/ ? 1 : 0), env_home => $environment,
+            key_home => $home =~ /^relative-/ ? $relative : $key_home,
+            options => ['--dry-run', '--no-skip-genesis', '--skip-xcat-dep']);
+        is($result->{rc}, 0, "$home keyring native Genesis planning completes") or diag($result->{log});
+        my ($command) = grep { /^\+ .*buildrpms\.pl/ } split /\n/, $result->{log};
+        my $home_path = $home eq 'default' ? "$result->{root}/.gnupg" : $key_home;
+        $home_path = File::Spec->rel2abs($relative, cwd()) if $home =~ /^relative-/;
+        like($command // '', qr/--gpg-sign --gpg-key-name '\Q$key_name\E' --gpg-home '\Q$home_path\E'/,
+            "$home parent signing identity reaches the Genesis child despite its private HOME");
+        is_deeply($result->{calls}, [], "$home Genesis planning runs no mock command");
+        isnt($result->{root}, cwd(), "$home child source directory differs from the parent signing directory");
+        like($result->{log}, qr/\(cwd: \Q$result->{root}\E\)/, "$home child command runs in its source directory");
+    }
+    my $legacy_genesis = scenario('genesis-legacy', target => 'alma+epel-9-x86_64', packages => 'xCAT-genesis-base=2.19.0',
+        missing => 1,
+        options => ['--dry-run', '--no-skip-genesis', '--skip-xcat-dep', '--gpg-sign', '--gpg-home', $key_home, '--gpg-key-name', $key_name]);
+    is($legacy_genesis->{rc}, 0, 'legacy signed owner still plans Genesis');
+    my ($legacy_command) = grep { /^\+ .*buildrpms\.pl/ } split /\n/, $legacy_genesis->{log};
+    like($legacy_command // '', qr/--package xCAT-genesis-base/, 'legacy plan contains the production child command');
+    unlike($legacy_command // '', qr/--gpg-(?:sign|home|key-name)/, 'legacy Genesis child invocation remains unchanged');
+}
