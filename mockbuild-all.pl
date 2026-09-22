@@ -395,6 +395,9 @@ my @build_targets = $target
     : defined($native_target) ? ($native_target)
     : map { resolve_mock_cfg($os_id, $_, $host_arch) } (8, 9, 10);
 
+die "openEuler repository publication requires --gpg-sign\n"
+    if !$dry_run && !$gpg_sign && grep { defined(openeuler_repo_subdir($_)) } @build_targets;
+
 # What a target builds. The mock-core-configs targets (<os>+epel-<rel>-<arch>) build every
 # dep natively on the host arch. The forcearch targets shipped in mock-configs/ cross-build
 # another arch that has no EPEL: the x86-only bootloaders are not built for it, the EPEL-only
@@ -763,6 +766,10 @@ if (!$skip_build) {
             '--force',
             '--verbose',
             '--xcat_dep_path', shell_quote($repo_root),
+            (defined(openeuler_repo_subdir($target)) && $gpg_sign
+                ? ('--gpg-sign', '--gpg-key-name', shell_quote($gpg_key_name),
+                   '--gpg-home', shell_quote($gpg_home ne '' ? $gpg_home
+                       : $ENV{GNUPGHOME} || "$ENV{HOME}/.gnupg")) : ()),
         );
         $cmd = native_owner_command($native, $target, $cmd, 0) if $native;
         push @build_steps, {
@@ -1602,6 +1609,8 @@ Options:
   --no-verify-repo        Suppress the AUTOMATIC post-build completeness+signature gate that runs
                           after each target's repo is finalized (default: verification ON)
   --gpg-sign              Sign RPMs and repomd.xml in every published repository
+                          Required for native openEuler publication, including --skip-build.
+                          Standalone --verify-repo consumes existing signed output.
   --gpg-key-name NAME     GPG key name (default: "xCAT Signing Key")
   --gpg-home PATH         GNUPGHOME for signing (default: system keyring)
   --target NAME           Build only this target (<ID>+epel-<REL>-<ARCH>, or a forcearch
