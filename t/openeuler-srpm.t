@@ -33,7 +33,7 @@ make_path("$tmp/bin", "$tmp/fixture/SPECS", $key_home);
 chmod 0700, $key_home;
 is(run_capture("$tmp/key.log", 'gpg', '--homedir', $key_home, '--batch', '--pinentry-mode', 'loopback',
     '--passphrase', '', '--quick-generate-key', $key_name, 'rsa2048', 'sign', '0'), 0,
-    'create a private ephemeral signing identity for the unsigned-output gate')
+    'create a private ephemeral signing identity for the repository gate')
     or BAIL_OUT(read_binary("$tmp/key.log"));
 END {
     run_capture("$tmp/key-cleanup.log", 'gpgconf', '--homedir', $key_home, '--kill', 'gpg-agent')
@@ -103,6 +103,7 @@ sub scenario {
     write_binary("$root/packages-manifest.conf", "[$selected]\n$manifest\n");
     write_binary("$root/Gitinfo", ('a' x 40) . "-dirty-snapshot-" . ('b' x 64) . "\n");
     write_binary("$root/Gitepoch", "$epoch\n");
+    write_binary("$root/buildrpms.pl", "die 'Genesis dry-run must not execute its child';\n");
     write_binary("$root/grub2-xcat/grub2-xcat.spec", "Name: grub2-xcat\nRelease: 1\n");
     write_binary("$root/grub2-xcat/mockbuild.pl", <<'PERL');
 use strict;
@@ -125,7 +126,12 @@ PERL
     local $ENV{SCP_MUTATE_SOURCE} = $opt{mutate} ? $input : '';
     local $ENV{SCP_FIXTURE_BINARY} = "$tmp/fixture/RPMS/noarch/python3-scp-0.14.5-1.noarch.rpm";
     local $ENV{SCP_FIXTURE_SOURCE} = "$tmp/fixture/SRPMS/python3-scp-0.14.5-1.src.rpm";
+    local $ENV{HOME} = $root;
+    local $ENV{GNUPGHOME} = $opt{env_home} // '';
     my @options = @{$opt{options} // []};
+    unshift @options, '--gpg-sign', '--gpg-key-name', $key_name,
+        ($opt{default_home} ? () : ('--gpg-home', $key_home))
+        if !$opt{unsigned} && $selected =~ /^openeuler-/;
     my $rc = run_capture("$tmp/$name.log", @namespace, $^X, $collector,
         '--repo-root', $root, '--xcat-source', $root, '--target', $selected,
         '--output', $out, '--repo-dep', $repo, '--run-id', 'source-contract',
@@ -197,7 +203,7 @@ isnt($cross->{rc}, 0, 'native cross-architecture source build is rejected');
 like($cross->{log}, qr/requires a ppc64le build host/, 'cross rejection names the native host requirement');
 is_deeply($cross->{calls}, [], 'cross rejection precedes every build command');
 
-my $dry = scenario('dry', options => ['--dry-run']);
+my $dry = scenario('dry', unsigned => 1, options => ['--dry-run']);
 is($dry->{rc}, 0, 'the selected source has a successful dry-run plan');
 like($dry->{log}, qr/--rebuild.*python-scp-0\.14\.5-1\.oe2403\.src\.rpm/, 'dry run reports the source rebuild');
 is_deeply($dry->{calls}, [], 'dry run executes no mock action');
@@ -217,22 +223,27 @@ is(digest_file($restamp->{input}), $hash, 'Release restamping preserves the offi
 my $empty = scenario('empty', success => 1, empty => 1);
 isnt($empty->{rc}, 0, 'mock success without an RPM cannot close the owner build');
 like($empty->{log}, qr/No binary RPMs were collected/, 'empty results reach the existing collection gate');
-my $unsigned = scenario('unsigned', success => 1,
-    options => ['--gpg-home', $key_home, '--gpg-key-name', $key_name]);
-isnt($unsigned->{rc}, 0, 'unsigned command-double output cannot pass the repository signature gate');
-like($unsigned->{log}, qr/UNSIGNED repomd/,
-    'the unsigned output reports a repository trust failure');
-like($unsigned->{log}, qr/UNSIGNED rpm python3-scp-0\.14\.5-1\.noarch\.rpm/,
-    'the existing gate also rejects the unsigned binary');
-is(read_binary("$unsigned->{repo}/openeuler20.03sp4/x86_64/sentinel"), 'previous repository',
-    'a publication gate failure preserves the previous repository');
+for my $skip (0, 1) {
+    my $unsigned = scenario("unsigned-$skip", unsigned => 1, success => 1,
+        options => ['--no-verify-repo', ($skip ? ('--skip-build', '--collect-dir', "$tmp/fixture/RPMS/noarch") : ())]);
+    isnt($unsigned->{rc}, 0, 'unsigned native publication is rejected even when verification is disabled');
+    like($unsigned->{log}, qr/openEuler repository publication requires --gpg-sign/, 'the owner reports the signing requirement');
+    is_deeply($unsigned->{calls}, [], 'unsigned publication fails before every mock action');
+    my $sentinel = "$unsigned->{repo}/openeuler20.03sp4/x86_64/sentinel";
+    is(-f $sentinel ? read_binary($sentinel) : '', 'previous repository', 'rejection preserves the previous repository');
+    my $metadata = "$unsigned->{repo}/openeuler20.03sp4/x86_64/xcat-dep.repo";
+    is(-f $metadata ? read_binary($metadata) : '', '', 'rejection emits no misleading native repository configuration');
+}
 my $collected = scenario('collection', success => 1, options => ['--no-verify-repo']);
 is($collected->{rc}, 0, 'the debug collection path accepts successful RPM-producing command output')
     or diag($collected->{log});
 my $published = "$collected->{repo}/openeuler20.03sp4/x86_64/python3-scp-0.14.5-1.noarch.rpm";
 ok(-f $published, 'native binary reaches the exact repository subdirectory');
-is(digest_file($published), digest_file("$tmp/fixture/RPMS/noarch/python3-scp-0.14.5-1.noarch.rpm"),
-    'the existing collector preserves binary bytes') if -f $published;
+is(capture_command('rpm', '-qp', '--qf', '%{SIGMD5}', $published),
+    capture_command('rpm', '-qp', '--qf', '%{SIGMD5}', "$tmp/fixture/RPMS/noarch/python3-scp-0.14.5-1.noarch.rpm"),
+    'signing preserves the collected RPM header and payload digest') if -f $published;
+ok(-s "$collected->{repo}/openeuler20.03sp4/x86_64/repodata/repomd.xml.key",
+    'signed native publication exports its configured repository key');
 ok(-f "$collected->{out}/mockbuild-all/$target-source-contract/repo-src/python3-scp-0.14.5-1.src.rpm",
     'the existing collector also retains the generated source RPM');
 
@@ -246,5 +257,23 @@ is_deeply($replay->{calls}, [], 'build-free collection executes no source action
 my $incomplete = scenario('incomplete', success => 1, packages => "python3-scp=0.14.5\nclosure-gap=1");
 isnt($incomplete->{rc}, 0, 'a successful source rebuild does not bypass the manifest gate');
 like($incomplete->{log}, qr/MISSING closure-gap\b/, 'the manifest gate identifies the missing required package');
+
+for my $home ('explicit', 'default', 'environment') {
+    my $result = scenario("genesis-$home", packages => 'xCAT-genesis-base=2.19.0',
+        default_home => $home ne 'explicit', env_home => $home eq 'environment' ? $key_home : '',
+        options => ['--dry-run', '--no-skip-genesis', '--skip-xcat-dep']);
+    is($result->{rc}, 0, "$home keyring native Genesis planning completes") or diag($result->{log});
+    my ($command) = grep { /^\+ .*buildrpms\.pl/ } split /\n/, $result->{log};
+    my $home_path = $home eq 'default' ? "$result->{root}/.gnupg" : $key_home;
+    like($command // '', qr/--gpg-sign --gpg-key-name '\Q$key_name\E' --gpg-home '\Q$home_path\E'/,
+        "$home parent signing identity reaches the Genesis child despite its private HOME");
+    is_deeply($result->{calls}, [], "$home Genesis planning runs no mock command");
+}
+my $legacy_genesis = scenario('genesis-legacy', target => 'alma+epel-9-x86_64', packages => 'xCAT-genesis-base=2.19.0',
+    options => ['--dry-run', '--no-skip-genesis', '--skip-xcat-dep', '--gpg-sign', '--gpg-home', $key_home, '--gpg-key-name', $key_name]);
+is($legacy_genesis->{rc}, 0, 'legacy signed owner still plans Genesis');
+my ($legacy_command) = grep { /^\+ .*buildrpms\.pl/ } split /\n/, $legacy_genesis->{log};
+like($legacy_command // '', qr/--package xCAT-genesis-base/, 'legacy plan contains the production child command');
+unlike($legacy_command // '', qr/--gpg-(?:sign|home|key-name)/, 'legacy Genesis child invocation remains unchanged');
 
 done_testing();
