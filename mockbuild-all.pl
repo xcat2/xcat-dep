@@ -9,6 +9,7 @@ use File::Copy qw(copy);
 use File::Find qw(find);
 use File::Glob qw(bsd_glob);
 use File::Path qw(make_path remove_tree);
+use File::Spec;
 use File::Temp qw(tempdir tempfile);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
@@ -768,8 +769,8 @@ if (!$skip_build) {
             '--xcat_dep_path', shell_quote($repo_root),
             (defined(openeuler_repo_subdir($target)) && $gpg_sign
                 ? ('--gpg-sign', '--gpg-key-name', shell_quote($gpg_key_name),
-                   '--gpg-home', shell_quote($gpg_home ne '' ? $gpg_home
-                       : $ENV{GNUPGHOME} || "$ENV{HOME}/.gnupg")) : ()),
+                   '--gpg-home', shell_quote(File::Spec->rel2abs($gpg_home ne '' ? $gpg_home
+                       : $ENV{GNUPGHOME} || "$ENV{HOME}/.gnupg"))) : ()),
         );
         $cmd = native_owner_command($native, $target, $cmd, 0) if $native;
         push @build_steps, {
