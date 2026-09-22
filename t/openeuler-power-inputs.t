@@ -241,6 +241,44 @@ for my $case (['publisher-elf', qr/ELF payload/], ['publisher-arch', qr/not a no
     dies_like(sub { verify_input($plan, \%node, $signed{$case->[0]}, $plan->{trust_db}) }, $case->[1], "$case->[0] is rejected using the real RPM payload/header");
 }
 
+{
+    my ($root) = prepare('standalone-signers');
+    my $dest = "$tmp/standalone-repo";
+    make_path($dest);
+    my $generated = signed_copy($rpm{'native-child'}, 'generated-build-signer', 'build');
+    my $publisher = "$dest/publisher-package-1-1.oe2403.noarch.rpm";
+    my $child = "$dest/native-child-1-1.oe2403.noarch.rpm";
+    copy($signed{'publisher-package'}, $publisher) or die $!;
+    copy($generated, $child) or die $!;
+    is(run_capture("$tmp/standalone-createrepo.log", 'createrepo_c', $dest), 0,
+        'create metadata for the mixed-signer repository');
+    is(run_capture("$tmp/standalone-sign.log", 'gpg', '--homedir', $homes{build}, '--batch', '--yes',
+        '--armor', '--detach-sign', '--default-key', $keys{build}, "$dest/repodata/repomd.xml"), 0,
+        'sign repository metadata with the build key');
+    my @verify = ($^X, $owner, '--repo-root', $root, '--target', $target,
+        '--verify-repo', $dest, '--gpg-home', $homes{build}, '--gpg-key-name', $keys{build});
+    is(run_capture("$tmp/standalone-valid.log", @verify), 0,
+        'standalone native verification accepts each declared signing authority')
+        or diag(read_binary("$tmp/standalone-valid.log"));
+    my $resigned = signed_copy($rpm{'publisher-package'}, 'publisher-build-signer', 'build');
+    copy($resigned, $publisher) or die $!;
+    isnt(run_capture("$tmp/standalone-resigned.log", @verify), 0,
+        'standalone verification rejects a publisher package signed by the build key');
+    like(read_binary("$tmp/standalone-resigned.log"), qr/SHA256 mismatch/,
+        'the publisher failure identifies the changed pinned bytes');
+    copy($signed{'publisher-package'}, $publisher) or die $!;
+    my $wrong_generated = signed_copy($rpm{'native-child'}, 'generated-publisher-signer', 'publisher');
+    copy($wrong_generated, $child) or die $!;
+    isnt(run_capture("$tmp/standalone-wrong-generated.log", @verify), 0,
+        'standalone verification rejects the publisher key for generated output');
+    like(read_binary("$tmp/standalone-wrong-generated.log"), qr/NOKEY|WRONGKEY|checksig/i,
+        'the generated output failure identifies the unexpected signer');
+    copy($generated, $child) or die $!;
+    is(run_capture("$tmp/standalone-restored.log", @verify), 0,
+        'restoring both original package signatures restores standalone acceptance');
+    ok(!-f $ENV{NATIVE_CALLS}, 'standalone verification runs no downloader or builder');
+}
+
 my @namespace = ('unshare', ($> == 0 ? () : ('--user', '--map-root-user')), '--mount', '--propagation', 'private');
 my $can_owner = $host_arch eq 'ppc64le'
     && run_capture("$tmp/mock-loader.log", 'python3', '-c', 'from mockbuild.util import load_config') == 0

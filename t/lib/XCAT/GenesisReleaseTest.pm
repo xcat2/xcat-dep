@@ -13,8 +13,10 @@ use XCAT::BuildUtils qw(
   relative_files
   write_binary
 );
+use XCAT::GenesisRelease qw(deb_package_name rpm_package_name);
 
 our @EXPORT_OK = qw(
+  build_package_release
   copy_tree
   dies_like
   make_export
@@ -23,6 +25,58 @@ our @EXPORT_OK = qw(
   write_checksums
   write_release_manifest
 );
+
+sub build_package_release {
+    my (%args) = @_;
+    my $root = $args{root};
+    my $format = $args{format};
+    my @architectures = @{ $args{architectures} };
+    my $release_root = "$root/release";
+
+    make_path($release_root);
+    for my $architecture (@architectures) {
+        my $export = make_export("$root/exports/$architecture", $architecture);
+        my $packages = "$root/packages/$architecture";
+        die "Cannot package test release for $architecture\n"
+          if run_capture(
+            "$root/package-$architecture.log",
+            $args{packager},
+            '--architecture', $architecture,
+            '--export-dir', $export,
+            '--output-dir', $packages,
+            '--version', $args{version},
+            '--release', $args{release},
+            '--revision', $args{revision},
+            '--source-date-epoch', $args{epoch},
+            '--format', $format,
+        );
+        if ($format eq 'rpm') {
+            my $name = rpm_package_name($architecture);
+            make_path("$release_root/rpm", "$release_root/srpm");
+            copy(
+                "$packages/rpm/$name-$args{version}-$args{release}.noarch.rpm",
+                "$release_root/rpm/$name-$args{version}-$args{release}.noarch.rpm",
+            ) or die $!;
+            copy(
+                "$packages/srpm/$name-$args{version}-$args{release}.src.rpm",
+                "$release_root/srpm/$name-$args{version}-$args{release}.src.rpm",
+            ) or die $!;
+        } else {
+            my $name = deb_package_name($architecture);
+            make_path("$release_root/deb");
+            copy(
+                "$packages/deb/${name}_$args{version}-$args{release}_all.deb",
+                "$release_root/deb/${name}_$args{version}-$args{release}_all.deb",
+            ) or die $!;
+        }
+    }
+    write_release_manifest(
+        $release_root, $args{version}, $args{release}, $args{revision},
+        $args{epoch}, join(',', @architectures), $format,
+    );
+    write_checksums($release_root);
+    return $release_root;
+}
 
 sub make_export {
     my ($directory, $architecture) = @_;
@@ -45,11 +99,12 @@ sub make_export {
 
 sub write_release_manifest {
     my ($directory, $xcat_version, $xcat_release, $revision, $epoch,
-        $architectures, $formats) = @_;
+        $architectures, $formats, $manifest_version) = @_;
+    $manifest_version //= 2;
     write_binary(
         "$directory/release.manifest",
         "format=xcat-genesis-packages\n"
-          . "version=1\n"
+          . "version=$manifest_version\n"
           . "xcat_version=$xcat_version\n"
           . "xcat_release=$xcat_release\n"
           . "xcat_revision=$revision\n"

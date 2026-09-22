@@ -124,6 +124,10 @@ PERL
     copy($source, $input) or die $! unless $opt{missing};
     write_binary($input, 'corrupt') if $opt{corrupt};
     write_binary("$repo/openeuler20.03sp4/x86_64/sentinel", 'previous repository');
+    for my $cell (keys %{$opt{published} // {}}) {
+        make_path("$repo/$cell");
+        copy($opt{published}{$cell}, "$repo/$cell/python3-scp-0.14.5-1.noarch.rpm") or die $!;
+    }
     local $ENV{PATH} = "$tmp/bin:$ENV{PATH}";
     local $ENV{MOCKBUILD_ALL_MOUNTNS} = 1;
     local $ENV{SCP_CALLS} = "$tmp/$name calls.jsonl";
@@ -252,6 +256,32 @@ ok(-s "$collected->{repo}/openeuler20.03sp4/x86_64/repodata/repomd.xml.key",
     'signed native publication exports its configured repository key');
 ok(-f "$collected->{out}/mockbuild-all/$target-source-contract/repo-src/python3-scp-0.14.5-1.src.rpm",
     'the existing collector also retains the generated source RPM');
+
+my $unsigned_fixture = "$tmp/fixture/RPMS/noarch/python3-scp-0.14.5-1.noarch.rpm";
+for my $case ([$target, 'openeuler20.03sp4/x86_64', 'rh20.03sp4/x86_64'],
+              ['alma+epel-9-x86_64', 'rh9/x86_64', 'openeuler9/x86_64']) {
+    my ($cell_target, $cell, $decoy) = @$case;
+    my $result = scenario("carry-$cell_target", missing => 1, target => $cell_target,
+        published => {$cell => $published, $decoy => $unsigned_fixture},
+        options => ['--skip-xcat-dep', '--gpg-sign', '--gpg-home', $key_home, '--gpg-key-name', $key_name]);
+    is($result->{rc}, 0, "$cell_target carries the signed skipped package from its own published cell")
+        or diag($result->{log});
+    my $carried = "$result->{out}/mockbuild-all/$cell_target-source-contract/repo/x86_64/python3-scp-0.14.5-1.noarch.rpm";
+    ok(-f $carried, "$cell_target includes the carried package in this run's repository");
+    is(capture_command('rpm', '-qp', '--qf', '%{SIGMD5}', $carried),
+        capture_command('rpm', '-qp', '--qf', '%{SIGMD5}', $published), "$cell_target preserves the carried payload") if -f $carried;
+    is_deeply($result->{calls}, [], "$cell_target carry-over executes no build command");
+}
+my $untrusted = scenario('carry-unsigned', missing => 1,
+    published => {'openeuler20.03sp4/x86_64' => $unsigned_fixture}, options => ['--skip-xcat-dep']);
+isnt($untrusted->{rc}, 0, 'unsigned native carry-over fails before publication');
+like($untrusted->{log}, qr/not signed by the configured key/, 'native carry-over reports the trust failure');
+is(read_binary("$untrusted->{repo}/openeuler20.03sp4/x86_64/sentinel"), 'previous repository',
+    'rejected native carry-over preserves the published repository');
+my $wrong_cell = scenario('carry-wrong-cell', missing => 1,
+    published => {'rh20.03sp4/x86_64' => $published}, options => ['--skip-xcat-dep']);
+isnt($wrong_cell->{rc}, 0, 'a signed package in the EL-shaped path cannot fill a native cell');
+like($wrong_cell->{log}, qr/MISSING python3-scp/, 'the native gate reports the package absent from its own cell');
 
 my $skipped = scenario('skip-dep', missing => 1, options => ['--skip-xcat-dep', '--dry-run']);
 is($skipped->{rc}, 0, 'skipping dependency builds does not require the source RPM');

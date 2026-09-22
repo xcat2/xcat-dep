@@ -8,6 +8,7 @@ use warnings;
 use Exporter 'import';
 use File::Basename qw(basename);
 use File::Copy qw(copy);
+use File::Glob qw(bsd_glob);
 use File::Find;
 use Sys::Hostname;
 use Digest::MD5 qw(md5_hex);
@@ -15,12 +16,14 @@ use Digest::MD5 qw(md5_hex);
 our @EXPORT_OK = qw(
     install_deps_packages install_deps_command missing_perl_modules
     sh_quote print_step
-    version_matches required_pkgs have_rpm read_manifest
+    version_matches required_pkgs skipped_builder carry_over_rpms rpm_name rpm_arch rpm_source_rpm
+    source_package rpm_digests_ok
+    have_rpm read_manifest
     verify_repo_packages verify_repo_signature verify_rpm_signatures
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext
+    build_mock_uniqueext rpm_in_cell
     openeuler_build_target openeuler_repo_subdir
 );
 
@@ -128,6 +131,107 @@ sub required_pkgs {
         && !($skip_perl    && /^perl-/)
         && !($skip_dep     && $_ ne 'xCAT-genesis-base' && $_ !~ /^perl-/)
     } @$pkgs;
+}
+
+# rpm_name: %{name} from the header of one rpm file, undef when rpm cannot read it.
+sub rpm_name {
+    my ($rpm) = @_;
+    my $name = `rpm -qp --qf '%{name}' ${\ sh_quote($rpm)} 2>/dev/null`;
+    return (defined $name && $name ne '') ? $name : undef;
+}
+
+# rpm_digests_ok: whether the header and payload digests of one rpm file verify, signatures aside.
+sub rpm_digests_ok {
+    my ($rpm) = @_;
+    my $out = `rpmkeys --checksig --nosignature -v ${\ sh_quote($rpm)} 2>&1`;
+    return ($? == 0 && $out !~ /NOT OK/i) ? 1 : 0;
+}
+
+# rpm_source_rpm: the %{sourcerpm} header of one rpm file, undef when rpm cannot read it. Every
+# subpackage of one build shares it.
+sub rpm_source_rpm {
+    my ($rpm) = @_;
+    my $srpm = `rpm -qp --qf '%{sourcerpm}' ${\ sh_quote($rpm)} 2>/dev/null`;
+    return (defined $srpm && $srpm =~ /\.src\.rpm$/) ? $srpm : undef;
+}
+
+# source_package: the source package name of a source rpm file name.
+sub source_package {
+    my ($srpm) = @_;
+    return (defined $srpm && $srpm =~ /^(.+)-[^-]+-[^-]+\.src\.rpm$/) ? $1 : undef;
+}
+
+# skipped_builder: whether the builder that produces a source package was skipped by the flags.
+# The classes are those of required_pkgs: xCAT-genesis-base, perl-*, and everything else the
+# xcat-dep builders make. The OpenEmbedded Genesis is published from a release, not built here.
+sub skipped_builder {
+    my ($source, $skipped) = @_;
+    return 0 if $source =~ /^xCAT-genesis-openembedded(?:-|$)/;
+    return $skipped->{genesis} ? 1 : 0 if $source =~ /^xCAT-genesis-base(?:-|$)/;
+    return $skipped->{perl}    ? 1 : 0 if $source =~ /^perl-/;
+    return $skipped->{dep}     ? 1 : 0;
+}
+
+# carry_over_rpms: copy the binary rpms a skipped builder published in $from into the run repository
+# $to, for the builds whose source package the target manifest still names and of which the run
+# carries no member yet. %$skipped holds the
+# genesis, perl and dep flags; @$manifest_names is the target's manifest section; $name_of and
+# $source_of map an rpm path to its package name and its source rpm (rpm_name and rpm_source_rpm
+# in production, injectable for tests), and $trusted says whether an rpm may be re-signed at all
+# (signed by the configured key in production), $arch is the cell's architecture and $arch_of
+# reads an rpm's. A build is selected when one of its rpms is a manifest package, and is then
+# carried whole, subpackages included, so a package the manifest dropped is not republished. The
+# carry-over dies instead of publishing a partial or doubtful set: an unreadable rpm in the cell
+# outside the OpenEmbedded Genesis family, a
+# member of a selected build the key did not sign or of another architecture than the cell's or
+# noarch, or a package name published more than once. Returns the copied basenames.
+sub carry_over_rpms {
+    my ($from, $to, $skipped, $manifest_names, $name_of, $source_of, $trusted, $arch, $arch_of) = @_;
+    my %named = map { $_ => 1 } @$manifest_names;
+    my %staged = map { my $n = $name_of->($_); defined $n ? ($n => 1) : () }
+                 grep { !/\.src\.rpm$/ } bsd_glob("$to/*.rpm");
+    my (%members, %selected, @problems);
+    for my $rpm (sort(bsd_glob("$from/*.rpm"))) {
+        next if $rpm =~ /\.src\.rpm$/;
+        # The OpenEmbedded Genesis is published from a release and pruned by name, so a stale file
+        # of that family is not read at all.
+        next if basename($rpm) =~ /^xCAT-genesis-openembedded-/;
+        my $srpm = $source_of->($rpm);
+        my $name = $name_of->($rpm);
+        my $source = source_package($srpm);
+        if (!defined $source || !defined $name) {
+            push @problems, basename($rpm) . ": header unreadable";
+            next;
+        }
+        next unless skipped_builder($source, $skipped);
+        push @{ $members{$srpm} }, { rpm => $rpm, name => $name };
+        $selected{$srpm} = 1
+            if $named{$name} || ($named{'xCAT-genesis-base'} && $name =~ /^xCAT-genesis-base-/);
+    }
+    my %seen;
+    for my $srpm (sort keys %selected) {
+        for my $m (@{ $members{$srpm} }) {
+            push @problems, basename($m->{rpm}) . ": not signed by the configured key" unless $trusted->($m->{rpm});
+            my $rpm_arch = $arch_of->($m->{rpm});
+            push @problems, basename($m->{rpm}) . ": architecture " . ($rpm_arch // 'unreadable') . " is not $arch or noarch"
+                unless defined $rpm_arch && ($rpm_arch eq $arch || $rpm_arch eq 'noarch');
+            push @problems, "$m->{name}: published more than once" if $seen{ $m->{name} }++ == 1;
+        }
+    }
+    die "FATAL: the published cell $from cannot be carried over:\n  " . join("\n  ", @problems) . "\n"
+        if @problems;
+    my @copied;
+    for my $srpm (sort keys %selected) {
+        # A build the run already carries in part is the run's, whole; mixing generations of one
+        # source package is never right.
+        next if grep { $staged{ $_->{name} } } @{ $members{$srpm} };
+        for my $m (@{ $members{$srpm} }) {
+            my $base = basename($m->{rpm});
+            copy($m->{rpm}, "$to/$base") or die "Failed to carry $m->{rpm} -> $to: $!\n";
+            push @copied, $base;
+        }
+    }
+    return sort @copied;
 }
 
 # verify_repo_packages: the PURE completeness-decision layer of the repo gate. Given the manifest's
@@ -592,6 +696,32 @@ sub bump_dep_release_suffix {
 # their roots apart, so three concurrent el8/el9/el10 ppc64le goconserver builds race in one root.
 # When the id is too long, keep a readable leading token AND append a short digest of the FULL id, so
 # distinct ids always yield distinct uniqueext regardless of where in the string they differ.
+# rpm_arch($rpm): the architecture of an rpm. The header decides when the file can be read, so a
+# renamed file does not pass for another architecture; a bare file name falls back to its suffix.
+sub rpm_arch {
+    my ($rpm) = @_;
+    return unless defined $rpm;
+    if (-f $rpm) {
+        my $arch = `rpm -qp --qf '%{ARCH}' ${\ sh_quote($rpm)} 2>/dev/null`;
+        chomp $arch;
+        return $arch if $arch ne '';
+    }
+    my ($arch) = $rpm =~ /\.([A-Za-z0-9_]+)\.rpm$/;
+    return $arch;
+}
+
+# rpm_in_cell($rpm, $target_arch): whether an rpm belongs in the repository cell of $target_arch.
+# A noarch builder run in another architecture's chroot (the x86 boot loaders for riscv64) can
+# emit that chroot's native rpms beside the noarch one; only noarch and the cell's own
+# architecture are kept.
+sub rpm_in_cell {
+    my ($rpm, $target_arch) = @_;
+    my $arch = rpm_arch($rpm);
+    return 0 unless defined $arch && defined $target_arch;
+    return 1 if $arch eq 'noarch';
+    return $arch eq $target_arch ? 1 : 0;
+}
+
 sub build_mock_uniqueext {
     my ($run, $seq, $label) = @_;
 
