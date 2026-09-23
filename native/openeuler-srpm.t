@@ -10,12 +10,13 @@ use FindBin qw($RealBin);
 use JSON::PP qw(decode_json);
 use Test::More;
 
-use lib "$RealBin/../lib", "$RealBin/lib";
+use lib "$RealBin/../lib", "$RealBin/../t/lib";
 use XCAT::BuildUtils qw(capture_command command_exists digest_file read_binary write_binary);
 use XCAT::GenesisReleaseTest qw(run_capture);
 
 plan skip_all => 'Linux RPM tools and user namespaces required'
-    unless $^O eq 'linux' && !grep { !command_exists($_) } qw(rpm rpmkeys rpmbuild createrepo_c unshare python3 gpg gpgconf);
+    unless $^O eq 'linux' && !grep { !command_exists($_) } qw(rpm rpmkeys rpmbuild createrepo_c unshare gpg gpgconf);
+my $parent_pid = $$;
 my $tmp = tempdir(CLEANUP => 1);
 my @namespace = $> == 0 ? () : ('unshare', '--user', '--map-root-user');
 plan skip_all => 'User namespace unavailable for the collector root check'
@@ -40,10 +41,11 @@ if ($ENV{XCAT_TEST_GENESIS_SIGNING_ONLY}) {
 is(run_capture("$tmp/key.log", 'gpg', '--homedir', $key_home, '--batch', '--pinentry-mode', 'loopback',
     '--passphrase', '', '--quick-generate-key', $key_name, 'rsa2048', 'sign', '0'), 0,
     'create a private ephemeral signing identity for the repository gate')
-    or BAIL_OUT(read_binary("$tmp/key.log"));
+    or die(read_binary("$tmp/key.log"));
 END {
+    local $?;
     run_capture("$tmp/key-cleanup.log", 'gpgconf', '--homedir', $key_home, '--kill', 'gpg-agent')
-        if defined($key_home) && -d $key_home;
+        if defined($parent_pid) && $$ == $parent_pid && defined($key_home) && -d $key_home;
 }
 write_binary("$tmp/fixture/SPECS/python3-scp.spec", <<'SPEC');
 Name: python3-scp
@@ -62,40 +64,8 @@ printf 'fixture\n' > %{buildroot}/usr/share/scp-contract/payload
 SPEC
 is(run_capture("$tmp/fixture.log", 'rpmbuild', '--quiet', '-ba', '--define', "_topdir $tmp/fixture",
     "$tmp/fixture/SPECS/python3-scp.spec"), 0, 'build real RPM fixtures for the command boundary')
-    or BAIL_OUT(read_binary("$tmp/fixture.log"));
-write_binary("$tmp/bin/mock", <<'PYTHON');
-#!/usr/bin/python3
-import hashlib, json, os, pathlib, shutil, sys
-args = sys.argv[1:]
-entry = {'argv': args}
-def option(name):
-    return args[args.index(name) + 1]
-if '-r' in args and pathlib.Path(option('-r')).is_file():
-    entry['config'] = pathlib.Path(option('-r')).read_text()
-if '--spec' in args:
-    entry['spec'] = pathlib.Path(option('--spec')).read_text()
-if '--rebuild' in args:
-    src = pathlib.Path(option('--rebuild'))
-    entry['source'] = str(src)
-    entry['sha256'] = hashlib.sha256(src.read_bytes()).hexdigest()
-with open(os.environ['SCP_CALLS'], 'a') as stream:
-    stream.write(json.dumps(entry) + '\n')
-if any(x.startswith('--scrub=') for x in args):
-    sys.exit(0)
-if '--buildsrpm' in args:
-    dest = pathlib.Path(option('--resultdir')); dest.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(os.environ['SCP_FIXTURE_SOURCE'], dest / 'python3-scp-0.14.5-1.src.rpm')
-    sys.exit(0)
-if os.environ.get('SCP_MUTATE_SOURCE'):
-    with open(os.environ['SCP_MUTATE_SOURCE'], 'ab') as stream:
-        stream.write(b'changed after staging')
-if os.environ.get('SCP_BUILD_STATUS', '43') != '0':
-    sys.exit(43)
-if os.environ.get('SCP_EMPTY_OUTPUT') != '1':
-    dest = pathlib.Path(option('--resultdir')); dest.mkdir(parents=True, exist_ok=True)
-    for key in ('SCP_FIXTURE_BINARY', 'SCP_FIXTURE_SOURCE'):
-        source = pathlib.Path(os.environ[key]); shutil.copyfile(source, dest / source.name)
-PYTHON
+    or die(read_binary("$tmp/fixture.log"));
+copy("$RealBin/fixtures/srpm-mock.pl", "$tmp/bin/mock") or die $!;
 chmod 0755, "$tmp/bin/mock";
 
 sub scenario {

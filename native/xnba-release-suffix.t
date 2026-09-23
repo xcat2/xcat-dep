@@ -11,7 +11,7 @@ use JSON::PP qw(encode_json);
 use Test::More;
 use Text::ParseWords qw(shellwords);
 
-use lib "$RealBin/../lib", "$RealBin/lib";
+use lib "$RealBin/../lib", "$RealBin/../t/lib";
 use XCAT::BuildUtils qw(capture_command command_exists digest_file read_binary write_binary);
 use XCAT::GenesisReleaseTest qw(run_capture);
 

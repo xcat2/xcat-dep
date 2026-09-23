@@ -9,7 +9,7 @@ use FindBin qw($RealBin);
 use JSON::PP;
 use Test::More;
 
-use lib "$RealBin/..", "$RealBin/../lib", "$RealBin/lib";
+use lib "$RealBin/..", "$RealBin/../lib", "$RealBin/../t/lib";
 use MockBuildUtils qw(read_manifest);
 use XCAT::BuildUtils qw(capture_command command_exists digest_file read_binary write_binary);
 use XCAT::GenesisReleaseTest qw(run_capture dies_like);
@@ -22,6 +22,7 @@ plan skip_all => 'Set XCAT_TEST_BUILD_USER to an unprivileged fixture builder' i
 my $build_uid = $> == 0 ? getpwnam($build_user) : $>;
 plan skip_all => 'The fixture builder must be unprivileged' unless defined($build_uid) && $build_uid != 0;
 my @rpm_user = $> == 0 ? ('runuser', '-u', $build_user, '--') : ();
+my $parent_pid = $$;
 my $tmp = tempdir(CLEANUP => !$ENV{XCAT_TEST_KEEP});
 diag("native input fixtures: $tmp");
 my $repo = abs_path("$RealBin/..");
@@ -32,7 +33,7 @@ my $epoch = 1788718796;
 my $host_arch = capture_command('uname', '-m');
 my %manifest = read_manifest("$repo/packages-manifest.conf");
 my $production_plan = eval { load_inputs($repo, $manifest{$target}); };
-ok($production_plan, 'the shipped full POWER manifest has an executable native input plan') or BAIL_OUT($@);
+ok($production_plan, 'the shipped full POWER manifest has an executable native input plan') or die($@);
 is($production_plan->{nodes}{'xCAT-genesis-base'}{build_uid}, 0, 'the shipped Genesis owner declares its root assembly exception');
 my %homes;
 my %keys;
@@ -46,14 +47,15 @@ for my $key (qw(publisher build foreign)) {
     chmod 0700, $home;
     is(run_capture("$tmp/key-$key.log", 'gpg', '--homedir', $home, '--batch', '--pinentry-mode', 'loopback',
         '--passphrase', '', '--quick-generate-key', "$key\@example.invalid", 'rsa2048', 'sign', '0'), 0,
-        "create private $key key") or BAIL_OUT(read_binary("$tmp/key-$key.log"));
+        "create private $key key") or die(read_binary("$tmp/key-$key.log"));
     my $listing = capture_command('gpg', '--homedir', $home, '--with-colons', '--list-keys');
     ($keys{$key}) = $listing =~ /^fpr:::::::::([0-9A-F]+):/m;
     write_binary("$home/public.asc", capture_command('gpg', '--homedir', $home, '--armor', '--export', $keys{$key}));
 }
 END {
+    local $?;
     for my $home (values %homes) {
-        run_capture("$home/cleanup.log", 'gpgconf', '--homedir', $home, '--kill', 'gpg-agent') if -d $home;
+        run_capture("$home/cleanup.log", 'gpgconf', '--homedir', $home, '--kill', 'gpg-agent') if defined($parent_pid) && $$ == $parent_pid && -d $home;
     }
 }
 
@@ -84,7 +86,7 @@ SPEC
     write_binary("$tmp/rpmbuild/SPECS/$name.spec", $spec);
     is(run_capture("$tmp/fixture-$name.log", @rpm_user, 'rpmbuild', '-ba', '--define', "_topdir $tmp/rpmbuild",
         "$tmp/rpmbuild/SPECS/$name.spec"), 0, "build real $name fixture with nonroot check")
-        or BAIL_OUT(read_binary("$tmp/fixture-$name.log"));
+        or die(read_binary("$tmp/fixture-$name.log"));
     $rpm{$name} = "$tmp/rpmbuild/RPMS/$arch/$name-1-1.oe2403.$arch.rpm";
     $rpm{"$name-src"} = "$tmp/rpmbuild/SRPMS/$name-1-1.oe2403.src.rpm";
 }
@@ -96,7 +98,7 @@ sub signed_copy {
     local $ENV{GNUPGHOME} = $homes{$key};
     is(run_capture("$tmp/sign-$name.log", 'rpmsign', '--define', "_gpg_name $keys{$key}",
         '--define', '__gpg /usr/bin/gpg', '--addsign', $dest), 0, "sign $name with $key key")
-        or BAIL_OUT(read_binary("$tmp/sign-$name.log"));
+        or die(read_binary("$tmp/sign-$name.log"));
     return $dest;
 }
 my %signed;
@@ -105,50 +107,8 @@ for my $name (qw(native-leaf-src native-child-src publisher-package publisher-el
 }
 my $foreign = signed_copy($rpm{'native-leaf-src'}, 'foreign-source', 'foreign');
 
-write_binary("$tmp/bin/wget", <<'PY');
-#!/usr/bin/python3
-import json, os, pathlib, shutil, sys
-args = sys.argv[1:]
-source = json.loads(pathlib.Path(os.environ['NATIVE_DOWNLOADS']).read_text())[args[-1]]
-with open(os.environ['NATIVE_CALLS'], 'a') as f: f.write(json.dumps({'wget': args[-1]}) + '\n')
-shutil.copyfile(source, args[args.index('-O')+1])
-PY
-write_binary("$tmp/bin/mock", <<'PY');
-#!/usr/bin/python3
-import json, os, pathlib, shutil, subprocess, sys
-args = sys.argv[1:]
-call = {'mock': args}
-def value(name): return args[args.index(name)+1]
-if '--rebuild' in args or '--buildsrpm' in args:
-    loader = '''import json, pathlib, sys, mockbuild
-from mockbuild.util import load_config
-config = load_config('/etc/mock', sys.argv[1], None, 'native-contract', str(pathlib.Path(mockbuild.__file__).parent))
-print(json.dumps({'uid': config['chrootuid'], 'dnf': config['dnf.conf']}))
-'''
-    config = subprocess.run([sys.executable, '-c', loader, value('-r')],
-                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    call['config_rc'] = config.returncode
-    if config.returncode:
-        print(config.stdout)
-        sys.exit(config.returncode)
-if '--rebuild' in args:
-    name = pathlib.Path(value('--rebuild')).name.split('-1-1.oe2403')[0]
-    call['name'] = name
-if '--buildsrpm' in args:
-    call['spec'] = pathlib.Path(value('--spec')).read_text()
-with open(os.environ['NATIVE_CALLS'], 'a') as f: f.write(json.dumps(call) + '\n')
-if '--buildsrpm' in args:
-    dest = pathlib.Path(value('--resultdir')); dest.mkdir(parents=True, exist_ok=True)
-    source = json.loads(pathlib.Path(os.environ['NATIVE_OUTPUTS']).read_text())['native-leaf'][1]
-    shutil.copyfile(source, dest / pathlib.Path(source).name)
-    sys.exit(0)
-if '--rebuild' not in args: sys.exit(0)
-if name == os.environ.get('NATIVE_FAIL'): sys.exit(42)
-dest = pathlib.Path(value('--resultdir')); dest.mkdir(parents=True, exist_ok=True)
-if name == os.environ.get('NATIVE_EMPTY'): sys.exit(0)
-fixtures = json.loads(pathlib.Path(os.environ['NATIVE_OUTPUTS']).read_text())
-for source in fixtures[name]: shutil.copyfile(source, dest / pathlib.Path(source).name)
-PY
+copy("$RealBin/fixtures/power-wget.pl", "$tmp/bin/wget") or die $!;
+copy("$RealBin/fixtures/power-mock.py", "$tmp/bin/mock") or die $!;
 chmod 0755, "$tmp/bin/wget", "$tmp/bin/mock";
 local $ENV{PATH} = "$tmp/bin:$ENV{PATH}";
 local $ENV{NATIVE_DOWNLOADS} = "$tmp/downloads.json";

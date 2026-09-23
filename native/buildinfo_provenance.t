@@ -7,13 +7,14 @@ use File::Temp qw(tempdir);
 use FindBin qw($RealBin);
 use Test::More;
 
-use lib "$RealBin/../lib", "$RealBin/lib";
+use lib "$RealBin/../lib", "$RealBin/../t/lib";
 use XCAT::BuildUtils qw(capture_command command_exists digest_file read_binary write_binary);
 use XCAT::GenesisReleaseTest qw(run_capture);
 
 plan skip_all => 'Linux RPM repository tools required'
-    unless $^O eq 'linux' && !grep { !command_exists($_) } qw(git rpm rpmbuild createrepo_c unshare);
+    unless $^O eq 'linux' && !grep { !command_exists($_) } qw(git rpm rpmbuild createrepo_c unshare gpg gpgconf rpmsign);
 
+my $parent_pid = $$;
 my $tmp = tempdir(CLEANUP => 1);
 my @namespace = $> == 0 ? () : ('unshare', '--user', '--map-root-user');
 plan skip_all => 'An unprivileged user namespace is required for the collector root check'
@@ -41,9 +42,22 @@ mkdir -p %{buildroot}/usr/share/provenance-fixture
 SPEC
 is(run_capture("$tmp/rpm-build.log", 'rpmbuild', '--quiet', '-bb', '--define', "_topdir $top",
     "$top/SPECS/provenance-fixture.spec"), 0, 'build an isolated RPM fixture')
-    or BAIL_OUT(read_binary("$tmp/rpm-build.log"));
+    or die(read_binary("$tmp/rpm-build.log"));
 my $fixture = "$top/RPMS/noarch/provenance-fixture-1-1.noarch.rpm";
-my $fixture_hash = digest_file($fixture);
+
+my $key_home = "$tmp/gnupg";
+make_path($key_home);
+chmod 0700, $key_home;
+my $key_name = 'provenance@example.invalid';
+die read_binary("$tmp/key.log") if run_capture("$tmp/key.log", 'gpg', '--homedir', $key_home,
+    '--batch', '--pinentry-mode', 'loopback', '--passphrase', '', '--quick-generate-key',
+    $key_name, 'rsa2048', 'sign', '0');
+END {
+    local $?;
+    run_capture("$tmp/key-cleanup.log", 'gpgconf', '--homedir', $key_home, '--kill', 'gpg-agent')
+      if defined($parent_pid) && $$ == $parent_pid && defined($key_home) && -d $key_home;
+}
+my $payload_hash = capture_command('rpm', '-qp', '--qf', '%{SIGMD5}', $fixture);
 
 for my $case (qw(checkout export missing empty)) {
     my $root = "$tmp/$case source";
@@ -81,7 +95,8 @@ for my $case (qw(checkout export missing empty)) {
             '--repo-dep', $repo, '--run-id', 'provenance', '--build-timestamp', $epoch,
             '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
             '--skip-createrepo', '--skip-tarball', '--no-verify-repo',
-            '--collect-dir', "$top/RPMS/noarch");
+            '--collect-dir', "$top/RPMS/noarch",
+            '--gpg-sign', '--gpg-home', $key_home, '--gpg-key-name', $key_name);
         is($status, 0, "$case $target full collector succeeds") or diag(read_binary($log));
         my $subdir = $target =~ /^openeuler/ ? "openeuler24.03sp3/$arch" : "rh10/$arch";
         my $metadata_path = "$repo/$subdir/buildinfo.txt";
@@ -92,8 +107,8 @@ for my $case (qw(checkout export missing empty)) {
         is($metadata{COMMIT_ID}, substr($expected, 0, 7), "$case $target preserves the short identity contract");
         is($metadata{SOURCE_DATE_EPOCH}, "$epoch", "$case $target retains the explicit epoch");
         is($metadata{TARGET}, $subdir, "$case $target retains the target repository path");
-        is(digest_file("$repo/$subdir/provenance-fixture-1-1.noarch.rpm"), $fixture_hash,
-            "$case $target collection preserves the RPM bytes");
+        is(capture_command('rpm', '-qp', '--qf', '%{SIGMD5}', "$repo/$subdir/provenance-fixture-1-1.noarch.rpm"), $payload_hash,
+            "$case $target signing preserves the RPM payload");
     }
 }
 
