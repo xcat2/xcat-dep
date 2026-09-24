@@ -5,7 +5,7 @@
 #   * mk-dep-chroots.sh  -> the "ensure chroots" phase (auto-initializes per-codename sbuild chroots
 #                           on first run; idempotent).
 #   * build-dep-debs.sh  -> the per-package build phase (drives each <dep>/sbuild.pl in the matching
-#                           chroot) + the metadata-preserving genesis phase.
+#                           chroot) + the genesis-ingest phase.
 #   * build-apt-repo.sh  -> the apt-repo assembly + signing phase (in Perl, focal supported).
 #
 # Design (mirrors mockbuild-all.pl + fixes the PR #63 review):
@@ -22,9 +22,9 @@
 #      arch-specific compiled deps (concern #3).
 #   4. Any required chroot / package / artifact failure, or any version-pin mismatch, fails the whole
 #      run non-zero (concern #4).
-#   5. The genesis-base deb keeps the maintained Debian packaging semantics -- a native deb is ingested
-#      as-is when provided; a converted rpm keeps the maintained control (Depends/Breaks/Replaces) and
-#      maintainer scripts (concern #2).
+#   5. The genesis-base debs are built by xcat-core, one per Ubuntu codename, and are ingested here
+#      as they are. Each is staged into the suite it was built for: the image carries the kernel of
+#      the root that built it, so one image cannot serve several releases.
 use strict;
 use warnings;
 use Cwd qw(abs_path);
@@ -53,12 +53,11 @@ use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifes
                   codename_to_version known_codenames supported_arches is_supported_arch
                   chroot_name chroot_sources_list
                   chroot_is_disposable
-                  control_field genesis_deb_control
+                  control_field
                   deb_field deb_version deb_hash cross_copy_genesis_deb);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = $script_dir;
-my $xcat_src   = "$repo_root/../xcat-core";
 my $output_root = '';
 my $apt_dir    = '';
 my $manifest   = '';
@@ -108,10 +107,7 @@ my $genesis_release_checksums;       # its verified SHA256SUMS, read once at sta
 # They are Architecture:all and identical for all suites, so a per-suite copy would multiply hundreds
 # of megabytes by the number of codenames for no gain.
 my $GENESIS_POOL_RELATIVE = 'pool/main/xcat-genesis-openembedded';
-my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): path or URL (preferred)
-my $genesis_rpm = '';                # fallback: native-arch genesis rpm to convert
-my $genesis_rpm_ppc = '';            # fallback: cross-arch ppc genesis rpm to convert (amd64 host)
-my $require_ppc_genesis = 0;
+my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): path or URL
 # File-scoped exclusive run-lock handle. MUST be file-scoped (not a lexical inside a block) so the
 # flock lives for the WHOLE process -- a lexical would close the FH and release the lock early.
 # Seconds to wait for a concurrent publisher before giving up (--publish-lock-wait). Long by default:
@@ -136,7 +132,6 @@ my %PKG_DIR = (
 # mockbuild-all.pl), plus the apt/sbuild-specific options this orchestrator adds.
 my %DEST = (
     'repo-root'        => \$repo_root,
-    'xcat-source'      => \$xcat_src,
     'output'           => \$output_root,   # alias of --output-root
     'output-root'      => \$output_root,
     'manifest'         => \$manifest,
@@ -161,9 +156,6 @@ my %DEST = (
     'gpg-key-id'       => \$gpg_key_id,
     'genesis-release'  => \$genesis_release,
     'genesis-deb'      => \@genesis_debs,
-    'genesis-rpm'      => \$genesis_rpm,
-    'genesis-rpm-ppc'  => \$genesis_rpm_ppc,
-    'require-ppc-genesis' => \$require_ppc_genesis,
 );
 my %spec;   # option-spec-string => destination ref
 for my $s (standard_options()) {
@@ -180,9 +172,6 @@ $spec{'gpg-key-id=s'}          = \$gpg_key_id;
 $spec{'parallel-targets=i'}    = \$parallel_targets;
 $spec{'build-timeout=i'}       = \$build_timeout;   # per-package wall-clock bound (0 = unbounded)
 $spec{'genesis-deb=s'}         = \@genesis_debs;
-$spec{'genesis-rpm=s'}         = \$genesis_rpm;
-$spec{'genesis-rpm-ppc=s'}     = \$genesis_rpm_ppc;
-$spec{'require-ppc-genesis!'}  = \$require_ppc_genesis;
 $spec{'install-deps!'}         = \$install_deps;   # make this host able to run at all, then exit
 $spec{'publish!'}              = \$publish;        # run the finalization (assemble+sign+gate+tarball)
 $spec{'publish-lock-wait=i'}   = \$PUBLISH_LOCK_WAIT;   # seconds to queue behind another publisher
@@ -221,7 +210,6 @@ if ($install_deps) {
 # Configuration
 # ---------------------------------------------------------------------------------------------------
 $repo_root = abs_path($repo_root);
-$xcat_src  = abs_path($xcat_src) if -d $xcat_src;
 $manifest  ||= "$repo_root/debs-manifest.conf";
 $arch      ||= `dpkg --print-architecture 2>/dev/null`; chomp $arch;
 $arch      ||= 'amd64';
@@ -369,7 +357,6 @@ $ENV{XCAT_DEP_BUILD_TIMEOUT} = $build_timeout if defined $build_timeout;
 
 print_step('Configuration');
 print "  repo-root:   $repo_root\n";
-print "  xcat-source: $xcat_src\n";
 print "  arch:        $arch\n";
 print "  dists:       @dist_list\n";
 print "  manifest:    $manifest\n";
@@ -677,49 +664,13 @@ sub build_deps {
 }
 
 # ---------------------------------------------------------------------------------------------------
-# Phase: genesis-base deb (concern #2: preserve maintained packaging; native ingest preferred)
+# Phase: genesis-base deb (built natively by xcat-core, one image per Ubuntu codename)
+#
+# The Genesis image carries the kernel of the root that built it. xcat-core's builddebs.pl --genesis
+# builds one deb per codename inside that codename's chroot; this phase only ingests them and stages
+# each one into the suite it belongs to. The rpm->deb conversion that came before it gave every
+# Ubuntu release the EL kernel, so it is gone.
 # ---------------------------------------------------------------------------------------------------
-# maintained_genesis_control($arch): the maintained xCAT-genesis-builder/debian/control text, with the
-# arch-specific package/relationship names remapped to $arch (the tree carries the amd64 control).
-sub maintained_genesis_control {
-    my ($a) = @_;
-    my $f = "$xcat_src/xCAT-genesis-builder/debian/control";
-    return undef unless -f $f;
-    local $/; open my $fh, '<', $f or return undef; my $t = <$fh>; close $fh;
-    # The tree carries the amd64 control; any other arch is the same text with the arch renamed.
-    $t =~ s/amd64/$a/g if $a ne 'amd64';
-    return $t;
-}
-# convert_genesis_rpm($rpm, $pkgname, $arch, $outdir): rpm2cpio-extract the noarch genesis rpm and
-# repackage as a .deb whose DEBIAN/control PRESERVES the maintained Depends/Breaks/Replaces and whose
-# maintainer scripts (postinst/prerm/preinst/postrm) are copied from the maintained debian/ -- so the
-# converted deb keeps the install/upgrade semantics the bare 5-field shim dropped (concern #2).
-sub convert_genesis_rpm {
-    my ($rpm, $pkgname, $a, $outdir) = @_;
-    my $work = tempdir(CLEANUP => 1);
-    my $get = ($rpm =~ m{^https?://})
-        ? "curl -fsSL " . sh_quote($rpm) . " | rpm2cpio"
-        : "rpm2cpio " . sh_quote($rpm);
-    run("cd $work && $get | cpio -idm --quiet");
-    my $ver = `rpm -qp --qf '%{VERSION}-%{RELEASE}' ${\ sh_quote($rpm)} 2>/dev/null`; chomp $ver;
-    $ver ||= "2.18.0-snap$snap_ts";
-    $ver =~ s/\.(el|fc)\d+.*$//;                       # drop the EL dist tag from the rpm Release
-    my $pkgd = "$work/pkg"; make_path("$pkgd/DEBIAN", "$pkgd/opt/xcat");
-    run("cp -a $work/opt/xcat/. $pkgd/opt/xcat/ 2>/dev/null || true", nofail => 1);
-    my $control = genesis_deb_control(maintained_genesis_control($a), $pkgname, $ver, 'all');
-    if (!$dry_run) {
-        open my $fh, '>', "$pkgd/DEBIAN/control" or die "write control: $!\n"; print $fh $control; close $fh;
-        # preserve maintainer scripts from the maintained packaging (install/upgrade behavior)
-        my $mdeb = "$xcat_src/xCAT-genesis-builder/debian";
-        for my $s (qw(postinst preinst postrm prerm)) {
-            next unless -f "$mdeb/$s";
-            copy("$mdeb/$s", "$pkgd/DEBIAN/$s"); chmod 0755, "$pkgd/DEBIAN/$s";
-        }
-    }
-    make_path($outdir);
-    run("dpkg-deb --build " . sh_quote($pkgd) . " " . sh_quote("$outdir/${pkgname}_${ver}_all.deb"));
-    return "$outdir/${pkgname}_${ver}_all.deb";
-}
 # genesis_in_manifest(): whether the legacy Genesis deb belongs to this run at all. It is named
 # per target in the manifest, and riscv64 does not name it: its Genesis is the OpenEmbedded package
 # published once into the shared pool. Without this, a plain --arch riscv64 run reaches
@@ -747,35 +698,12 @@ sub build_genesis {
         print "  ingested native genesis deb: $base\n";
         $produced_native = 1 if $base =~ /^\Q$native_arch_pkg\E_/;
     }
-    # 2) else convert the native-arch rpm (metadata-preserving)
-    if (!$produced_native) {
-        if ($genesis_rpm) {
-            print "  converting native-arch genesis rpm -> deb (preserving control + scripts)\n";
-            convert_genesis_rpm($genesis_rpm, $native_arch_pkg, $arch, $gen);
-        } elsif (!@genesis_debs) {
-            die "FATAL: no native genesis for $arch: pass --genesis-deb (preferred) or --genesis-rpm\n";
-        }
-    }
-    # 3) cross-arch ppc genesis on the amd64 host (#7610): convert the ppc rpm if given
-    if ($arch eq 'amd64') {
-        my $have_ppc = grep { basename($_) =~ /^xcat-genesis-base-ppc64el_/ } glob("$gen/*.deb");
-        if (!$have_ppc && $genesis_rpm_ppc) {
-            print "  converting cross-arch ppc64el genesis rpm -> deb (#7610)\n";
-            convert_genesis_rpm($genesis_rpm_ppc, 'xcat-genesis-base-ppc64el', 'ppc64el', $gen);
-            $have_ppc = 1;
-        }
-        if (!$have_ppc) {
-            my $msg = "no ppc64el genesis (pass --genesis-deb/--genesis-rpm-ppc): an amd64 MN cannot "
-                    . "netboot ppc nodes (#7610)";
-            die "FATAL: $msg\n" if $require_ppc_genesis;
-            warn "WARN: $msg\n";
-        }
-    }
-    # stage the arch:all genesis deb(s) into every codename (this host's arch subdir; the cross-arch
-    # ppc genesis produced on the amd64 host rides in the amd64 subdir and is picked up by assemble).
-    # Use BuildUtils::cross_copy_genesis_deb -- the tested, hash-based, stale-dropping copier -- once
-    # per genesis package-arch present in $gen (the native-arch one, plus the cross-converted ppc64el
-    # one on the amd64 host). It refreshes a stale same-name deb by content and is idempotent.
+    die "FATAL: no Genesis deb for $arch: pass --genesis-deb.\n"
+      . "       xcat-core builds them with `builddebs.pl --genesis-only --genesis-dist <codename>`.\n"
+        unless $produced_native || $dry_run;
+    # Stage each suite's OWN image. cross_copy_genesis_deb is the tested, hash-based, stale-dropping
+    # copier; the codename narrows it to the deb built on that release. A deb with no codename in its
+    # version serves every suite, which is how a package published before the native build is reused.
     my %gen_arches;
     for my $d (glob("$gen/*.deb")) {
         $gen_arches{$1}++ if basename($d) =~ /^xcat-genesis-base-([a-z0-9]+)_/;
@@ -788,7 +716,10 @@ sub build_genesis {
         }
         make_path($dst);
         for my $ga (sort keys %gen_arches) {
-            my $n = cross_copy_genesis_deb($gen, $dst, $ga, undef);
+            my $n = cross_copy_genesis_deb($gen, $dst, $ga, undef, $cn);
+            die "FATAL: no xcat-genesis-base-$ga image built for $cn: xcat-core builds one per\n"
+              . "       codename, so --genesis-dist must name every release this run publishes.\n"
+                unless $n || glob("$dst/xcat-genesis-base-$ga\_*.deb");
             print "  staged xcat-genesis-base-$ga -> $cn/$arch ($n newly copied)\n";
         }
     }
@@ -1391,7 +1322,10 @@ sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian ap
 
   # STEP 1 -- per arch, on that arch's build host: build + validate into staging (does NOT publish):
   sbuild-all.pl --arch amd64   --dists "focal jammy noble resolute" \
-      --xcat-source ../xcat-core --genesis-rpm <xCAT-genesis-base rpm>
+      --genesis-deb <xcat-genesis-base-amd64_..~focal_all.deb> \
+      --genesis-deb <xcat-genesis-base-amd64_..~jammy_all.deb> \
+      --genesis-deb <xcat-genesis-base-amd64_..~noble_all.deb> \
+      --genesis-deb <xcat-genesis-base-amd64_..~resolute_all.deb>
   sbuild-all.pl --arch ppc64el --dists "focal jammy noble resolute" --skip-genesis
   sbuild-all.pl --arch riscv64 --dists "focal jammy noble resolute"
 
@@ -1404,7 +1338,7 @@ sbuild-all.pl - build, validate, sign and assemble the xcat-dep Ubuntu/Debian ap
   sbuild-all.pl --target noble-amd64        ...   # equivalent single-target form
 
   # single host, build AND publish in one go (add --publish explicitly):
-  sbuild-all.pl --arch amd64 --dists noble --genesis-rpm <rpm> --publish --expect-arch amd64 \
+  sbuild-all.pl --arch amd64 --dists noble --genesis-deb <deb> --publish --expect-arch amd64 \
       --gpg-sign --gpg-key-id <id> --gpg-home <dir>
 
   # verify an already-published tree out of band (signatures checked by DEFAULT):
@@ -1472,10 +1406,11 @@ failure (see L</"Each package builds in a clean, disposable chroot">).
 
 =item Genesis
 
-Produces the C<xcat-genesis-base> deb: a native deb is ingested as-is when provided
-(C<--genesis-deb>); otherwise the rpm is converted while B<preserving the maintained control>
-(Depends/Breaks/Replaces) and maintainer scripts. The amd64 host also converts the cross-arch
-ppc64el genesis (issue #7610) unless C<--require-ppc-genesis> gates it. Skipped with C<--skip-genesis>.
+Ingests the C<xcat-genesis-base> debs named by C<--genesis-deb> and stages each one into the
+suite it was built for. The Genesis image carries the kernel of the root that built it, so
+xcat-core builds one deb per Ubuntu codename (C<builddebs.pl --genesis-only --genesis-dist
+E<lt>codenameE<gt>>) and stamps the codename into the version. A run that publishes a codename
+with no image for it stops. Skipped with C<--skip-genesis>.
 An B<OpenEmbedded Genesis package release> is a separate, verified input published by
 C<--genesis-release>; it is not built here.
 
@@ -1542,9 +1477,9 @@ Build a single target; the arch must match C<--arch>.
 
 Per-target manifest. Default: C<< <repo-root>/debs-manifest.conf >>.
 
-=item B<--repo-root> / B<--xcat-source> C<path>
+=item B<--repo-root> C<path>
 
-xcat-dep root (default: the script's dir) / xcat-core root (for the maintained genesis packaging).
+xcat-dep root (default: the script's dir).
 
 =item B<--output-root> / B<--apt-dir> C<path>
 
@@ -1558,15 +1493,8 @@ build hosts).
 
 =item B<--genesis-deb> C<path|url>
 
-Native C<xcat-genesis-base> deb to ingest (repeatable; preferred over conversion).
-
-=item B<--genesis-rpm> / B<--genesis-rpm-ppc> C<path|url>
-
-Native-arch genesis rpm to convert / cross-arch ppc genesis rpm to convert on amd64 (issue #7610).
-
-=item B<--require-ppc-genesis>
-
-Make a missing ppc64el genesis fatal (default: warn).
+An C<xcat-genesis-base> deb that xcat-core built. Repeatable: pass one per codename, and one per
+architecture on a host that stages another architecture's image.
 
 =item B<--genesis-release> C<dir>
 

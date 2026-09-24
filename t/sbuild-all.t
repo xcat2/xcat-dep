@@ -20,7 +20,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   supported_arches is_supported_arch
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
-                  control_field genesis_deb_control
+                  control_field
                   deb_field deb_version deb_hash cross_copy_genesis_deb
                   build_deb_in_chroot);
 
@@ -86,41 +86,6 @@ is(chroot_name('noble', 'amd64'), 'noble-amd64-sbuild', 'chroot_name shape');
         'Depends folded across continuation lines');
     is(control_field($ctrl, 'Breaks'), 'old-foo', 'Breaks parsed');
     is(control_field($ctrl, 'Replaces'), undef, 'absent field -> undef');
-}
-
-# ---- genesis_deb_control: PRESERVE the maintained packaging semantics (concern #2) --------------
-{
-    # The real xCAT-genesis-builder/debian/control fields that the bare 5-field shim used to drop.
-    my $maintained = <<'CTRL';
-Source: xcat-genesis-base-amd64
-Section: admin
-Priority: optional
-Maintainer: xCAT <xcat-user@lists.sourceforge.net>
-
-Package: xcat-genesis-base-amd64
-Architecture: all
-Depends: ${misc:Depends}
-Replaces: xcat-genesis-amd64
-Breaks: xcat-genesis-amd64, xcat-genesis-scripts-amd64 (<< 2.13.10)
-Description: xCAT Genesis netboot image
- base platform.
-CTRL
-    my $c = genesis_deb_control($maintained, 'xcat-genesis-base-amd64', '2.18.0-snap1', 'all');
-    like($c, qr/^Package: xcat-genesis-base-amd64$/m, 'Package set');
-    like($c, qr/^Version: 2\.18\.0-snap1$/m,          'Version set');
-    like($c, qr/^Architecture: all$/m,                'Architecture set');
-    like($c, qr/^Replaces: xcat-genesis-amd64$/m,     'Replaces PRESERVED (was dropped by the shim)');
-    like($c, qr/^Breaks: xcat-genesis-amd64, xcat-genesis-scripts-amd64 \(<< 2\.13\.10\)$/m,
-        'Breaks PRESERVED with its version constraint');
-    unlike($c, qr/\$\{misc:Depends\}/, 'unresolved ${misc:Depends} substvar dropped (would ship literal)');
-    like($c, qr/^Maintainer: xCAT /m, 'Maintainer preserved');
-}
-# With no maintained control available, an honest minimal control is still produced.
-{
-    my $c = genesis_deb_control(undef, 'xcat-genesis-base-ppc64el', '2.18.0-snap1', 'all');
-    like($c, qr/^Package: xcat-genesis-base-ppc64el$/m, 'minimal control still names the package');
-    like($c, qr/^Architecture: all$/m,                  'minimal control still arch:all');
-    unlike($c, qr/^Replaces:/m, 'no Replaces invented when the maintained control is absent');
 }
 
 # ---- verify_repo_packages: PURE completeness decision (no I/O; manifest = source of truth) -------
@@ -771,7 +736,7 @@ STUB
     };
 
     my ($scan) = $src =~ /\n(    my %u = \(\$arch => 1\);\n    if \(\$mode eq 'publish'\) \{\n.*?\n        \}\n)/ms;
-    BAIL_OUT('could not extract the staged-arch scan from sbuild-all.pl') unless defined $scan;
+    die('could not extract the staged-arch scan from sbuild-all.pl') unless defined $scan;
 
     my $staging = tempdir( CLEANUP => 1 );
     make_path("$staging/noble/$_") for qw(amd64 ppc64el riscv64 s390x);
@@ -805,7 +770,7 @@ STUB
     };
 
     my ($sub) = $src =~ /\n(sub genesis_in_manifest \{\n.*?\n\})\n/ms;
-    BAIL_OUT('could not extract genesis_in_manifest from sbuild-all.pl') unless defined $sub;
+    die('could not extract genesis_in_manifest from sbuild-all.pl') unless defined $sub;
 
     our %MANIFEST = (
         'noble-amd64'   => { 'xcat-genesis-base' => '2.*', 'ipmitool-xcat' => '1.8.18-4' },
@@ -839,10 +804,10 @@ STUB
     };
 
     my ($sub) = $src =~ /\n(sub ensure_foreign_arch_support \{\n.*?\n\})\n/ms;
-    BAIL_OUT('could not extract ensure_foreign_arch_support from sbuild-all.pl') unless defined $sub;
+    die('could not extract ensure_foreign_arch_support from sbuild-all.pl') unless defined $sub;
 
     my ($map) = $src =~ /\n(my %BINFMT_HANDLER = \(.*?\);)\n/ms;
-    BAIL_OUT('could not extract the binfmt handler map') unless defined $map;
+    die('could not extract the binfmt handler map') unless defined $map;
 
     my $fake = tempdir( CLEANUP => 1 );
     ( my $driver = "$map\n$sub" ) =~ s{/proc/sys/fs/binfmt_misc}{$fake}g;
