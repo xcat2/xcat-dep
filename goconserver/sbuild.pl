@@ -44,7 +44,14 @@ $build_timestamp = time() unless defined $build_timestamp;
 # The maintained debian/ is at ./debian in the copied package dir; the upstream source is cloned fresh
 # at the pinned SHA into ./gcsrc, the maintained debian/ copied in, and dpkg-buildpackage run there
 # (its .deb(s) land in the copied package dir, which the collector picks up).
-my $build = <<'BUILD';
+# The build script below is lifted by t/goconserver_cross_build.t and run with the commands it
+# calls shadowed. Keep the marker: the test dies when it can no longer find this region.
+my $host_deb_arch = `dpkg --print-architecture 2>/dev/null`;
+chomp $host_deb_arch;
+die "FATAL: cannot read the build host architecture from dpkg\n"
+    unless $host_deb_arch =~ /^[a-z0-9]+$/;
+
+my $build = "HOST_DEB_ARCH=$host_deb_arch\n" . <<'BUILD';
 set -e
 VERSION=0.3.3
 REPO=https://github.com/xcat2/goconserver.git
@@ -52,13 +59,23 @@ REF=6166fe5ec1c5b3c20475e322a9f0e8e93c87e45f
 GO_PIN=1.25.12
 
 # pinned modern Go toolchain (static CGO-free build, portable across codenames; reproducible compiler)
-go_arch=$(dpkg --print-architecture); [ "$go_arch" = ppc64el ] && go_arch=ppc64le
-echo "installing pinned go${GO_PIN} (${go_arch}) for the goconserver build"
-rm -rf /usr/local/go
-curl -fsSL "https://go.dev/dl/go${GO_PIN}.linux-${go_arch}.tar.gz" | tar -C /usr/local -xz
-export PATH=/usr/local/go/bin:$PATH
+# The toolchain is the BUILD HOST's and the target comes from GOARCH, because riscv64 has no build
+# host: its chroot runs under qemu-user, and a riscv64 `go build` there parks in futex_wait and never
+# returns. Go cross-compiles a CGO-free binary, and a Go toolchain is statically linked, so the host
+# one runs inside the foreign chroot at native speed. HOST_DEB_ARCH is stamped in by sbuild.pl: it
+# cannot be read here, because qemu makes the chroot's dpkg and uname both answer for the target.
+deb_to_goarch() { case "$1" in ppc64el) echo ppc64le;; *) echo "$1";; esac; }
+go_host_arch=$(deb_to_goarch "$HOST_DEB_ARCH")
+go_target_arch=$(deb_to_goarch "$(dpkg --print-architecture)")
+echo "installing pinned go${GO_PIN} (${go_host_arch}) to compile for ${go_target_arch}"
+gotoolchain="$PWD/.gotoolchain"
+mkdir -p "$gotoolchain"
+curl -fsSL "https://go.dev/dl/go${GO_PIN}.linux-${go_host_arch}.tar.gz" | tar -C "$gotoolchain" --strip-components=1 -xz
+export PATH="$gotoolchain/bin:$PATH"
 export GOTOOLCHAIN=local     # use exactly the pinned toolchain; never auto-download another
+export GOOS=linux GOARCH="$go_target_arch"
 go version
+go env GOHOSTARCH GOARCH
 
 if [ -n "${SOURCE_DATE_EPOCH:-}" ]; then
     SNAP_TS=$(date -d "@$SOURCE_DATE_EPOCH" --utc '+%Y%m%d%H%M')
