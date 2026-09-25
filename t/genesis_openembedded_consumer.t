@@ -23,6 +23,7 @@ use XCAT::BuildUtils qw(
   read_binary
   write_binary
 );
+use XCAT::NFSLock ();
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
@@ -1079,9 +1080,9 @@ sub test_publish_lock {
     stage_legacy_deb("$tmp/lock-deb", $output);
     make_path($output);
 
-    my $lockfile = "$output/.sbuild-all.publish.lock";
-    open(my $held, '>', $lockfile) or die "Cannot create $lockfile: $!\n";
-    flock($held, LOCK_EX | LOCK_NB) or die "Cannot hold $lockfile: $!\n";
+    # This process is a live publisher on the same host.
+    my $lockfile = "$output/.sbuild-all.publish.nfslock";
+    my $held = XCAT::NFSLock->acquire($lockfile);
 
     my $locked_log = "$tmp/deb-locked.log";
     my $locked_status = run_apt_consumer(
@@ -1089,11 +1090,11 @@ sub test_publish_lock {
         extra => [ '--publish-lock-wait', '2' ],
     );
     isnt($locked_status, 0, 'a locked apt tree is not published into');
-    like(read_binary($locked_log), qr/waiting for the publish lock \Q$lockfile\E/,
+    like(read_binary($locked_log), qr/^Trying to unlock \Q$lockfile\E failed after 2s;/m,
         'the refusal names the lock another run owns');
     ok(!-d "$apt_root/dists", 'nothing is published while another run holds the lock');
 
-    close($held);
+    $held->release;
 
     # sbuild-all.pl never publishes in place: it assembles a COMPLETE side tree and renames it onto
     # the repository, so there is no half-written state to recover and no per-file backup to restore.
