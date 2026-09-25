@@ -12,7 +12,7 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
                       required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
-                      rpm_arch rpm_in_cell
+                      rpm_arch rpm_in_cell resolve_mock_cfg
                       skipped_builder carry_over_rpms source_package
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
@@ -29,6 +29,24 @@ sub quiet(&) {
     open(STDOUT, '>&', $save) or die "restore STDOUT: $!";
     die $err if $err;
     return wantarray ? @r : $r[0];
+}
+
+# ---- resolve_mock_cfg: /etc/os-release says almalinux, mock-core-configs names the file alma -----
+{
+    my $dir   = tempdir(CLEANUP => 1);
+    my $touch = sub { open(my $fh, '>', "$dir/$_[0].cfg") or die "$_[0]: $!"; close($fh); };
+    $touch->('alma+epel-10-x86_64');
+    $touch->('rocky+epel-9-x86_64');
+    is(eval { resolve_mock_cfg('almalinux', 10, 'x86_64', $dir) }, 'alma+epel-10-x86_64',
+        'an AlmaLinux host resolves to the alma config file');
+    is(eval { resolve_mock_cfg('rocky', 9, 'x86_64', $dir) }, 'rocky+epel-9-x86_64',
+        'an id that names its config file resolves to it');
+    $touch->('almalinux+epel-10-x86_64');
+    is(eval { resolve_mock_cfg('almalinux', 10, 'x86_64', $dir) }, 'almalinux+epel-10-x86_64',
+        'a config file named after the os-release id is preferred');
+    ok(!eval { resolve_mock_cfg('almalinux', 8, 'x86_64', $dir); 1 },
+        'a release with no config file is an error');
+    like($@, qr{\Q$dir/alma+epel-8-x86_64.cfg\E}, 'the error names the config files it tried');
 }
 
 # ---- required_pkgs: a skipped builder's packages are not required (clean --skip-* runs) -------
@@ -415,6 +433,10 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     cmp_ok(scalar(@targets), '>=', 1, 'packages-manifest.conf has at least one target section');
     ok(!grep({ $_ eq 'common' } @targets), 'the shared-repo section is not treated as a build target');
     my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
+    # The upstream iPXE loaders ship beside xnba-undi, so a target that publishes one publishes both.
+    my @no_ipxe_xcat = grep { exists $m{$_}{'xnba-undi'} && !exists $m{$_}{'ipxe-xcat'} } @targets;
+    is_deeply(\@no_ipxe_xcat, [], 'every target that lists xnba-undi also lists ipxe-xcat')
+        or diag("missing ipxe-xcat in: @no_ipxe_xcat");
     is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
         or diag("missing conserver-xcat in: @missing");
 
@@ -422,7 +444,7 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     # carries, at the same pins: a riscv64 MN serves the x86 nodes of a mixed cluster too.
     my ($ppc) = grep { /^[a-z+]+-10-ppc64le$/ } @targets;
     ok(defined $ppc, 'an EL10 ppc64le target section exists to compare against') or $ppc = '';
-    for my $boot (qw(elilo-xcat grub2-xcat syslinux-xcat xnba-undi)) {
+    for my $boot (qw(elilo-xcat grub2-xcat ipxe-xcat syslinux-xcat xnba-undi)) {
         is($m{'rocky-10-riscv64-xcat'}{$boot}, $m{$ppc}{$boot},
             "$boot pinned in the riscv64 target as in the EL10 ppc64le target");
     }

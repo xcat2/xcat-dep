@@ -1,0 +1,16 @@
+Source: ipxe-xcat
+Section: admin
+Priority: optional
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
+Build-Depends: debhelper (>= 12)
+Standards-Version: 4.5.0
+Homepage: https://ipxe.org/
+
+Package: ipxe-xcat
+Architecture: all
+Depends: ${misc:Depends}
+Description: iPXE network boot binaries from the upstream release
+ The ipxeboot.tar.gz tree of the iPXE 2.0.0 release, installed unchanged
+ under /tftpboot/xcat/ipxe. It carries the signed Secure Boot builds and
+ their shim. The source archive of the release tag is installed with the
+ documentation.

@@ -1,0 +1,36 @@
+#!/usr/bin/make -f
+# The payload is the upstream release tree, byte for byte: nothing strips it, and dh_compress and
+# dh_fixperms leave /tftpboot and the licence texts alone.
+
+VERSION := $(shell dpkg-parsechangelog -S Version | sed 's/-[^-]*$$//')
+DEST := debian/ipxe-xcat
+DOC := $(DEST)/usr/share/doc/ipxe-xcat
+
+build build-arch build-indep:
+
+clean:
+	dh_testdir
+	dh_clean
+
+binary-arch:
+
+binary-indep:
+	dh_testdir
+	dh_testroot
+	dh_prep
+	install -d $(DEST)/tftpboot/xcat/ipxe $(DOC)
+	tar -xzf ipxeboot-$(VERSION).tar.gz --no-same-owner --strip-components=1 -C $(DEST)/tftpboot/xcat/ipxe
+	install -m 0644 ipxe-$(VERSION)-source.tar.gz $(DOC)/
+	cp -R licenses $(DOC)/licenses
+	dh_installdocs
+	dh_installchangelogs
+	dh_compress -Xlicenses/
+	dh_fixperms -Xtftpboot/
+	dh_installdeb
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
+
+binary: binary-indep binary-arch
+
+.PHONY: build build-arch build-indep clean binary-arch binary-indep binary
