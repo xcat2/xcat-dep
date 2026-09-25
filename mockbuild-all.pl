@@ -15,7 +15,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell resolve_mock_cfg
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
@@ -2127,28 +2127,6 @@ sub collect_srpms {
     }
 
     return ($copied, $skipped_non_src, $missing_roots);
-}
-
-sub resolve_mock_cfg {
-    my ($os_id, $rel, $arch) = @_;
-    my %short_forms = (
-        almalinux      => 'alma',
-        'centos-stream' => 'centos-stream',
-        rocky          => 'rocky',
-    );
-    # Resolve by CONFIG-FILE existence, not by running `mock --print-root-path`: the latter can fail
-    # transiently (bootstrap chroot setup, a concurrent mock holding a lock) and made el10 flakily
-    # "resolve" to the long form that has no .cfg. Checking /etc/mock/<cfg>.cfg is deterministic.
-    for my $id ($os_id, (exists $short_forms{$os_id} ? ($short_forms{$os_id}) : ())) {
-        my $candidate = "${id}+epel-${rel}-${arch}";
-        if (-f "/etc/mock/${candidate}.cfg") {
-            print "Mock config resolved: $candidate\n" if $id ne $os_id;
-            return $candidate;
-        }
-    }
-    my $short = $short_forms{$os_id} // $os_id;
-    die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
-      . "(tried /etc/mock/${os_id}+epel-${rel}-${arch}.cfg and /etc/mock/${short}+epel-${rel}-${arch}.cfg)\n";
 }
 
 sub resolve_xcat_source {
