@@ -95,7 +95,7 @@ sub acquire {
 
         my $current = _read_owner($abs);
         $owner = $current if defined($current);
-        next if owner_is_dead(parse_owner($current), _here()) && _break($abs);
+        next if _owner_dead($current) && _break($abs);
         my $left = $deadline - Time::HiRes::time();
         last if $left <= 0;
         # Randomise the wait. Two waiters that back off by the same amount keep colliding.
@@ -285,7 +285,7 @@ sub _break {
     my $mine    = owner_record();
     return 0 unless _create($breaker, $mine, {});
     my $removed = 0;
-    if (owner_is_dead(parse_owner(_read_owner($path)), _here())) {
+    if (_owner_dead(_read_owner($path))) {
         $removed = _remove($path);
     }
     my $held = _read_owner($breaker);
@@ -313,8 +313,19 @@ sub _sweep {
     }
     for my $tmp (bsd_glob("$path.tmp.*")) {
         next unless -d $tmp && !-l $tmp;
-        remove_tree($tmp) if owner_is_dead(parse_owner(_read_owner($tmp)), _here());
+        remove_tree($tmp) if _owner_dead(_read_owner($tmp));
     }
+}
+
+# Whether the owner file names a dead owner. mockbuild-all.pl wrote host, pid and epoch before this
+# module, without a start time: there, only a pid that no longer exists on this host is proof.
+sub _owner_dead {
+    my ($record) = @_;
+    return owner_is_dead(parse_owner($record), _here()) if defined(parse_owner($record));
+    return 0 unless defined($record) && $record =~ /\Ahost=(\S+)\npid=([1-9][0-9]*)\nepoch=[0-9]+\n\z/;
+    my ($host, $pid) = ($1, $2);
+    return 0 unless $host eq (hostname() || '');
+    return defined(process_start($pid)) ? 0 : 1;
 }
 
 sub _private_name {
