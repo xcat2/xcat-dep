@@ -12,7 +12,7 @@ use File::Path qw(make_path);
 use File::Basename qw(basename);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
                       required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
-                      rpm_arch rpm_in_cell
+                      rpm_arch rpm_in_cell resolve_mock_cfg
                       skipped_builder carry_over_rpms source_package
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
                       verify_repo_packages verify_repo_signature verify_rpm_signatures
@@ -29,6 +29,24 @@ sub quiet(&) {
     open(STDOUT, '>&', $save) or die "restore STDOUT: $!";
     die $err if $err;
     return wantarray ? @r : $r[0];
+}
+
+# ---- resolve_mock_cfg: /etc/os-release says almalinux, mock-core-configs names the file alma -----
+{
+    my $dir   = tempdir(CLEANUP => 1);
+    my $touch = sub { open(my $fh, '>', "$dir/$_[0].cfg") or die "$_[0]: $!"; close($fh); };
+    $touch->('alma+epel-10-x86_64');
+    $touch->('rocky+epel-9-x86_64');
+    is(eval { resolve_mock_cfg('almalinux', 10, 'x86_64', $dir) }, 'alma+epel-10-x86_64',
+        'an AlmaLinux host resolves to the alma config file');
+    is(eval { resolve_mock_cfg('rocky', 9, 'x86_64', $dir) }, 'rocky+epel-9-x86_64',
+        'an id that names its config file resolves to it');
+    $touch->('almalinux+epel-10-x86_64');
+    is(eval { resolve_mock_cfg('almalinux', 10, 'x86_64', $dir) }, 'almalinux+epel-10-x86_64',
+        'a config file named after the os-release id is preferred');
+    ok(!eval { resolve_mock_cfg('almalinux', 8, 'x86_64', $dir); 1 },
+        'a release with no config file is an error');
+    like($@, qr{\Q$dir/alma+epel-8-x86_64.cfg\E}, 'the error names the config files it tried');
 }
 
 # ---- required_pkgs: a skipped builder's packages are not required (clean --skip-* runs) -------
