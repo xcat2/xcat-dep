@@ -1108,6 +1108,7 @@ sub test_publish_lock {
         log => $freed_log, output => $output, apt_dir => $apt_root, dists => ['noble']);
     is($freed_status, 0, 'the publish runs once the lock is released');
     ok(-f "$apt_root/dists/noble/Release", 'the released lock lets the tree be published');
+    ok(!-e $lockfile, 'the publisher releases the publish lock when it exits');
     isnt(read_binary("$apt_root/dists/noble/Release"), "abandoned\n",
         'a side tree abandoned by a dead run is never published');
 }

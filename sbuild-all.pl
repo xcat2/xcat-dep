@@ -39,6 +39,7 @@ use POSIX qw(strftime);
 use Fcntl qw(:flock);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
+use XCAT::NFSLock ();
 # NOTE: XCAT::GenesisRelease (the shared reader/validator of an OpenEmbedded Genesis package release,
 # the same module mockbuild-all.pl uses for the rpm side) is loaded ON DEMAND in the --genesis-release
 # block, NOT with `use` here. It pulls in XCAT::BuildUtils, which needs File::Slurper, and the Ubuntu
@@ -195,6 +196,9 @@ $spec{'help|h'}                = sub { pod2usage(-verbose => 1, -exitval => 0); 
 $spec{'man'}                   = sub { pod2usage(-verbose => 2, -exitval => 0); };
 
 GetOptions(%spec) or pod2usage(-verbose => 1, -exitval => 2);
+# A signal exits through END, so the publish lock is released. The build phase installs its own
+# forwarding handlers for the duration of the build.
+$SIG{$_} = sub { exit 1 } for qw(INT TERM HUP);
 
 # --install-deps: make THIS host able to run the script, then exit. It comes first because
 # everything below assumes the toolchain is present, and a host that lacks it would fail with a
@@ -1079,28 +1083,22 @@ sub verify_assembled_repo {
 #      complete repo or the new complete repo -- never a half-wiped pool or an index that does not
 #      match its Release. A failed gate leaves the published tree untouched.
 #
-# The lock file lives on the shared tree; within a host flock() is authoritative, which is what
-# matters, since the pipeline's finalization step always runs on one host (the amd64 Ubuntu builder).
+# Publishers of one tree can run on different hosts, and flock through an NFS re-export does not
+# exclude them, so the publish lock is an XCAT::NFSLock. The END block releases it.
 # ---------------------------------------------------------------------------------------------------
-my $PUBLISH_LOCK_FH;
+my $PUBLISH_LOCK;
 
 sub acquire_publish_lock {
     make_path($output_root);
-    my $lockfile = "$output_root/.sbuild-all.publish.lock";
-    open($PUBLISH_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open publish lock $lockfile: $!\n";
-    unless (flock($PUBLISH_LOCK_FH, LOCK_EX | LOCK_NB)) {
-        print "  publish lock is held by another run -- waiting up to ${PUBLISH_LOCK_WAIT}s: $lockfile\n";
-        local $SIG{ALRM} = sub {
-            die "FATAL: timed out after ${PUBLISH_LOCK_WAIT}s waiting for the publish lock $lockfile\n";
-        };
-        alarm($PUBLISH_LOCK_WAIT);
-        my $ok = flock($PUBLISH_LOCK_FH, LOCK_EX);
-        alarm(0);
-        die "FATAL: cannot take the publish lock $lockfile: $!\n" unless $ok;
-    }
+    my $lockfile = "$output_root/.sbuild-all.publish.nfslock";
+    print "  taking the publish lock, waiting up to ${PUBLISH_LOCK_WAIT}s: $lockfile\n";
+    $PUBLISH_LOCK = XCAT::NFSLock->acquire($lockfile,
+        timeout => $PUBLISH_LOCK_WAIT, label => 'publish lock');
     print "  publish lock acquired: $lockfile\n";
     return $lockfile;
 }
+
+END { $PUBLISH_LOCK->release if $PUBLISH_LOCK }
 
 # assemble_into($dir, $expect_arches): (re)assemble every --dists codename inside $dir from the
 # validated staging tree, index it per expected binary-<arch>, write + sign Release. $dir is the SIDE
@@ -1307,7 +1305,7 @@ sub publish_repo {
     print_step('Publish apt repo (locked, assembled aside, swapped in atomically)');
     my $expect = resolve_expect_arches('publish', $apt_dir);
     if ($dry_run) {
-        print "  [dry-run] would lock $output_root/.sbuild-all.publish.lock, assemble @dist_list for "
+        print "  [dry-run] would lock $output_root/.sbuild-all.publish.nfslock, assemble @dist_list for "
             . join(' ', @$expect) . " into $apt_dir.publish-<run-id>.<pid>, gate it, then rename it "
             . "onto $apt_dir\n";
         return;
