@@ -1,0 +1,5 @@
+ipxe-xcat (2.0.0-1) unstable; urgency=medium
+
+  * Package the ipxeboot.tar.gz tree of the iPXE v2.0.0 release.
+
+ -- xCAT <xcat-user@lists.sourceforge.net>  Fri, 25 Sep 2026 12:00:00 +0000
