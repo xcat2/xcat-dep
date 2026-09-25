@@ -20,7 +20,8 @@ use lib $RealBin, "$RealBin/lib";
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
-                      read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
+                      read_manifest derive_target_from_repo_path
+                      verify_repo_packages verify_repo_signature verify_rpm_signatures
                       rpm_version rpm_release rpm_sigmd5 restamp_release_line
                       cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
                       build_mock_uniqueext rpmkeys_checksig_problem
@@ -2235,20 +2236,6 @@ sub native_publisher_rpm {
     my $id = rpm_identity($rpm);
     my $owner = $plan->{outputs}{$id->{name}} // return 0;
     return $plan->{nodes}{$owner}{type} eq 'publisher';
-}
-
-# derive_target_from_repo_path: map a deployed per-target repo path .../rh<N>/<arch> to its manifest
-# target section name alma+epel-<N>-<arch>. Returns undef when the path lacks that rh<N>/<arch> tail,
-# so the standalone --verify-repo mode can require an explicit --target instead.
-sub derive_target_from_repo_path {
-    my ($dir) = @_;
-    my $tgt;
-    return $tgt unless defined $dir;
-    $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
-    if ($dir =~ m{/openeuler((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)/(x86_64|ppc64le)/*$}) {
-        $tgt = "openeuler-$1-$2";
-    }
-    return $tgt;
 }
 
 sub reset_staging_repo {

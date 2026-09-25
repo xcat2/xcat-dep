@@ -19,7 +19,7 @@ our @EXPORT_OK = qw(
     version_matches required_pkgs skipped_builder carry_over_rpms rpm_name rpm_arch rpm_source_rpm
     source_package rpm_digests_ok
     have_rpm read_manifest
-    verify_repo_packages verify_repo_signature verify_rpm_signatures
+    derive_target_from_repo_path verify_repo_packages verify_repo_signature verify_rpm_signatures
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
@@ -296,6 +296,17 @@ sub parse_pin {
     return ('any') if !defined($pin) || $pin eq '*';
     return ('evr', $1, $2) if $pin =~ /^\s*(>=|<=|==|=|>|<)\s*(\S+)\s*$/;
     return ('version');
+}
+
+sub derive_target_from_repo_path {
+    my ($dir) = @_;
+    my $tgt;
+    return $tgt unless defined $dir;
+    $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    if ($dir =~ m{/openeuler((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)/(x86_64|ppc64le)/*$}) {
+        $tgt = "openeuler-$1-$2";
+    }
+    return $tgt;
 }
 
 sub verify_repo_packages {
