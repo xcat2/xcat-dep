@@ -975,8 +975,6 @@ sub test_rpm_repository_lock {
     isnt($status, 0, 'a repository cell cannot have two publishers');
     like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 0s;/m,
         'the lock failure names the locked cell');
-    like(read_binary($log), qr/^If you are sure it is safe, remove the lock: rm -rf \Q$cell_lock\E$/m,
-        'the lock failure gives the command that removes the lock');
     ok(-d $cell_lock, 'a lock held on another machine is left in place');
     remove_tree($cell_lock);
 

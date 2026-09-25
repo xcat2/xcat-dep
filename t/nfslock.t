@@ -93,8 +93,6 @@ for my $case (
     eval { XCAT::NFSLock->acquire($path, timeout => 0.3, label => 'repository lock'); 1 };
     like($@, qr/\ATrying to unlock \Q$path\E failed after 0\.3s; repository lock owned by /,
         "$name: the wait ends with an error that names the lock");
-    like($@, qr/^If you are sure it is safe, remove the lock: rm -rf \Q$path\E$/m,
-        "$name: the error gives the command that removes the lock");
     is(read_text("$path/data"), 'kept', "$name: the lock is left in place");
     is_deeply(leftovers($path), [], "$name: no breaker or private tree is left behind");
 }

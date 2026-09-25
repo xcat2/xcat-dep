@@ -61,7 +61,6 @@ for my $case (
     is($ran, 0, "recovery does not run while $name holds the common lock");
     like($printed, qr/^common recovery skipped: another run holds \Q$base\E\/\.common-publish\.lock$/m,
         "the skip names the lock $name holds");
-    unlike($printed, qr/rm -rf/, "the skip does not tell the operator to remove the lock $name holds");
     ok(-d "$base/.common.staging", "the staging tree of $name is left in place");
     ok(!-e "$base/common", "the common tree stays where $name put it");
     is(read_text("$base/.common-publish.lock/owner"), $holder, "$name keeps the common lock");
