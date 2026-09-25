@@ -412,8 +412,8 @@ my %forcearch_targets = (
         arch         => 'riscv64',
         # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
         noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
 );
@@ -536,10 +536,11 @@ if (!$skip_build && !$dry_run && -d $run_root) {
     remove_tree($run_root);
 }
 
-# All dep builders run natively on every arch. xnba-undi and grub2-xcat are noarch packagings of
-# committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
-# step, so ppc builds them the same as x86 -- no cross-arch import. A forcearch target builds
-# only the builders its profile lists; the noarch ones run in the profile's native chroot.
+# All dep builders run natively on every arch. xnba-undi, grub2-xcat and ipxe-xcat are noarch
+# packagings of committed artifacts (an x86 UNDI ROM / the grub2 resource tarball / the iPXE release
+# tree) with no arch-specific build step, so ppc builds them the same as x86 -- no cross-arch
+# import. A forcearch target builds only the builders its profile lists; the noarch ones run in
+# the profile's native chroot.
 # syslinux-xcat is noarch too, and its spec builds on x86 and ppc64le only.
 my @dep_builders = (
     { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl", noarch => 1 },
@@ -549,6 +550,7 @@ my @dep_builders = (
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
+    { name => 'ipxe-xcat',   script => "$repo_root/ipxe-xcat/mockbuild.pl", noarch => 1 },
 );
 my %profile_builds = map { $_ => 1 } @{ $profile->{dep_builders} };
 
@@ -1040,11 +1042,11 @@ sub target_profile {
         noarch_cfg   => $target,
         forcearch    => 0,
         epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
         # xCAT Requires all of these on every arch, and every one of them builds natively on
-        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
+        # every arch (the noarch deps -- grub2-xcat, xnba-undi, ipxe-xcat -- just repackage committed
         # artifacts), so a self-sufficient per-arch build produces the whole set.
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     };
 }

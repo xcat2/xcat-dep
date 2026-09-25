@@ -17,7 +17,7 @@
 #      two arches build concurrently on their two hosts, so a per-arch build that also published would
 #      interleave wipes of the same pool/dists/Release; and a partial or failed build must never reach
 #      the published repo, nor stale debs accumulate in it (concern #1).
-#   3. Per-arch package sets come from the manifest: the x86 boot components (syslinux/elilo/xnba,
+#   3. Per-arch package sets come from the manifest: the x86 boot components (syslinux/elilo/xnba/ipxe-xcat,
 #      Architecture:all) are built once on amd64 (single producer); ppc64el builds only the genuinely
 #      arch-specific compiled deps (concern #3).
 #   4. Any required chroot / package / artifact failure, or any version-pin mismatch, fails the whole
@@ -126,6 +126,7 @@ my %PKG_DIR = (
     'grub2-xcat'     => 'grub2-xcat',
     'elilo-xcat'     => 'elilo',
     'xnba-undi'      => 'xnba',
+    'ipxe-xcat'      => 'ipxe-xcat',
 );
 
 # Build the GetOptions map from the shared standard_options() spec (so the flag vocabulary matches
@@ -556,7 +557,7 @@ sub build_one_codename {
     for my $pkg (@pkgs) {
         my $dir = $PKG_DIR{$pkg}
             or die "FATAL: no builder dir mapped for manifest package '$pkg'\n";
-        # arch:all single-producer packages (grub2-xcat/syslinux-xcat/elilo-xcat/xnba-undi) are built
+        # arch:all single-producer packages (grub2-xcat/syslinux-xcat/elilo-xcat/xnba-undi/ipxe-xcat) are built
         # ONCE on amd64 -- their source is x86-only (syslinux compiles with nasm/gcc-multilib) -- and,
         # being Architecture:all, are assembled into every arch's Packages index. They stay REQUIRED in
         # the ppc64el manifest so the gate verifies the ppc repo actually carries them, but are NOT
