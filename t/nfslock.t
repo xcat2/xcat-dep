@@ -150,6 +150,28 @@ for my $case (
     $lock->release if $lock;
 }
 
+# Locks written by mockbuild-all.pl before XCAT::NFSLock: host, pid and epoch only.
+{
+    use Sys::Hostname qw(hostname);
+    my $host = hostname();
+    my $old = sub { my ($h, $pid) = @_; return "host=$h\npid=$pid\nepoch=1\n" };
+
+    my $gone_path = stage('legacy-gone.lock', $old->($host, $gone));
+    my $lock = eval { XCAT::NFSLock->acquire($gone_path) };
+    ok($lock, 'an old lock whose process is gone on this host is taken') or diag($@);
+    $lock->release if $lock;
+
+    for my $case ([ 'live on this host', $old->($host, $parent) ],
+                  [ 'from another host', $old->('another-host', $gone) ]) {
+        my ($name, $record) = @$case;
+        (my $file = "legacy-$name.lock") =~ s/\s+/-/g;
+        my $path = stage($file, $record);
+        eval { XCAT::NFSLock->acquire($path); 1 };
+        like($@, qr/\ATrying to unlock \Q$path\E /, "an old lock $name is not taken");
+        is(read_text("$path/owner"), $record, "the old lock $name is left in place");
+    }
+}
+
 # Another process is breaking the lock: this one does not remove it.
 {
     my $dead = record(pid => $gone);
