@@ -479,10 +479,13 @@ Deliberately not built for riscv64:
   Test::XML) are EPEL-only as well, so it can neither be built nor installed without EPEL;
   xCAT uses it for HP blade and VirtualBox support only.
 
-Known differences from the EPEL-fed x86_64 repo: perl-Net-DNS is the 0.80 release of
-`perl-Net-DNS/Net-DNS.spec`, built pure-perl (`--noxs`) as noarch, where EPEL 10 ships
-1.47 -- its spec BuildRequires perl(Net::LibIDN2), which is EPEL-only too. A newer,
-XS-free perl-Net-DNS without that BuildRequires is a follow-up. The riscv64 goconserver
+perl-Net-DNS is built from `perl-Net-DNS/Net-DNS.spec` at 1.47, the release EPEL 10 ships,
+so the riscv64 repo carries the same resource records as the EPEL-fed repos. xCAT needs the
+KEY record, which release 0.80 left to the separate Net::DNS::SEC distribution. This spec
+does not take the EPEL-only perl(Net::LibIDN2) BuildRequires of the EPEL package:
+Net::DNS treats Net::LibIDN2 as optional and uses it for internationalised names only.
+
+Known difference from the EPEL-fed x86_64 repo: the riscv64 goconserver
 binaries are stripped by the Go linker (`-ldflags "-s -w"`, cross build only) because the
 host's brp-strip cannot strip a riscv64 ELF.
 
