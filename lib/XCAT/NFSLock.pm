@@ -3,12 +3,12 @@ package XCAT::NFSLock;
 # A lock L on a shared, possibly re-exported, NFS tree. P is the process that
 # owns L, and H is the host P runs on.
 #
-# Safety: nothing bad ever happens. A violation shows in a finite run.
+# Safety:
 #   1. Single ownership. At any time, at most one live process holds L.
 #   2. No cross-host borrowing. Only P removes L, or a process on H that
 #      proves P dead. A process on another host never removes L.
 #
-# Liveness: something good eventually happens.
+# Liveness:
 #   3. No deadlock. Assuming P does not run forever, every acquire ends: it
 #      takes L, or it fails after its timeout. If P dies holding L, another
 #      process on H can take L. If H vanishes, an operator releases L by moving
