@@ -433,6 +433,10 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     cmp_ok(scalar(@targets), '>=', 1, 'packages-manifest.conf has at least one target section');
     ok(!grep({ $_ eq 'common' } @targets), 'the shared-repo section is not treated as a build target');
     my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
+    # The upstream iPXE loaders ship beside xnba-undi, so a target that publishes one publishes both.
+    my @no_ipxe_xcat = grep { exists $m{$_}{'xnba-undi'} && !exists $m{$_}{'ipxe-xcat'} } @targets;
+    is_deeply(\@no_ipxe_xcat, [], 'every target that lists xnba-undi also lists ipxe-xcat')
+        or diag("missing ipxe-xcat in: @no_ipxe_xcat");
     is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
         or diag("missing conserver-xcat in: @missing");
 
@@ -440,7 +444,7 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     # carries, at the same pins: a riscv64 MN serves the x86 nodes of a mixed cluster too.
     my ($ppc) = grep { /^[a-z+]+-10-ppc64le$/ } @targets;
     ok(defined $ppc, 'an EL10 ppc64le target section exists to compare against') or $ppc = '';
-    for my $boot (qw(elilo-xcat grub2-xcat syslinux-xcat xnba-undi)) {
+    for my $boot (qw(elilo-xcat grub2-xcat ipxe-xcat syslinux-xcat xnba-undi)) {
         is($m{'rocky-10-riscv64-xcat'}{$boot}, $m{$ppc}{$boot},
             "$boot pinned in the riscv64 target as in the EL10 ppc64le target");
     }
