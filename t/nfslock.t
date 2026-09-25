@@ -73,6 +73,11 @@ sub leftovers {
     is($lock->release, 0, 'a second release does nothing');
 }
 
+for my $bad ('', "$dir/.", "$dir/..", "$dir/") {
+    eval { XCAT::NFSLock->acquire($bad); 1 };
+    like($@, qr/\AInvalid lock path/, "a lock path that names no entry is refused: '$bad'");
+}
+
 eval { XCAT::NFSLock->acquire("$dir/bad-meta.lock", meta => { owner => 'x' }); 1 };
 like($@, qr/\AInvalid metadata name 'owner'/, 'metadata cannot replace the owner record');
 eval { XCAT::NFSLock->acquire("$dir/bad-meta.lock", meta => { '../x' => 'x' }); 1 };

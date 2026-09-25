@@ -53,8 +53,9 @@ my $FORMAT = 'nfslock2';
             meta    => hash ref of file name => content, written into the lock
                        before it appears
     Returns:
-        A lock object. Dies when the wait ends, naming the owner and the command
-        that removes the lock.
+        A lock object. Dies when the wait ends, naming the owner and the mv
+        command that moves the lock away. The next acquire deletes a lock moved
+        to <path>.dead.*.
 
 =cut
 
@@ -68,6 +69,11 @@ sub acquire {
         die "Invalid metadata name '$name' for $label\n"
           if $name eq 'owner' || $name !~ /\A[A-Za-z0-9_][A-Za-z0-9_.-]*\z/;
     }
+    # The last component names the lock itself. basename would turn '' into './' and drop a
+    # trailing slash, so the raw path is checked.
+    my ($name) = ($path // '') =~ m{(?:\A|/)([^/]+)\z};
+    die "Invalid $label path '" . ($path // '') . "'\n"
+      if !defined($name) || $name eq '.' || $name eq '..';
     my $abs  = _absolute($path);
     my $self = bless { path => $abs, label => $label, pid => $$ }, $class;
     $self->{record} = owner_record();
@@ -91,7 +97,7 @@ sub acquire {
 
     my $who = _describe(parse_owner($owner));
     die "Trying to unlock $abs failed after ${timeout}s; $label owned by $who.\n"
-      . "If you are sure it is safe, remove the lock: rm -rf $abs\n";
+      . "If you are sure it is safe, move the lock away: mv $abs $abs.dead.manual\n";
 }
 
 #--------------------------------------------------------------------------------

@@ -252,7 +252,7 @@ The build locks its work area (`<output>/.lock`), each repository cell it deploy
 (`<repo-dep>/.common-publish.lock`). The per-arch runs of one build lock different
 cells, so they run in parallel. A lock whose owner is dead is removed only on the
 owner's host; from any other host the build waits `--try-unlock-timeout` seconds,
-then fails with the `rm -rf` command for the lock.
+then fails with the `mv` command that moves the lock away.
 
 The build prepares the complete common repository in a temporary directory, then
 replaces the previous repository only after package verification, metadata
