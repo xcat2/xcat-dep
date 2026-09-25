@@ -10,6 +10,7 @@ use File::Temp qw(tempdir);
 use File::Slurper qw(read_text write_text);
 use Errno qw(ENOENT);
 use POSIX ();
+use Time::HiRes ();
 
 my $retransmit;
 
@@ -76,6 +77,36 @@ sub leftovers {
 for my $bad ('', "$dir/.", "$dir/..", "$dir/") {
     eval { XCAT::NFSLock->acquire($bad); 1 };
     like($@, qr/\AInvalid lock path/, "a lock path that names no entry is refused: '$bad'");
+}
+
+for my $retry (0, 0.5, -1) {
+    eval { XCAT::NFSLock->acquire("$dir/bad-retry.lock", retry => $retry); 1 };
+    like($@, qr/\AInvalid retry interval $retry for lock: must be more than 0\.5s/,
+        "a retry interval of ${retry}s is refused");
+}
+
+# A waiter takes the lock once its live owner releases it.
+{
+    my $path = "$dir/handover.lock";
+    pipe(my $ready_r, my $ready_w) or die "Cannot pipe: $!";
+    my $child = fork() // die "Cannot fork: $!";
+    if ($child == 0) {
+        close($ready_r);
+        my $held = XCAT::NFSLock->acquire($path);
+        syswrite($ready_w, "x");
+        Time::HiRes::sleep(0.5);
+        $held->release;
+        POSIX::_exit(0);
+    }
+    close($ready_w);
+    sysread($ready_r, my $byte, 1);
+    my $start = Time::HiRes::time();
+    my $lock  = eval { XCAT::NFSLock->acquire($path, timeout => 10, retry => 0.6) };
+    my $spent = Time::HiRes::time() - $start;
+    waitpid($child, 0);
+    ok($lock, 'a waiter takes the lock after its owner releases it') or diag($@);
+    cmp_ok($spent, '<', 3, 'the waiter retries at its interval, not at the timeout');
+    $lock->release if $lock;
 }
 
 eval { XCAT::NFSLock->acquire("$dir/bad-meta.lock", meta => { owner => 'x' }); 1 };

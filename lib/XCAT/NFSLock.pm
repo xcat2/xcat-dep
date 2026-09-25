@@ -52,6 +52,7 @@ my $FORMAT = 'nfslock2';
         %opt:
             timeout => seconds to wait for a live owner (default 0: try once)
             label   => word for messages (default "lock")
+            retry   => seconds between attempts, more than 0.5 (default 3)
             meta    => hash ref of file name => content, written into the lock
                        before it appears
     Returns:
@@ -66,6 +67,9 @@ sub acquire {
     my ($class, $path, %opt) = @_;
     my $timeout = $opt{timeout} // 0;
     my $label   = $opt{label}   // 'lock';
+    my $retry   = $opt{retry}   // 3;
+    # Each attempt is a mkdir, writes and a rename on the NFS server.
+    die "Invalid retry interval $retry for $label: must be more than 0.5s\n" unless $retry > 0.5;
     my $meta    = $opt{meta}    // {};
     for my $name (keys %$meta) {
         die "Invalid metadata name '$name' for $label\n"
@@ -92,9 +96,11 @@ sub acquire {
         my $current = _read_owner($abs);
         $owner = $current if defined($current);
         next if owner_is_dead(parse_owner($current), _here()) && _break($abs);
-        last if Time::HiRes::time() >= $deadline;
+        my $left = $deadline - Time::HiRes::time();
+        last if $left <= 0;
         # Randomise the wait. Two waiters that back off by the same amount keep colliding.
-        Time::HiRes::sleep(0.05 + rand(0.25));
+        my $wait = $retry + rand($retry / 4);
+        Time::HiRes::sleep($wait < $left ? $wait : $left);
     }
 
     my $who = _describe(parse_owner($owner));
