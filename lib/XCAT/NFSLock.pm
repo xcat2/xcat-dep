@@ -9,10 +9,10 @@ package XCAT::NFSLock;
 #      proves P dead. A process on another host never removes L.
 #
 # Liveness: something good eventually happens.
-#   3. No deadlock. P does not run forever, so every acquire ends: it takes L,
-#      or it fails after its timeout. If P dies holding L, another process on
-#      H can take L. If H vanishes, an operator releases L by moving the
-#      directory away.
+#   3. No deadlock. Assuming P does not run forever, every acquire ends: it
+#      takes L, or it fails after its timeout. If P dies holding L, another
+#      process on H can take L. If H vanishes, an operator releases L by moving
+#      the directory away.
 #   4. Disjoint progress. Owners of disjoint resources do not wait on each
 #      other: an acquire of a lock nobody holds succeeds without waiting.
 #
