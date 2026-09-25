@@ -429,9 +429,9 @@ my %forcearch_targets = (
 # Each target deploys one cell, <repo-dep>/rh<rel>/<arch>, and locks only that cell: the per-arch
 # runs of one build share --repo-dep and never wait on each other.
 my @cell_locks = map {
-    my $profile = target_profile($_);
-    make_path("$repo_dep/rh$profile->{rel}");
-    cell_lock_path("$repo_dep/rh$profile->{rel}/$profile->{arch}");
+    my $cell = target_cell($_);
+    make_path(dirname($cell));
+    cell_lock_path($cell);
 } @build_targets;
 my %cell_lock_seen;
 take_lock($_, 'repository cell lock') for grep { !$cell_lock_seen{$_}++ } sort @cell_locks;
@@ -904,7 +904,7 @@ if (!$skip_genesis && !$dry_run) {
 # A skipped builder built nothing this run, so everything it published in the cell joins the run
 # repository here, ahead of the bump check, createrepo, the tarballs and the deploy gate.
 if (!$dry_run && ($skip_genesis || $skip_perl || $skip_xcat_dep)) {
-    my $published = "$repo_dep/rh$rel/$arch";
+    my $published = target_cell($target);
     if (-d $published) {
         my %skipped = (genesis => $skip_genesis, perl => $skip_perl, dep => $skip_xcat_dep);
         # Only an rpm the configured key signed, by signer id and by rpmkeys --checksig, may be
@@ -1094,7 +1094,7 @@ sub deploy_target {
     my $rel   = $info->{rel};
     my $src   = $info->{repo_dir};
     my $tarch = $info->{profile}{arch};
-    my $dest  = "$repo_dep/rh$rel/$tarch";
+    my $dest  = target_cell($tgt);
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
 
@@ -2200,6 +2200,14 @@ sub take_lock {
     push(@HELD_LOCKS, $lock);
     $LOCK_OWNER_PID //= $$;
     return $lock;
+}
+
+# The repository cell a target deploys. The deploy, the carry-over and the cell lock all take the
+# path from here, so the lock covers the directory the deploy writes.
+sub target_cell {
+    my ($target) = @_;
+    my $profile = target_profile($target);
+    return "$repo_dep/rh$profile->{rel}/$profile->{arch}";
 }
 
 # The lock of a repository cell <dir>/<arch> sits beside it, as <dir>/.<arch>.lock: the deploy
