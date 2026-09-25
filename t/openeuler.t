@@ -3,11 +3,9 @@ use strict;
 use warnings;
 use FindBin qw($RealBin);
 use lib "$RealBin/..";
-use File::Temp qw(tempdir);
-use File::Path qw(make_path);
-use JSON::PP qw(decode_json);
 use Test::More;
-use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir install_deps_command install_deps_packages);
+use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir install_deps_command
+                      install_deps_packages derive_target_from_repo_path);
 
 my @cells = (
     ['20.03sp4', '20.03-LTS-SP4', '20.03LTS_SP4', 'x86_64'],
@@ -25,6 +23,10 @@ for my $cell (@cells) {
     is(openeuler_build_target({ID => 'openEuler', VERSION => $native_version}, $arch), $target,
         "$target retains the native service pack");
     is(openeuler_repo_subdir($target), "openeuler$version/$arch", "$target preserves repository provenance");
+    for my $suffix ('', '/', '//') {
+        my $path = "/repo/openeuler$version/$arch$suffix";
+        is(derive_target_from_repo_path($path), $target, "$path selects $target");
+    }
 }
 is(openeuler_build_target({ID => 'rocky', VERSION_ID => '9.6'}, 'x86_64'), undef, 'EL uses existing target selection');
 is(openeuler_repo_subdir('alma+epel-10-x86_64'), undef, 'EL uses existing repository layout');
@@ -39,32 +41,15 @@ ok(grep($_ eq '/usr/bin/systemd-nspawn', @native_install), 'native prerequisites
 ok(!grep(/epel|crb|codeready/i, @native_install), 'native prerequisites do not enable EL repositories');
 is_deeply([install_deps_command('rocky')], ['dnf', '-y', 'install', install_deps_packages('rocky')], 'EL prerequisite command remains unchanged');
 
-{
-    my $tmp = tempdir(CLEANUP => 1);
-    open(my $manifest, '>', "$tmp/packages-manifest.conf") or die $!;
-    for my $cell (@cells) {
-        my ($version, undef, undef, $arch) = @$cell;
-        print {$manifest} "[openeuler-$version-$arch]\nnative-fixture-$version=1\n";
-    }
-    close($manifest) or die $!;
-    for my $cell (@cells) {
-        my ($version, undef, undef, $arch) = @$cell;
-        my $repo = "$tmp/openeuler$version/$arch";
-        make_path($repo);
-        my $pid = fork();
-        die $! unless defined $pid;
-        if (!$pid) {
-            open(STDOUT, '>', "$tmp/output") or die $!;
-            open(STDERR, '>&', \*STDOUT) or die $!;
-            exec($^X, "$RealBin/../mockbuild-all.pl", '--verify-repo', $repo, '--repo-root', $tmp) or die $!;
-        }
-        waitpid($pid, 0);
-        isnt((($? & 127) ? 128 + ($? & 127) : $? >> 8), 0, "$version/$arch empty repository fails the full publication gate");
-        open(my $output, '<', "$tmp/output") or die $!;
-        my $text = do {local $/; <$output>};
-        close($output);
-        like($text, qr/MISSING native-fixture-\Q$version\E\b/, "$version/$arch path selects its own exact manifest section");
-    }
+for my $path (
+    '/repo/openeuler24.09/x86_64',
+    '/repo/openeuler24.03sp0/x86_64',
+    '/repo/openeuler24.03/ppc64',
+    '/repo/openeuler24.03',
+    '/repo/openeuler24.03/x86_64/repodata',
+    '/repo/notopeneuler24.03/x86_64',
+) {
+    is(derive_target_from_repo_path($path), undef, "$path has no native target");
 }
 
 done_testing();

@@ -15,7 +15,7 @@ use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_mo
                       rpm_arch rpm_in_cell
                       skipped_builder carry_over_rpms source_package
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
-                      verify_repo_packages verify_repo_signature verify_rpm_signatures
+                      derive_target_from_repo_path verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
                       bump_dep_release_suffix build_mock_uniqueext);
 
@@ -510,6 +510,21 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is($n2, 0, 'a second bump_dep_release_suffix call stamps nothing (idempotent)');
     my $a_again = do { open my $fh, '<', "$tmp/a.spec" or die; local $/; <$fh> };
     is($a_again, $a_after, 'a.spec content unchanged on the idempotent second call');
+}
+
+for my $case (
+    ['/repo/rh8/x86_64', 'alma+epel-8-x86_64'],
+    ['/repo/rh9/s390x/', 'alma+epel-9-s390x'],
+    ['/repo/rh10/ppc64le//', 'alma+epel-10-ppc64le'],
+    ['/repo/rh10/riscv64', 'alma+epel-10-riscv64'],
+) {
+    my ($path, $target) = @$case;
+    is(derive_target_from_repo_path($path), $target, "$path selects $target");
+}
+is(derive_target_from_repo_path(undef), undef, 'missing path has no target');
+is(derive_target_from_repo_path(''), undef, 'empty path has no target');
+for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64') {
+    is(derive_target_from_repo_path($path), undef, "$path has no target");
 }
 
 # ---- verify_repo_packages: pure repo-completeness decision (MISSING + VERSION + wildcard) ---------
