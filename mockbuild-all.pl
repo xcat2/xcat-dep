@@ -15,6 +15,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
+use XCAT::NFSLock ();
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
@@ -130,7 +131,8 @@ my $gpg_sign = 0;
 my $gpg_key_name = 'xCAT Signing Key';
 my $gpg_home = '';
 my $gpg_program = '';
-my $force_unlock = 0;
+# Seconds to wait for a lock that a live process holds. 0 fails at once.
+my $try_unlock_timeout = 0;
 # --finalize-xcat-dep: post-build cross-arch genesis provisioning (issue #7610). Takes the two
 # per-arch repo roots and cross-populates the noarch xCAT-genesis-base between them.
 my $finalize_xcat_dep = 0;
@@ -159,7 +161,7 @@ GetOptions(
     'gpg-sign!'         => \$gpg_sign,
     'gpg-key-name=s'    => \$gpg_key_name,
     'gpg-home=s'        => \$gpg_home,
-    'force-unlock!'     => \$force_unlock,
+    'try-unlock-timeout=i' => \$try_unlock_timeout,
     'finalize-xcat-dep!' => \$finalize_xcat_dep,
     'x86_64-repo=s'     => \$x86_64_repo,
     'ppc64le-repo=s'    => \$ppc64le_repo,
@@ -189,6 +191,7 @@ GetOptions(
 ) or die usage();
 
 die "Run as root (uid=$>)\n" if $> != 0 && !$finalize_xcat_dep && !$verify_repo;
+die "--try-unlock-timeout must be >= 0\n" if $try_unlock_timeout < 0;
 # --skip-build collects a prior build's artifacts from that build's per-target tree, so it must
 # know the target. Without --target the default is "all three EL targets", and each would collect
 # the same artifacts and cross-publish them into every repo (foreign-EL / foreign-arch rpms).
@@ -253,6 +256,12 @@ if ($finalize_xcat_dep) {
     my $ppc = abs_path($ppc64le_repo) or die "--ppc64le-repo '$ppc64le_repo' not found\n";
     die "--x86_64-repo '$x86' is not a directory\n" if !-d $x86;
     die "--ppc64le-repo '$ppc' is not a directory\n" if !-d $ppc;
+    # finalize rewrites the per-arch cells a build deploys, so it takes the same cell locks.
+    my %cell;
+    for my $root ($x86, $ppc) {
+        $cell{ abs_path($_) } = 1 for grep { -d } (glob("$root/*/x86_64"), glob("$root/*/ppc64le"));
+    }
+    take_lock(cell_lock_path($_), 'repository cell lock') for sort keys %cell;
     # Inject the per-rpm gpg re-sign and the repo re-index as callbacks so the finalize logic in
     # MockBuildUtils stays free of this script's gpg/createrepo state.
     finalize_xcat_dep($x86, $ppc,
@@ -320,11 +329,10 @@ make_path($repo_dep) if !-d $repo_dep;
 $repo_dep = abs_path($repo_dep)
     or die "Cannot resolve --repo-dep directory\n";
 
-# Fail-fast lock on the output base so a second run against the same --output aborts instead of
-# racing on the shared NFS tree. Held for the whole invocation; released by the exit handlers.
-acquire_output_lock($output_base, $force_unlock);
-acquire_repository_lock($repo_dep, $force_unlock)
-    if $repo_dep ne $output_base;
+# Locks are taken in one order: the output tree, then each repository cell in name order, then
+# common. The exit handlers release them.
+take_lock("$output_base/.lock", 'output lock');
+MockBuildUtils::recover_common_repository($repo_dep) unless $dry_run;
 
 $xcat_src  = resolve_xcat_source($xcat_src, $repo_root);
 
@@ -418,6 +426,16 @@ my %forcearch_targets = (
     },
 );
 
+# Each target deploys one cell, <repo-dep>/rh<rel>/<arch>, and locks only that cell: the per-arch
+# runs of one build share --repo-dep and never wait on each other.
+my @cell_locks = map {
+    my $cell = target_cell($_);
+    make_path(dirname($cell));
+    cell_lock_path($cell);
+} @build_targets;
+my %cell_lock_seen;
+take_lock($_, 'repository cell lock') for grep { !$cell_lock_seen{$_}++ } sort @cell_locks;
+
 # NOTE: no dhcp- packages are built here. DHCP backend selection is an install-time
 # rich dep in xCAT.spec (kea if system-release>=10 else /usr/sbin/dhcpd), so there is
 # nothing arch/EL-specific to build or to exclude for el10.
@@ -426,8 +444,7 @@ print_step('Targets to build');
 print "  $_\n" for @build_targets;
 print "output_base:      $output_base\n";
 print "deploy repo-dep:  $repo_dep\n";
-print "output lock:      $output_base/.lock (held)\n";
-print "repository lock:  $repo_dep/.lock (held)\n";
+print "locks held:       $_\n" for map { $_->path } @HELD_LOCKS;
 print "gpg_sign:         $gpg_sign\n";
 print "gpg_key_name:     $gpg_key_name\n" if $gpg_sign;
 print "gpg_home:         " . ($gpg_home ne '' ? $gpg_home : '(default keyring)') . "\n" if $gpg_sign;
@@ -887,7 +904,7 @@ if (!$skip_genesis && !$dry_run) {
 # A skipped builder built nothing this run, so everything it published in the cell joins the run
 # repository here, ahead of the bump check, createrepo, the tarballs and the deploy gate.
 if (!$dry_run && ($skip_genesis || $skip_perl || $skip_xcat_dep)) {
-    my $published = "$repo_dep/rh$rel/$arch";
+    my $published = target_cell($target);
     if (-d $published) {
         my %skipped = (genesis => $skip_genesis, perl => $skip_perl, dep => $skip_xcat_dep);
         # Only an rpm the configured key signed, by signer id and by rpmkeys --checksig, may be
@@ -1077,7 +1094,7 @@ sub deploy_target {
     my $rel   = $info->{rel};
     my $src   = $info->{repo_dir};
     my $tarch = $info->{profile}{arch};
-    my $dest  = "$repo_dep/rh$rel/$tarch";
+    my $dest  = target_cell($tgt);
     print_step("Deploy $tgt -> $dest");
     return if $dry_run;
 
@@ -1148,6 +1165,8 @@ sub publish_genesis_common_repo {
         return;
     }
 
+    # Every architecture run can publish common, so common has its own lock.
+    take_lock("$repo_dep/.common-publish.lock", 'common lock');
     $COMMON_STAGE = tempdir('.common.XXXXXXXX', DIR => $repo_dep, CLEANUP => 0);
     my $published = publish_genesis_release_packages('rpm', $COMMON_STAGE);
     verify_genesis_release_packages('rpm', $COMMON_STAGE);
@@ -1259,12 +1278,20 @@ sub publish_file {
     die $error;
 }
 
-# createrepo_c command with upstream-matching, deterministic metadata. The tool's
-# defaults emit primary/filelists/other as *.xml.zst plus *.sqlite.bz2 (--database),
-# exactly the upstream shape; --set-timestamp-to-revision pins repomd to SOURCE_DATE_EPOCH.
+# createrepo_c command with deterministic metadata: primary/filelists/other as *.xml.zst, with
+# --set-timestamp-to-revision pinning repomd to SOURCE_DATE_EPOCH.
+#
+# NO --database. It writes *.sqlite.bz2, and SQLite needs POSIX locks. The build tree lives on the
+# shared shared tree, an NFS mount the hypervisor re-exports, and the kernel refuses locks there:
+# every attempt answers errno 524. createrepo_c died with "Cannot open .repodata/primary.sqlite:
+# Can not create db_info table: disk I/O error" on every target once the build hosts moved off
+# virtiofs -- xcat-dep-el-cd #161 and #162 both failed that way and staged nothing.
+#
+# --database is deprecated in createrepo_c 1.1.2 and --no-database is its default. dnf on el8+ and
+# zypper read the XML.
 sub createrepo_c_cmd {
     my ($dir) = @_;
-    return 'createrepo_c --update --database '
+    return 'createrepo_c --update '
         . '--revision ' . shell_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
         . shell_quote($dir);
 }
@@ -1417,7 +1444,11 @@ Options:
   --output-root PATH      Override the derived build tree root (default: <output>/mockbuild-all)
   --repo-dep PATH         Override the deployable output root; rh8/rh9/rh10/<arch> and common
                           are assembled and signed here (default: <output>/xcat-dep)
-  --force-unlock          Remove a stale <output>/.lock before acquiring it
+  --try-unlock-timeout N  Wait up to N seconds (default 0) for a lock that a live
+                          process holds, then fail with the command that removes it.
+                          A lock whose owner is proven dead on this host is removed
+                          at once. Locks: <output>/.lock, one <repo-dep>/rh<N>/.<arch>.lock
+                          per target, and <repo-dep>/.common-publish.lock for common
   --finalize-xcat-dep     Post-build cross-arch genesis mode (builds nothing). Requires
                           --x86_64-repo and --ppc64le-repo. For each matching <os>/x86_64 and
                           <os>/ppc64le repo pair, copies the noarch xCAT-genesis-base-ppc64
@@ -2169,72 +2200,29 @@ sub resolve_xcat_source {
     return eval { abs_path($requested) } || $requested;
 }
 
-# Fail-fast advisory lock on the output base. Uses an atomic mkdir (portable and reliable over
-# NFS, unlike flock) of "<base>/.lock". A second run against the same --output dies immediately
-# rather than racing on the shared tree. Only the process that created the lock removes it.
-sub acquire_named_lock {
-    my ($base, $label, $force) = @_;
-    my $lock = "$base/.lock";
-    if ($force && -d $lock) {
-        print "force-unlock: removing stale lock $lock\n";
-        _rmdir_lock($lock);
-    }
-    if (mkdir $lock) {
-        push(@HELD_LOCKS, $lock);
-        $LOCK_OWNER_PID //= $$;
-        my $host = capture_command('uname', '-n') || 'unknown';
-        if (open my $fh, '>', "$lock/owner") {
-            print {$fh} "host=$host\npid=$$\nepoch=" . time() . "\n";
-            close $fh;
-        }
-        return;
-    }
-    # mkdir failed: either it already exists (locked) or a real error.
-    if (-d $lock) {
-        my $info = '';
-        if (open my $fh, '<', "$lock/owner") { local $/; $info = <$fh>; close $fh; }
-        $info =~ s/\s+/ /g;
-        die "$label $base is locked ($lock): $info\n"
-          . "another mockbuild-all run owns it; use a different destination or --force-unlock if stale.\n";
-    }
-    die "Cannot create lock $lock: $!\n";
+# A lock the run holds until it exits. The owner pid lets the exit handlers tell the run from the
+# build workers it forks, which inherit the lock list.
+sub take_lock {
+    my ($path, $label) = @_;
+    my $lock = XCAT::NFSLock->acquire($path, timeout => $try_unlock_timeout, label => $label);
+    push(@HELD_LOCKS, $lock);
+    $LOCK_OWNER_PID //= $$;
+    return $lock;
 }
 
-sub acquire_output_lock {
-    my ($base, $force) = @_;
-    acquire_named_lock($base, 'output', $force);
+# The repository cell a target deploys. The deploy, the carry-over and the cell lock all take the
+# path from here, so the lock covers the directory the deploy writes.
+sub target_cell {
+    my ($target) = @_;
+    my $profile = target_profile($target);
+    return "$repo_dep/rh$profile->{rel}/$profile->{arch}";
 }
 
-sub acquire_repository_lock {
-    my ($base, $force) = @_;
-    _recover_common_repository($base) if $force;
-    acquire_named_lock($base, 'repository', $force);
-}
-
-sub _recover_common_repository {
-    my ($base) = @_;
-    my $destination = "$base/common";
-    my @backups = sort {
-        ((stat($a))[9] // 0) <=> ((stat($b))[9] // 0)
-    } grep { -d $_ && !-l $_ } bsd_glob("$base/.common.previous.*");
-
-    if (!-e $destination && !-l $destination && @backups) {
-        my $backup = pop(@backups);
-        rename($backup, $destination)
-          or die "Cannot restore interrupted common repository $backup: $!\n";
-    }
-    remove_tree($_) for grep { -d $_ && !-l $_ } @backups;
-
-    for my $staging (bsd_glob("$base/.common.*")) {
-        next if $staging =~ m{/\.common\.previous\.};
-        remove_tree($staging) if -d $staging && !-l $staging;
-    }
-}
-
-sub _rmdir_lock {
-    my ($lock) = @_;
-    unlink "$lock/owner";
-    rmdir $lock;
+# The lock of a repository cell <dir>/<arch> sits beside it, as <dir>/.<arch>.lock: the deploy
+# replaces the cell directory itself.
+sub cell_lock_path {
+    my ($cell) = @_;
+    return dirname($cell) . '/.' . basename($cell) . '.lock';
 }
 
 # Release locks on every exit path, but only from the process that acquired them.
@@ -2254,9 +2242,7 @@ sub _restore_common_repository {
 
 sub _release_locks_if_owner {
     return unless defined($LOCK_OWNER_PID) && $$ == $LOCK_OWNER_PID;
-    for my $lock (reverse(@HELD_LOCKS)) {
-        _rmdir_lock($lock) if -d $lock;
-    }
+    $_->release for reverse(@HELD_LOCKS);
 }
 END {
     _restore_common_repository();

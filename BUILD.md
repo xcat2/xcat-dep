@@ -138,8 +138,10 @@ Use these flags to skip specific operations:
   - Adds extra artifact roots to the collection phase (repeatable).
 - `--dry-run`
   - Prints planned actions without executing them.
-- `--force-unlock`
-  - Removes a stale lock after the previous publisher has been checked.
+- `--try-unlock-timeout <N>`
+  - Waits up to N seconds (default 0) for a lock that a live process holds, then fails and prints
+    the command that removes the lock. A lock whose owner is proven dead on this host is removed
+    at once.
 
 # Prerequisites
 
@@ -245,12 +247,18 @@ published once under `xcat-dep/common`. Source RPMs stay in the verified
 release directory. Existing per-EL repositories keep the old Genesis packages
 and contain no OpenEmbedded copies.
 
-The build holds separate locks for its work area and the published repository.
-It prepares the complete common repository in a temporary directory, then
+The build locks its work area (`<output>/.lock`), each repository cell it deploys
+(`<repo-dep>/rh<N>/.<arch>.lock`) and, while it publishes, the common repository
+(`<repo-dep>/.common-publish.lock`). The per-arch runs of one build lock different
+cells, so they run in parallel. A lock whose owner is dead is removed only on the
+owner's host; from any other host the build waits `--try-unlock-timeout` seconds,
+then fails with the `mv` command that moves the lock away.
+
+The build prepares the complete common repository in a temporary directory, then
 replaces the previous repository only after package verification, metadata
 generation, and signing have succeeded. If a stopped publisher leaves staging
-or backup directories behind, rerun it with ``--force-unlock`` to recover the
-previous repository before starting a new publication.
+or backup directories behind, the next run recovers the previous repository
+when no other run holds the common lock.
 
 Repository publication requires all eight current architectures. Version 1
 release manifests remain readable, but they cannot replace the current

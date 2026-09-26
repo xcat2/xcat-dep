@@ -36,9 +36,9 @@ use File::Temp qw(tempdir);
 use Getopt::Long qw(GetOptions);
 use Pod::Usage qw(pod2usage);
 use POSIX qw(strftime);
-use Fcntl qw(:flock);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
+use XCAT::NFSLock ();
 # NOTE: XCAT::GenesisRelease (the shared reader/validator of an OpenEmbedded Genesis package release,
 # the same module mockbuild-all.pl uses for the rpm side) is loaded ON DEMAND in the --genesis-release
 # block, NOT with `use` here. It pulls in XCAT::BuildUtils, which needs File::Slurper, and the Ubuntu
@@ -112,13 +112,12 @@ my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): p
 my $genesis_rpm = '';                # fallback: native-arch genesis rpm to convert
 my $genesis_rpm_ppc = '';            # fallback: cross-arch ppc genesis rpm to convert (amd64 host)
 my $require_ppc_genesis = 0;
-# File-scoped exclusive run-lock handle. MUST be file-scoped (not a lexical inside a block) so the
-# flock lives for the WHOLE process -- a lexical would close the FH and release the lock early.
 # Seconds to wait for a concurrent publisher before giving up (--publish-lock-wait). Long by default:
 # the other holder is a real publish (assemble + gate + swap), and waiting it out is almost always
 # better than failing the run.
 my $PUBLISH_LOCK_WAIT = 1800;
-my $RUN_LOCK_FH;
+# The per-arch run lock, held until the END block releases it.
+my $RUN_LOCK;
 
 # Builder map: manifest binary-package name -> the in-tree package dir that carries <dir>/sbuild.pl
 # and the maintained debian/. (goconserver's dir == its binary name.)
@@ -195,6 +194,9 @@ $spec{'help|h'}                = sub { pod2usage(-verbose => 1, -exitval => 0); 
 $spec{'man'}                   = sub { pod2usage(-verbose => 2, -exitval => 0); };
 
 GetOptions(%spec) or pod2usage(-verbose => 1, -exitval => 2);
+# A signal exits through END, so the publish lock is released. The build phase installs its own
+# forwarding handlers for the duration of the build.
+$SIG{$_} = sub { exit 1 } for qw(INT TERM HUP);
 
 # --install-deps: make THIS host able to run the script, then exit. It comes first because
 # everything below assumes the toolchain is present, and a host that lacks it would fail with a
@@ -348,19 +350,13 @@ for my $cn (@dist_list) {
 my $staging = "$output_root/staging";
 unless ($dry_run) { make_path($staging); }
 
-# Fail-fast PER-ARCH run lock. Within ONE pipeline run the amd64 and ppc64el stages run CONCURRENTLY
-# on their own hosts against the SAME --output-root (different arch subdirs), so a single shared lock
-# would wrongly serialize them (or deadlock). Lock per-arch instead: <output_root>/.sbuild-all.<arch>.lock
-# is only ever contended by same-arch stages, which all run on the SAME host -- so a plain local flock
-# is authoritative (no cross-host NFS lockd needed). This still blocks a SECOND run's same-arch stage
-# (cron vs manual) from racing on this arch's staging + the shared apt tree. Not taken under --dry-run.
+# Fail-fast PER-ARCH run lock. The amd64 and ppc64el stages of one run build concurrently on their
+# own hosts against one --output-root, so the lock is per arch: a second run of the same arch stops.
+# flock on the shared tree fails with ENOTSUPP through the NFS re-export, so this is an
+# XCAT::NFSLock. Not taken under --dry-run.
 unless ($dry_run) {
     make_path($output_root);
-    my $lockfile = "$output_root/.sbuild-all.$arch.lock";
-    open($RUN_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open run lock $lockfile: $!\n";
-    unless (flock($RUN_LOCK_FH, LOCK_EX | LOCK_NB)) {
-        die "FATAL: another sbuild-all ($arch) is already running (lock held): $lockfile\n";
-    }
+    $RUN_LOCK = XCAT::NFSLock->acquire("$output_root/.sbuild-all.$arch.nfslock", label => "sbuild-all ($arch) run lock");
 }
 
 # The per-package builders are separate processes with their own CLI, so the bound travels to them in
@@ -1079,27 +1075,24 @@ sub verify_assembled_repo {
 #      complete repo or the new complete repo -- never a half-wiped pool or an index that does not
 #      match its Release. A failed gate leaves the published tree untouched.
 #
-# The lock file lives on the shared tree; within a host flock() is authoritative, which is what
-# matters, since the pipeline's finalization step always runs on one host (the amd64 Ubuntu builder).
+# Publishers of one tree can run on different hosts, and flock through an NFS re-export does not
+# exclude them, so the publish lock is an XCAT::NFSLock. The END block releases it.
 # ---------------------------------------------------------------------------------------------------
-my $PUBLISH_LOCK_FH;
+my $PUBLISH_LOCK;
 
 sub acquire_publish_lock {
     make_path($output_root);
-    my $lockfile = "$output_root/.sbuild-all.publish.lock";
-    open($PUBLISH_LOCK_FH, '>', $lockfile) or die "FATAL: cannot open publish lock $lockfile: $!\n";
-    unless (flock($PUBLISH_LOCK_FH, LOCK_EX | LOCK_NB)) {
-        print "  publish lock is held by another run -- waiting up to ${PUBLISH_LOCK_WAIT}s: $lockfile\n";
-        local $SIG{ALRM} = sub {
-            die "FATAL: timed out after ${PUBLISH_LOCK_WAIT}s waiting for the publish lock $lockfile\n";
-        };
-        alarm($PUBLISH_LOCK_WAIT);
-        my $ok = flock($PUBLISH_LOCK_FH, LOCK_EX);
-        alarm(0);
-        die "FATAL: cannot take the publish lock $lockfile: $!\n" unless $ok;
-    }
+    my $lockfile = "$output_root/.sbuild-all.publish.nfslock";
+    print "  taking the publish lock, waiting up to ${PUBLISH_LOCK_WAIT}s: $lockfile\n";
+    $PUBLISH_LOCK = XCAT::NFSLock->acquire($lockfile,
+        timeout => $PUBLISH_LOCK_WAIT, label => 'publish lock');
     print "  publish lock acquired: $lockfile\n";
     return $lockfile;
+}
+
+END {
+    $PUBLISH_LOCK->release if $PUBLISH_LOCK;
+    $RUN_LOCK->release     if $RUN_LOCK;
 }
 
 # assemble_into($dir, $expect_arches): (re)assemble every --dists codename inside $dir from the
@@ -1307,7 +1300,7 @@ sub publish_repo {
     print_step('Publish apt repo (locked, assembled aside, swapped in atomically)');
     my $expect = resolve_expect_arches('publish', $apt_dir);
     if ($dry_run) {
-        print "  [dry-run] would lock $output_root/.sbuild-all.publish.lock, assemble @dist_list for "
+        print "  [dry-run] would lock $output_root/.sbuild-all.publish.nfslock, assemble @dist_list for "
             . join(' ', @$expect) . " into $apt_dir.publish-<run-id>.<pid>, gate it, then rename it "
             . "onto $apt_dir\n";
         return;
