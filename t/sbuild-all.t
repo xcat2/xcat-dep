@@ -302,14 +302,15 @@ SKIP: {
     is_deeply(\@miss_go, [], 'goconserver present in every manifest target')
         or diag("missing goconserver in: @miss_go");
 
-    # The noarch boot components (syslinux-xcat, grub2-xcat, elilo-xcat, xnba-undi) are Architecture:all
-    # single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target incl. ppc64el and
-    # riscv64, so the gate verifies those repos actually carry them (matches the EL manifest + the 2.16
-    # ppc dep repo; a ppc or riscv64 MN serves the x86 nodes of a mixed cluster). It is the BUILD PHASE
-    # -- not the manifest -- that avoids rebuilding them off amd64 (build_one_codename skips an
-    # Architecture:all package on non-amd64; see the control_binary_arch test below).
+    # The noarch boot components (syslinux-xcat, grub2-xcat, elilo-xcat, xnba-undi, ipxe-xcat) are
+    # Architecture:all single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target
+    # incl. ppc64el and riscv64, so the gate verifies those repos actually carry them (matches the
+    # EL manifest + the 2.16 ppc dep repo; a ppc or riscv64 MN serves the x86 nodes of a mixed
+    # cluster). It is the BUILD PHASE -- not the manifest -- that avoids rebuilding them off amd64
+    # (build_one_codename skips an Architecture:all package on non-amd64; see the
+    # control_binary_arch test below).
     for my $t (@targets) {
-        for my $boot (qw(syslinux-xcat grub2-xcat elilo-xcat xnba-undi)) {
+        for my $boot (qw(syslinux-xcat grub2-xcat elilo-xcat xnba-undi ipxe-xcat)) {
             ok(exists $m{$t}{$boot}, "$boot required-present on $t (arch:all, verified on every arch)");
         }
     }
@@ -370,6 +371,17 @@ SKIP: {
         'native amd64 deb -> amd64 counts as built');
     ok(!index_has_native_arch('',    'amd64'), 'empty index text -> not built');
     ok(!index_has_native_arch(undef, 'amd64'), 'undef index text -> not built (no crash)');
+}
+
+# ipxe-xcat is built once on amd64 like the other boot components. Its control file must declare
+# Architecture: all, or every other arch would rebuild it.
+{
+    open my $fh, '<', "$FindBin::Bin/../ipxe-xcat/debian/control" or die "ipxe-xcat/debian/control: $!";
+    my $ctl = do { local $/; <$fh> };
+    close $fh;
+    is(control_binary_arch($ctl, 'ipxe-xcat'), 'all', 'ipxe-xcat is Architecture:all');
+    ok(!skip_arch_all_on($ctl, 'ipxe-xcat', 'amd64'), 'ipxe-xcat is built on amd64');
+    ok(skip_arch_all_on($ctl, 'ipxe-xcat', $_), "ipxe-xcat is not rebuilt on $_") for qw(ppc64el riscv64);
 }
 
 # ---- control_binary_arch: PURE Architecture lookup for a specific BINARY package in debian/control --
@@ -706,6 +718,7 @@ STUB
         'grub2-xcat'     => 'grub2-xcat',
         'elilo-xcat'     => 'elilo',
         'xnba-undi'      => 'xnba',
+        'ipxe-xcat'      => 'ipxe-xcat',
     );
     my %manifest = read_manifest("$root/debs-manifest.conf");
     my %seen;

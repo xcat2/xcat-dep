@@ -23,7 +23,7 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext rpm_in_cell
+    build_mock_uniqueext rpm_in_cell resolve_mock_cfg
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -721,6 +721,32 @@ sub build_mock_uniqueext {
     $idx = 0 if $idx < 0;
 
     return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
+}
+
+# resolve_mock_cfg($os_id, $rel, $arch[, $cfg_dir]): the mock config for EL release $rel on this
+# host, <id>+epel-<rel>-<arch>. /etc/os-release says 'almalinux' where mock-core-configs names the
+# file 'alma', so the short form is tried too. $cfg_dir defaults to /etc/mock.
+sub resolve_mock_cfg {
+    my ($os_id, $rel, $arch, $cfg_dir) = @_;
+    $cfg_dir //= '/etc/mock';
+    my %short_forms = (
+        almalinux      => 'alma',
+        'centos-stream' => 'centos-stream',
+        rocky          => 'rocky',
+    );
+    # Resolve by CONFIG-FILE existence, not by running `mock --print-root-path`: the latter can fail
+    # transiently (bootstrap chroot setup, a concurrent mock holding a lock) and made el10 flakily
+    # "resolve" to the long form that has no .cfg. Checking <cfg_dir>/<cfg>.cfg is deterministic.
+    for my $id ($os_id, (exists $short_forms{$os_id} ? ($short_forms{$os_id}) : ())) {
+        my $candidate = "${id}+epel-${rel}-${arch}";
+        if (-f "$cfg_dir/${candidate}.cfg") {
+            print "Mock config resolved: $candidate\n" if $id ne $os_id;
+            return $candidate;
+        }
+    }
+    my $short = $short_forms{$os_id} // $os_id;
+    die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
+      . "(tried $cfg_dir/${os_id}+epel-${rel}-${arch}.cfg and $cfg_dir/${short}+epel-${rel}-${arch}.cfg)\n";
 }
 
 1;

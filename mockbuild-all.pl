@@ -15,7 +15,7 @@ use Parallel::ForkManager;
 use POSIX qw(strftime);
 use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell
+use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell resolve_mock_cfg
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest verify_repo_packages verify_repo_signature verify_rpm_signatures
@@ -412,8 +412,8 @@ my %forcearch_targets = (
         arch         => 'riscv64',
         # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
         noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
 );
@@ -536,10 +536,11 @@ if (!$skip_build && !$dry_run && -d $run_root) {
     remove_tree($run_root);
 }
 
-# All dep builders run natively on every arch. xnba-undi and grub2-xcat are noarch packagings of
-# committed artifacts (an x86 UNDI ROM / the grub2 resource tarball) with no arch-specific build
-# step, so ppc builds them the same as x86 -- no cross-arch import. A forcearch target builds
-# only the builders its profile lists; the noarch ones run in the profile's native chroot.
+# All dep builders run natively on every arch. xnba-undi, grub2-xcat and ipxe-xcat are noarch
+# packagings of committed artifacts (an x86 UNDI ROM / the grub2 resource tarball / the iPXE release
+# tree) with no arch-specific build step, so ppc builds them the same as x86 -- no cross-arch
+# import. A forcearch target builds only the builders its profile lists; the noarch ones run in
+# the profile's native chroot.
 # syslinux-xcat is noarch too, and its spec builds on x86 and ppc64le only.
 my @dep_builders = (
     { name => 'elilo-xcat',  script => "$repo_root/elilo/mockbuild.pl", noarch => 1 },
@@ -549,6 +550,7 @@ my @dep_builders = (
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
+    { name => 'ipxe-xcat',   script => "$repo_root/ipxe-xcat/mockbuild.pl", noarch => 1 },
 );
 my %profile_builds = map { $_ => 1 } @{ $profile->{dep_builders} };
 
@@ -1040,11 +1042,11 @@ sub target_profile {
         noarch_cfg   => $target,
         forcearch    => 0,
         epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
         # xCAT Requires all of these on every arch, and every one of them builds natively on
-        # every arch (the noarch deps -- grub2-xcat, xnba-undi -- just repackage committed
+        # every arch (the noarch deps -- grub2-xcat, xnba-undi, ipxe-xcat -- just repackage committed
         # artifacts), so a self-sufficient per-arch build produces the whole set.
-        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+        required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     };
 }
@@ -2127,28 +2129,6 @@ sub collect_srpms {
     }
 
     return ($copied, $skipped_non_src, $missing_roots);
-}
-
-sub resolve_mock_cfg {
-    my ($os_id, $rel, $arch) = @_;
-    my %short_forms = (
-        almalinux      => 'alma',
-        'centos-stream' => 'centos-stream',
-        rocky          => 'rocky',
-    );
-    # Resolve by CONFIG-FILE existence, not by running `mock --print-root-path`: the latter can fail
-    # transiently (bootstrap chroot setup, a concurrent mock holding a lock) and made el10 flakily
-    # "resolve" to the long form that has no .cfg. Checking /etc/mock/<cfg>.cfg is deterministic.
-    for my $id ($os_id, (exists $short_forms{$os_id} ? ($short_forms{$os_id}) : ())) {
-        my $candidate = "${id}+epel-${rel}-${arch}";
-        if (-f "/etc/mock/${candidate}.cfg") {
-            print "Mock config resolved: $candidate\n" if $id ne $os_id;
-            return $candidate;
-        }
-    }
-    my $short = $short_forms{$os_id} // $os_id;
-    die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
-      . "(tried /etc/mock/${os_id}+epel-${rel}-${arch}.cfg and /etc/mock/${short}+epel-${rel}-${arch}.cfg)\n";
 }
 
 sub resolve_xcat_source {
