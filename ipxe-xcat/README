@@ -2,7 +2,8 @@ ipxe-xcat
 =========
 
 This package installs the ipxeboot.tar.gz tree of the iPXE v2.0.0 release
-under /tftpboot/xcat/ipxe, unchanged. Nothing is rebuilt. The x86_64-sb
+under /tftpboot/xcat/ipxe. Nothing is rebuilt, and only the two shims are
+replaced: see The shim. The x86_64-sb
 and arm64-sb builds carry their Secure Boot signatures inside the files, and
 the shim finds snponly.efi and ipxe.efi by name in its own directory, so the
 package keeps every name, symlink and byte of the release tree.
@@ -24,8 +25,15 @@ ipxe-2.0.0-source.tar.gz
     are GPL2_OR_LATER without the UBDL, so snponly.efi and undionly.kpxe are
     GPLv2+ as a whole. The package installs this archive with the binaries.
 
+ipxe-shimx64.efi, ipxe-shimaa64.efi
+    The ipxe-shimx64.efi and ipxe-shimaa64.efi assets of
+    https://github.com/ipxe/shim/releases/tag/ipxe-16.1, as ipxe replaced
+    them on 2026-05-27. Their SHA-256 values are the digests that GitHub
+    publishes for the assets.
+
 SHA256SUMS
-    The SHA-256 of both archives. Both builders check it before the build.
+    The SHA-256 of both archives and both shims. Both builders check it
+    before the build.
 
 payload.sha256
     One line for each directory, file and symlink of the release tree, with
@@ -45,11 +53,14 @@ licenses/
 The shim
 --------
 
-x86_64-sb/shimx64.efi and arm64-sb/shimaa64.efi report shim 16.1, and
-shimx64.efi is signed by the Microsoft Corporation UEFI CA 2011 only. The
-ipxe/shim ipxe-16.1 release assets were replaced on 2026-05-27 with a build
-signed by both the UEFI CA 2011 and the UEFI CA 2023. The files in this
-release tree are the earlier 16.1 build.
+The release tree carries shim 16.1 as x86_64-sb/shimx64.efi and
+arm64-sb/shimaa64.efi, signed by the Microsoft Corporation UEFI CA 2011
+only. Firmware that trusts only the UEFI CA 2023 refuses them with Secure
+Boot on. On 2026-05-27 ipxe replaced the ipxe/shim ipxe-16.1 release assets
+with a build signed by both CAs. Both builders install ipxe-shimx64.efi and
+ipxe-shimaa64.efi over the shims of the tree, under the same names, so the
+ipxe-shim.efi and snponly-shim.efi links still point to them. payload.sha256
+lists the digests of the replacements.
 
 Update to a new release
 -----------------------
@@ -58,13 +69,19 @@ Update to a new release
    the digest on the release page.
 2. Download the source archive of the tag, and compare its content with
    "git archive" of the tag.
-3. Replace both archives, and write SHA256SUMS with sha256sum.
-4. Write payload.sha256:
+3. Replace both archives. Download ipxe-shimx64.efi and ipxe-shimaa64.efi
+   from the latest ipxe/shim release, and compare their SHA-256 with the
+   digests on its page. Drop them and their install lines when the shims of
+   the new tree carry the UEFI CA 2023 signature.
+4. Write SHA256SUMS with sha256sum.
+5. Write payload.sha256 from the tree with the shims in place:
 
        mkdir tree
        tar -xzf ipxeboot-<version>.tar.gz --strip-components=1 -C tree
+       cp ipxe-shimx64.efi tree/x86_64-sb/shimx64.efi
+       cp ipxe-shimaa64.efi tree/arm64-sb/shimaa64.efi
        ./verify-payload.pl --generate tree > payload.sha256
 
-5. Update licenses/ when the release changes its licence texts or its shim.
-6. Set the version in ipxe-xcat.spec and debian/changelog, and the ipxe-xcat
+6. Update licenses/ when the release changes its licence texts or its shim.
+7. Set the version in ipxe-xcat.spec and debian/changelog, and the ipxe-xcat
    pins in packages-manifest.conf and debs-manifest.conf.

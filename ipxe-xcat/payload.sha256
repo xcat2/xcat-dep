@@ -7,7 +7,7 @@ dir	-	arm64
 dir	-	arm64-sb
 link	shimaa64.efi	arm64-sb/ipxe-shim.efi
 file	01b2438e6dc354c343590c308f1d4f000bc098be4d2237540432023abdbddcb8	arm64-sb/ipxe.efi
-file	8c13ca9078279c4012dc26dbd095bbebd54553db88af0b67a76b1641cf7b1a87	arm64-sb/shimaa64.efi
+file	31c6d8ef9ed24dc810dd7b951cf86b2e9036a02dea8a32548c0e1c0ae4d6f1c9	arm64-sb/shimaa64.efi
 link	shimaa64.efi	arm64-sb/snponly-shim.efi
 file	bed8da8639b45eeec55d41627349863efa5085a2113bb1193838b8a463e5f49e	arm64-sb/snponly.efi
 file	cff2abf51b7b491d7c5e2ef68c45003a0b4c5e866cb5b20f162569746d53390d	arm64/ipxe-legacy.efi
@@ -43,7 +43,7 @@ dir	-	x86_64
 dir	-	x86_64-sb
 link	shimx64.efi	x86_64-sb/ipxe-shim.efi
 file	6558e37887516b246d6a97122e8d18bedfe4197b7ba7f67bf1bf102a16678d33	x86_64-sb/ipxe.efi
-file	83ad71c7d4f2cf328b75b653d09bf3bea5f29bee2e67ca058f37d83c07133885	x86_64-sb/shimx64.efi
+file	5eecca2780bd49c900565e124516a1bd666ec5e012825f34991b6ba1ef2fa6cf	x86_64-sb/shimx64.efi
 link	shimx64.efi	x86_64-sb/snponly-shim.efi
 file	b1e67c3e4a1e8708ddfd0079ad4505e3a02245acb55ee9a95437ab3c507be82a	x86_64-sb/snponly.efi
 file	1d567f2e89a3c0cf0a184549918a3e799a47dc542df385c56e6b464e4765fae2	x86_64/ipxe-legacy.efi

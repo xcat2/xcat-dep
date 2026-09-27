@@ -19,12 +19,15 @@ Source4:        licenses/ipxe/COPYING.UBDL
 Source5:        licenses/shim/COPYRIGHT
 Source6:        licenses/shim/openssl/LICENSE
 Source7:        licenses/shim/gnu-efi/README.efilib
+Source8:        ipxe-shimx64.efi
+Source9:        ipxe-shimaa64.efi
 
 %description
-The ipxeboot.tar.gz tree of the iPXE %{version} release, installed unchanged
-under /tftpboot/xcat/ipxe. It carries the signed Secure Boot builds and
-their shim. The source archive of the release tag is installed with the
-documentation.
+The ipxeboot.tar.gz tree of the iPXE %{version} release, installed under
+/tftpboot/xcat/ipxe. It carries the signed Secure Boot builds and their
+shim. The shims are the ipxe/shim 16.1 assets signed by both Microsoft UEFI
+CAs, 2011 and 2023, and every other file is unchanged. The source archive
+of the release tag is installed with the documentation.
 
 %prep
 %setup -q -c -T
@@ -40,6 +43,8 @@ install -D -m 0644 %{SOURCE7} licenses/shim/gnu-efi/README.efilib
 %install
 mkdir -p %{buildroot}/tftpboot/xcat/ipxe
 tar -xzf %{SOURCE0} --no-same-owner --strip-components=1 -C %{buildroot}/tftpboot/xcat/ipxe
+install -m 0644 %{SOURCE8} %{buildroot}/tftpboot/xcat/ipxe/x86_64-sb/shimx64.efi
+install -m 0644 %{SOURCE9} %{buildroot}/tftpboot/xcat/ipxe/arm64-sb/shimaa64.efi
 install -D -m 0644 %{SOURCE1} %{buildroot}%{_pkgdocdir}/ipxe-%{version}-source.tar.gz
 
 %files
@@ -50,4 +55,5 @@ install -D -m 0644 %{SOURCE1} %{buildroot}%{_pkgdocdir}/ipxe-%{version}-source.t
 
 %changelog
 * Fri Sep 25 2026 xCAT <xcat-user@lists.sourceforge.net> - 2.0.0-1
-- Package the ipxeboot.tar.gz tree of the iPXE v2.0.0 release
+- Package the ipxeboot.tar.gz tree of the iPXE v2.0.0 release, with the
+  ipxe/shim 16.1 shims signed by both Microsoft UEFI CAs

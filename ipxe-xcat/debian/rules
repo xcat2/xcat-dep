@@ -20,6 +20,8 @@ binary-indep:
 	dh_prep
 	install -d $(DEST)/tftpboot/xcat/ipxe $(DOC)
 	tar -xzf ipxeboot-$(VERSION).tar.gz --no-same-owner --strip-components=1 -C $(DEST)/tftpboot/xcat/ipxe
+	install -m 0644 ipxe-shimx64.efi $(DEST)/tftpboot/xcat/ipxe/x86_64-sb/shimx64.efi
+	install -m 0644 ipxe-shimaa64.efi $(DEST)/tftpboot/xcat/ipxe/arm64-sb/shimaa64.efi
 	install -m 0644 ipxe-$(VERSION)-source.tar.gz $(DOC)/
 	cp -R licenses $(DOC)/licenses
 	dh_installdocs
