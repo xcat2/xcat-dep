@@ -11,6 +11,7 @@ use warnings;
 use Test::More;
 use Digest::SHA ();
 use File::Basename qw(dirname);
+use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
 use FindBin qw($RealBin);
@@ -116,18 +117,26 @@ is($code, 2, 'a tree path that is a symlink is refused');
 my @releases = glob("$pkg_dir/ipxeboot-*.tar.gz");
 is(scalar(@releases), 1, 'the package directory holds one release archive');
 SKIP: {
-    skip 'no release archive', 2 if @releases != 1;
+    skip 'no release archive', 4 if @releases != 1;
     my $release = "$tmp/release";
     make_path($release);
     is(system('tar', '-xzf', $releases[0], '--strip-components=1', '-C', $release), 0,
         'the release archive unpacks');
+
+    # The builders install the ipxe/shim shims, signed by both UEFI CAs, over those of the release.
+    my %shims = ('ipxe-shimx64.efi' => 'x86_64-sb/shimx64.efi', 'ipxe-shimaa64.efi' => 'arm64-sb/shimaa64.efi');
+    ($code, $output) = run_checker($release, "$pkg_dir/payload.sha256");
+    is($code, 1, 'payload.sha256 does not describe the shims of the bare release tree');
+    copy("$pkg_dir/$_", "$release/$shims{$_}") or die "copy $_: $!" for sort keys %shims;
+    ($code, $output) = run_checker($release, "$pkg_dir/payload.sha256");
+    is($code, 0, 'payload.sha256 matches the release tree with the committed shims') or diag($output);
 
     open(my $fh, '<', "$pkg_dir/SHA256SUMS") or die "read SHA256SUMS: $!";
     my %sums = map { /^([0-9a-f]{64})  (\S+)$/ ? ($2, $1) : () } <$fh>;
     close($fh);
     my %actual = map { ($_, Digest::SHA->new(256)->addfile("$pkg_dir/$_", 'b')->hexdigest) }
         grep { -f "$pkg_dir/$_" } keys %sums;
-    is_deeply(\%actual, \%sums, 'SHA256SUMS matches both committed archives');
+    is_deeply(\%actual, \%sums, 'SHA256SUMS matches the committed archives and shims');
 }
 
 done_testing();
