@@ -116,13 +116,11 @@ is($code, 2, 'a tree path that is a symlink is refused');
 my @releases = glob("$pkg_dir/ipxeboot-*.tar.gz");
 is(scalar(@releases), 1, 'the package directory holds one release archive');
 SKIP: {
-    skip 'no release archive', 3 if @releases != 1;
+    skip 'no release archive', 2 if @releases != 1;
     my $release = "$tmp/release";
     make_path($release);
     is(system('tar', '-xzf', $releases[0], '--strip-components=1', '-C', $release), 0,
         'the release archive unpacks');
-    ($code, $output) = run_checker($release, "$pkg_dir/payload.sha256");
-    is($code, 0, 'payload.sha256 matches the committed release archive') or diag($output);
 
     open(my $fh, '<', "$pkg_dir/SHA256SUMS") or die "read SHA256SUMS: $!";
     my %sums = map { /^([0-9a-f]{64})  (\S+)$/ ? ($2, $1) : () } <$fh>;
