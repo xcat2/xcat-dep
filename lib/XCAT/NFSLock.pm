@@ -407,8 +407,6 @@ sub _log {
     my $host = (split(/\./, hostname() || 'unknown'))[0];
     my $line = join(' ', '[nfslock]', $time, $host, "pid=$$", $event, $self->{label}, $self->{path},
         defined($detail) ? $detail : ());
-    # Flushed at once, so the line lands in the build log in the order the event happened.
-    local $| = 1;
     print "$line\n";
 }
 
