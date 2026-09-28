@@ -10,6 +10,7 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
+use File::Slurper qw(write_text);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
                       required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       rpm_arch rpm_in_cell resolve_mock_cfg
@@ -379,6 +380,27 @@ SPEC
     my %tarch = map { $_->{arch} => $_->{tarch} } @MockBuildUtils::GENESIS_ARCHES;
     is($tarch{x86_64},  'x86_64', 'GENESIS_ARCHES: x86_64 maps to tarch x86_64');
     is($tarch{ppc64le}, 'ppc64',  'GENESIS_ARCHES: ppc64le maps to xCAT tarch ppc64');
+}
+
+# ---- finalize_xcat_dep only => [...]: write only the cells of the named arches -----------------
+# Each host finalizes the cells it deploys, so a cell lock is never held from another host.
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my ($x, $p) = ("$tmp/r/rh9/x86_64", "$tmp/r/rh9/ppc64le");
+    make_path($x, $p);
+    write_text("$x/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm", "x86 genesis\n");
+    write_text("$p/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm", "ppc genesis\n");
+    my @reindexed;
+    quiet { finalize_xcat_dep("$tmp/r", "$tmp/r", only => ['ppc64le'],
+        reindex => sub { push @reindexed, $_[0] }) };
+    ok(-f "$p/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm", 'the ppc64le cell gets the x86_64 genesis');
+    ok(!-e "$x/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm", 'the x86_64 cell is not written');
+    is_deeply(\@reindexed, [$p], 'only the ppc64le cell is re-indexed');
+
+    my $bad = eval { quiet { finalize_xcat_dep("$tmp/r", "$tmp/r", only => ['riscv64']) }; 1 };
+    ok(!$bad, 'an arch outside the cross-arch matrix is refused');
+    like($@, qr/\AFATAL: \[finalize\] no cross-arch genesis for arch 'riscv64'/,
+        'the refusal names the arch');
 }
 
 # ---- restamp_release_line: CD --build-number Release stamping (PR #62 review point 1) ----------

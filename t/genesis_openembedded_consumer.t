@@ -1026,6 +1026,22 @@ sub test_finalize_cell_lock {
         'finalize names the cell lock it waited for');
     ok(-d $cell_lock, 'the build keeps its cell lock');
     ok(!-e "$ppc/rh10/.ppc64le.lock", 'finalize releases the cell locks it took');
+
+    # Finalize of the ppc64le cells takes only their locks: the x86_64 cell lock of another machine
+    # does not stop it. It stops at the next check, the missing genesis rpm.
+    my $arch_log = "$tmp/finalize-arch.log";
+    my $arch_status = run_capture(
+        $arch_log,
+        $^X, $rpm_consumer,
+        '--repo-root', $repo_root,
+        '--finalize-xcat-dep', '--finalize-arch', 'ppc64le',
+        '--x86_64-repo', $x86, '--ppc64le-repo', $ppc,
+    );
+    isnt($arch_status, 0, 'finalize of an empty ppc64le cell fails');
+    unlike(read_binary($arch_log), qr/^Trying to unlock/m, 'finalize of ppc64le cells takes no x86_64 cell lock');
+    like(read_binary($arch_log), qr/no x86_64 xCAT-genesis-base rpm/, 'finalize of ppc64le cells reaches the genesis check');
+    ok(-d $cell_lock, 'the x86_64 cell lock of the other machine is left in place');
+    ok(!-e "$ppc/rh10/.ppc64le.lock", 'finalize releases the ppc64le cell lock');
 }
 
 sub test_rpm_signal_cleanup {
@@ -1082,16 +1098,19 @@ sub test_publish_lock {
     stage_legacy_deb("$tmp/lock-deb", $output);
     make_path($output);
 
-    # This process is a live amd64 run on the same host. The run lock is an XCAT::NFSLock, because
-    # flock on the shared tree fails with ENOTSUPP through the NFS re-export.
-    {
-        my $run_lock = "$output/.sbuild-all.amd64.nfslock";
+    # This process is a live build run on the same host. The publish reads the staging of every
+    # expected arch, so it waits for the run lock of each one. The run lock is an XCAT::NFSLock,
+    # because flock on the shared tree fails with ENOTSUPP through the NFS re-export.
+    for my $build_arch (qw(amd64 ppc64el)) {
+        my $run_lock = "$output/.sbuild-all.$build_arch.nfslock";
         my $running = XCAT::NFSLock->acquire($run_lock);
-        my $run_log = "$tmp/deb-run-locked.log";
-        my $run_status = run_apt_consumer(log => $run_log, output => $output, apt_dir => $apt_root);
-        isnt($run_status, 0, 'a second amd64 run does not start beside a live one');
+        my $run_log = "$tmp/deb-run-locked-$build_arch.log";
+        my $run_status = run_apt_consumer(log => $run_log, output => $output, apt_dir => $apt_root,
+            extra => [ '--publish-lock-wait', '2' ]);
+        isnt($run_status, 0, "a publish does not start while a $build_arch run holds its lock");
         like(read_binary($run_log), qr/^Trying to unlock \Q$run_lock\E failed after 1 retry;/m,
-            'the refusal names the run lock');
+            "the refusal names the $build_arch run lock");
+        ok(!-d "$apt_root/dists", "nothing is published while a $build_arch run holds its lock");
         $running->release;
     }
 
