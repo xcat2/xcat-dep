@@ -6,10 +6,13 @@ package MockBuildUtils;
 use strict;
 use warnings;
 use Exporter 'import';
-use File::Basename qw(basename);
+use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Glob qw(bsd_glob);
 use File::Find;
+use File::Path qw(remove_tree);
+use lib dirname(__FILE__) . '/lib';
+use XCAT::NFSLock ();
 use Sys::Hostname;
 use Digest::MD5 qw(md5_hex);
 
@@ -23,7 +26,8 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
-    build_mock_uniqueext rpm_in_cell
+    build_mock_uniqueext rpm_in_cell resolve_mock_cfg
+    recover_common_repository
 );
 
 # install_deps_packages($os_id): the host packages mockbuild-all.pl needs to run at all, for the
@@ -545,6 +549,15 @@ sub finalize_xcat_dep {
     my ($x86_64_repo, $ppc64le_repo, %opt) = @_;
     my $sign    = $opt{sign};
     my $reindex = $opt{reindex};
+    # The arches whose cells this run writes. The others are read only: each host finalizes the
+    # cells it deploys, so it never holds a cell lock that only another host could reclaim.
+    my %known = map { $_->{arch} => 1 } @GENESIS_ARCHES;
+    my @only  = @{ $opt{only} // [ map { $_->{arch} } @GENESIS_ARCHES ] };
+    for my $a (@only) {
+        die "FATAL: [finalize] no cross-arch genesis for arch '$a'\n" unless $known{$a};
+    }
+    my %write = map { $_ => 1 } @only;
+    my @dst_arches = grep { $write{ $_->{arch} } } @GENESIS_ARCHES;
     print_step('Finalize xcat-dep: cross-arch genesis-base provisioning (issue #7610)');
     print "x86_64-repo:  $x86_64_repo\n";
     print "ppc64le-repo: $ppc64le_repo\n";
@@ -585,7 +598,7 @@ sub finalize_xcat_dep {
         # N-way cross-copy: put each arch's genesis into EVERY other arch's repo dir.
         my @summary;
         for my $src (@GENESIS_ARCHES) {
-            for my $dst (@GENESIS_ARCHES) {
+            for my $dst (@dst_arches) {
                 next if $src->{arch} eq $dst->{arch};
                 my $n = cross_copy_genesis($adir{$src->{arch}}, $adir{$dst->{arch}}, $src->{tarch}, $sign);
                 push @summary, "$n $src->{tarch} -> $dst->{arch}";
@@ -596,7 +609,7 @@ sub finalize_xcat_dep {
         # rpm on disk (so cross_copy_genesis now returns 0) yet ABSENT from repomd.xml -- which no
         # signature gate catches. Re-indexing is cheap (tiny repos) and idempotent, and heals that
         # partial state; skipped only when no signer/indexer was injected.
-        if ($reindex) { $reindex->($adir{$_->{arch}}) for @GENESIS_ARCHES; }
+        if ($reindex) { $reindex->($adir{$_->{arch}}) for @dst_arches; }
         print "[finalize] $osdir: " . join(', ', @summary) . "\n";
         $pairs++;
     }
@@ -721,6 +734,80 @@ sub build_mock_uniqueext {
     $idx = 0 if $idx < 0;
 
     return sprintf("mba-%02d-%s-%s", $idx, $run_part, $label_part);
+}
+
+#--------------------------------------------------------------------------------
+
+=head3 recover_common_repository
+
+    Descriptions:
+        Put back the common tree that an interrupted publication moved aside, and
+        remove the staging trees it left. Runs only under the common lock, so it
+        never removes the staging tree of a run that is still publishing.
+    Arguments:
+        $base: the --repo-dep directory
+    Returns:
+        1 when the recovery ran, 0 when another run holds the common lock.
+
+=cut
+
+#--------------------------------------------------------------------------------
+sub recover_common_repository {
+    my ($base) = @_;
+    my $path = "$base/.common-publish.lock";
+    my $lock = eval { XCAT::NFSLock->acquire($path, label => 'common lock') };
+    unless ($lock) {
+        # The lock is live or unproven: this is not the place to offer its removal.
+        print "common recovery skipped: another run holds $path\n";
+        return 0;
+    }
+    my $destination = "$base/common";
+    my @backups = sort {
+        ((stat($a))[9] // 0) <=> ((stat($b))[9] // 0)
+    } grep { -d $_ && !-l $_ } bsd_glob("$base/.common.previous.*");
+
+    if (!-e $destination && !-l $destination && @backups) {
+        my $backup = pop(@backups);
+        unless (rename($backup, $destination)) {
+            my $error = $!;
+            $lock->release;
+            die "Cannot restore interrupted common repository $backup: $error\n";
+        }
+    }
+    remove_tree($_) for grep { -d $_ && !-l $_ } @backups;
+
+    for my $staging (bsd_glob("$base/.common.*")) {
+        next if $staging =~ m{/\.common\.previous\.};
+        remove_tree($staging) if -d $staging && !-l $staging;
+    }
+    $lock->release;
+    return 1;
+}
+
+# resolve_mock_cfg($os_id, $rel, $arch[, $cfg_dir]): the mock config for EL release $rel on this
+# host, <id>+epel-<rel>-<arch>. /etc/os-release says 'almalinux' where mock-core-configs names the
+# file 'alma', so the short form is tried too. $cfg_dir defaults to /etc/mock.
+sub resolve_mock_cfg {
+    my ($os_id, $rel, $arch, $cfg_dir) = @_;
+    $cfg_dir //= '/etc/mock';
+    my %short_forms = (
+        almalinux      => 'alma',
+        'centos-stream' => 'centos-stream',
+        rocky          => 'rocky',
+    );
+    # Resolve by CONFIG-FILE existence, not by running `mock --print-root-path`: the latter can fail
+    # transiently (bootstrap chroot setup, a concurrent mock holding a lock) and made el10 flakily
+    # "resolve" to the long form that has no .cfg. Checking <cfg_dir>/<cfg>.cfg is deterministic.
+    for my $id ($os_id, (exists $short_forms{$os_id} ? ($short_forms{$os_id}) : ())) {
+        my $candidate = "${id}+epel-${rel}-${arch}";
+        if (-f "$cfg_dir/${candidate}.cfg") {
+            print "Mock config resolved: $candidate\n" if $id ne $os_id;
+            return $candidate;
+        }
+    }
+    my $short = $short_forms{$os_id} // $os_id;
+    die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
+      . "(tried $cfg_dir/${os_id}+epel-${rel}-${arch}.cfg and $cfg_dir/${short}+epel-${rel}-${arch}.cfg)\n";
 }
 
 1;

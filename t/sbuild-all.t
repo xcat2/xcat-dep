@@ -20,7 +20,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   supported_arches is_supported_arch
                   codename_to_version version_to_codename known_codenames
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
-                  control_field genesis_deb_control
+                  control_field
                   deb_field deb_version deb_hash cross_copy_genesis_deb
                   build_deb_in_chroot);
 
@@ -86,41 +86,6 @@ is(chroot_name('noble', 'amd64'), 'noble-amd64-sbuild', 'chroot_name shape');
         'Depends folded across continuation lines');
     is(control_field($ctrl, 'Breaks'), 'old-foo', 'Breaks parsed');
     is(control_field($ctrl, 'Replaces'), undef, 'absent field -> undef');
-}
-
-# ---- genesis_deb_control: PRESERVE the maintained packaging semantics (concern #2) --------------
-{
-    # The real xCAT-genesis-builder/debian/control fields that the bare 5-field shim used to drop.
-    my $maintained = <<'CTRL';
-Source: xcat-genesis-base-amd64
-Section: admin
-Priority: optional
-Maintainer: xCAT <xcat-user@lists.sourceforge.net>
-
-Package: xcat-genesis-base-amd64
-Architecture: all
-Depends: ${misc:Depends}
-Replaces: xcat-genesis-amd64
-Breaks: xcat-genesis-amd64, xcat-genesis-scripts-amd64 (<< 2.13.10)
-Description: xCAT Genesis netboot image
- base platform.
-CTRL
-    my $c = genesis_deb_control($maintained, 'xcat-genesis-base-amd64', '2.18.0-snap1', 'all');
-    like($c, qr/^Package: xcat-genesis-base-amd64$/m, 'Package set');
-    like($c, qr/^Version: 2\.18\.0-snap1$/m,          'Version set');
-    like($c, qr/^Architecture: all$/m,                'Architecture set');
-    like($c, qr/^Replaces: xcat-genesis-amd64$/m,     'Replaces PRESERVED (was dropped by the shim)');
-    like($c, qr/^Breaks: xcat-genesis-amd64, xcat-genesis-scripts-amd64 \(<< 2\.13\.10\)$/m,
-        'Breaks PRESERVED with its version constraint');
-    unlike($c, qr/\$\{misc:Depends\}/, 'unresolved ${misc:Depends} substvar dropped (would ship literal)');
-    like($c, qr/^Maintainer: xCAT /m, 'Maintainer preserved');
-}
-# With no maintained control available, an honest minimal control is still produced.
-{
-    my $c = genesis_deb_control(undef, 'xcat-genesis-base-ppc64el', '2.18.0-snap1', 'all');
-    like($c, qr/^Package: xcat-genesis-base-ppc64el$/m, 'minimal control still names the package');
-    like($c, qr/^Architecture: all$/m,                  'minimal control still arch:all');
-    unlike($c, qr/^Replaces:/m, 'no Replaces invented when the maintained control is absent');
 }
 
 # ---- verify_repo_packages: PURE completeness decision (no I/O; manifest = source of truth) -------
@@ -337,14 +302,15 @@ SKIP: {
     is_deeply(\@miss_go, [], 'goconserver present in every manifest target')
         or diag("missing goconserver in: @miss_go");
 
-    # The noarch boot components (syslinux-xcat, grub2-xcat, elilo-xcat, xnba-undi) are Architecture:all
-    # single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target incl. ppc64el and
-    # riscv64, so the gate verifies those repos actually carry them (matches the EL manifest + the 2.16
-    # ppc dep repo; a ppc or riscv64 MN serves the x86 nodes of a mixed cluster). It is the BUILD PHASE
-    # -- not the manifest -- that avoids rebuilding them off amd64 (build_one_codename skips an
-    # Architecture:all package on non-amd64; see the control_binary_arch test below).
+    # The noarch boot components (syslinux-xcat, grub2-xcat, elilo-xcat, xnba-undi, ipxe-xcat) are
+    # Architecture:all single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target
+    # incl. ppc64el and riscv64, so the gate verifies those repos actually carry them (matches the
+    # EL manifest + the 2.16 ppc dep repo; a ppc or riscv64 MN serves the x86 nodes of a mixed
+    # cluster). It is the BUILD PHASE -- not the manifest -- that avoids rebuilding them off amd64
+    # (build_one_codename skips an Architecture:all package on non-amd64; see the
+    # control_binary_arch test below).
     for my $t (@targets) {
-        for my $boot (qw(syslinux-xcat grub2-xcat elilo-xcat xnba-undi)) {
+        for my $boot (qw(syslinux-xcat grub2-xcat elilo-xcat xnba-undi ipxe-xcat)) {
             ok(exists $m{$t}{$boot}, "$boot required-present on $t (arch:all, verified on every arch)");
         }
     }
@@ -405,6 +371,17 @@ SKIP: {
         'native amd64 deb -> amd64 counts as built');
     ok(!index_has_native_arch('',    'amd64'), 'empty index text -> not built');
     ok(!index_has_native_arch(undef, 'amd64'), 'undef index text -> not built (no crash)');
+}
+
+# ipxe-xcat is built once on amd64 like the other boot components. Its control file must declare
+# Architecture: all, or every other arch would rebuild it.
+{
+    open my $fh, '<', "$FindBin::Bin/../ipxe-xcat/debian/control" or die "ipxe-xcat/debian/control: $!";
+    my $ctl = do { local $/; <$fh> };
+    close $fh;
+    is(control_binary_arch($ctl, 'ipxe-xcat'), 'all', 'ipxe-xcat is Architecture:all');
+    ok(!skip_arch_all_on($ctl, 'ipxe-xcat', 'amd64'), 'ipxe-xcat is built on amd64');
+    ok(skip_arch_all_on($ctl, 'ipxe-xcat', $_), "ipxe-xcat is not rebuilt on $_") for qw(ppc64el riscv64);
 }
 
 # ---- control_binary_arch: PURE Architecture lookup for a specific BINARY package in debian/control --
@@ -741,6 +718,7 @@ STUB
         'grub2-xcat'     => 'grub2-xcat',
         'elilo-xcat'     => 'elilo',
         'xnba-undi'      => 'xnba',
+        'ipxe-xcat'      => 'ipxe-xcat',
     );
     my %manifest = read_manifest("$root/debs-manifest.conf");
     my %seen;

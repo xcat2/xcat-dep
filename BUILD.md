@@ -50,6 +50,7 @@ This guide uses the following placeholders consistently:
 - `<REPO_ROOT>/goconserver/mockbuild.pl`
 - `<REPO_ROOT>/conserver/mockbuild.pl`
 - `<REPO_ROOT>/xnba/mockbuild.pl`
+- `<REPO_ROOT>/ipxe-xcat/mockbuild.pl`
 - `<REPO_ROOT>/mockbuild-perl-packages.pl`
 - `<XCAT_SOURCE>/buildrpms.pl` — only to build the OS-dependent `xCAT-genesis-base` package (unless `--skip-genesis` is set); the full xCAT core is built separately by the xcat-core pipeline, not here.
 
@@ -103,7 +104,7 @@ Use these flags to skip specific operations:
 - `--skip-genesis`
   - Skips the `xCAT-genesis-base` build (`<XCAT_SOURCE>/buildrpms.pl --package xCAT-genesis-base`).
 - `--skip-xcat-dep`
-  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `xnba-undi`).
+  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `xnba-undi`, `ipxe-xcat`).
 - `--skip-perl`
   - Skips `<REPO_ROOT>/mockbuild-perl-packages.pl`.
   - With any of the three flags above, the run repository, the tarball and the deployed cell keep
@@ -138,8 +139,10 @@ Use these flags to skip specific operations:
   - Adds extra artifact roots to the collection phase (repeatable).
 - `--dry-run`
   - Prints planned actions without executing them.
-- `--force-unlock`
-  - Removes a stale lock after the previous publisher has been checked.
+- `--try-unlock-timeout <N>`
+  - Waits about N seconds for a lock that a live process holds, in retries of 3 seconds with
+    at least one retry, then fails and prints the command that removes the lock. A lock whose
+    owner is proven dead on this host is taken over at once.
 
 # Prerequisites
 
@@ -245,12 +248,19 @@ published once under `xcat-dep/common`. Source RPMs stay in the verified
 release directory. Existing per-EL repositories keep the old Genesis packages
 and contain no OpenEmbedded copies.
 
-The build holds separate locks for its work area and the published repository.
-It prepares the complete common repository in a temporary directory, then
+The build locks its work area (`<output>/.lock`), each repository cell it deploys
+(`<repo-dep>/rh<N>/.<arch>.lock`) and, while it publishes, the common repository
+(`<repo-dep>/.common-publish.lock`). The per-arch runs of one build lock different
+cells, so they run in parallel. A lock whose owner is dead is taken over only on the
+owner's host. From any other host the build waits `--try-unlock-timeout` seconds,
+then fails with the command that removes the lock. The protocol is documented at the
+top of `lib/XCAT/NFSLock.pm`.
+
+The build prepares the complete common repository in a temporary directory, then
 replaces the previous repository only after package verification, metadata
 generation, and signing have succeeded. If a stopped publisher leaves staging
-or backup directories behind, rerun it with ``--force-unlock`` to recover the
-previous repository before starting a new publication.
+or backup directories behind, the next run recovers the previous repository
+when no other run holds the common lock.
 
 Repository publication requires all eight current architectures. Version 1
 release manifests remain readable, but they cannot replace the current
@@ -459,7 +469,7 @@ missing, and then builds the `[rocky-10-riscv64-xcat]` section of `packages-mani
 | goconserver | cross-compiled on the host (`GOARCH=riscv64`), packaged with `rpmbuild --target riscv64` |
 | grub2-xcat (noarch) | built in the native, EPEL-free `rocky-10-x86_64` chroot |
 | perl list6 + EPEL gap (`--epel-gap`) | `mockbuild-perl-packages.pl --target-arch riscv64 --noarch-mock-cfg rocky-10-x86_64 --epel-gap`: XS modules in the riscv64 chroot, noarch modules in the native chroot |
-| elilo-xcat, syslinux-xcat, xnba-undi (noarch) | built in the native `rocky-10-x86_64` chroot, like grub2-xcat: a riscv64 management node serves the x86 nodes of a mixed cluster. The target is cross-built on x86_64 only, as its mock config states |
+| elilo-xcat, ipxe-xcat, syslinux-xcat, xnba-undi (noarch) | built in the native `rocky-10-x86_64` chroot, like grub2-xcat: a riscv64 management node serves the x86 nodes of a mixed cluster. The target is cross-built on x86_64 only, as its mock config states |
 
 There is no EPEL for riscv64, so the perl deps of xCAT that EL10 otherwise takes from EPEL
 are built here as well (`--epel-gap` in `mockbuild-perl-packages.pl`: perl-Crypt-Blowfish,
@@ -611,16 +621,16 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
   `mk-build-deps`, so version constraints, `a | b` alternatives and arch qualifiers are honoured) are
   all **fatal** on failure — and since nothing survives the session, a package whose `debian/control`
   forgets a `Build-Depends` cannot build green on a sibling package's leftovers.
-- **Per-arch package sets (`debs-manifest.conf`).** One `[<codename>-<arch>]` section per target. The
-  noarch boot components (`syslinux-xcat`/`grub2-xcat`/`elilo-xcat`/`xnba-undi`, `Architecture:all`)
-  are built ONCE on amd64 — single producer, their source is x86-only — and assembled into every
-  arch's `Packages` index. They are listed for **ppc64el too, as required-present**, so the gate
-  verifies the ppc repo actually carries them (a ppc MN needs them for netboot, matching the EL
-  manifest). `build_one_codename` **skips** an `Architecture:all` package on any non-amd64 arch
-  (detected via `control_binary_arch`), so ppc64el and riscv64 build only the genuinely
-  arch-specific compiled deps (`ipmitool-xcat`, `conserver-xcat`, `goconserver`) yet still verify the
-  boot components they need. The riscv64 sections require the same four boot components as
-  ppc64el: a riscv64 management node serves the x86 nodes of a mixed cluster.
+- **Per-arch package sets (`debs-manifest.conf`).** One `[<codename>-<arch>]` section per target.
+  The noarch boot components (`syslinux-xcat`/`grub2-xcat`/`elilo-xcat`/`xnba-undi`/`ipxe-xcat`,
+  `Architecture:all`) are built ONCE on amd64 — single producer, most of them from x86-only source —
+  and assembled into every arch's `Packages` index. They are listed for **ppc64el too, as
+  required-present**, so the gate verifies the ppc repo actually carries them (a ppc MN needs them
+  for netboot, matching the EL manifest). `build_one_codename` **skips** an `Architecture:all`
+  package on any non-amd64 arch (detected via `control_binary_arch`), so ppc64el and riscv64 build
+  only the genuinely arch-specific compiled deps (`ipmitool-xcat`, `conserver-xcat`, `goconserver`)
+  yet still verify the boot components they need. The riscv64 sections require the same five boot
+  components as ppc64el: a riscv64 management node serves the x86 nodes of a mixed cluster.
 - **Fail-hard.** Any required chroot / package / artifact failure, or any version-pin mismatch, fails
   the whole run non-zero.
 - **Genesis keeps its maintained packaging.** A native `xcat-genesis-base` deb is INGESTED as-is when
@@ -686,7 +696,7 @@ needs no `--mirror`.
 | ipmitool-xcat, conserver-xcat | `dpkg-buildpackage` in the emulated riscv64 chroot |
 | goconserver | same chroot, compiled by the Go toolchain the chroot installs for riscv64 |
 | grub2-xcat (`Architecture:all`) | built once on amd64 and assembled into the riscv64 index; listed in the riscv64 manifest sections as required-present, because a riscv64 management node needs it to netboot |
-| syslinux-xcat, elilo-xcat, xnba-undi (`Architecture:all`) | built once on amd64 and assembled into the riscv64 index; required-present like grub2-xcat, because a riscv64 management node serves the x86 nodes of a mixed cluster |
+| syslinux-xcat, elilo-xcat, xnba-undi, ipxe-xcat (`Architecture:all`) | built once on amd64 and assembled into the riscv64 index; required-present like grub2-xcat, because a riscv64 management node serves the x86 nodes of a mixed cluster |
 | xcat-genesis-base | not built: no riscv64 section names it, and the build skips the step when the manifest does not ask for it, so `--skip-genesis` is unnecessary here |
 
 The riscv64 ipmitool-xcat deb is installed into the chroot that built it and

@@ -37,7 +37,7 @@ our @EXPORT_OK = qw(
     supported_arches is_supported_arch
     chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
     chroot_build_timeout
-    control_field genesis_deb_control
+    control_field genesis_debs_for_codename
     deb_field deb_version deb_hash cross_copy_genesis_deb
     build_deb_in_chroot
 );
@@ -476,53 +476,6 @@ sub control_field {
     return undef;
 }
 
-# genesis_deb_control: build the DEBIAN/control text for the cross-arch-converted xcat-genesis-base
-# deb, PRESERVING the maintained packaging's semantics (Depends/Breaks/Replaces/Section/Priority)
-# instead of hand-rolling a bare 5-field control (the bug in build-dep-debs.sh flagged by review
-# concern #2). $maintained is the text of xCAT-genesis-builder/debian/control (or undef when it
-# cannot be located — then a minimal-but-honest control is produced and the caller should warn).
-# $pkgname is e.g. xcat-genesis-base-ppc64el, $version the deb version, $arch 'all'. Pure/testable.
-sub genesis_deb_control {
-    my ($maintained, $pkgname, $version, $arch) = @_;
-    $arch ||= 'all';
-    my %f = (
-        Package      => $pkgname,
-        Version      => $version,
-        Architecture => $arch,
-        Section      => 'admin',
-        Priority     => 'optional',
-        Maintainer   => 'xCAT <xcat-user@lists.sourceforge.net>',
-    );
-    if (defined $maintained && $maintained ne '') {
-        for my $k (qw(Section Priority Maintainer Depends Pre-Depends Recommends
-                      Suggests Breaks Replaces Conflicts Provides)) {
-            my $v = control_field($maintained, $k);
-            $f{$k} = $v if defined $v && $v ne '';
-        }
-        my $desc = control_field($maintained, 'Description');
-        $f{Description} = $desc if defined $desc && $desc ne '';
-    }
-    $f{Description} ||= 'xCAT Genesis netboot image (converted from the rpm for cross-arch netboot)';
-    # ${misc:Depends} is a debhelper substitution var that only resolves during a real dpkg build;
-    # in a hand-assembled control it would ship literally, so drop it from a preserved Depends.
-    for my $k (qw(Depends Pre-Depends Recommends Suggests)) {
-        next unless defined $f{$k};
-        $f{$k} =~ s/\$\{[^}]+\}//g;
-        $f{$k} =~ s/^[,\s]+|[,\s]+$//g;
-        $f{$k} =~ s/\s*,\s*,\s*/, /g;
-        delete $f{$k} if $f{$k} eq '';
-    }
-    my @order = qw(Package Version Section Priority Architecture Maintainer
-                   Pre-Depends Depends Recommends Suggests Breaks Replaces Conflicts
-                   Provides Description);
-    my $out = '';
-    for my $k (@order) {
-        next unless defined $f{$k} && $f{$k} ne '';
-        $out .= "$k: $f{$k}\n";
-    }
-    return $out;
-}
-
 # ---------------------------------------------------------------------------------------------------
 # Built-.deb inspection + cross-arch genesis provisioning (filesystem; tested with real dpkg-deb).
 # ---------------------------------------------------------------------------------------------------
@@ -596,9 +549,30 @@ sub deb_hash {
 # Idempotent; content is compared by deb_hash so a stale same-name deb is refreshed rather than
 # mistaken for up to date. $sign is an optional coderef($deb_path) invoked on each copied deb; pass
 # undef to skip. Mirrors MockBuildUtils::cross_copy_genesis for the apt world.
+# $codename, when given, narrows the set to the image built for that release -- see
+# genesis_debs_for_codename.
+# genesis_debs_for_codename: the Genesis debs that belong to ONE Ubuntu release.
+#
+# The Genesis image carries the kernel of the root that built it, so xcat-core builds one deb per
+# codename and stamps the codename into the version (2.19.0-snap...~noble). Staging all of them into
+# every suite publishes three images per suite, and apt serves the newest -- the image of another
+# release. A deb with no codename in its version predates the native build and serves every release.
+sub genesis_debs_for_codename {
+    my ($debs, $codename) = @_;
+    my @debs = @{ $debs || [] };
+    return @debs unless @debs && defined $codename && $codename ne '';
+    my $marked = qr/_[^_]*~[A-Za-z0-9.]+_[^_]*\.deb\z/;
+    return @debs unless grep { basename($_) =~ $marked } @debs;
+    return grep {
+        my $base = basename($_);
+        $base =~ /_[^_]*~\Q$codename\E_[^_]*\.deb\z/ || $base !~ $marked;
+    } @debs;
+}
+
 sub cross_copy_genesis_deb {
-    my ($from, $to, $arch, $sign) = @_;
-    my @src = glob("$from/xcat-genesis-base-$arch\_*.deb");
+    my ($from, $to, $arch, $sign, $codename) = @_;
+    my @src = genesis_debs_for_codename(
+        [ glob("$from/xcat-genesis-base-$arch\_*.deb") ], $codename);
     return 0 if !@src;
     my %want = map { basename($_) => $_ } @src;
     my @existing = glob("$to/xcat-genesis-base-$arch\_*.deb");
