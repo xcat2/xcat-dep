@@ -549,6 +549,15 @@ sub finalize_xcat_dep {
     my ($x86_64_repo, $ppc64le_repo, %opt) = @_;
     my $sign    = $opt{sign};
     my $reindex = $opt{reindex};
+    # The arches whose cells this run writes. The others are read only: each host finalizes the
+    # cells it deploys, so it never holds a cell lock that only another host could reclaim.
+    my %known = map { $_->{arch} => 1 } @GENESIS_ARCHES;
+    my @only  = @{ $opt{only} // [ map { $_->{arch} } @GENESIS_ARCHES ] };
+    for my $a (@only) {
+        die "FATAL: [finalize] no cross-arch genesis for arch '$a'\n" unless $known{$a};
+    }
+    my %write = map { $_ => 1 } @only;
+    my @dst_arches = grep { $write{ $_->{arch} } } @GENESIS_ARCHES;
     print_step('Finalize xcat-dep: cross-arch genesis-base provisioning (issue #7610)');
     print "x86_64-repo:  $x86_64_repo\n";
     print "ppc64le-repo: $ppc64le_repo\n";
@@ -589,7 +598,7 @@ sub finalize_xcat_dep {
         # N-way cross-copy: put each arch's genesis into EVERY other arch's repo dir.
         my @summary;
         for my $src (@GENESIS_ARCHES) {
-            for my $dst (@GENESIS_ARCHES) {
+            for my $dst (@dst_arches) {
                 next if $src->{arch} eq $dst->{arch};
                 my $n = cross_copy_genesis($adir{$src->{arch}}, $adir{$dst->{arch}}, $src->{tarch}, $sign);
                 push @summary, "$n $src->{tarch} -> $dst->{arch}";
@@ -600,7 +609,7 @@ sub finalize_xcat_dep {
         # rpm on disk (so cross_copy_genesis now returns 0) yet ABSENT from repomd.xml -- which no
         # signature gate catches. Re-indexing is cheap (tiny repos) and idempotent, and heals that
         # partial state; skipped only when no signer/indexer was injected.
-        if ($reindex) { $reindex->($adir{$_->{arch}}) for @GENESIS_ARCHES; }
+        if ($reindex) { $reindex->($adir{$_->{arch}}) for @dst_arches; }
         print "[finalize] $osdir: " . join(', ', @summary) . "\n";
         $pairs++;
     }

@@ -113,7 +113,7 @@ my @genesis_debs;                    # native xcat-genesis-base-<arch> deb(s): p
 # better than failing the run.
 my $PUBLISH_LOCK_WAIT = 1800;
 # The per-arch run lock, held until the END block releases it.
-my $RUN_LOCK;
+my @RUN_LOCKS;
 
 # Builder map: manifest binary-package name -> the in-tree package dir that carries <dir>/sbuild.pl
 # and the maintained debian/. (goconserver's dir == its binary name.)
@@ -339,13 +339,21 @@ for my $cn (@dist_list) {
 my $staging = "$output_root/staging";
 unless ($dry_run) { make_path($staging); }
 
-# Fail-fast PER-ARCH run lock. The amd64 and ppc64el stages of one run build concurrently on their
-# own hosts against one --output-root, so the lock is per arch: a second run of the same arch stops.
-# flock on the shared tree fails with ENOTSUPP through the NFS re-export, so this is an
-# XCAT::NFSLock. Not taken under --dry-run.
+# PER-ARCH run locks. The amd64 and ppc64el stages of one run build concurrently on their own hosts
+# against one --output-root, so the lock is per arch: a second run of the same arch stops. A publish
+# reads the staging of every expected arch, so it also waits for the run lock of each one. The locks
+# are taken in name order. flock on the shared tree fails with ENOTSUPP through the NFS re-export, so
+# these are XCAT::NFSLock. Not taken under --dry-run.
 unless ($dry_run) {
     make_path($output_root);
-    $RUN_LOCK = XCAT::NFSLock->acquire("$output_root/.sbuild-all.$arch.nfslock", label => "sbuild-all ($arch) run lock");
+    my %lock_arch = ($arch => 1);
+    if ($publish) { $lock_arch{$_} = 1 for @{ resolve_expect_arches('publish', $apt_dir) }; }
+    for my $a (sort keys %lock_arch) {
+        # A build of this arch fails fast. A publish queues behind the builders it reads from.
+        my $wait = ($publish && !($a eq $arch && !$skip_build)) ? $PUBLISH_LOCK_WAIT : 0;
+        push(@RUN_LOCKS, XCAT::NFSLock->acquire("$output_root/.sbuild-all.$a.nfslock",
+            timeout => $wait, label => "sbuild-all ($a) run lock"));
+    }
 }
 
 # The per-package builders are separate processes with their own CLI, so the bound travels to them in
@@ -1024,7 +1032,7 @@ sub acquire_publish_lock {
 
 END {
     $PUBLISH_LOCK->release if $PUBLISH_LOCK;
-    $RUN_LOCK->release     if $RUN_LOCK;
+    $_->release for reverse(@RUN_LOCKS);
 }
 
 # assemble_into($dir, $expect_arches): (re)assemble every --dists codename inside $dir from the

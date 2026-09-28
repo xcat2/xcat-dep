@@ -136,6 +136,7 @@ my $try_unlock_timeout = 0;
 # --finalize-xcat-dep: post-build cross-arch genesis provisioning (issue #7610). Takes the two
 # per-arch repo roots and cross-populates the noarch xCAT-genesis-base between them.
 my $finalize_xcat_dep = 0;
+my @finalize_arch;
 my $x86_64_repo = '';
 my $ppc64le_repo = '';
 # --verify-repo=<repo>: standalone, build-free completeness + signature gate over one already-built
@@ -163,6 +164,7 @@ GetOptions(
     'gpg-home=s'        => \$gpg_home,
     'try-unlock-timeout=i' => \$try_unlock_timeout,
     'finalize-xcat-dep!' => \$finalize_xcat_dep,
+    'finalize-arch=s'    => \@finalize_arch,
     'x86_64-repo=s'     => \$x86_64_repo,
     'ppc64le-repo=s'    => \$ppc64le_repo,
     'verify-repo=s'     => \$verify_repo,
@@ -256,15 +258,19 @@ if ($finalize_xcat_dep) {
     my $ppc = abs_path($ppc64le_repo) or die "--ppc64le-repo '$ppc64le_repo' not found\n";
     die "--x86_64-repo '$x86' is not a directory\n" if !-d $x86;
     die "--ppc64le-repo '$ppc' is not a directory\n" if !-d $ppc;
-    # finalize rewrites the per-arch cells a build deploys, so it takes the same cell locks.
+    # finalize rewrites the per-arch cells a build deploys, so it takes the same cell locks. With
+    # --finalize-arch it writes, and locks, only the cells of those arches.
+    @finalize_arch = map { split /[\s,]+/ } @finalize_arch;
+    @finalize_arch = qw(x86_64 ppc64le) unless @finalize_arch;
     my %cell;
     for my $root ($x86, $ppc) {
-        $cell{ abs_path($_) } = 1 for grep { -d } (glob("$root/*/x86_64"), glob("$root/*/ppc64le"));
+        $cell{ abs_path($_) } = 1 for grep { -d } map { glob("$root/*/$_") } @finalize_arch;
     }
     take_lock(cell_lock_path($_), 'repository cell lock') for sort keys %cell;
     # Inject the per-rpm gpg re-sign and the repo re-index as callbacks so the finalize logic in
     # MockBuildUtils stays free of this script's gpg/createrepo state.
     finalize_xcat_dep($x86, $ppc,
+        only => \@finalize_arch,
         sign => ($gpg_sign ? sub {
             my ($rpm) = @_;
             local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
@@ -281,7 +287,7 @@ if ($finalize_xcat_dep) {
     unless ($no_verify_repo) {
         my %seen;
         for my $root ($x86, $ppc) {
-            my @cells = (glob("$root/rh*/x86_64"), glob("$root/rh*/ppc64le"));
+            my @cells = map { glob("$root/rh*/$_") } @finalize_arch;
             for my $d (sort @cells) {
                 next unless -d $d;
                 my $abs = abs_path($d);
@@ -1459,6 +1465,9 @@ Options:
                           ppc64le repo (dropping any stale foreign-arch genesis), then
                           re-indexes + re-signs. Restores the 2.17 cross-arch genesis
                           (issue #7610). Honors --gpg-sign/--gpg-key-name/--gpg-home. Use alone.
+  --finalize-arch ARCH    (finalize) Write, lock and verify only the cells of ARCH (x86_64 or
+                          ppc64le; repeatable). Run it on the host that builds ARCH, so a
+                          dead finalize leaves locks that host can reclaim. Default: both
   --x86_64-repo PATH      (finalize) x86_64 repo root holding <os>/x86_64 (e.g. rh9/x86_64)
   --ppc64le-repo PATH     (finalize) ppc64le repo root holding <os>/ppc64le
   --verify-repo PATH      Standalone completeness + signature gate over the per-target repo at PATH
