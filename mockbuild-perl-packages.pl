@@ -187,6 +187,14 @@ my %meta = (
         rpm_arch   => 'noarch',
         module     => 'IO::Stty',
     },
+    'perl-IO-Tty' => {
+        mode      => 'spec',
+        pkg_dir   => "$repo_root/perl-IO-Tty",
+        spec      => "$repo_root/perl-IO-Tty/perl-IO-Tty.spec",
+        rpm_name  => 'perl-IO-Tty',
+        rpm_arch  => 'native',
+        module    => 'IO::Tty',
+    },
     'perl-Mail-Sender' => {
         mode       => 'srpm',
         pkg_dir    => "$repo_root/perl-Mail-Sender",
@@ -274,6 +282,7 @@ my @default_order = qw(
     perl-HTML-Form
     perl-HTTP-Async
     perl-IO-Stty
+    perl-IO-Tty
     perl-Net-HTTPS-NB
     perl-Net-Telnet
     perl-Sys-Virt

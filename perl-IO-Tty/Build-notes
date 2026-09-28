@@ -1,1 +1,17 @@
-For RHEL 8, run "rpmbuild --rebuild perl-IO-Tty-1.12-13.fc29.src.rpm".
+IO-Tty 1.12 and older do not build on EL8 or newer. Makefile.PL probes each pty
+function by compiling a program that only takes its address; the current
+toolchain drops that reference, so the probe reports _getpty as present, the
+build defines HAVE__GETPTY, and IO/Tty/Tty.so then fails to load with
+"undefined symbol: _getpty". IO-Tty 1.20 calls the function in the probe, so
+the link fails and the probe answers correctly.
+
+Source: https://cpan.metacpan.org/authors/id/T/TO/TODDR/IO-Tty-1.20.tar.gz
+
+xcat-dep ships IO-Tty 1.20-1. EL8 PowerTools carries 1.12-11 and EL9 CRB carries
+1.16-4, so the xcat-dep rpm outranks the distribution copy on a management node
+that enables those repositories. Both distribution builds load correctly; they
+are shadowed because a service node reads no CRB and one repository serves both
+roles. 1.20 is the same upstream release the distributions package, with the same
+license, the same vendor paths and the same perl(IO::Tty) provides, so the higher
+version is an upgrade and not a fork. EL10 CRB carries 1.20-7, which outranks
+1.20-1, so the distribution copy still wins there.
