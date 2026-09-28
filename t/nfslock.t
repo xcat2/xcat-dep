@@ -21,6 +21,12 @@ BEGIN {
 
 use XCAT::NFSLock qw(this_process format_metadata parse_metadata owner_is_dead process_start);
 
+# The lock logs to the selected handle. Keep the log out of the TAP stream, and read it back.
+open(my $log_fh, '>', \my $logged) or die "Cannot capture the log: $!";
+select($log_fh);
+
+sub clear_log { $logged = ''; seek($log_fh, 0, 0) }
+
 my $dir = tempdir(CLEANUP => 1);
 my $me  = this_process();
 is($me->{pid}, $$, 'the identity names this process');
@@ -266,6 +272,37 @@ for my $case (
     is(owner_is_dead({ %rec, 'boot-id' => 'b0' }, \%here), 1, 'an owner from an earlier boot is dead');
     is(owner_is_dead({ %rec, pid => 11 }, \%here), 1, 'an owner whose pid is gone is dead');
     is(owner_is_dead({ %rec, pstart => 99 }, \%here), 1, 'an owner whose pid was reused is dead');
+}
+
+# The log names each event, in the order it happened.
+{
+    my $stamp = qr/\[nfslock\] \d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z \S+ pid=$$/;
+    my $path = "$dir/logged.lock";
+    clear_log();
+    my $lock = XCAT::NFSLock->acquire($path, label => 'cell lock');
+    $lock->release;
+    my @lines = split(/\n/, $logged);
+    is(scalar(@lines), 2, 'a lock taken and released logs two lines');
+    like($lines[0], qr/\A$stamp acquired cell lock \Q$path\E\z/, 'the first line is the acquisition');
+    like($lines[1], qr/\A$stamp released cell lock \Q$path\E\z/, 'the second line is the release');
+
+    my $held = stage('logged-wait.lock', metadata(pid => $parent, pstart => $parent_start));
+    clear_log();
+    eval { XCAT::NFSLock->acquire($held, retries => 2); 1 };
+    my @waits = $logged =~ /^$stamp wait lock \Q$held\E (retry \d\/\d), owner pid $parent on machine /mg;
+    is_deeply(\@waits, ['retry 1/2', 'retry 2/2'], 'each retry logs a wait that names the owner');
+
+    my $dead = stage('logged-dead.lock', metadata(pid => $gone));
+    clear_log();
+    my $taken = XCAT::NFSLock->acquire($dead);
+    like($logged, qr/^$stamp took-over lock \Q$dead\E from dead pid $gone$/m, 'a takeover names the dead owner');
+    $taken->release;
+
+    clear_log();
+    my $quiet = XCAT::NFSLock->acquire("$dir/quiet.lock", quiet => 1);
+    $quiet->release;
+    eval { XCAT::NFSLock->acquire($held, retries => 1, quiet => 1); 1 };
+    is($logged, '', 'quiet => 1 logs nothing');
 }
 
 is($renames, 0, 'the lock never renames');

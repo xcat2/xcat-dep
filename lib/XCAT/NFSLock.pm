@@ -82,6 +82,12 @@ package XCAT::NFSLock;
 #
 # Steps 1 to 7 are acquire, step 8 is the caller, steps 9 to 12 are release.
 # release does steps 10 and 11 only when the metadata names this acquisition.
+#
+# Log
+#   Unless quiet => 1, each lock event prints one line to the selected output handle:
+#     [nfslock] <UTC time> <host> pid=<pid> <event> <label> <lock.d> [detail]
+#   Events: acquired (step 1), took-over (step 6), wait (a retry), released (step 11),
+#   release-skipped. The time has milliseconds, so the lines of two hosts sort into one order.
 
 use strict;
 use warnings;
@@ -90,6 +96,8 @@ use Digest::SHA qw(sha256_hex);
 use Errno qw(EEXIST ENOENT);
 use Exporter 'import';
 use File::Basename qw(dirname basename);
+use POSIX qw(strftime);
+use Sys::Hostname qw(hostname);
 use Time::HiRes ();
 
 our @EXPORT_OK = qw(this_process format_metadata parse_metadata owner_is_dead process_start);
@@ -110,6 +118,7 @@ my @IDENTITY = qw(machine-id boot-id pid pstart token);
             jitter  => δ, seconds, 0 or more and less than T/2 (default 0.5)
             retries => R, more than 0 (default: timeout / T, at least 1)
             timeout => seconds to wait, used when retries is not given (default 0)
+            quiet   => 1 to print no log lines for this lock
     Returns:
         A lock object. Dies after R retries, naming the lock and its owner.
 
@@ -148,6 +157,7 @@ sub acquire {
         pid    => $$,
         delay  => $delay,
         jitter => $jitter,
+        quiet  => $opt{quiet} ? 1 : 0,
     }, $class;
     my $here = _here();
     my $seen;
@@ -156,7 +166,10 @@ sub acquire {
         # Step 1.
         if (mkdir($abs)) {
             $self->{identity} = this_process();
-            return $self if eval { _write_metadata($abs, $self->{identity}); 1 };
+            if (eval { _write_metadata($abs, $self->{identity}); 1 }) {
+                $self->_log('acquired');
+                return $self;
+            }
             my $error = $@;
             unlink("$abs/metadata");
             rmdir($abs);
@@ -180,10 +193,14 @@ sub acquire {
             my $error = $@;
             rmdir($borrow);
             die $error unless defined($taken);
-            return $self if $taken;
+            if ($taken) {
+                $self->_log('took-over', 'from dead pid ' . $observed->{pid});
+                return $self;
+            }
         }
 
         last if $count >= $retries;
+        $self->_log('wait', sprintf('retry %d/%d, owner %s', $count + 1, $retries, _describe($seen)));
         _sleep(_wait($delay, $jitter));
     }
 
@@ -225,12 +242,14 @@ sub release {
                 my $error   = $!;
                 rmdir($borrow);
                 warn "Cannot remove $path: $error\n" unless $removed;
+                $self->_log($removed ? 'released' : 'release-skipped', $removed ? () : ("rmdir: $error"));
                 return $removed ? 1 : 0;
             }
             rmdir($borrow);
             # Valid metadata of another acquisition, or no lock.d at all: this lock is gone.
             if (defined($current) || !-d $path) {
                 $self->{released} = 1;
+                $self->_log('release-skipped', defined($current) ? 'owned by ' . _describe($current) : 'no lock.d');
                 return 0;
             }
         }
@@ -378,6 +397,19 @@ sub process_start {
     $stat =~ s/\A.*\)\s+//s or return undef;
     my @field = split(/\s+/, $stat);
     return $field[19];
+}
+
+sub _log {
+    my ($self, $event, $detail) = @_;
+    return if $self->{quiet};
+    my $now  = Time::HiRes::time();
+    my $time = strftime('%Y-%m-%dT%H:%M:%S', gmtime($now)) . sprintf('.%03dZ', ($now - int($now)) * 1000);
+    my $host = (split(/\./, hostname() || 'unknown'))[0];
+    my $line = join(' ', '[nfslock]', $time, $host, "pid=$$", $event, $self->{label}, $self->{path},
+        defined($detail) ? $detail : ());
+    # Flushed at once, so the line lands in the build log in the order the event happened.
+    local $| = 1;
+    print "$line\n";
 }
 
 sub _canonical {
