@@ -11,9 +11,9 @@ use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Slurper qw(read_text write_text);
 use MockBuildUtils qw(recover_common_repository);
-use XCAT::NFSLock qw(owner_record parse_owner process_start);
+use XCAT::NFSLock qw(this_process format_metadata process_start);
 
-my $me = parse_owner(owner_record());
+my $me = this_process();
 
 # No process can have a pid above the kernel's pid_max (2**22 at most).
 my $gone   = 2**22 + 7;
@@ -21,9 +21,7 @@ my $parent = getppid();
 
 sub record {
     my (%f) = @_;
-    my %r = (%$me, host => 'peer', created => 1, %f);
-    return join('', map { "$_\n" } 'nfslock2',
-        map { "$_=$r{$_}" } qw(machine boot pid start token host created));
+    return format_metadata({ %$me, %f });
 }
 
 # A repository left by an interrupted publication: common/ moved aside, a staging tree beside it.
@@ -34,7 +32,7 @@ sub interrupted {
     write_text("$base/.common.previous.999/marker", "previous repository\n");
     if (defined($holder)) {
         make_path("$base/.common-publish.lock");
-        write_text("$base/.common-publish.lock/owner", $holder);
+        write_text("$base/.common-publish.lock/metadata", $holder);
     }
     return $base;
 }
@@ -48,8 +46,8 @@ sub interrupted {
 }
 
 for my $case (
-    [ 'a live run on this host', record(pid => $parent, start => process_start($parent)) ],
-    [ 'a run on another host',   record(machine => 'elsewhere', pid => $gone) ],
+    [ 'a live run on this host', record(pid => $parent, pstart => process_start($parent)) ],
+    [ 'a run on another host',   record('machine-id' => 'elsewhere', pid => $gone) ],
   )
 {
     my ($name, $holder) = @$case;
@@ -63,7 +61,7 @@ for my $case (
         "the skip names the lock $name holds");
     ok(-d "$base/.common.staging", "the staging tree of $name is left in place");
     ok(!-e "$base/common", "the common tree stays where $name put it");
-    is(read_text("$base/.common-publish.lock/owner"), $holder, "$name keeps the common lock");
+    is(read_text("$base/.common-publish.lock/metadata"), $holder, "$name keeps the common lock");
 }
 
 {

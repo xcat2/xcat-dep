@@ -1446,10 +1446,10 @@ Options:
   --output-root PATH      Override the derived build tree root (default: <output>/mockbuild-all)
   --repo-dep PATH         Override the deployable output root; rh8/rh9/rh10/<arch> and common
                           are assembled and signed here (default: <output>/xcat-dep)
-  --try-unlock-timeout N  Wait up to N seconds (default 0) for a lock that a live
-                          process holds, then fail with the command that removes it.
-                          A lock whose owner is proven dead on this host is removed
-                          at once. Locks: <output>/.lock, one <repo-dep>/rh<N>/.<arch>.lock
+  --try-unlock-timeout N  Wait about N seconds (default 0: one retry of 3s) for a lock
+                          that a live process holds, then fail with the command that
+                          removes it. A lock whose owner is proven dead on this host
+                          is taken over at once. Locks: <output>/.lock, one <repo-dep>/rh<N>/.<arch>.lock
                           per target, and <repo-dep>/.common-publish.lock for common
   --finalize-xcat-dep     Post-build cross-arch genesis mode (builds nothing). Requires
                           --x86_64-repo and --ppc64le-repo. For each matching <os>/x86_64 and

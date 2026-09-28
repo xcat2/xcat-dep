@@ -1,140 +1,196 @@
 package XCAT::NFSLock;
 
-# A lock on a shared, possibly re-exported, NFS tree.
+# NFS lock protocol
 #
-# Definitions
-#   L, P, H, J     locks, processes, hosts, jobs
-#   host : P → H   the host a process runs on
-#   job  : P → J   the job a process belongs to
-#   Dₜ ⊆ P         the processes dead at time t
-#   Oₜ(l) ⊆ P      the processes that acquired l and have not released it, live or dead
+# A lock on a shared, possibly re-exported, NFS tree. flock and fcntl are not
+# available there. The protocol uses mkdir, rmdir, unlink and plain file
+# writes. It uses no rename.
+#
+# Names in this module
+#   lock.d           the lock path given to acquire
+#   lock.d/metadata  the metadata of the owner
+#   lock.borrow      <lock path>.borrow, beside lock.d
+#   R, T, δ          the options retries, delay and jitter
 #
 # Assumptions
-#   A1  Job-host affinity   ∀ p, q ∈ P : job(p) = job(q) ⇒ host(p) = host(q)
-#                           A job always runs on the same host.
-#   A2  Mortality           ∀ p ∈ P : ∃ t : p ∈ Dₜ
-#                           Every process ends.
-#   A3  Atomicity           mkdir and rename are atomic. flock and fcntl are unavailable.
+#   1. mkdir(path) is atomic and exclusive among contenders, and successful
+#      namespace changes eventually become visible.
+#   2. machine-id is unique among participating hosts.
+#      Cloned VMs and images can share it by accident unless it is regenerated.
+#   3. Metadata writes eventually become readable completely and consistently.
+#   4. A host never declares one of its own live process incarnations dead.
+#   5. A process cannot die:
+#      - after it creates lock.d, until it publishes valid metadata;
+#      - while it holds lock.borrow, until it removes it.
+#   6. A crashed worker leaves recoverable state. The owning host eventually
+#      returns and retries. Eventually one worker and its release complete.
+#   7. All participants follow the protocol.
 #
-# Safety
-#   S1  Single ownership    ∀ l, t : |Oₜ(l) ∖ Dₜ| ≤ 1
-#                           At most one live process holds a lock.
-#   S2  No borrowing        q removes l at t ∧ q ∉ Oₜ(l)  ⇒  ∀ p ∈ Oₜ(l) : p ∈ Dₜ ∧ host(p) = host(q)
-#                           Only a process on the holders' host removes a lock, when all are dead.
+# Metadata
+#   lock.d/metadata contains:
+#     machine-id, boot-id, pid, pstart, token, hash
 #
-# Liveness
-#   L1  Bounded wait        Every acquire ends within its timeout, owning l or naming it in an error.
-#   L2  Recovery            ∅ ≠ Oₜ(l) ⊆ Dₜ ∧ job(q) ∈ job(Oₜ(l))  ⇒  q takes l with no operator
-#                           The next run of the same job reclaims a dead owner's lock.
-#   L3  Disjoint progress   Jobs that write disjoint resources take disjoint locks.
+#   Ownership identity: (machine-id, boot-id, pid, pstart, token)
+#   token is random per acquisition.
+#   hash = HASH(canonical(SORT(k, v))) over all fields except hash.
 #
-# Algorithm
-#   acquire(l, τ)
-#     1. r ← (host, boot, pid, start time) of this process.
-#     2. Create a private directory holding r and rename it to l. On success, return.
-#     3. If l's owner is dead, break(l) and go to 2.
-#     4. If τ has passed, fail and name l.
-#     5. Wait, then go to 2.
+#   If the metadata is missing, cannot be parsed or hashed, or the hash does not
+#   match, assume a partial or inconsistent read and retry. Never infer stale
+#   ownership from invalid metadata.
 #
-#   break(l)
-#     1. Create l.break atomically. If it exists, another process is breaking l: return.
-#     2. If l's owner is still dead, rename l away.
-#     3. Remove l.break.
+# Retry
+#   R = max retries, T = base delay, δ = jitter
+#   R > 0, δ >= 0, T >= 3, T > 2δ
 #
-#   release(l)
-#     1. If l's record is r, rename l away.
+#   Generic retry:
+#     if retries >= R: fail
+#     sleep(T + rand(-δ, δ))
+#     retries++
+#     goto 1
 #
-#   dead(r)  ⇔  r.host = this host
-#               ∧ (r.boot ≠ current boot ∨ r.pid does not exist ∨ start time of r.pid ≠ r.start)
+# Protocol
+#   1. mkdir lock.d
+#      - success: write valid metadata, go to 8
+#      - EEXIST: continue
+#      - other error: fail
+#   2. Read and validate the metadata.
+#      - invalid or missing: retry
+#      - different machine-id: retry
+#      - same host: save the observed ownership identity
+#   3. mkdir lock.borrow
+#      - failure: retry
+#   4. Read and validate the metadata again.
+#      - invalid, missing, or ownership identity changed: rmdir lock.borrow, retry
+#   5. Prove that the recorded (boot-id, pid, pstart) is dead.
+#      - not provably dead: rmdir lock.borrow, retry
+#      - dead: continue
+#   6. Replace the metadata with the identity of this process and a fresh token.
+#   7. rmdir lock.borrow
+#   8. Call the worker.
+#   9. mkdir lock.borrow
+#      - failure: sleep(T + rand(-δ, δ)), retry step 9
+#  10. unlink lock.d/metadata
+#  11. rmdir lock.d (the actual unlock)
+#  12. rmdir lock.borrow
 #
-# Where each property rests
-#   S1  acquire 2 (one rename wins) and break 2 (the owner is re-checked under l.break)
-#   S2  dead(r), which only r's host can prove, and release 1
-#   L1  acquire 4
-#   L2  acquire 3
-#   L3  the caller, which takes one lock per resource
+# Core invariants
+#   lock.d exists         => locked
+#   lock.d absent         => acquirable
+#   invalid metadata      => retry only
+#   different machine-id  => never recover here
+#   lock.borrow exists    => ownership transition or release in progress
+#
+# Steps 1 to 7 are acquire, step 8 is the caller, steps 9 to 12 are release.
+# release does steps 10 and 11 only when the metadata names this acquisition.
 
 use strict;
 use warnings;
 use Cwd qw(abs_path);
-use Errno qw(EEXIST ENOENT ENOTEMPTY ESTALE);
+use Digest::SHA qw(sha256_hex);
+use Errno qw(EEXIST ENOENT);
 use Exporter 'import';
 use File::Basename qw(dirname basename);
-use File::Glob qw(bsd_glob);
-use File::Path qw(remove_tree);
-use Sys::Hostname qw(hostname);
 use Time::HiRes ();
 
-our @EXPORT_OK = qw(owner_record parse_owner owner_is_dead process_start);
+our @EXPORT_OK = qw(this_process format_metadata parse_metadata owner_is_dead process_start);
 
-my $FORMAT = 'nfslock2';
+my @IDENTITY = qw(machine-id boot-id pid pstart token);
 
 #--------------------------------------------------------------------------------
 
 =head3 acquire
 
     Descriptions:
-        Take the lock at $path. Waits while another live process owns it, and
-        removes it when the owner is provably dead on this machine.
+        Take the lock at $path with steps 1 to 7 of the protocol.
     Arguments:
-        $path: path of the lock directory
+        $path: path of lock.d
         %opt:
-            timeout => seconds to wait for a live owner (default 0: try once)
             label   => word for messages (default "lock")
-            retry   => seconds between attempts, more than 0.5 (default 3)
-            meta    => hash ref of file name => content, written into the lock
-                       before it appears
+            delay   => T, seconds, 3 or more (default 3)
+            jitter  => δ, seconds, 0 or more and less than T/2 (default 0.5)
+            retries => R, more than 0 (default: timeout / T, at least 1)
+            timeout => seconds to wait, used when retries is not given (default 0)
     Returns:
-        A lock object. Dies when the wait ends, naming the owner and the mv
-        command that moves the lock away. The next acquire deletes a lock moved
-        to <path>.dead.*.
+        A lock object. Dies after R retries, naming the lock and its owner.
 
 =cut
 
 #--------------------------------------------------------------------------------
 sub acquire {
     my ($class, $path, %opt) = @_;
-    my $timeout = $opt{timeout} // 0;
-    my $label   = $opt{label}   // 'lock';
-    my $retry   = $opt{retry}   // 3;
-    # Each attempt is a mkdir, writes and a rename on the NFS server.
-    die "Invalid retry interval $retry for $label: must be more than 0.5s\n" unless $retry > 0.5;
-    my $meta    = $opt{meta}    // {};
-    for my $name (keys %$meta) {
-        die "Invalid metadata name '$name' for $label\n"
-          if $name eq 'owner' || $name !~ /\A[A-Za-z0-9_][A-Za-z0-9_.-]*\z/;
+    my $label  = $opt{label}  // 'lock';
+    my $delay  = $opt{delay}  // 3;
+    my $jitter = $opt{jitter} // 0.5;
+    die "Invalid delay $delay for $label: must be 3s or more\n" unless $delay >= 3;
+    die "Invalid jitter $jitter for $label: must be 0 or more\n" unless $jitter >= 0;
+    die "Invalid jitter $jitter for $label: must be less than half the delay\n"
+      unless $delay > 2 * $jitter;
+    my $retries = $opt{retries};
+    unless (defined($retries)) {
+        my $timeout = $opt{timeout} // 0;
+        $retries = int($timeout / $delay);
+        $retries++ if $retries * $delay < $timeout;
+        $retries = 1 if $retries < 1;
     }
+    die "Invalid retries $retries for $label: must be a whole number more than 0\n"
+      unless $retries =~ /\A[1-9][0-9]*\z/;
+
     # The last component names the lock itself. basename would turn '' into './' and drop a
     # trailing slash, so the raw path is checked.
     my ($name) = ($path // '') =~ m{(?:\A|/)([^/]+)\z};
     die "Invalid $label path '" . ($path // '') . "'\n"
       if !defined($name) || $name eq '.' || $name eq '..';
-    my $abs  = _absolute($path);
-    my $self = bless { path => $abs, label => $label, pid => $$ }, $class;
-    $self->{record} = owner_record();
-    my $deadline = Time::HiRes::time() + $timeout;
-    my $owner;
+    my $abs    = _absolute($path);
+    my $borrow = "$abs.borrow";
+    my $self   = bless {
+        path   => $abs,
+        label  => $label,
+        pid    => $$,
+        delay  => $delay,
+        jitter => $jitter,
+    }, $class;
+    my $here = _here();
+    my $seen;
 
-    _sweep($abs);
-    while (1) {
-        return $self if _create($abs, $self->{record}, $meta);
-        my $error = $!;
-        die "Cannot create $label $abs: $error\n"
-          unless grep { $error == $_ } (EEXIST, ENOTEMPTY, ENOENT, ESTALE);
+    for (my $count = 0 ; ; $count++) {
+        # Step 1.
+        if (mkdir($abs)) {
+            $self->{identity} = this_process();
+            return $self if eval { _write_metadata($abs, $self->{identity}); 1 };
+            my $error = $@;
+            unlink("$abs/metadata");
+            rmdir($abs);
+            die $error;
+        }
+        die "Cannot create $label $abs: $!\n" unless $! == EEXIST;
 
-        my $current = _read_owner($abs);
-        $owner = $current if defined($current);
-        next if _owner_dead($current) && _break($abs);
-        my $left = $deadline - Time::HiRes::time();
-        last if $left <= 0;
-        # Randomise the wait. Two waiters that back off by the same amount keep colliding.
-        my $wait = $retry + rand($retry / 4);
-        Time::HiRes::sleep($wait < $left ? $wait : $left);
+        # Step 2.
+        my $observed = _read_metadata($abs);
+        $seen = $observed if defined($observed);
+        if (defined($observed) && $observed->{'machine-id'} eq $here->{'machine-id'} && mkdir($borrow)) {
+            # Steps 3 to 7.
+            my $taken = eval {
+                my $again = _read_metadata($abs);
+                return 0 unless defined($again) && _key($again) eq _key($observed);
+                return 0 unless owner_is_dead($again, $here);
+                $self->{identity} = this_process();
+                _write_metadata($abs, $self->{identity});
+                1;
+            };
+            my $error = $@;
+            rmdir($borrow);
+            die $error unless defined($taken);
+            return $self if $taken;
+        }
+
+        last if $count >= $retries;
+        _sleep(_wait($delay, $jitter));
     }
 
-    my $who = _describe(parse_owner($owner));
-    die "Trying to unlock $abs failed after ${timeout}s; $label owned by $who.\n"
-      . "If you are sure it is safe, move the lock away: mv $abs $abs.dead.manual\n";
+    my $who = _describe($seen);
+    my $s   = $retries == 1 ? 'retry' : 'retries';
+    die "Trying to unlock $abs failed after $retries $s; $label owned by $who.\n"
+      . "If you are sure it is safe, remove the lock: rm -rf $abs\n";
 }
 
 #--------------------------------------------------------------------------------
@@ -142,9 +198,9 @@ sub acquire {
 =head3 release
 
     Descriptions:
-        Remove the lock if this process owns it. A forked child of the owner does
-        nothing, and a lock that no longer carries this owner's record is left
-        alone.
+        Steps 9 to 12 of the protocol. Waits while another process holds
+        lock.borrow. A forked child of the owner does nothing, and a lock whose
+        metadata names another acquisition is left alone.
     Arguments:
         none
     Returns:
@@ -156,69 +212,116 @@ sub acquire {
 sub release {
     my ($self) = @_;
     return 0 if $self->{released} || $$ != $self->{pid};
-    my $current = _read_owner($self->{path});
-    return 0 unless defined($current) && $current eq $self->{record};
-    $self->{released} = 1;
-    return _remove($self->{path});
+    my $path   = $self->{path};
+    my $borrow = "$path.borrow";
+    while (1) {
+        # Step 9.
+        if (mkdir($borrow)) {
+            my $current = _read_metadata($path);
+            if (defined($current) && _key($current) eq _key($self->{identity})) {
+                $self->{released} = 1;
+                unlink("$path/metadata");
+                my $removed = rmdir($path);
+                my $error   = $!;
+                rmdir($borrow);
+                warn "Cannot remove $path: $error\n" unless $removed;
+                return $removed ? 1 : 0;
+            }
+            rmdir($borrow);
+            # Valid metadata of another acquisition, or no lock.d at all: this lock is gone.
+            if (defined($current) || !-d $path) {
+                $self->{released} = 1;
+                return 0;
+            }
+        }
+        elsif ($! != EEXIST) {
+            warn "Cannot create $borrow: $!\n";
+            return 0;
+        }
+        _sleep(_wait($self->{delay}, $self->{jitter}));
+    }
 }
 
 sub path { return $_[0]{path} }
 
 #--------------------------------------------------------------------------------
 
-=head3 owner_record
+=head3 this_process
 
     Descriptions:
-        The content of the owner file: the machine, its boot, the pid and the
-        start time of the process, a random token, and, for messages only, the
-        host name and the creation time. The token tells two acquisitions of one
-        process apart, so a record names one acquisition.
+        The ownership identity of this process with a fresh token.
     Arguments:
         none
     Returns:
-        The record string.
+        A hash ref with machine-id, boot-id, pid, pstart and token.
 
 =cut
 
 #--------------------------------------------------------------------------------
-sub owner_record {
-    my %here = %{ _here() };
-    return join('', map { "$_\n" } $FORMAT,
-        "machine=$here{machine}", "boot=$here{boot}", "pid=$$",
-        'start=' . (process_start($$) // 0),
-        sprintf('token=%08x%08x', int(rand(2**32)), int(rand(2**32))),
-        'host=' . (hostname() || 'unknown'), 'created=' . time());
+sub this_process {
+    my $here = _here();
+    return {
+        'machine-id' => $here->{'machine-id'},
+        'boot-id'    => $here->{'boot-id'},
+        pid          => $$,
+        pstart       => process_start($$) // die("Cannot read the start time of pid $$\n"),
+        token        => _token(),
+    };
 }
 
 #--------------------------------------------------------------------------------
 
-=head3 parse_owner
+=head3 format_metadata
 
     Descriptions:
-        Split a record written by owner_record into its fields.
+        The content of lock.d/metadata: one "key=value" line per field, sorted
+        by key, and the hash line.
     Arguments:
-        $record: the content of an owner file
+        $fields: hash ref with machine-id, boot-id, pid, pstart and token
     Returns:
-        A hash ref of the fields, or undef when $record is not such a record.
+        The metadata string.
 
 =cut
 
 #--------------------------------------------------------------------------------
-sub parse_owner {
-    my ($record) = @_;
-    return undef unless defined($record);
-    my ($format, @lines) = split(/\n/, $record);
-    return undef unless defined($format) && $format eq $FORMAT;
+sub format_metadata {
+    my ($fields) = @_;
+    my $canonical = _canonical($fields);
+    return $canonical . 'hash=' . sha256_hex($canonical) . "\n";
+}
+
+#--------------------------------------------------------------------------------
+
+=head3 parse_metadata
+
+    Descriptions:
+        Validate the content of lock.d/metadata. A partial read, an unknown or
+        repeated field, a malformed value and a hash that does not match all
+        make the metadata invalid.
+    Arguments:
+        $text: the content of lock.d/metadata, or undef
+    Returns:
+        A hash ref of the identity fields, or undef when the metadata is invalid.
+
+=cut
+
+#--------------------------------------------------------------------------------
+sub parse_metadata {
+    my ($text) = @_;
+    return undef unless defined($text) && $text =~ /\n\z/;
     my %field;
-    for my $line (@lines) {
-        my ($key, $value) = split(/=/, $line, 2);
-        return undef unless defined($value);
+    for my $line (split(/\n/, $text)) {
+        my ($key, $value) = $line =~ /\A([a-z-]+)=([^=\s]+)\z/ or return undef;
+        return undef if exists($field{$key});
         $field{$key} = $value;
     }
-    for my $key (qw(machine boot pid start)) {
-        return undef unless defined($field{$key}) && length($field{$key});
+    my $hash = delete($field{hash});
+    return undef unless defined($hash) && keys(%field) == @IDENTITY;
+    for my $key (@IDENTITY) {
+        return undef unless defined($field{$key});
     }
-    return undef unless $field{pid} =~ /\A[1-9][0-9]*\z/ && $field{start} =~ /\A[0-9]+\z/;
+    return undef unless $field{pid} =~ /\A[1-9][0-9]*\z/ && $field{pstart} =~ /\A[0-9]+\z/;
+    return undef unless $hash eq sha256_hex(_canonical(\%field));
     return \%field;
 }
 
@@ -227,14 +330,13 @@ sub parse_owner {
 =head3 owner_is_dead
 
     Descriptions:
-        Decide from facts alone whether a recorded owner is dead. Only the owner's
-        machine can know: any other machine answers "not proven". An unreadable
-        record is never proven dead.
+        Step 5: decide from facts alone whether a recorded owner is dead. Only
+        the owner's machine can know. Any other machine answers "not proven".
     Arguments:
-        $owner: a hash ref from parse_owner, or undef
-        $here: hash ref with machine, boot and start_of, a code ref that returns
-               the start time of a pid on this machine, or undef when no such
-               process exists
+        $owner: a hash ref from parse_metadata, or undef
+        $here: hash ref with machine-id, boot-id and start_of, a code ref that
+               returns the start time of a pid on this machine, or undef when
+               no such process exists
     Returns:
         1 when the owner is provably dead, 0 otherwise.
 
@@ -244,11 +346,11 @@ sub parse_owner {
 sub owner_is_dead {
     my ($owner, $here) = @_;
     return 0 unless defined($owner);
-    return 0 unless $owner->{machine} eq $here->{machine};
-    return 1 unless $owner->{boot} eq $here->{boot};
+    return 0 unless $owner->{'machine-id'} eq $here->{'machine-id'};
+    return 1 unless $owner->{'boot-id'} eq $here->{'boot-id'};
     my $start = $here->{start_of}->($owner->{pid});
     return 1 unless defined($start);
-    return $start eq $owner->{start} ? 0 : 1;
+    return $start eq $owner->{pstart} ? 0 : 1;
 }
 
 #--------------------------------------------------------------------------------
@@ -278,103 +380,60 @@ sub process_start {
     return $field[19];
 }
 
-# Build the lock under a private name, then rename it into place: the owner
-# record and the metadata appear with the lock. rename fails when the target is
-# a directory that is not empty, so one creator wins.
-sub _create {
-    my ($path, $record, $meta) = @_;
-    my $tmp = _private_name($path, 'tmp');
-    mkdir($tmp) or return 0;
-    my %files = (%{ $meta // {} }, owner => $record);
-    for my $name (sort keys %files) {
-        my $fh;
-        unless (open($fh, '>', "$tmp/$name") && print({$fh} $files{$name}) && close($fh)) {
-            my $error = $!;
-            remove_tree($tmp);
-            die "Cannot write $tmp/$name: $error\n";
-        }
-    }
-    return 1 if rename($tmp, $path);
-    my $error = $!;
-    remove_tree($tmp);
-    # NFS can retransmit a rename that already succeeded, and the reply is then
-    # an error. The owner file says whether the lock in place is this one.
-    my $current = _read_owner($path);
-    return 1 if defined($current) && $current eq $record;
-    $! = $error;
-    return 0;
+sub _canonical {
+    my ($fields) = @_;
+    return join('', map { "$_=$fields->{$_}\n" } sort @IDENTITY);
 }
 
-# Two processes can find the same dead owner. Only the one holding the breaker
-# removes the lock, and only after it proves the current owner dead again: only
-# the owner or the breaker removes the lock, so that owner is the one removed.
-sub _break {
+sub _key {
+    my ($fields) = @_;
+    return join("\n", map { $fields->{$_} } @IDENTITY);
+}
+
+# A reader can see this file half written. The hash makes that read invalid.
+sub _write_metadata {
+    my ($path, $identity) = @_;
+    my $file = "$path/metadata";
+    my $fh;
+    open($fh, '>', $file) && print({$fh} format_metadata($identity)) && close($fh)
+      or die "Cannot write $file: $!\n";
+}
+
+sub _read_metadata {
     my ($path) = @_;
-    my $breaker = "$path.break";
-    my $mine    = owner_record();
-    return 0 unless _create($breaker, $mine, {});
-    my $removed = 0;
-    if (_owner_dead(_read_owner($path))) {
-        $removed = _remove($path);
-    }
-    my $held = _read_owner($breaker);
-    _remove($breaker) if defined($held) && $held eq $mine;
-    return $removed;
-}
-
-# One rename takes the lock away. The detached tree is deleted afterwards: an
-# NFS client keeps a file open by renaming it to .nfsXXXX, which only delays
-# that delete.
-sub _remove {
-    my ($path) = @_;
-    my $dead = _private_name($path, 'dead');
-    return 0 unless rename($path, $dead);
-    remove_tree($dead);
-    return 1;
-}
-
-# Leftovers of earlier runs. A detached tree belongs to nobody. A private build
-# belongs to its creator until that creator is proven dead.
-sub _sweep {
-    my ($path) = @_;
-    for my $dead (bsd_glob("$path.dead.*")) {
-        remove_tree($dead) if -d $dead && !-l $dead;
-    }
-    for my $tmp (bsd_glob("$path.tmp.*")) {
-        next unless -d $tmp && !-l $tmp;
-        remove_tree($tmp) if _owner_dead(_read_owner($tmp));
-    }
-}
-
-# Whether the owner file names a dead owner. mockbuild-all.pl wrote host, pid and epoch before this
-# module, without a start time: there, only a pid that no longer exists on this host is proof.
-sub _owner_dead {
-    my ($record) = @_;
-    return owner_is_dead(parse_owner($record), _here()) if defined(parse_owner($record));
-    return 0 unless defined($record) && $record =~ /\Ahost=(\S+)\npid=([1-9][0-9]*)\nepoch=[0-9]+\n\z/;
-    my ($host, $pid) = ($1, $2);
-    return 0 unless $host eq (hostname() || '');
-    return defined(process_start($pid)) ? 0 : 1;
-}
-
-sub _private_name {
-    my ($path, $kind) = @_;
-    return sprintf('%s.%s.%d.%08x', $path, $kind, $$, int(rand(2**32)));
-}
-
-sub _read_owner {
-    my ($path) = @_;
-    open(my $fh, '<', "$path/owner") or return undef;
+    open(my $fh, '<', "$path/metadata") or return undef;
     local $/;
-    my $record = <$fh>;
+    my $text = <$fh>;
     close($fh);
-    return $record;
+    return parse_metadata($text);
 }
 
+sub _wait {
+    my ($delay, $jitter) = @_;
+    return $delay + (2 * rand() - 1) * $jitter;
+}
+
+sub _sleep {
+    my ($seconds) = @_;
+    Time::HiRes::sleep($seconds);
+}
+
+sub _token {
+    if (open(my $fh, '<:raw', '/dev/urandom')) {
+        my $read = read($fh, my $bytes, 16);
+        close($fh);
+        return unpack('H*', $bytes) if defined($read) && $read == 16;
+    }
+    return join('', map { sprintf('%08x', int(rand(2**32))) } 1 .. 4);
+}
+
+# Assumption 2 needs a real machine-id. A host without one cannot take part.
 sub _here {
     return {
-        machine  => _first_line('/etc/machine-id') // (hostname() || 'unknown'),
-        boot     => _first_line('/proc/sys/kernel/random/boot_id') // 'unknown',
+        'machine-id' => _first_line('/etc/machine-id')
+          // die("Cannot read /etc/machine-id: an NFS lock needs a machine id\n"),
+        'boot-id' => _first_line('/proc/sys/kernel/random/boot_id')
+          // die("Cannot read the boot id of this machine\n"),
         start_of => \&process_start,
     };
 }
@@ -392,8 +451,7 @@ sub _first_line {
 sub _describe {
     my ($owner) = @_;
     return 'an unknown owner' unless defined($owner);
-    return sprintf('pid %s on %s since %s', $owner->{pid}, $owner->{host} // $owner->{machine},
-        scalar(localtime($owner->{created} // 0)));
+    return sprintf('pid %s on machine %s', $owner->{pid}, $owner->{'machine-id'});
 }
 
 # An absolute path in the message, without resolving the lock itself.

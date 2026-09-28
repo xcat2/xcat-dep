@@ -951,8 +951,9 @@ sub test_rpm_repository_lock {
     # The cell this target deploys is locked by a run on another machine.
     my $cell_lock = "$repository/rh10/.$arch.lock";
     make_path($cell_lock);
-    write_binary("$cell_lock/owner",
-        "nfslock2\nmachine=another-machine\nboot=b\npid=1\nstart=1\ntoken=t\nhost=other\ncreated=1\n");
+    write_binary("$cell_lock/metadata",
+        XCAT::NFSLock::format_metadata({ 'machine-id' => 'another-machine', 'boot-id' => 'b',
+            pid => 1, pstart => 1, token => 't' }));
 
     my @perl_lib;
     push(@perl_lib, write_forkmanager_stub("$tmp/perl-lock-stub"))
@@ -974,7 +975,7 @@ sub test_rpm_repository_lock {
         '--skip-createrepo', '--skip-tarball', '--dry-run',
     );
     isnt($status, 0, 'a repository cell cannot have two publishers');
-    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 0s;/m,
+    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 1 retry;/m,
         'the lock failure names the locked cell');
     ok(-d $cell_lock, 'a lock held on another machine is left in place');
     remove_tree($cell_lock);
@@ -1009,8 +1010,9 @@ sub test_finalize_cell_lock {
     # A build on another machine is still deploying the x86_64 cell.
     my $cell_lock = "$x86/rh10/.x86_64.lock";
     make_path($cell_lock);
-    write_binary("$cell_lock/owner",
-        "nfslock2\nmachine=another-machine\nboot=b\npid=1\nstart=1\ntoken=t\nhost=other\ncreated=1\n");
+    write_binary("$cell_lock/metadata",
+        XCAT::NFSLock::format_metadata({ 'machine-id' => 'another-machine', 'boot-id' => 'b',
+            pid => 1, pstart => 1, token => 't' }));
 
     my $log = "$tmp/finalize-lock.log";
     my $status = run_capture(
@@ -1020,7 +1022,7 @@ sub test_finalize_cell_lock {
         '--finalize-xcat-dep', '--x86_64-repo', $x86, '--ppc64le-repo', $ppc,
     );
     isnt($status, 0, 'finalize does not rewrite a cell that a build holds');
-    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 0s;/m,
+    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 1 retry;/m,
         'finalize names the cell lock it waited for');
     ok(-d $cell_lock, 'the build keeps its cell lock');
     ok(!-e "$ppc/rh10/.ppc64le.lock", 'finalize releases the cell locks it took');
@@ -1088,7 +1090,7 @@ sub test_publish_lock {
         my $run_log = "$tmp/deb-run-locked.log";
         my $run_status = run_apt_consumer(log => $run_log, output => $output, apt_dir => $apt_root);
         isnt($run_status, 0, 'a second amd64 run does not start beside a live one');
-        like(read_binary($run_log), qr/^Trying to unlock \Q$run_lock\E failed after 0s;/m,
+        like(read_binary($run_log), qr/^Trying to unlock \Q$run_lock\E failed after 1 retry;/m,
             'the refusal names the run lock');
         $running->release;
     }
@@ -1103,7 +1105,7 @@ sub test_publish_lock {
         extra => [ '--publish-lock-wait', '2' ],
     );
     isnt($locked_status, 0, 'a locked apt tree is not published into');
-    like(read_binary($locked_log), qr/^Trying to unlock \Q$lockfile\E failed after 2s;/m,
+    like(read_binary($locked_log), qr/^Trying to unlock \Q$lockfile\E failed after 1 retry;/m,
         'the refusal names the lock another run owns');
     ok(!-d "$apt_root/dists", 'nothing is published while another run holds the lock');
 

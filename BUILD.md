@@ -140,9 +140,9 @@ Use these flags to skip specific operations:
 - `--dry-run`
   - Prints planned actions without executing them.
 - `--try-unlock-timeout <N>`
-  - Waits up to N seconds (default 0) for a lock that a live process holds, then fails and prints
-    the command that removes the lock. A lock whose owner is proven dead on this host is removed
-    at once.
+  - Waits about N seconds for a lock that a live process holds, in retries of 3 seconds with
+    at least one retry, then fails and prints the command that removes the lock. A lock whose
+    owner is proven dead on this host is taken over at once.
 
 # Prerequisites
 
@@ -251,9 +251,10 @@ and contain no OpenEmbedded copies.
 The build locks its work area (`<output>/.lock`), each repository cell it deploys
 (`<repo-dep>/rh<N>/.<arch>.lock`) and, while it publishes, the common repository
 (`<repo-dep>/.common-publish.lock`). The per-arch runs of one build lock different
-cells, so they run in parallel. A lock whose owner is dead is removed only on the
-owner's host; from any other host the build waits `--try-unlock-timeout` seconds,
-then fails with the `mv` command that moves the lock away.
+cells, so they run in parallel. A lock whose owner is dead is taken over only on the
+owner's host. From any other host the build waits `--try-unlock-timeout` seconds,
+then fails with the command that removes the lock. The protocol is documented at the
+top of `lib/XCAT/NFSLock.pm`.
 
 The build prepares the complete common repository in a temporary directory, then
 replaces the previous repository only after package verification, metadata
