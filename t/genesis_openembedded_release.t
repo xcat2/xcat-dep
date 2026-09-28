@@ -49,7 +49,7 @@ my $epoch = 1787293573;
 
 if ($ENV{XCAT_GENESIS_CI}) {
     for my $command (qw(git dpkg-deb rpm rpmbuild tar)) {
-        BAIL_OUT("CI requires $command") unless command_exists($command);
+        die("CI requires $command") unless command_exists($command);
     }
 }
 
