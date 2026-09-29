@@ -489,9 +489,10 @@ Deliberately not built for riscv64:
   Test::XML) are EPEL-only as well, so it can neither be built nor installed without EPEL;
   xCAT uses it for HP blade and VirtualBox support only.
 
-perl-Net-DNS is built from `perl-Net-DNS/Net-DNS.spec` at 1.47, the release EPEL 10 ships,
-so the riscv64 repo carries the same resource records as the EPEL-fed repos. xCAT needs the
-KEY record, which release 0.80 left to the separate Net::DNS::SEC distribution. This spec
+perl-Net-DNS is built from `perl-Net-DNS/Net-DNS.spec` at 1.57. xCAT needs the KEY record,
+which release 0.80 left to the separate Net::DNS::SEC distribution. 1.57 is newer than the
+1.47 that EPEL 10 ships, because 1.56 and 1.57 fix CVE-2026-64193, CVE-2026-64194 and an
+unbounded recursion on TSIG. This spec
 does not take the EPEL-only perl(Net::LibIDN2) BuildRequires of the EPEL package:
 Net::DNS treats Net::LibIDN2 as optional and uses it for internationalised names only.
 

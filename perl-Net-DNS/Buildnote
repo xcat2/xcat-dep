@@ -1,6 +1,6 @@
 How to build the perl-Net-DNS
 
-1. cp the Net-DNS-1.47.tar.gz to the rpmbuild/SOURCES/
+1. cp the Net-DNS-1.57.tar.gz to the rpmbuild/SOURCES/
 2. cp the Net-DNS.spec to the rpmbuild/SPECS/
 3. cd rpmbuild/SPECS/
 4. rpmbuild -bb Net-DNS.spec (Net::DNS is pure perl, so the rpm is noarch and one
