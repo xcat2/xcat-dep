@@ -1,8 +1,5 @@
 package MockBuildUtils;
-# Reusable, unit-testable helpers factored out of mockbuild-all.pl. Kept free of that script's
-# globals so t/mockbuild-all.t can exercise them directly. The two orchestration helpers that
-# need signing / re-indexing (cross_copy_genesis, finalize_xcat_dep) take those as injected
-# callbacks instead of reaching for gpg/createrepo state, so they stay pure and testable.
+# Build helpers use explicit settings and callbacks instead of script globals.
 use strict;
 use warnings;
 use Exporter 'import';
@@ -22,11 +19,13 @@ our @EXPORT_OK = qw(
     version_matches required_pkgs skipped_builder carry_over_rpms rpm_name rpm_arch rpm_source_rpm
     source_package rpm_digests_ok
     have_rpm read_manifest
-    verify_repo_packages verify_repo_signature verify_rpm_signatures
+    derive_target_from_repo_path verify_repo_packages verify_repo_signature verify_rpm_signatures
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
+    createrepo_c_cmd sign_and_index_repo
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg
+    openeuler_build_target openeuler_repo_subdir
     recover_common_repository
 );
 
@@ -37,6 +36,7 @@ our @EXPORT_OK = qw(
 sub install_deps_packages {
     my ($os_id) = @_;
     $os_id = '' unless defined $os_id;
+    return (install_deps_packages(''), '/usr/bin/systemd-nspawn') if lc($os_id) eq 'openeuler';
     # The perl modules are what actually break a run; the rest is the toolchain the script drives.
     return qw(perl perl-File-Slurper perl-IPC-Cmd perl-Parallel-ForkManager perl-Digest-SHA
               mock createrepo_c tar findutils rpm rpm-build rpm-sign rpmdevtools gnupg2 wget git)
@@ -53,7 +53,29 @@ sub install_deps_command {
     my @pkgs = install_deps_packages($os_id);
     return ('zypper', '--non-interactive', 'install', '--no-recommends', @pkgs)
         if $os_id =~ /^(?:opensuse|sles|sled)/;
+    return ('dnf', '--setopt=gpgcheck=1', '--setopt=*.gpgcheck=1', '--setopt=strict=1', '--setopt=install_weak_deps=False', '-y', 'install', @pkgs)
+        if lc($os_id) eq 'openeuler';
     return ('dnf', '-y', 'install', @pkgs);
+}
+
+sub openeuler_build_target {
+    my ($os, $arch) = @_;
+    return undef unless lc($os->{ID} // '') eq 'openeuler';
+    my $version = $os->{VERSION} || $os->{VERSION_ID} || '';
+    if ($version =~ /\A(20|22|24)\.03\s+\(LTS(?:-SP([1-9][0-9]*))?\)\z/) {
+        $version = "$1.03" . (defined($2) ? "sp$2" : '');
+    }
+    my $target = "openeuler-$version-$arch";
+    openeuler_repo_subdir($target);
+    return $target;
+}
+
+sub openeuler_repo_subdir {
+    my ($target) = @_;
+    return undef unless defined($target) && $target =~ /\Aopeneuler-/;
+    die "Unsupported openEuler build target '$target'\n"
+        unless $target =~ /\Aopeneuler-((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)-(x86_64|ppc64le)\z/;
+    return "openeuler$1/$2";
 }
 
 # missing_perl_modules(@modules): those that cannot be loaded, in order. The point of --install-deps
@@ -278,6 +300,17 @@ sub parse_pin {
     return ('version');
 }
 
+sub derive_target_from_repo_path {
+    my ($dir) = @_;
+    my $tgt;
+    return $tgt unless defined $dir;
+    $tgt = "alma+epel-$1-$2" if $dir =~ m{/rh(\d+)/([^/]+)/*$};
+    if ($dir =~ m{/openeuler((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)/(x86_64|ppc64le)/*$}) {
+        $tgt = "openeuler-$1-$2";
+    }
+    return $tgt;
+}
+
 sub verify_repo_packages {
     my ($expected, $present_ver, $present_evr, $vercmp) = @_;
     $present_evr //= $present_ver;
@@ -486,6 +519,53 @@ sub read_manifest {
     return %m;
 }
 
+sub createrepo_c_cmd {
+    my ($dir, $epoch) = @_;
+    return 'createrepo_c --update '
+        . '--revision ' . sh_quote($epoch) . ' --set-timestamp-to-revision '
+        . sh_quote($dir);
+}
+
+sub sign_and_index_repo {
+    my ($dir, $native, %options) = @_;
+    my $run = $options{run} // die "Repository signing requires a command runner\n";
+    my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
+    if ($native) {
+        require XCAT::NativeInputs;
+        require XCAT::BuildUtils;
+        my @built;
+        for my $rpm (@rpms) {
+            my $id = XCAT::NativeInputs::rpm_identity($rpm);
+            my $owner = $native->{outputs}{$id->{name}} // die "Undeclared native output: $id->{name}\n";
+            my $node = $native->{nodes}{$owner};
+            if ($node->{type} eq 'publisher') {
+                die "Publisher input changed before signing: $rpm\n"
+                    unless XCAT::BuildUtils::digest_file($rpm) eq $node->{sha256};
+            } else {
+                push @built, $rpm;
+            }
+        }
+        @rpms = @built;
+    }
+    if ($options{gpg_sign} && @rpms) {
+        local $ENV{GNUPGHOME} = $options{gpg_home} if $options{gpg_home};
+        $run->('rpmsign --define ' . sh_quote("%_gpg_name $options{gpg_key_name}")
+            . ' --define ' . sh_quote("%__gpg $options{gpg_program}") . ' --addsign '
+            . join(' ', map { sh_quote($_) } @rpms));
+    }
+    $run->(createrepo_c_cmd($dir, $options{source_date_epoch}));
+    if ($options{gpg_sign}) {
+        local $ENV{GNUPGHOME} = $options{gpg_home} if $options{gpg_home};
+        my $repomd = "$dir/repodata/repomd.xml";
+        unlink "$repomd.asc" if -f "$repomd.asc";
+        $run->("gpg -a --detach-sign --default-key " . sh_quote($options{gpg_key_name}) . ' ' . sh_quote($repomd));
+        $run->("gpg -a --export " . sh_quote($options{gpg_key_name}) . " > " . sh_quote("$repomd.key"));
+        if ($native) {
+            $run->('cat ' . sh_quote($native->{publisher_key}) . ' >> ' . sh_quote("$repomd.key"));
+        }
+    }
+}
+
 # cross_copy_genesis: copy the noarch xCAT-genesis-base-<tarch>-*.rpm from $from into $to, dropping
 # any stale foreign-arch genesis already in $to so the repo ends with exactly the fresh set.
 # Returns the count of rpms newly copied (0 = already up to date, so the caller can skip
@@ -528,12 +608,9 @@ sub cross_copy_genesis {
     return $copied;
 }
 
-# finalize_xcat_dep: cross-populate the noarch xCAT-genesis-base between each matching
-# <os>/x86_64 and <os>/ppc64le repo pair (issue #7610), then re-index the repos that changed.
-# %opt: sign => coderef($rpm) applied to copied rpms (or undef); reindex => coderef($dir) run on
-# a repo whose rpm set changed (or undef). Both injected so this stays free of gpg/createrepo
-# state and is unit-testable. Requires each arch's own genesis rpm to be present (a pair with no
-# genesis is a hard error, never a silent no-op) and fails if no repo pair is found at all.
+# Cross-populate Genesis RPMs between matching legacy architecture repositories; skip openEuler cells.
+# Both peers and their own Genesis RPMs are required. Empty roots are errors.
+# The sign and reindex callbacks operate on copied RPMs and selected destination repositories.
 # Architectures whose xCAT-genesis-base is cross-provisioned into every peer repo, so a management
 # node can netboot nodes of any arch (issue #7610). Each entry maps the repo/subdir arch name to the
 # genesis rpm's xCAT "tarch" (xCAT collapses ppc/ppc64le into tarch ppc64; x86_64 stays x86_64). This
@@ -571,10 +648,23 @@ sub finalize_xcat_dep {
     # <os> built for only the OTHER arch slip through unseen -- finalize then never cross-populated
     # that cell and still exited 0 (PR #62 review). Every discovered <os> must carry every arch below.
     my %os;
+    my $native_cells = 0;
     for my $a (@GENESIS_ARCHES) {
         my $root = $repo{ $a->{arch} }
             // die "FATAL: [finalize] no repo root configured for arch '$a->{arch}' (wire it in %repo)\n";
-        $os{ basename($_) } = 1 for grep { -d "$_/$a->{arch}" } glob("$root/*");
+        for my $dir (grep { -d "$_/$a->{arch}" } glob("$root/*")) {
+            my $name = basename($dir);
+            if ($name =~ /^openeuler/) {
+                $native_cells++;
+                next;
+            }
+            $os{$name} = 1;
+        }
+    }
+
+    if (!%os && $native_cells) {
+        print "[finalize] openEuler repositories do not use cross-arch Genesis; skipping\n";
+        return;
     }
 
     my $pairs = 0;

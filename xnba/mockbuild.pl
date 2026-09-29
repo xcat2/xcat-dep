@@ -7,6 +7,9 @@ use File::Basename qw(dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
 use Getopt::Long qw(GetOptions);
+use FindBin qw($RealBin);
+use lib "$RealBin/..";
+use MockBuildUtils qw(restamp_release_line);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path("$script_dir/..");
@@ -20,6 +23,7 @@ my $mock_uniqueext = '';
 my $result_dir  = "$repo_root/build-output/list3/xnba-undi";
 my $log_dir     = "$repo_root/build-logs/list3/xnba-undi";
 my $build_timestamp;
+my $release_suffix = '';
 
 GetOptions(
     'work-dir=s'     => \$work_dir,
@@ -28,6 +32,7 @@ GetOptions(
     'result-dir=s'   => \$result_dir,
     'log-dir=s'      => \$log_dir,
     'build-timestamp=i' => \$build_timestamp,
+    'release-suffix=s' => \$release_suffix,
 ) or die usage();
 
 die "Run as root (current uid=$>)\n" if $> != 0;
@@ -133,6 +138,9 @@ install -m 644 binary/xnba.efi %{buildroot}/tftpboot/xcat/xnba.efi
 - Packaged pre-built xnba binaries for EL10
 SPEC
 
+$simple_spec = join('', map { (restamp_release_line($_, $release_suffix))[0] }
+    split(/(?<=\n)/, $simple_spec)) if $release_suffix ne '';
+
 open my $fh, '>', "$rpmbuild_top/SPECS/xnba-undi.spec"
     or die "Cannot write spec: $!\n";
 print $fh $simple_spec;
@@ -174,6 +182,7 @@ Options:
   --result-dir PATH     Output directory for RPMs
   --log-dir PATH        Output directory for logs
   --build-timestamp EPOCH  Unix timestamp for reproducible builds
+  --release-suffix STR  Append a suffix to the generated RPM Release
 USAGE
 }
 

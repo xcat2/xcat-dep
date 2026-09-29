@@ -10,13 +10,13 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
-use File::Slurper qw(write_text);
+use File::Slurper qw(read_text write_text);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
                       required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       rpm_arch rpm_in_cell resolve_mock_cfg
                       skipped_builder carry_over_rpms source_package
                       restamp_release_line cross_copy_genesis finalize_xcat_dep read_manifest
-                      verify_repo_packages verify_repo_signature verify_rpm_signatures
+                      derive_target_from_repo_path verify_repo_packages verify_repo_signature verify_rpm_signatures
                       parse_evr evr_constraint_ok parse_pin rpmkeys_checksig_problem
                       bump_dep_release_suffix build_mock_uniqueext);
 
@@ -403,6 +403,81 @@ SPEC
         'the refusal names the arch');
 }
 
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my ($x, $p) = ("$tmp/x/rh9/x86_64", "$tmp/p/rh9/ppc64le");
+    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    make_path($x, $p, @native);
+    write_text("$x/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm", "x86 genesis\n");
+    write_text("$p/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm", "ppc genesis\n");
+    write_text("$_/marker", "native repository\n") for @native;
+    my (@signed, @reindexed);
+    my $ok = eval {
+        quiet { finalize_xcat_dep("$tmp/x", "$tmp/p",
+            sign => sub { push @signed, $_[0] },
+            reindex => sub { push @reindexed, $_[0] }) };
+        1;
+    };
+    ok($ok, 'mixed roots finalize their legacy cells without native peer requirements') or diag($@);
+    is(-f "$x/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm"
+        ? read_text("$x/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm") : undef, "ppc genesis\n",
+        'the legacy x86 cell receives its foreign Genesis');
+    is(-f "$p/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm"
+        ? read_text("$p/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm") : undef, "x86 genesis\n",
+        'the legacy ppc cell receives its foreign Genesis');
+    is_deeply([sort @signed], [sort { $a cmp $b } ("$x/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm",
+        "$p/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm")], 'only legacy copies are signed');
+    is_deeply([sort @reindexed], [sort { $a cmp $b } ($x, $p)], 'only legacy cells are indexed');
+    for my $native (@native) {
+        is_deeply([glob("$native/*")], ["$native/marker"], 'finalize adds no native artifacts');
+        is(read_text("$native/marker"), "native repository\n", 'finalize preserves native content');
+    }
+}
+
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    make_path(@native);
+    write_text("$_/marker", "native repository\n") for @native;
+    my (@signed, @reindexed);
+    my $ok = eval {
+        quiet { finalize_xcat_dep("$tmp/x", "$tmp/p", only => ['x86_64'],
+            sign => sub { push @signed, $_[0] },
+            reindex => sub { push @reindexed, $_[0] }) };
+        1;
+    };
+    ok($ok, 'native-only roots require no legacy Genesis finalization') or diag($@);
+    is_deeply(\@signed, [], 'native-only finalization signs nothing');
+    is_deeply(\@reindexed, [], 'native-only finalization indexes nothing');
+    for my $native (@native) {
+        is_deeply([glob("$native/*")], ["$native/marker"], 'native-only finalization adds no artifacts');
+        is(read_text("$native/marker"), "native repository\n", 'native-only finalization preserves content');
+    }
+    my $bad = eval { quiet { finalize_xcat_dep("$tmp/x", "$tmp/p", only => ['riscv64']) }; 1 };
+    ok(!$bad, 'native-only roots still reject an unsupported finalization architecture');
+    like($@, qr/no cross-arch genesis for arch 'riscv64'/, 'native-only validation names the bad architecture');
+}
+
+for my $legacy ('x86-only', 'ppc-only', 'missing-genesis') {
+    my $tmp = tempdir(CLEANUP => 1);
+    make_path("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    make_path("$tmp/x/rh9/x86_64") unless $legacy eq 'ppc-only';
+    make_path("$tmp/p/rh9/ppc64le") unless $legacy eq 'x86-only';
+    my (@signed, @reindexed);
+    my $ok = eval {
+        quiet { finalize_xcat_dep("$tmp/x", "$tmp/p",
+            sign => sub { push @signed, $_[0] },
+            reindex => sub { push @reindexed, $_[0] }) };
+        1;
+    };
+    ok(!$ok, "$legacy legacy input remains fatal in mixed roots");
+    my $expected = $legacy eq 'x86-only' ? qr/no ppc64le peer repo/
+        : $legacy eq 'ppc-only' ? qr/no x86_64 peer repo/ : qr/no x86_64 xCAT-genesis-base/;
+    like($@, $expected, "$legacy reports the missing legacy input");
+    is_deeply(\@signed, [], "$legacy signs nothing");
+    is_deeply(\@reindexed, [], "$legacy indexes nothing");
+}
+
 # ---- restamp_release_line: CD --build-number Release stamping (PR #62 review point 1) ----------
 # A fresh stamp is appended after the Release token, preserving any %{?dist} macro.
 {
@@ -451,7 +526,7 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     # Not every section is a build target: [common] describes the SHARED repository the
     # OpenEmbedded Genesis release is published into, which no builder produces. Target sections are
     # the ones named after a mock config (<id>+epel-<rel>-<arch>, opensuse-leap-<ver>-<arch>).
-    my @targets = grep { /^[a-z0-9.+-]+-\d+(?:\.\d+)?-[a-z0-9_]+$/ } sort keys %m;
+    my @targets = grep { !/^openeuler-/ && /^[a-z0-9.+-]+-\d+(?:\.\d+)?-[a-z0-9_]+$/ } sort keys %m;
     cmp_ok(scalar(@targets), '>=', 1, 'packages-manifest.conf has at least one target section');
     ok(!grep({ $_ eq 'common' } @targets), 'the shared-repo section is not treated as a build target');
     my @missing = grep { !exists $m{$_}{'conserver-xcat'} } @targets;
@@ -459,8 +534,10 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     my @no_ipxe_xcat = grep { exists $m{$_}{'xnba-undi'} && !exists $m{$_}{'ipxe-xcat'} } @targets;
     is_deeply(\@no_ipxe_xcat, [], 'every target that lists xnba-undi also lists ipxe-xcat')
         or diag("missing ipxe-xcat in: @no_ipxe_xcat");
-    is_deeply(\@missing, [], 'conserver-xcat is present in every manifest target section')
+    is_deeply(\@missing, [], 'conserver-xcat is present in every legacy manifest target section')
         or diag("missing conserver-xcat in: @missing");
+    my @native_missing = grep { /^openeuler-/ && !exists $m{$_}{goconserver} } sort keys %m;
+    is_deeply(\@native_missing, [], 'native manifest targets retain goconserver');
 
     # The forcearch riscv64 target carries the noarch boot components the ppc64le EL10 target
     # carries, at the same pins: a riscv64 MN serves the x86 nodes of a mixed cluster too.
@@ -552,6 +629,21 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is($n2, 0, 'a second bump_dep_release_suffix call stamps nothing (idempotent)');
     my $a_again = do { open my $fh, '<', "$tmp/a.spec" or die; local $/; <$fh> };
     is($a_again, $a_after, 'a.spec content unchanged on the idempotent second call');
+}
+
+for my $case (
+    ['/repo/rh8/x86_64', 'alma+epel-8-x86_64'],
+    ['/repo/rh9/s390x/', 'alma+epel-9-s390x'],
+    ['/repo/rh10/ppc64le//', 'alma+epel-10-ppc64le'],
+    ['/repo/rh10/riscv64', 'alma+epel-10-riscv64'],
+) {
+    my ($path, $target) = @$case;
+    is(derive_target_from_repo_path($path), $target, "$path selects $target");
+}
+is(derive_target_from_repo_path(undef), undef, 'missing path has no target');
+is(derive_target_from_repo_path(''), undef, 'empty path has no target');
+for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64') {
+    is(derive_target_from_repo_path($path), undef, "$path has no target");
 }
 
 # ---- verify_repo_packages: pure repo-completeness decision (MISSING + VERSION + wildcard) ---------

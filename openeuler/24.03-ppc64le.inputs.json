@@ -1,0 +1,1123 @@
+{
+  "version": 1,
+  "target": "openeuler-24.03-ppc64le",
+  "publisher_key": {
+    "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/RPM-GPG-KEY-openEuler",
+    "sha256": "006e79d37c10e74c24df6d07c4efc4176515cec009daa5ed493b06f5b6ef39c1",
+    "fingerprint": "8AA16BF9F2CA5244010DCA963B477C60B675600B",
+    "path": "openeuler/RPM-GPG-KEY-openEuler-24.03-LTS"
+  },
+  "build_inputs": [
+    "perl-CPAN-Changes",
+    "perl-Class-Method-Modifiers",
+    "perl-Data-OptList",
+    "perl-Data-Section",
+    "perl-Devel-GlobalDestruction",
+    "perl-Devel-Symdump",
+    "perl-ExtUtils-CBuilder",
+    "perl-Import-Into",
+    "perl-MRO-Compat",
+    "perl-Module-Build",
+    "perl-Module-Runtime",
+    "perl-Moo",
+    "perl-Package-Generator",
+    "perl-Parallel-ForkManager",
+    "perl-Path-Class",
+    "perl-Pod-Coverage",
+    "perl-Role-Tiny",
+    "perl-Software-License",
+    "perl-Sub-Exporter",
+    "perl-Sub-Exporter-Progressive",
+    "perl-Sub-Install",
+    "perl-Sub-Quote",
+    "perl-Sub-Uplevel",
+    "perl-Test-Exception",
+    "perl-Test-Pod",
+    "perl-Test-Pod-Coverage",
+    "perl-Test-Warnings",
+    "perl-Text-Template",
+    "perl-XML-XPath",
+    "perl-inc-latest",
+    "python3-mock",
+    "python3-pbr",
+    "python3-wheel",
+    "procenv"
+  ],
+  "bootstrap_inputs": [
+    "mock",
+    "perl-Params-Util",
+    "python-psutil",
+    "python-pyroute2",
+    "perl-PerlIO-utf8_strict",
+    "perl-File-Slurper",
+    "procenv"
+  ],
+  "inputs": [
+    {
+      "name": "ksh",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/ksh-1.0.8-1.oe2403.src.rpm",
+      "sha256": "06d31f1ed0213f58d7009d5830bec3b3cb26878c4ae4deaeb8f8f4d74acb33fb",
+      "outputs": [
+        "ksh",
+        "ksh-debuginfo",
+        "ksh-debugsource"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "net-snmp",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/net-snmp-5.9.3-2.oe2403.src.rpm",
+      "sha256": "c6edbda654e5f4416e19c3f56004457daf72e4ae7058f118030c3442c486930b",
+      "outputs": [
+        "net-snmp",
+        "net-snmp-debuginfo",
+        "net-snmp-debugsource",
+        "net-snmp-devel",
+        "net-snmp-gui",
+        "net-snmp-help",
+        "net-snmp-libs",
+        "net-snmp-perl",
+        "python3-net-snmp"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-DB_File",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-DB_File-1.859-1.oe2403.src.rpm",
+      "sha256": "cce82dd316ed906fde94ec69e5d0298322dc4b14dba89dd3151c2823f404e8b3",
+      "outputs": [
+        "perl-DB_File",
+        "perl-DB_File-debuginfo",
+        "perl-DB_File-debugsource",
+        "perl-DB_File-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-Digest-SHA1",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-Digest-SHA1-2.13-27.oe2403.src.rpm",
+      "sha256": "2761ba4d7f43727908af232cd03b2d872f245380acfecc9cf7b65d0a2da83060",
+      "outputs": [
+        "perl-Digest-SHA1",
+        "perl-Digest-SHA1-debuginfo",
+        "perl-Digest-SHA1-debugsource",
+        "perl-Digest-SHA1-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-IO-Tty",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-IO-Tty-1.17-1.oe2403.src.rpm",
+      "sha256": "28a795eb3d834e10760dfa7e016e697c6e5c3acbdb35ee5c3971b44146c3e903",
+      "outputs": [
+        "perl-IO-Tty",
+        "perl-IO-Tty-debuginfo",
+        "perl-IO-Tty-debugsource",
+        "perl-IO-Tty-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-Sys-Virt",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-Sys-Virt-4.7.0-3.oe2403.src.rpm",
+      "sha256": "a7603e7e27afb1aa60c69852c583fc0837a895fd3975aabf7470013d4f798482",
+      "outputs": [
+        "perl-Sys-Virt",
+        "perl-Sys-Virt-debuginfo",
+        "perl-Sys-Virt-debugsource",
+        "perl-Sys-Virt-help"
+      ],
+      "needs": [
+        "perl-Params-Util",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "nasm",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/nasm-2.16.01-1.oe2403.src.rpm",
+      "sha256": "0dac600e4da291eefb1986daabea54f9bf60aeeb5b8c8940faeb86dbcd20ea4a",
+      "outputs": [
+        "nasm",
+        "nasm-debuginfo",
+        "nasm-debugsource",
+        "nasm-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "docbook-style-dsssl",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/docbook-style-dsssl-1.79-28.oe2403.src.rpm",
+      "sha256": "9bc538924ce5c76e0006cd25cb1af34a3ea9b754bbd25c6fc1a65416274e5b4a",
+      "outputs": [
+        "docbook-style-dsssl",
+        "docbook-style-dsssl-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "docbook-utils",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/docbook-utils-0.6.14-47.oe2403.src.rpm",
+      "sha256": "2337c62d716bafcb90910f8a530d7a037ca6d93905d0b26cfb27a2d2ecf39d05",
+      "outputs": [
+        "docbook-utils",
+        "docbook-utils-help",
+        "docbook-utils-pdf"
+      ],
+      "needs": [
+        "docbook-style-dsssl",
+        "openjade",
+        "perl-SGMLSpm",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "elinks",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/elinks-0.12-4.oe2403.src.rpm",
+      "sha256": "bd7e4695311b3eb259af15bb2a5c6154675de9cf07bf3b260591bb50ee19c40f",
+      "outputs": [
+        "elinks",
+        "elinks-debuginfo",
+        "elinks-debugsource",
+        "elinks-help"
+      ],
+      "needs": [
+        "lua",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "help2man",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/help2man-1.49.3-1.oe2403.src.rpm",
+      "sha256": "438f7a27f86e4906d03cb1451e93b6ae189948a4287a2cbd3ce3aa75b83f7eec",
+      "outputs": [
+        "help2man",
+        "help2man-debuginfo",
+        "help2man-debugsource",
+        "help2man-help"
+      ],
+      "needs": [
+        "perl-gettext",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "lua",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/lua-5.4.6-1.oe2403.src.rpm",
+      "sha256": "6e327bf54d114f3c6fb849a92fd8530e7d093d14e566cc9eca69e8ccd980f7ab",
+      "outputs": [
+        "lua",
+        "lua-debuginfo",
+        "lua-debugsource",
+        "lua-devel",
+        "lua-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "multilib-rpm-config",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/multilib-rpm-config-1-16.oe2403.src.rpm",
+      "sha256": "807e501bf7a52e868a69fdb5c412a996858c835596e90786279257a80b63c84c",
+      "outputs": [
+        "multilib-rpm-config"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "openjade",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/openjade-1.3.2-61.oe2403.src.rpm",
+      "sha256": "418003efee45c62a3c1576d960cfec704d328bf4c992362444c49ad9266955f2",
+      "outputs": [
+        "openjade",
+        "openjade-debuginfo",
+        "openjade-debugsource",
+        "openjade-help"
+      ],
+      "needs": [
+        "opensp",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "opensp",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/opensp-1.5.2-31.oe2403.src.rpm",
+      "sha256": "12dcec9276c9234fb05424ee668f046e04c42e48300bf4c2f5c97d3182f48785",
+      "outputs": [
+        "opensp",
+        "opensp-debuginfo",
+        "opensp-debugsource",
+        "opensp-devel"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-Data-UUID",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-Data-UUID-1.226-1.oe2403.src.rpm",
+      "sha256": "bff5621c60eb5d5e883e222c4e4a6654f6b6babde1ecfbd350a9a82d4f986143",
+      "outputs": [
+        "perl-Data-UUID",
+        "perl-Data-UUID-debuginfo",
+        "perl-Data-UUID-debugsource",
+        "perl-Data-UUID-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-SGMLSpm",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-SGMLSpm-1.03ii-46.oe2403.src.rpm",
+      "sha256": "d64347233d55e1fed96b3f0956a6b6654875eed1bb691d19b381a824be5e48b6",
+      "outputs": [
+        "perl-SGMLSpm",
+        "perl-SGMLSpm-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-gettext",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-gettext-1.07-15.oe2403.src.rpm",
+      "sha256": "4c957422db0487ad914ce71dea89c81eb17d9ffd5fc4388cba79e4f449eb1146",
+      "outputs": [
+        "perl-Locale-gettext",
+        "perl-gettext-debuginfo",
+        "perl-gettext-debugsource",
+        "perl-gettext-help"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "uuid",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/uuid-1.6.2-47.oe2403.src.rpm",
+      "sha256": "208ec1a90ac611a11527eb813fe94bd8349085b9e10ac4d784c551933633a7f5",
+      "outputs": [
+        "uuid",
+        "uuid-c++",
+        "uuid-c++-devel",
+        "uuid-dce",
+        "uuid-dce-devel",
+        "uuid-debuginfo",
+        "uuid-debugsource",
+        "uuid-devel",
+        "uuid-help",
+        "uuid-perl"
+      ],
+      "needs": [
+        "perl-Data-UUID",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "postgresql",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/postgresql-15.6-1.oe2403.src.rpm",
+      "sha256": "0e1dd792cccf353f7a0d7f3f9d13b1a22a7ace0a428f4b197193b99c58081960",
+      "outputs": [
+        "postgresql",
+        "postgresql-contrib",
+        "postgresql-debuginfo",
+        "postgresql-debugsource",
+        "postgresql-docs",
+        "postgresql-plperl",
+        "postgresql-plpython3",
+        "postgresql-pltcl",
+        "postgresql-private-devel",
+        "postgresql-private-libs",
+        "postgresql-server",
+        "postgresql-server-devel",
+        "postgresql-static",
+        "postgresql-test",
+        "postgresql-test-rpm-macros"
+      ],
+      "needs": [
+        "docbook-utils",
+        "elinks",
+        "help2man",
+        "multilib-rpm-config",
+        "procenv",
+        "uuid"
+      ],
+      "patches": [
+        {
+          "path": "postgresql/postgresql-15.6-openeuler-llvmjit-buildrequires.patch",
+          "sha256": "799a90eb82321722d11ffc421d4b09684f2939c44bfdc71a6c9b039a4f4d8592"
+        }
+      ],
+      "defines": [
+        "llvmjit 0",
+        "external_libpq 0",
+        "runselftest 1",
+        "test 1"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-DBD-Pg",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-DBD-Pg-3.18.0-1.oe2403.src.rpm",
+      "sha256": "5bb91b28459ee5754c031cf62471c86a887392587c261c8df61ab44e4c8caf09",
+      "outputs": [
+        "perl-DBD-Pg",
+        "perl-DBD-Pg-debuginfo",
+        "perl-DBD-Pg-debugsource",
+        "perl-DBD-Pg-help"
+      ],
+      "needs": [
+        "postgresql",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-CGI",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-CGI-4.57-1.oe2403.noarch.rpm",
+      "sha256": "98609a3a6c210a676a14960531cd5c82a86667da7aacea0c6e693ccbee612ee3",
+      "outputs": [
+        "perl-CGI"
+      ],
+      "needs": [],
+      "runtime": true
+    },
+    {
+      "name": "perl-CPAN-Changes",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-CPAN-Changes-0.400002-10.oe2403.noarch.rpm",
+      "sha256": "95c2a1939b26e201a07d128851b53a4fff7522b84f7a9ddb0947edf1f1ed2505",
+      "outputs": [
+        "perl-CPAN-Changes"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Class-Method-Modifiers",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Class-Method-Modifiers-2.15-1.oe2403.noarch.rpm",
+      "sha256": "e92f880e1a3eef95025938da643e07a05db0d7f2eda140a1fdaeef64d6c0a8a7",
+      "outputs": [
+        "perl-Class-Method-Modifiers"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Crypt-CBC",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Crypt-CBC-2.33-22.oe2403.noarch.rpm",
+      "sha256": "60f2dd1de7c4143301bcc1a35d52f3b69b3c40effe377a5740114d58a1205fc0",
+      "outputs": [
+        "perl-Crypt-CBC"
+      ],
+      "needs": [],
+      "runtime": true
+    },
+    {
+      "name": "perl-Data-OptList",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Data-OptList-0.114-1.oe2403.noarch.rpm",
+      "sha256": "68176d8117d5bbab5761e9b658465e96e01ecf5d6daa0e3cb400b45d77b3ecaf",
+      "outputs": [
+        "perl-Data-OptList"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Data-Section",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Data-Section-0.200007-6.oe2403.noarch.rpm",
+      "sha256": "fb307d87653b15130f0bb0480761a7e86eed8052399977f9a811977b10792f62",
+      "outputs": [
+        "perl-Data-Section"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Devel-GlobalDestruction",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Devel-GlobalDestruction-0.14-8.oe2403.noarch.rpm",
+      "sha256": "f141968f5359ed78945f08b042782889f3ff30b0d41a8ed8e9a284f1ecb80c54",
+      "outputs": [
+        "perl-Devel-GlobalDestruction"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Devel-Symdump",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Devel-Symdump-2.18-9.oe2403.noarch.rpm",
+      "sha256": "a304653f87360e565bb40f91569ccf168535f8b9e801536da9f5993cc5ca15c7",
+      "outputs": [
+        "perl-Devel-Symdump"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Expect",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Expect-1.35-7.oe2403.noarch.rpm",
+      "sha256": "a99336a76e9c9245026e7e4dc8cbddd5386dce30de91de0013905cbc9cbe9a41",
+      "outputs": [
+        "perl-Expect"
+      ],
+      "needs": [],
+      "runtime": true
+    },
+    {
+      "name": "perl-ExtUtils-CBuilder",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-ExtUtils-CBuilder-0.280236-1.oe2403.noarch.rpm",
+      "sha256": "fa99812f5cfff7d24fcbc98b40741db286e1dcfb4412ad9cdcf47fcf7722a474",
+      "outputs": [
+        "perl-ExtUtils-CBuilder"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-HTML-Form",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-HTML-Form-6.11-1.oe2403.noarch.rpm",
+      "sha256": "163a17e21393bb97e8c2e16b9ac163aea99983c294ded47c00f98998bcb1caff",
+      "outputs": [
+        "perl-HTML-Form"
+      ],
+      "needs": [],
+      "runtime": true
+    },
+    {
+      "name": "perl-Import-Into",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Import-Into-1.002005-2.oe2403.noarch.rpm",
+      "sha256": "a5bad0bbf3e5ae2789857799114f84867b7c93044b233754d238dd97b2ad563d",
+      "outputs": [
+        "perl-Import-Into"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-LWP-Protocol-https",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-LWP-Protocol-https-6.10-1.oe2403.noarch.rpm",
+      "sha256": "ee20297e3736754b5751b4160ac9a236d2d876a5bc85a7ba7bada51928bf9f74",
+      "outputs": [
+        "perl-LWP-Protocol-https"
+      ],
+      "needs": [],
+      "runtime": true
+    },
+    {
+      "name": "perl-MRO-Compat",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-MRO-Compat-0.15-1.oe2403.noarch.rpm",
+      "sha256": "3c0bb3b8a227e1682c262fb3456179da9bd2f50f47665c421104944cdb0bb0da",
+      "outputs": [
+        "perl-MRO-Compat"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Mail-Sender",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Mail-Sender-0.903-9.oe2403.noarch.rpm",
+      "sha256": "dcf401ee82064f8c06e6e22b8e28f24be97600b197ca0bc3fc3fb8883ca6f5f7",
+      "outputs": [
+        "perl-Mail-Sender"
+      ],
+      "needs": [],
+      "runtime": true
+    },
+    {
+      "name": "perl-Module-Build",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Module-Build-0.42.34-1.oe2403.noarch.rpm",
+      "sha256": "db8163ae929ca61af611d2f13e8f9b946011ecad34811a36a5bdbe4ba74dae93",
+      "outputs": [
+        "perl-Module-Build"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Module-Runtime",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Module-Runtime-0.016-5.oe2403.noarch.rpm",
+      "sha256": "87a0baf3236ccc778749c60992a79f1fdc5f4ebdb28f6f55927d0360ad37468c",
+      "outputs": [
+        "perl-Module-Runtime"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Moo",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Moo-2.005005-1.oe2403.noarch.rpm",
+      "sha256": "277a6477d7fe6320d3b487f38f245fc468abf94e9a5b75c134c8a941488ae529",
+      "outputs": [
+        "perl-Moo"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Net-DNS",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Net-DNS-1.40-1.oe2403.noarch.rpm",
+      "sha256": "c6d9932ccfaae2e515635b00204e86b5121516f5693d4fb345ae0d979bfbde23",
+      "outputs": [
+        "perl-Net-DNS"
+      ],
+      "needs": [],
+      "runtime": true
+    },
+    {
+      "name": "perl-Package-Generator",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Package-Generator-1.106-14.oe2403.noarch.rpm",
+      "sha256": "b9a424e6e083920b5000482637b62f617eb31808285ad86c09727e4f6d2c3fa8",
+      "outputs": [
+        "perl-Package-Generator"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Parallel-ForkManager",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Parallel-ForkManager-2.02-2.oe2403.noarch.rpm",
+      "sha256": "f406916c07bc1c59cb83080c91b308aa0a3e560825b948f44d02d6f93b5f9050",
+      "outputs": [
+        "perl-Parallel-ForkManager"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Path-Class",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Path-Class-0.37-14.oe2403.noarch.rpm",
+      "sha256": "aa2a7bc7789bfa34becdc8d98ad2263091cce2065776ab670802b20b72e497ce",
+      "outputs": [
+        "perl-Path-Class"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Pod-Coverage",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Pod-Coverage-0.23-16.oe2403.noarch.rpm",
+      "sha256": "d55a851604e72bd8eae598883b6d07f7795bde516b6a82e9af2654294412e3d0",
+      "outputs": [
+        "perl-Pod-Coverage"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Role-Tiny",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Role-Tiny-2.002004-1.oe2403.noarch.rpm",
+      "sha256": "058122267ea240407d97677450d50e251708d88dd9edf11a0e9cc3dfe813389d",
+      "outputs": [
+        "perl-Role-Tiny"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Software-License",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Software-License-0.104001-2.oe2403.noarch.rpm",
+      "sha256": "511ad1cd11c7acd42798f05662d8732c67bb5780bde034912102b9b9628e96f4",
+      "outputs": [
+        "perl-Software-License"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Sub-Exporter",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Sub-Exporter-0.990-1.oe2403.noarch.rpm",
+      "sha256": "1bad67d715ab6ff15e4add9f0c41b2e0f505ccc25ef0ca75ed75bcb1332d040b",
+      "outputs": [
+        "perl-Sub-Exporter"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Sub-Exporter-Progressive",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Sub-Exporter-Progressive-0.001013-8.oe2403.noarch.rpm",
+      "sha256": "dbb9b6a648ea82eaef58d6c60136e0e6101b54c40a1b6e346d85df46fd5947f4",
+      "outputs": [
+        "perl-Sub-Exporter-Progressive"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Sub-Install",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Sub-Install-0.929-1.oe2403.noarch.rpm",
+      "sha256": "5a828b848f5b730aaf30ffd9b2f7608cde97f69737bfb3abed4c7d6dd44a8e7b",
+      "outputs": [
+        "perl-Sub-Install"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Sub-Quote",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Sub-Quote-2.005001-4.oe2403.noarch.rpm",
+      "sha256": "f11b0e95c4ec3df9ed03ee923a127b2cc84794a740dbe521f3adbfc52c7ca401",
+      "outputs": [
+        "perl-Sub-Quote"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Sub-Uplevel",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Sub-Uplevel-0.2800-5.oe2403.noarch.rpm",
+      "sha256": "faa82aeb4f083ff0b4dac06a1219deacaf35ad6fc682ecbd91dfea8efbaaba74",
+      "outputs": [
+        "perl-Sub-Uplevel"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Test-Exception",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Test-Exception-0.43-10.oe2403.noarch.rpm",
+      "sha256": "ba94cb3100826ef941055017174d3b613416e785b04d20792725c17007a82361",
+      "outputs": [
+        "perl-Test-Exception"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Test-Pod",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Test-Pod-1.52-4.oe2403.noarch.rpm",
+      "sha256": "edcfbc73f8d1b848b5ff4e40699e74820f1f6c60f031f264381c29c6f01ba43a",
+      "outputs": [
+        "perl-Test-Pod"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Test-Pod-Coverage",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Test-Pod-Coverage-1.10-14.oe2403.noarch.rpm",
+      "sha256": "953f3ca4c78abc2ac4c63e2debece478409766c54e9a2ec08c2f8b1247505e4b",
+      "outputs": [
+        "perl-Test-Pod-Coverage"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Test-Warnings",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Test-Warnings-0.031-1.oe2403.noarch.rpm",
+      "sha256": "b152ba3fddab972447eb341a2cfd845d3851146d554605a02da2101d56387b8f",
+      "outputs": [
+        "perl-Test-Warnings"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-Text-Template",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Text-Template-1.60-1.oe2403.noarch.rpm",
+      "sha256": "04012c8e50e8fca42b22feadc51ac84a03cb1811067cd88eadd97ed76c6138b0",
+      "outputs": [
+        "perl-Text-Template"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-XML-XPath",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-XML-XPath-1.47-1.oe2403.noarch.rpm",
+      "sha256": "4b4c440628ca82c3eaf997b2b52b38e243cb52eb3e6cc8296a858a0905008ea6",
+      "outputs": [
+        "perl-XML-XPath"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "perl-inc-latest",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-inc-latest-0.500-12.oe2403.noarch.rpm",
+      "sha256": "46df92ce44f1dcb654642b42650dc790455dbb82d6a8594d70227c406874d82b",
+      "outputs": [
+        "perl-inc-latest"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "python3-mock",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/python3-mock-5.1.0-1.oe2403.noarch.rpm",
+      "sha256": "2cf15ae56a3c01b85be156c939cc4c26d3b0a48f67327e4089484d11c8d719a5",
+      "outputs": [
+        "python3-mock"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "python3-pbr",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/python3-pbr-6.0.0-1.oe2403.noarch.rpm",
+      "sha256": "b841a0ee0421804080a2a9dd1b58991b59098b61eaf50ea5cee08e74b245ee1d",
+      "outputs": [
+        "python3-pbr"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "python3-wheel",
+      "type": "publisher",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/python3-wheel-0.40.0-1.oe2403.noarch.rpm",
+      "sha256": "a5f12a955d77f97f571d9d2253b845976ec52b14cb0ed2e1f22504941e2093c6",
+      "outputs": [
+        "python3-wheel"
+      ],
+      "needs": [],
+      "runtime": false
+    },
+    {
+      "name": "mock",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/mock-2.2-2.oe2403.src.rpm",
+      "sha256": "15aee65d6d6284522c3c777c2355a7b4310a706bbff4a99d227c9917e32873db",
+      "outputs": [
+        "mock",
+        "mock-plugins"
+      ],
+      "build_uid": 1000,
+      "needs": [
+        "procenv",
+        "python-psutil",
+        "python-pyroute2"
+      ]
+    },
+    {
+      "name": "perl-Params-Util",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-Params-Util-1.07-26.oe2403.src.rpm",
+      "sha256": "66a4363f542e00063dbc37e0b5abe42c9537c2f54c3e1d1d8290772d4d3f1824",
+      "outputs": [
+        "perl-Params-Util",
+        "perl-Params-Util-debuginfo",
+        "perl-Params-Util-debugsource",
+        "perl-Params-Util-help"
+      ],
+      "build_uid": 1000,
+      "needs": [
+        "procenv"
+      ]
+    },
+    {
+      "name": "python-psutil",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/python-psutil-5.9.5-1.oe2403.src.rpm",
+      "sha256": "f0dc3859323b5e769cc8d3910d1d19645f6c868f152e9053fedd59a279fdc27f",
+      "outputs": [
+        "python-psutil-debuginfo",
+        "python-psutil-debugsource",
+        "python3-psutil"
+      ],
+      "build_uid": 1000,
+      "needs": [
+        "procenv"
+      ]
+    },
+    {
+      "name": "python-pyroute2",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/python-pyroute2-0.7.9-2.oe2403.src.rpm",
+      "sha256": "4f42494d851c91bb2416254fdbfa04eb33acf23bd3507b5fc03ad62089db8bed",
+      "outputs": [
+        "python-pyroute2-help",
+        "python3-pyroute2"
+      ],
+      "build_uid": 1000,
+      "needs": [
+        "procenv"
+      ]
+    },
+    {
+      "name": "perl-PerlIO-utf8_strict",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/perl-PerlIO-utf8_strict-0.010-1.oe2403.src.rpm",
+      "sha256": "5f0749a94e7e42b68a4b5a8ad13b06696cc02cceb302924cdacbecaaa43209d8",
+      "outputs": [
+        "perl-PerlIO-utf8_strict",
+        "perl-PerlIO-utf8_strict-debuginfo",
+        "perl-PerlIO-utf8_strict-debugsource",
+        "perl-PerlIO-utf8_strict-help"
+      ],
+      "build_uid": 1000,
+      "needs": [
+        "procenv"
+      ]
+    },
+    {
+      "name": "perl-File-Slurper",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS-SP3/source/Packages/perl-File-Slurper-0.014-1.oe2403sp3.src.rpm",
+      "sha256": "7f0438344d8c191e74da13c26254f71374a32128ab9efc1d79705e9b00637c1e",
+      "outputs": [
+        "perl-File-Slurper",
+        "perl-File-Slurper-help"
+      ],
+      "needs": [
+        "perl-PerlIO-utf8_strict",
+        "perl-Test-Warnings",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "procenv",
+      "type": "srpm",
+      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/source/Packages/procenv-0.60-1.oe2403.src.rpm",
+      "sha256": "4175affb56e6a39f6aac4ada813dee8802b3086807b17a1f9cd80e91717e7819",
+      "outputs": [
+        "procenv",
+        "procenv-debuginfo",
+        "procenv-debugsource"
+      ],
+      "build_uid": 1000,
+      "needs": []
+    },
+    {
+      "name": "perl-Crypt-Rijndael",
+      "type": "owner",
+      "outputs": [
+        "perl-Crypt-Rijndael",
+        "perl-Crypt-Rijndael-debuginfo",
+        "perl-Crypt-Rijndael-debugsource"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-Crypt-SSLeay",
+      "type": "owner",
+      "outputs": [
+        "perl-Crypt-SSLeay",
+        "perl-Crypt-SSLeay-debuginfo",
+        "perl-Crypt-SSLeay-debugsource"
+      ],
+      "needs": [
+        "perl-Path-Class",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-HTTP-Async",
+      "type": "owner",
+      "outputs": [
+        "perl-HTTP-Async"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-Net-HTTPS-NB",
+      "type": "owner",
+      "outputs": [
+        "perl-Net-HTTPS-NB"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-Net-Telnet",
+      "type": "owner",
+      "outputs": [
+        "perl-Net-Telnet"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "ipmitool-xcat",
+      "type": "owner",
+      "outputs": [
+        "ipmitool-xcat",
+        "ipmitool-xcat-debuginfo",
+        "ipmitool-xcat-debugsource"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "syslinux-xcat",
+      "type": "owner",
+      "outputs": [
+        "syslinux",
+        "syslinux-debuginfo",
+        "syslinux-debugsource",
+        "syslinux-extlinux",
+        "syslinux-xcat"
+      ],
+      "needs": [
+        "nasm",
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "grub2-xcat",
+      "type": "owner",
+      "outputs": [
+        "grub2-xcat"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "xnba-undi",
+      "type": "owner",
+      "outputs": [
+        "xnba-undi"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 0
+    },
+    {
+      "name": "goconserver",
+      "type": "owner",
+      "outputs": [
+        "goconserver"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "xCAT-genesis-base",
+      "type": "owner",
+      "outputs": [
+        "xCAT-genesis-base-ppc64"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 0
+    },
+    {
+      "name": "perl-IO-Stty",
+      "type": "owner",
+      "outputs": [
+        "perl-IO-Stty"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    }
+  ]
+}
