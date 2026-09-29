@@ -7,7 +7,5 @@ do not provide `python3-scp`.
 - Upstream signing key: `8AA16BF9F2CA5244010DCA963B477C60B675600B`
 - License: LGPL-2.1-or-later
 
-The upstream spec disables its SSH-dependent `%check`. Native validation must
-include authenticated SCP uploads and downloads, recursive paths, mode and time
-preservation, and rejection of incorrect client and server keys. The build uses
-the target's native Python and Paramiko packages.
+The upstream spec disables its SSH-dependent `%check`. The build uses the
+target's native Python and Paramiko packages.
