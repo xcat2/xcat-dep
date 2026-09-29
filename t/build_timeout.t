@@ -94,7 +94,7 @@ is($bad->{ec}, 3, 'a failing command keeps its exit status');
 my $hang = drive(name => 'hang', cmd => 'exec sleep 600 >/dev/null 2>&1',
                  timeout => 4, sample => 2, deadline => 90);
 ok($hang->{finished}, 'a hanging command does NOT hang the caller')
-    or BAIL_OUT('run_bounded never returned: the bound is missing, so a hung build has no failure');
+    or die('run_bounded never returned: the bound is missing, so a hung build has no failure');
 is($hang->{timed_out}, 1, 'the hang is reported as a timeout');
 is($hang->{ec}, 124, 'the timeout exit status is 124, as timeout(1) uses');
 cmp_ok($hang->{wall}, '<', 60, 'it fails soon after the budget, not later');

@@ -4,7 +4,7 @@ use warnings;
 use Cwd qw(abs_path);
 use File::Basename qw(basename);
 use File::Copy qw(copy);
-use File::Path qw(make_path);
+use File::Path qw(make_path remove_tree);
 use Fcntl qw(:flock);
 use File::Temp qw(tempdir);
 use FindBin;
@@ -23,6 +23,7 @@ use XCAT::BuildUtils qw(
   read_binary
   write_binary
 );
+use XCAT::NFSLock ();
 use XCAT::GenesisRelease qw(
   architectures
   deb_package_name
@@ -51,9 +52,9 @@ my @APT_SUITES = qw(focal jammy noble resolute);
 test_activation_helper();
 
 if ($ENV{XCAT_GENESIS_CI}) {
-    BAIL_OUT('CI requires Linux root') unless $^O eq 'linux' && $> == 0;
+    die('CI requires Linux root') unless $^O eq 'linux' && $> == 0;
     for my $command (qw(apt-ftparchive bash createrepo_c dpkg-deb gpg rpm rpmbuild)) {
-        BAIL_OUT("CI requires $command") unless command_exists($command);
+        die("CI requires $command") unless command_exists($command);
     }
 }
 
@@ -73,6 +74,7 @@ SKIP: {
     test_skip_build_collects_results();
     test_dry_run_release();
     test_rpm_repository_lock();
+    test_finalize_cell_lock();
     test_rpm_signal_cleanup();
 }
 
@@ -169,6 +171,9 @@ sub test_rpm_consumer {
     push(@perl_lib, $ENV{PERL5LIB})
       if defined($ENV{PERL5LIB}) && $ENV{PERL5LIB} ne '';
     local $ENV{PERL5LIB} = join(':', @perl_lib);
+    # An interrupted publication left a staging tree. A real run recovers it.
+    my $abandoned = "$output/xcat-dep/.common.abandoned";
+    make_path($abandoned);
     my $log = "$tmp/rpm-consumer.log";
     my $status = run_capture(
         $log,
@@ -186,6 +191,7 @@ sub test_rpm_consumer {
     );
 
     is($status, 0, 'RPM repository accepts a verified Genesis release');
+    ok(!-e $abandoned, 'the run removes the staging tree of an interrupted publication');
     is(
         sprintf('%04o', (stat($common_repo))[2] & 0x0fff),
         '0755',
@@ -329,7 +335,7 @@ sub run_apt_consumer {
 sub write_apt_manifest {
     my ($path, $mutate) = @_;
     my %shipped = read_manifest("$repo_root/debs-manifest.conf");
-    BAIL_OUT('debs-manifest.conf has no [shared] section')
+    die('debs-manifest.conf has no [shared] section')
       unless exists $shipped{shared};
     my %shared = %{ $shipped{shared} };
     $mutate->(\%shared) if $mutate;
@@ -938,11 +944,16 @@ sub test_dry_run_release {
 sub test_rpm_repository_lock {
     my $output = "$tmp/rpm-lock-output";
     my $repository = "$tmp/rpm-shared-repository";
-    my $target = 'test+epel-10-' . capture_command('uname', '-m');
+    my $arch = capture_command('uname', '-m');
+    my $target = "test+epel-10-$arch";
     my $scratch_repo_root = "$tmp/rpm-lock-repo-root";
     write_target_manifest($scratch_repo_root, $target);
-    make_path("$repository/.lock");
-    write_binary("$repository/.lock/owner", "host=other\npid=1\nepoch=1\n");
+    # The cell this target deploys is locked by a run on another machine.
+    my $cell_lock = "$repository/rh10/.$arch.lock";
+    make_path($cell_lock);
+    write_binary("$cell_lock/metadata",
+        XCAT::NFSLock::format_metadata({ 'machine-id' => 'another-machine', 'boot-id' => 'b',
+            pid => 1, pstart => 1, token => 't' }));
 
     my @perl_lib;
     push(@perl_lib, write_forkmanager_stub("$tmp/perl-lock-stub"))
@@ -963,9 +974,11 @@ sub test_rpm_repository_lock {
         '--no-verify-repo',
         '--skip-createrepo', '--skip-tarball', '--dry-run',
     );
-    isnt($status, 0, 'a shared RPM repository cannot have two publishers');
-    like(read_binary($log), qr/repository \Q$repository\E is locked/,
-        'the lock failure names the shared repository');
+    isnt($status, 0, 'a repository cell cannot have two publishers');
+    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 1 retry;/m,
+        'the lock failure names the locked cell');
+    ok(-d $cell_lock, 'a lock held on another machine is left in place');
+    remove_tree($cell_lock);
 
     my $backup = "$repository/.common.previous.999";
     my $staging = "$repository/.common.abandoned";
@@ -981,12 +994,54 @@ sub test_rpm_repository_lock {
         '--target', $target,
         '--skip-build', '--skip-genesis', '--skip-xcat-dep', '--skip-perl',
         '--no-verify-repo',
-        '--skip-createrepo', '--skip-tarball', '--dry-run', '--force-unlock',
+        '--skip-createrepo', '--skip-tarball', '--dry-run',
     );
-    is($forced_status, 0, '--force-unlock recovers an interrupted RPM publication');
-    ok(-f "$repository/common/marker",
-        'the interrupted common repository is restored before publication');
-    ok(!-d $staging, 'abandoned common repository staging is removed');
+    is($forced_status, 0, 'a dry run starts beside an interrupted RPM publication')
+      or diag(read_binary($forced_log));
+    ok(-f "$backup/marker", 'a dry run leaves the moved-aside common repository in place');
+    ok(-d $staging, 'a dry run leaves the abandoned staging tree in place');
+    ok(!-e "$repository/common", 'a dry run does not restore the common repository');
+}
+
+sub test_finalize_cell_lock {
+    my $x86 = "$tmp/finalize-x86";
+    my $ppc = "$tmp/finalize-ppc";
+    make_path("$x86/rh10/x86_64", "$ppc/rh10/ppc64le");
+    # A build on another machine is still deploying the x86_64 cell.
+    my $cell_lock = "$x86/rh10/.x86_64.lock";
+    make_path($cell_lock);
+    write_binary("$cell_lock/metadata",
+        XCAT::NFSLock::format_metadata({ 'machine-id' => 'another-machine', 'boot-id' => 'b',
+            pid => 1, pstart => 1, token => 't' }));
+
+    my $log = "$tmp/finalize-lock.log";
+    my $status = run_capture(
+        $log,
+        $^X, $rpm_consumer,
+        '--repo-root', $repo_root,
+        '--finalize-xcat-dep', '--x86_64-repo', $x86, '--ppc64le-repo', $ppc,
+    );
+    isnt($status, 0, 'finalize does not rewrite a cell that a build holds');
+    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 1 retry;/m,
+        'finalize names the cell lock it waited for');
+    ok(-d $cell_lock, 'the build keeps its cell lock');
+    ok(!-e "$ppc/rh10/.ppc64le.lock", 'finalize releases the cell locks it took');
+
+    # Finalize of the ppc64le cells takes only their locks: the x86_64 cell lock of another machine
+    # does not stop it. It stops at the next check, the missing genesis rpm.
+    my $arch_log = "$tmp/finalize-arch.log";
+    my $arch_status = run_capture(
+        $arch_log,
+        $^X, $rpm_consumer,
+        '--repo-root', $repo_root,
+        '--finalize-xcat-dep', '--finalize-arch', 'ppc64le',
+        '--x86_64-repo', $x86, '--ppc64le-repo', $ppc,
+    );
+    isnt($arch_status, 0, 'finalize of an empty ppc64le cell fails');
+    unlike(read_binary($arch_log), qr/^Trying to unlock/m, 'finalize of ppc64le cells takes no x86_64 cell lock');
+    like(read_binary($arch_log), qr/no x86_64 xCAT-genesis-base rpm/, 'finalize of ppc64le cells reaches the genesis check');
+    ok(-d $cell_lock, 'the x86_64 cell lock of the other machine is left in place');
+    ok(!-e "$ppc/rh10/.ppc64le.lock", 'finalize releases the ppc64le cell lock');
 }
 
 sub test_rpm_signal_cleanup {
@@ -995,13 +1050,10 @@ sub test_rpm_signal_cleanup {
     my $signal_bin = "$tmp/rpm-signal-bin";
     my $log = "$tmp/rpm-signal.log";
     make_path($repository, $signal_bin);
-    write_binary(
-        "$signal_bin/uname",
-        "#!/bin/sh\n"
-          . "if [ \"\$1\" = -m ]; then sleep 60; exit 1; fi\n"
-          . "exec /usr/bin/uname \"\$@\"\n",
-    );
-    chmod(0755, "$signal_bin/uname") or die $!;
+    # nproc runs after every lock is taken and before any build starts.
+    write_binary("$signal_bin/nproc", "#!/bin/sh\nsleep 60\nexit 1\n");
+    chmod(0755, "$signal_bin/nproc") or die $!;
+    my $cell_lock = "$repository/rh10/." . capture_command('uname', '-m') . '.lock';
 
     my $pid = fork();
     die "Cannot fork signal test: $!" unless defined($pid);
@@ -1026,7 +1078,7 @@ sub test_rpm_signal_cleanup {
 
     my $locked = 0;
     for (1 .. 200) {
-        if (-d "$output/.lock" && -d "$repository/.lock") {
+        if (-d "$output/.lock" && -d $cell_lock) {
             $locked = 1;
             last;
         }
@@ -1037,7 +1089,7 @@ sub test_rpm_signal_cleanup {
     waitpid($pid, 0);
     is($? >> 8, 1, 'SIGTERM follows the publisher cleanup exit path');
     ok(!-d "$output/.lock", 'SIGTERM releases the output lock');
-    ok(!-d "$repository/.lock", 'SIGTERM releases the repository lock');
+    ok(!-d $cell_lock, 'SIGTERM releases the repository cell lock');
 }
 
 sub test_publish_lock {
@@ -1046,9 +1098,25 @@ sub test_publish_lock {
     stage_legacy_deb("$tmp/lock-deb", $output);
     make_path($output);
 
-    my $lockfile = "$output/.sbuild-all.publish.lock";
-    open(my $held, '>', $lockfile) or die "Cannot create $lockfile: $!\n";
-    flock($held, LOCK_EX | LOCK_NB) or die "Cannot hold $lockfile: $!\n";
+    # This process is a live build run on the same host. The publish reads the staging of every
+    # expected arch, so it waits for the run lock of each one. The run lock is an XCAT::NFSLock,
+    # because flock on the shared tree fails with ENOTSUPP through the NFS re-export.
+    for my $build_arch (qw(amd64 ppc64el)) {
+        my $run_lock = "$output/.sbuild-all.$build_arch.nfslock";
+        my $running = XCAT::NFSLock->acquire($run_lock);
+        my $run_log = "$tmp/deb-run-locked-$build_arch.log";
+        my $run_status = run_apt_consumer(log => $run_log, output => $output, apt_dir => $apt_root,
+            extra => [ '--publish-lock-wait', '2' ]);
+        isnt($run_status, 0, "a publish does not start while a $build_arch run holds its lock");
+        like(read_binary($run_log), qr/^Trying to unlock \Q$run_lock\E failed after 1 retry;/m,
+            "the refusal names the $build_arch run lock");
+        ok(!-d "$apt_root/dists", "nothing is published while a $build_arch run holds its lock");
+        $running->release;
+    }
+
+    # This process is a live publisher on the same host.
+    my $lockfile = "$output/.sbuild-all.publish.nfslock";
+    my $held = XCAT::NFSLock->acquire($lockfile);
 
     my $locked_log = "$tmp/deb-locked.log";
     my $locked_status = run_apt_consumer(
@@ -1056,11 +1124,11 @@ sub test_publish_lock {
         extra => [ '--publish-lock-wait', '2' ],
     );
     isnt($locked_status, 0, 'a locked apt tree is not published into');
-    like(read_binary($locked_log), qr/waiting for the publish lock \Q$lockfile\E/,
+    like(read_binary($locked_log), qr/^Trying to unlock \Q$lockfile\E failed after 1 retry;/m,
         'the refusal names the lock another run owns');
     ok(!-d "$apt_root/dists", 'nothing is published while another run holds the lock');
 
-    close($held);
+    $held->release;
 
     # sbuild-all.pl never publishes in place: it assembles a COMPLETE side tree and renames it onto
     # the repository, so there is no half-written state to recover and no per-file backup to restore.
@@ -1074,6 +1142,7 @@ sub test_publish_lock {
         log => $freed_log, output => $output, apt_dir => $apt_root, dists => ['noble']);
     is($freed_status, 0, 'the publish runs once the lock is released');
     ok(-f "$apt_root/dists/noble/Release", 'the released lock lets the tree be published');
+    ok(!-e $lockfile, 'the publisher releases the publish lock when it exits');
     isnt(read_binary("$apt_root/dists/noble/Release"), "abandoned\n",
         'a side tree abandoned by a dead run is never published');
 }
@@ -1083,7 +1152,7 @@ sub test_activation_helper {
     unlike($activation, qr/XCAT_GENESIS_ROOT/,
         'the root package helper has no environment-controlled execution root');
     $activation =~ s/\ngenesis_activation_main "\$\@"\s*\z/\n/
-      or BAIL_OUT('the activation helper has no reusable main boundary');
+      or die('the activation helper has no reusable main boundary');
 
     my $driver = "$tmp/activation-driver";
     my $log = "$tmp/activation.log";

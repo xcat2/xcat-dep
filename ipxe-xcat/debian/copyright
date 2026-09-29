@@ -1,0 +1,37 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: iPXE
+Source: https://github.com/ipxe/ipxe/releases/tag/v2.0.0
+Comment: ipxeboot-2.0.0.tar.gz is the ipxeboot.tar.gz asset of the iPXE v2.0.0
+ release, unchanged. ipxe-2.0.0-source.tar.gz is the source archive of tag
+ v2.0.0, installed as /usr/share/doc/ipxe-xcat/ipxe-2.0.0-source.tar.gz.
+ .
+ The files x86_64-sb/shimx64.efi and arm64-sb/shimaa64.efi in the release tree
+ are shim 16.1, built by the iPXE project from ipxe/shim tag ipxe-16.1. Shim is
+ under the BSD licence in licenses/shim/COPYRIGHT and includes OpenSSL 1.0.2k
+ (licenses/shim/openssl/LICENSE) and gnu-efi (licenses/shim/gnu-efi/README.efilib).
+ .
+ The licence texts are installed in /usr/share/doc/ipxe-xcat/licenses/.
+
+Files: *
+Copyright: Michael Brown <mbrown@fensystems.co.uk> and the iPXE contributors
+License: GPL-2+
+ iPXE files are licensed under the GNU General Public License, version 2 or
+ (at your option) any later version, unless the file states another licence.
+ Some files are licensed under version 2 only, some under BSD or MIT terms,
+ and most may also be used under the Unmodified Binary Distribution Licence
+ (licenses/ipxe/COPYING.UBDL). Each file in the source archive states its
+ own licence.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 2 can be found in /usr/share/common-licenses/GPL-2.
+
+Files: debian/*
+Copyright: xCAT contributors
+License: GPL-2+
+ This packaging is free software; you can redistribute it and/or modify it
+ under the terms of the GNU General Public License as published by the Free
+ Software Foundation; either version 2 of the License, or (at your option)
+ any later version.
+ .
+ On Debian systems, the complete text of the GNU General Public License
+ version 2 can be found in /usr/share/common-licenses/GPL-2.
