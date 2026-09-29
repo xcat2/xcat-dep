@@ -1,0 +1,14 @@
+--- a/postgresql.spec
++++ b/postgresql.spec
+@@ -78,7 +78,10 @@
+ Patch11: postgresql-datalayout-mismatch-on-s390.patch
+ Patch16: postgresql-pgcrypto-openssl3-tests.patch
+ 
+-BuildRequires: gcc clang
++BuildRequires: gcc
++%if %llvmjit
++BuildRequires: clang
++%endif
+ BuildRequires: perl(ExtUtils::MakeMaker) glibc-devel bison flex gawk
+ BuildRequires: perl(ExtUtils::Embed), perl-devel
+ BuildRequires: perl-generators

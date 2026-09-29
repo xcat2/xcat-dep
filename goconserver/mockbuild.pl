@@ -7,6 +7,11 @@ use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
 use Getopt::Long qw(GetOptions);
+use POSIX qw(strftime);
+use FindBin;
+use lib "$FindBin::Bin/..", "$FindBin::Bin/../lib";
+use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir);
+use XCAT::BuildUtils qw(digest_file read_lines);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path("$script_dir/..");
@@ -46,11 +51,18 @@ die "Run as root (current uid=$>)\n" if $> != 0;
 my $arch = capture('uname -m');
 if (!$mock_cfg) {
     my $os_id = capture(q{bash -lc 'source /etc/os-release; echo $ID'});
-    $mock_cfg = resolve_mock_cfg($os_id, '10', $arch);
+    if (lc($os_id) eq 'openeuler') {
+        my $os_version = capture(q{bash -lc 'source /etc/os-release; echo "$VERSION"'});
+        $mock_cfg = openeuler_build_target({ ID => $os_id, VERSION => $os_version }, $arch);
+    } else {
+        $mock_cfg = resolve_mock_cfg($os_id, '10', $arch);
+    }
 }
 
+my $native_repo = openeuler_repo_subdir($mock_cfg);
 my ($rel) = $mock_cfg =~ /-(\d+)-/;
 $rel //= '10';
+my $dist_suffix = defined($native_repo) ? '' : ".el$rel";
 
 # --target-arch names the arch of the rpm to produce. It differs from the host arch only for a
 # forcearch target (rocky-10-riscv64-xcat on an x86_64 host; see BUILD.md "riscv64").
@@ -58,12 +70,17 @@ $target_arch = $arch if $target_arch eq '';
 my %goarch = (x86_64 => 'amd64', aarch64 => 'arm64', ppc64le => 'ppc64le', s390x => 's390x', riscv64 => 'riscv64');
 my $cross = $target_arch ne $arch;
 die "No GOARCH known for target arch $target_arch\n" if $cross && !exists $goarch{$target_arch};
+if (defined($native_repo)) {
+    my ($native_arch) = $native_repo =~ m{/([^/]+)$};
+    die "openEuler goconserver requires a native $native_arch builder\n"
+      if $cross || $arch ne $native_arch;
+}
 
 # For the host arch the Go compile happens INSIDE the mock chroot (BuildRequires: golang), so the
 # host only fetches the pinned source and drives mock. A forcearch chroot would run that compile
 # under qemu, so the cross build instead cross-compiles on the host and packages the result with
 # rpmbuild --target.
-for my $bin (qw(git rpm), ($cross ? qw(go rpmbuild) : qw(mock))) {
+for my $bin (qw(git rpm), (defined($native_repo) ? 'wget' : ()), ($cross ? qw(go rpmbuild) : qw(mock))) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
@@ -83,13 +100,21 @@ unless ($SOURCE_DATE_EPOCH && $SOURCE_DATE_EPOCH =~ /^\d+$/) {
     chomp $SOURCE_DATE_EPOCH;
 }
 $SOURCE_DATE_EPOCH = time() unless $SOURCE_DATE_EPOCH =~ /^\d+$/;
+if (defined($native_repo)) {
+    my $native_epoch = defined($build_timestamp) ? $build_timestamp : $ENV{SOURCE_DATE_EPOCH};
+    if (defined($native_epoch)) {
+        die "Invalid native build timestamp: $native_epoch\n" unless $native_epoch =~ /\A\d+\z/;
+        $SOURCE_DATE_EPOCH = $native_epoch;
+    }
+}
 $ENV{SOURCE_DATE_EPOCH} = $SOURCE_DATE_EPOCH;
 
 # goconserver is a CGO-free static Go binary. el8/el9 chroots ship a Go too old to build 0.3.3, so
 # always COMPILE in the el10 chroot for this arch (regardless of the target EL), then ship the static
 # binary to every EL repo. The Release still carries the target's dist tag (4.el$rel) so each EL repo
 # gets a correctly-named, byte-identical rpm.
-(my $build_cfg = $mock_cfg) =~ s/-\d+-/-10-/;
+my $build_cfg = $mock_cfg;
+$build_cfg =~ s/-\d+-/-10-/ unless defined($native_repo);
 
 print_step("Configuration");
 print "repo_root:    $repo_root\n";
@@ -97,8 +122,8 @@ print "pkg_dir:      $pkg_dir\n";
 print "work_dir:     $work_dir\n";
 print "result_dir:   $result_dir\n";
 print "log_dir:      $log_dir\n";
-print "mock_cfg:     $mock_cfg (target dist tag: el$rel)\n";
-print "build_cfg:    $build_cfg (el10 -- portable static build for arch $arch)\n" if !$cross;
+print "mock_cfg:     $mock_cfg (target dist suffix: $dist_suffix)\n";
+print "build_cfg:    $build_cfg\n" if !$cross;
 print "arch:         $arch\n";
 print "target_arch:  $target_arch" . ($cross ? " (GOARCH=$goarch{$target_arch}, rpmbuild --target)" : '') . "\n";
 print "version:      $version\n";
@@ -120,6 +145,15 @@ run("git init -q " . sh_quote($src_dir) . " >$clone_log 2>&1");
 run("git -C " . sh_quote($src_dir) . " remote add origin " . sh_quote($go_repo) . " >>$clone_log 2>&1");
 run("git -C " . sh_quote($src_dir) . " fetch --depth 1 origin " . sh_quote($go_ref) . " >>$clone_log 2>&1");
 run("git -C " . sh_quote($src_dir) . " checkout -q FETCH_HEAD >>$clone_log 2>&1");
+
+my $go_ldflags = '-X main.Version=%{version}';
+if (defined($native_repo)) {
+    my $source_commit = capture("git -C " . sh_quote($src_dir) . " rev-parse --verify 'HEAD^{commit}'");
+    die "Cannot resolve fetched goconserver commit\n"
+      if $? != 0 || $source_commit !~ /\A[0-9a-f]{40}\z/;
+    my $build_time = strftime('%Y-%m-%dT%H:%M:%SZ', gmtime($SOURCE_DATE_EPOCH));
+    $go_ldflags .= " -X main.Commit=$source_commit -X main.BuildTime=$build_time";
+}
 
 # etcd storage backend has broken deps with modern Go modules; xCAT only uses file storage.
 unlink "$src_dir/storage/etcd.go";
@@ -190,6 +224,26 @@ run("tar --sort=name --owner=0 --group=0 --mtime=\@$SOURCE_DATE_EPOCH" .
 write_file("$sources_dir/goconserver.service", $service_unit);
 write_file("$sources_dir/server.conf", $server_conf);
 
+my ($go_source, $go_prep, $go_environment) = ('', '', '');
+my $native_changelog = '';
+my $go_requires = 'golang';
+if (defined($native_repo)) {
+    my $go_file = "go1.25.12.linux-$goarch{$arch}.tar.gz";
+    my %checksums = map { my ($hash, $name) = split /\s+/, $_; ($name, $hash) }
+      read_lines("$pkg_dir/toolchains/go1.25.12.sha256");
+    my $go_hash = $checksums{$go_file};
+    die "No pinned checksum for $go_file\n" unless defined($go_hash) && $go_hash =~ /\A[0-9a-f]{64}\z/;
+    my $go_url = "https://go.dev/dl/$go_file";
+    my $go_archive = "$sources_dir/$go_file";
+    run("wget --https-only --tries=3 --timeout=60 -q -O " . sh_quote($go_archive) . " " . sh_quote($go_url));
+    die "Go toolchain checksum mismatch: $go_file\n" unless digest_file($go_archive) eq $go_hash;
+    $go_source = "Source3:        $go_url\n";
+    $go_requires = 'coreutils tar gzip ca-certificates';
+    $go_prep = "echo '$go_hash  %{SOURCE3}' | sha256sum -c -\ntar -C %{_builddir} -xzf %{SOURCE3}\n";
+    $go_environment = 'export PATH=%{_builddir}/go/bin:$PATH' . "\ngo version\n";
+    $native_changelog = "* Tue Sep 08 2026 xCAT build - $version-4\n- Build in the native openEuler target with the verified Go 1.25.12 source archive.\n\n";
+}
+
 # --- Spec: the Go compile runs in %build INSIDE the chroot; modules fetched from the proxy, pinned by go.sum ---
 print_step("Write spec");
 my $spec_file = "$work_dir/goconserver.spec";
@@ -199,7 +253,7 @@ write_file($spec_file, <<"SPEC");
 %global debug_package %{nil}
 Name:           goconserver
 Version:        $version
-Release:        4.el$rel$release_suffix
+Release:        4$dist_suffix$release_suffix
 Summary:        Console server written in Go for xCAT
 License:        EPL-1.0
 URL:            https://github.com/xcat2/goconserver
@@ -208,8 +262,9 @@ BuildArch:      $arch
 Source0:        goconserver-%{version}.tar.gz
 Source1:        goconserver.service
 Source2:        server.conf
+$go_source
 
-BuildRequires:  golang
+BuildRequires:  $go_requires
 
 %description
 goconserver is a scalable console server written in Go. It provides
@@ -217,15 +272,17 @@ console logging and management for xCAT cluster nodes.
 
 %prep
 %setup -q -n goconserver-%{version}
+$go_prep
 
 %build
 # Compile in-chroot. Modules are downloaded from the Go proxy at build time (mock networking is on)
 # but PINNED + integrity-checked by the committed go.sum, so the build is reproducible without a
 # vendored tree. GOTOOLCHAIN=local pins the chroot's Go (never auto-downloads a toolchain).
+$go_environment
 export GOFLAGS=-mod=mod GOTOOLCHAIN=local CGO_ENABLED=0
 export GOCACHE=%{_builddir}/.gocache GOPATH=%{_builddir}/.gopath GOMODCACHE=%{_builddir}/.gomodcache
-go build -trimpath -buildvcs=false -ldflags "-X main.Version=%{version}" -o goconserver goconserver.go
-go build -trimpath -buildvcs=false -ldflags "-X main.Version=%{version}" -o congo cmd/congo.go
+go build -trimpath -buildvcs=false -ldflags "$go_ldflags" -o goconserver goconserver.go
+go build -trimpath -buildvcs=false -ldflags "$go_ldflags" -o congo cmd/congo.go
 
 %install
 install -Dm0755 goconserver %{buildroot}/usr/bin/goconserver
@@ -243,6 +300,7 @@ mkdir -p %{buildroot}/var/log/goconserver %{buildroot}/var/lib/goconserver
 %dir /var/lib/goconserver
 
 %changelog
+$native_changelog
 * Mon Aug 10 2026 xCAT build - $version-4.el$rel
 - Build inside a mock chroot (no host build). Modules are downloaded at build time but pinned +
   integrity-checked by a committed go.sum (no `go mod tidy`, no vendored tree). Compiled in the
