@@ -271,7 +271,10 @@ if ($finalize_xcat_dep) {
     @finalize_arch = qw(x86_64 ppc64le) unless @finalize_arch;
     my %cell;
     for my $root ($x86, $ppc) {
-        $cell{ abs_path($_) } = 1 for grep { -d } map { glob("$root/*/$_") } @finalize_arch;
+        my @os = grep { -d && basename($_) !~ /^openeuler/ } glob("$root/*");
+        for my $os (@os) {
+            $cell{ abs_path($_) } = 1 for grep { -d } map { "$os/$_" } @finalize_arch;
+        }
     }
     take_lock(cell_lock_path($_), 'repository cell lock') for sort keys %cell;
     # Inject the per-rpm gpg re-sign and the repo re-index as callbacks so the finalize logic in
@@ -1541,45 +1544,15 @@ sub publish_file {
 # zypper read the XML.
 sub createrepo_c_cmd {
     my ($dir) = @_;
-    return 'createrepo_c --update '
-        . '--revision ' . shell_quote($SOURCE_DATE_EPOCH) . ' --set-timestamp-to-revision '
-        . shell_quote($dir);
+    return MockBuildUtils::createrepo_c_cmd($dir, $SOURCE_DATE_EPOCH);
 }
 
 sub sign_and_index_repo {
     my ($dir, $native) = @_;
-    my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
-    if ($native) {
-        my @built;
-        for my $rpm (@rpms) {
-            my $id = rpm_identity($rpm);
-            my $owner = $native->{outputs}{$id->{name}} // die "Undeclared native output: $id->{name}\n";
-            my $node = $native->{nodes}{$owner};
-            if ($node->{type} eq 'publisher') {
-                die "Publisher input changed before signing: $rpm\n" unless digest_file($rpm) eq $node->{sha256};
-            } else {
-                push @built, $rpm;
-            }
-        }
-        @rpms = @built;
-    }
-    if ($gpg_sign && @rpms) {
-        local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
-        run_simple('rpmsign --define ' . shell_quote("%_gpg_name $gpg_key_name")
-            . ' --define ' . shell_quote("%__gpg $gpg_program") . ' --addsign '
-            . join(' ', map { shell_quote($_) } @rpms));
-    }
-    run_simple(createrepo_c_cmd($dir));
-    if ($gpg_sign) {
-        local $ENV{GNUPGHOME} = $gpg_home if $gpg_home;
-        my $repomd = "$dir/repodata/repomd.xml";
-        unlink "$repomd.asc" if -f "$repomd.asc";
-        run_simple("gpg -a --detach-sign --default-key " . sh_quote($gpg_key_name) . ' ' . sh_quote($repomd));
-        run_simple("gpg -a --export " . sh_quote($gpg_key_name) . " > " . sh_quote("$repomd.key"));
-        if ($native) {
-            run_simple('cat ' . sh_quote($native->{publisher_key}) . ' >> ' . sh_quote("$repomd.key"));
-        }
-    }
+    return MockBuildUtils::sign_and_index_repo($dir, $native,
+        gpg_sign => $gpg_sign, gpg_home => $gpg_home,
+        gpg_key_name => $gpg_key_name, gpg_program => $gpg_program,
+        source_date_epoch => $SOURCE_DATE_EPOCH, run => \&run_simple);
 }
 
 sub write_dep_repo_metadata {

@@ -1,8 +1,5 @@
 package MockBuildUtils;
-# Reusable, unit-testable helpers factored out of mockbuild-all.pl. Kept free of that script's
-# globals so t/mockbuild-all.t can exercise them directly. The two orchestration helpers that
-# need signing / re-indexing (cross_copy_genesis, finalize_xcat_dep) take those as injected
-# callbacks instead of reaching for gpg/createrepo state, so they stay pure and testable.
+# Build helpers use explicit settings and callbacks instead of script globals.
 use strict;
 use warnings;
 use Exporter 'import';
@@ -26,6 +23,7 @@ our @EXPORT_OK = qw(
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
+    createrepo_c_cmd sign_and_index_repo
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -521,6 +519,53 @@ sub read_manifest {
     return %m;
 }
 
+sub createrepo_c_cmd {
+    my ($dir, $epoch) = @_;
+    return 'createrepo_c --update '
+        . '--revision ' . sh_quote($epoch) . ' --set-timestamp-to-revision '
+        . sh_quote($dir);
+}
+
+sub sign_and_index_repo {
+    my ($dir, $native, %options) = @_;
+    my $run = $options{run} // die "Repository signing requires a command runner\n";
+    my @rpms = grep { !/\.src\.rpm$/ } bsd_glob("$dir/*.rpm");
+    if ($native) {
+        require XCAT::NativeInputs;
+        require XCAT::BuildUtils;
+        my @built;
+        for my $rpm (@rpms) {
+            my $id = XCAT::NativeInputs::rpm_identity($rpm);
+            my $owner = $native->{outputs}{$id->{name}} // die "Undeclared native output: $id->{name}\n";
+            my $node = $native->{nodes}{$owner};
+            if ($node->{type} eq 'publisher') {
+                die "Publisher input changed before signing: $rpm\n"
+                    unless XCAT::BuildUtils::digest_file($rpm) eq $node->{sha256};
+            } else {
+                push @built, $rpm;
+            }
+        }
+        @rpms = @built;
+    }
+    if ($options{gpg_sign} && @rpms) {
+        local $ENV{GNUPGHOME} = $options{gpg_home} if $options{gpg_home};
+        $run->('rpmsign --define ' . sh_quote("%_gpg_name $options{gpg_key_name}")
+            . ' --define ' . sh_quote("%__gpg $options{gpg_program}") . ' --addsign '
+            . join(' ', map { sh_quote($_) } @rpms));
+    }
+    $run->(createrepo_c_cmd($dir, $options{source_date_epoch}));
+    if ($options{gpg_sign}) {
+        local $ENV{GNUPGHOME} = $options{gpg_home} if $options{gpg_home};
+        my $repomd = "$dir/repodata/repomd.xml";
+        unlink "$repomd.asc" if -f "$repomd.asc";
+        $run->("gpg -a --detach-sign --default-key " . sh_quote($options{gpg_key_name}) . ' ' . sh_quote($repomd));
+        $run->("gpg -a --export " . sh_quote($options{gpg_key_name}) . " > " . sh_quote("$repomd.key"));
+        if ($native) {
+            $run->('cat ' . sh_quote($native->{publisher_key}) . ' >> ' . sh_quote("$repomd.key"));
+        }
+    }
+}
+
 # cross_copy_genesis: copy the noarch xCAT-genesis-base-<tarch>-*.rpm from $from into $to, dropping
 # any stale foreign-arch genesis already in $to so the repo ends with exactly the fresh set.
 # Returns the count of rpms newly copied (0 = already up to date, so the caller can skip
@@ -606,10 +651,23 @@ sub finalize_xcat_dep {
     # <os> built for only the OTHER arch slip through unseen -- finalize then never cross-populated
     # that cell and still exited 0 (PR #62 review). Every discovered <os> must carry every arch below.
     my %os;
+    my $native_cells = 0;
     for my $a (@GENESIS_ARCHES) {
         my $root = $repo{ $a->{arch} }
             // die "FATAL: [finalize] no repo root configured for arch '$a->{arch}' (wire it in %repo)\n";
-        $os{ basename($_) } = 1 for grep { -d "$_/$a->{arch}" } glob("$root/*");
+        for my $dir (grep { -d "$_/$a->{arch}" } glob("$root/*")) {
+            my $name = basename($dir);
+            if ($name =~ /^openeuler/) {
+                $native_cells++;
+                next;
+            }
+            $os{$name} = 1;
+        }
+    }
+
+    if (!%os && $native_cells) {
+        print "[finalize] openEuler repositories do not use cross-arch Genesis; skipping\n";
+        return;
     }
 
     my $pairs = 0;
