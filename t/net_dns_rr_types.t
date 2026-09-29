@@ -75,6 +75,14 @@ for my $target (@targets) {
 my $tarball = "$root/perl-Net-DNS/$source";
 die "$tarball is missing, so the spec cannot build" unless -f $tarball;
 
+# The tarball, the spec and the Buildnote name one release. A second tarball beside the spec is a
+# release that nothing builds, and a Buildnote that names it sends a manual build to the wrong one.
+my @tarballs = map { s{.*/}{}r } glob("$root/perl-Net-DNS/Net-DNS-*.tar.gz");
+is_deeply(\@tarballs, [$source], "perl-Net-DNS/ holds only the tarball the spec builds ($source)");
+my @buildnote = read_lines("$root/perl-Net-DNS/Buildnote");
+my @named = map { /(Net-DNS-[\d.]+\.tar\.gz)/ ? $1 : () } @buildnote;
+is_deeply(\@named, [$source], "the Buildnote names the tarball the spec builds ($source)");
+
 my $tmp = tempdir(CLEANUP => 1);
 {
     my $tar = Archive::Tar->new;
@@ -129,6 +137,38 @@ is(index($key_module, $tmp), 0, 'the KEY record class also comes from the shippe
     Net::DNS::Packet->new(\$reply);
     like($@, qr/deep compression recursion/,
         'Net::DNS rejects a reply that chains 200 compression pointers (CVE-2026-64194)');
+}
+
+# rt.cpan.org #181125, fixed in Net::DNS 1.57: a reply with a TSIG record in the answer section,
+# followed by another record, makes the re-encode of that reply recurse without bound. 1.56 and
+# 1.47 recurse. The wrapper stops the recursion at 20 levels and records that it did: Net::DNS
+# catches the die inside the TSIG encoder, so the re-encode itself still returns.
+{
+    my $reply = pack('n6', 1, 0x8100, 1, 2, 0, 0) . "\x07example\x00" . pack('nn', 1, 1);
+    my $rdata = "\x0bhmac-sha256\x00" . pack('nNn nnnn', 0, 0, 300, 0, 1, 0, 0);
+    $reply .= "\x03key\x00" . pack('nnNn', 250, 255, 0, length $rdata) . $rdata;
+    $reply .= "\x00" . pack('nnNn', 1, 1, 0, 4) . "\x7f\0\0\1";
+
+    my $encode = \&Net::DNS::Packet::encode;
+    my ($depth, $stopped) = (0, 0);
+    no warnings 'redefine';
+    local *Net::DNS::Packet::encode = sub {
+        if (++$depth > 20) {
+            $stopped = 1;
+            die "Net::DNS::Packet::encode recursed more than 20 levels deep\n";
+        }
+        my $wire  = eval { $encode->(@_) };
+        my $error = $@;
+        $depth--;
+        die $error if $error;
+        return $wire;
+    };
+    local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ /misplaced or corrupt TSIG/ };
+    my $packet = Net::DNS::Packet->new(\$reply);
+    ok($packet, 'Net::DNS decodes a reply with a misplaced TSIG record') or diag($@);
+    my $data = $packet && eval { $packet->data };
+    ok(defined $data, 'Net::DNS re-encodes that reply') or diag($@);
+    ok(!$stopped, 'the re-encode does not recurse without bound (rt.cpan.org #181125)');
 }
 
 done_testing;
