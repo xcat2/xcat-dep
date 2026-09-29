@@ -69,6 +69,7 @@ jobs:
           prove -v t/goconserver_cross_build.t
           prove -v t/ipxe_xcat_payload.t
           prove -v t/mockbuild-all.t
+          prove -v t/net_dns_rr_types.t
           prove -v t/repo-lock-race.t
           prove -v t/nfslock.t
           prove -v -It/lib t/genesis_openembedded_release.t
