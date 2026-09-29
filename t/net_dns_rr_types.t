@@ -107,4 +107,28 @@ my $key_module = $INC{'Net/DNS/RR/KEY.pm'} // '(nothing)';
 is(index($key_module, $tmp), 0, 'the KEY record class also comes from the shipped tarball')
     or diag("loaded: $key_module");
 
+# CVE-2026-64194: a reply whose owner name is a long chain of compression pointers makes the
+# decoder recurse once per pointer. Net::DNS 1.56 stops the chain; 1.47 decodes all of it.
+# The reply below holds a NULL record whose rdata is 200 pointers, each to the one before it,
+# and an A record whose owner name points at the last one.
+{
+    my $reply = pack('n6', 1, 0x8100, 1, 2, 0, 0) . "\x01a\x00" . pack('nn', 1, 1);
+    my $rdata_at = length($reply) + 12;
+    my ($chain, $prev) = ('', 12);
+    for (1 .. 200) {
+        my $here = $rdata_at + length $chain;
+        $chain .= pack 'n', 0xC000 | $prev;
+        $prev = $here;
+    }
+    $reply .= pack('nnnNn', 0xC00C, 10, 1, 0, length $chain) . $chain;
+    $reply .= pack('nnnNn', 0xC000 | $prev, 1, 1, 0, 4) . "\x7f\0\0\1";
+
+    require Net::DNS::Packet;
+    local $SIG{__WARN__} = sub { warn @_ unless $_[0] =~ /^Deep recursion/ };
+    # Packet->new reports a decode error in $@ and returns, as the resolver expects.
+    Net::DNS::Packet->new(\$reply);
+    like($@, qr/deep compression recursion/,
+        'Net::DNS rejects a reply that chains 200 compression pointers (CVE-2026-64194)');
+}
+
 done_testing;
