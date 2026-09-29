@@ -5,8 +5,9 @@ use FindBin qw($RealBin);
 use lib "$RealBin/..";
 use Test::More;
 use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir install_deps_command
-                      install_deps_packages derive_target_from_repo_path);
+                      install_deps_packages derive_target_from_repo_path read_manifest);
 
+my %manifest = read_manifest("$RealBin/../packages-manifest.conf");
 my @cells = (
     ['20.03sp4', '20.03-LTS-SP4', '20.03LTS_SP4', 'x86_64'],
     ['22.03sp4', '22.03-LTS-SP4', '22.03LTS_SP4', 'x86_64'],
@@ -20,6 +21,8 @@ for my $cell (@cells) {
     my ($base, $sp) = $version =~ /^(\d+\.\d+)(?:sp(\d+))?$/;
     my $native_version = "$base (LTS" . (defined($sp) ? "-SP$sp" : '') . ')';
     my $target = "openeuler-$version-$arch";
+    ok(-f "$RealBin/../mock-configs/$target.cfg", "$target has a native mock config");
+    ok(exists $manifest{$target}{goconserver}, "$target has a native package manifest");
     is(openeuler_build_target({ID => 'openEuler', VERSION => $native_version}, $arch), $target,
         "$target retains the native service pack");
     is(openeuler_repo_subdir($target), "openeuler$version/$arch", "$target preserves repository provenance");

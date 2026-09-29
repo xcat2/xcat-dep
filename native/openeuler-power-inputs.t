@@ -10,8 +10,8 @@ use JSON::PP;
 use Test::More;
 
 use lib "$RealBin/..", "$RealBin/../lib", "$RealBin/../t/lib";
-use MockBuildUtils qw(read_manifest);
-use XCAT::BuildUtils qw(capture_command command_exists digest_file read_binary write_binary);
+use MockBuildUtils qw(read_manifest sign_and_index_repo);
+use XCAT::BuildUtils qw(capture_command command_exists digest_file digest_manifest relative_files read_binary write_binary);
 use XCAT::GenesisReleaseTest qw(run_capture dies_like);
 use XCAT::NativeInputs qw(load_inputs stage_inputs publisher_trust verify_input validate_outputs);
 
@@ -237,6 +237,59 @@ for my $case (['publisher-elf', qr/ELF payload/], ['publisher-arch', qr/not a no
     is(run_capture("$tmp/standalone-restored.log", @verify), 0,
         'restoring both original package signatures restores standalone acceptance');
     ok(!-f $ENV{NATIVE_CALLS}, 'standalone verification runs no downloader or builder');
+}
+
+{
+    my $dest = "$tmp/signing-repo";
+    make_path($dest);
+    my $publisher = "$dest/publisher-package-1-1.oe2403.noarch.rpm";
+    my $child = "$dest/native-child-1-1.oe2403.noarch.rpm";
+    copy($signed{'publisher-package'}, $publisher) or die $!;
+    copy($rpm{'native-child'}, $child) or die $!;
+    my @commands;
+    my $sequence = 0;
+    my %options = (
+        gpg_sign => 1, gpg_home => $homes{build}, gpg_key_name => $keys{build},
+        gpg_program => '/usr/bin/gpg', source_date_epoch => $epoch,
+        run => sub {
+            my ($command) = @_;
+            push @commands, $command;
+            my $log = "$tmp/signing-command-" . ++$sequence . '.log';
+            die read_binary($log) if run_capture($log, '/bin/sh', '-c', $command);
+        },
+    );
+    my $ok = eval { sign_and_index_repo($dest, $plan, %options); 1 };
+    ok($ok, 'repository signing accepts unchanged publisher input') or die($@);
+    is(digest_file($publisher), digest_file($signed{'publisher-package'}),
+        'repository signing preserves the original publisher bytes');
+    is(run_capture("$tmp/signing-publisher.log", 'rpmkeys', '--dbpath', $plan->{trust_db},
+        '--checksig', '--verbose', $publisher), 0,
+        'publisher RPM retains its original trusted signature');
+    my $build_trust = "$tmp/signing-build-trust";
+    make_path($build_trust);
+    is(run_capture("$tmp/signing-build-import.log", 'rpmkeys', '--dbpath', $build_trust,
+        '--import', "$homes{build}/public.asc"), 0, 'trust the build key in an isolated RPM database');
+    is(run_capture("$tmp/signing-child.log", 'rpmkeys', '--dbpath', $build_trust,
+        '--checksig', '--verbose', $child), 0, 'generated RPM verifies with the build key');
+    like(read_binary("$tmp/signing-child.log"), qr/Signature.*\bOK\b/i,
+        'generated RPM has a verified signature');
+    is(run_capture("$tmp/signing-metadata.log", 'gpg', '--homedir', $homes{build},
+        '--verify', "$dest/repodata/repomd.xml.asc", "$dest/repodata/repomd.xml"), 0,
+        'repository metadata has a valid build signature');
+
+    my $changed = signed_copy($rpm{'publisher-package'}, 'changed-before-signing', 'build');
+    copy($changed, $publisher) or die $!;
+    copy($rpm{'native-child'}, $child) or die $!;
+    isnt(digest_file($publisher), $plan->{nodes}{'publisher-package'}{sha256},
+        'the changed publisher RPM differs from its pinned input');
+    my $before = digest_manifest($dest, 'sha256', relative_files($dest));
+    @commands = ();
+    dies_like(sub { sign_and_index_repo($dest, $plan, %options) },
+        qr/\APublisher input changed before signing: \Q$publisher\E\n\z/,
+        'changed publisher bytes stop repository signing');
+    is_deeply(\@commands, [], 'changed publisher bytes stop before signing or indexing commands');
+    is(digest_manifest($dest, 'sha256', relative_files($dest)), $before,
+        'rejection preserves generated RPMs, publisher RPMs and repository metadata');
 }
 
 my @namespace = ('unshare', ($> == 0 ? () : ('--user', '--map-root-user')), '--mount', '--propagation', 'private');

@@ -10,7 +10,7 @@ use lib "$RealBin/..";
 use File::Temp qw(tempdir);
 use File::Path qw(make_path);
 use File::Basename qw(basename);
-use File::Slurper qw(write_text);
+use File::Slurper qw(read_text write_text);
 use MockBuildUtils qw(install_deps_packages install_deps_command missing_perl_modules
                       required_pkgs version_matches rpm_sigmd5 rpm_version rpm_release rpm_is_signed
                       rpm_arch rpm_in_cell resolve_mock_cfg
@@ -401,6 +401,81 @@ SPEC
     ok(!$bad, 'an arch outside the cross-arch matrix is refused');
     like($@, qr/\AFATAL: \[finalize\] no cross-arch genesis for arch 'riscv64'/,
         'the refusal names the arch');
+}
+
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my ($x, $p) = ("$tmp/x/rh9/x86_64", "$tmp/p/rh9/ppc64le");
+    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    make_path($x, $p, @native);
+    write_text("$x/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm", "x86 genesis\n");
+    write_text("$p/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm", "ppc genesis\n");
+    write_text("$_/marker", "native repository\n") for @native;
+    my (@signed, @reindexed);
+    my $ok = eval {
+        quiet { finalize_xcat_dep("$tmp/x", "$tmp/p",
+            sign => sub { push @signed, $_[0] },
+            reindex => sub { push @reindexed, $_[0] }) };
+        1;
+    };
+    ok($ok, 'mixed roots finalize their legacy cells without native peer requirements') or diag($@);
+    is(-f "$x/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm"
+        ? read_text("$x/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm") : undef, "ppc genesis\n",
+        'the legacy x86 cell receives its foreign Genesis');
+    is(-f "$p/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm"
+        ? read_text("$p/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm") : undef, "x86 genesis\n",
+        'the legacy ppc cell receives its foreign Genesis');
+    is_deeply([sort @signed], [sort { $a cmp $b } ("$x/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm",
+        "$p/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm")], 'only legacy copies are signed');
+    is_deeply([sort @reindexed], [sort { $a cmp $b } ($x, $p)], 'only legacy cells are indexed');
+    for my $native (@native) {
+        is_deeply([glob("$native/*")], ["$native/marker"], 'finalize adds no native artifacts');
+        is(read_text("$native/marker"), "native repository\n", 'finalize preserves native content');
+    }
+}
+
+{
+    my $tmp = tempdir(CLEANUP => 1);
+    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    make_path(@native);
+    write_text("$_/marker", "native repository\n") for @native;
+    my (@signed, @reindexed);
+    my $ok = eval {
+        quiet { finalize_xcat_dep("$tmp/x", "$tmp/p", only => ['x86_64'],
+            sign => sub { push @signed, $_[0] },
+            reindex => sub { push @reindexed, $_[0] }) };
+        1;
+    };
+    ok($ok, 'native-only roots require no legacy Genesis finalization') or diag($@);
+    is_deeply(\@signed, [], 'native-only finalization signs nothing');
+    is_deeply(\@reindexed, [], 'native-only finalization indexes nothing');
+    for my $native (@native) {
+        is_deeply([glob("$native/*")], ["$native/marker"], 'native-only finalization adds no artifacts');
+        is(read_text("$native/marker"), "native repository\n", 'native-only finalization preserves content');
+    }
+    my $bad = eval { quiet { finalize_xcat_dep("$tmp/x", "$tmp/p", only => ['riscv64']) }; 1 };
+    ok(!$bad, 'native-only roots still reject an unsupported finalization architecture');
+    like($@, qr/no cross-arch genesis for arch 'riscv64'/, 'native-only validation names the bad architecture');
+}
+
+for my $legacy ('x86-only', 'ppc-only', 'missing-genesis') {
+    my $tmp = tempdir(CLEANUP => 1);
+    make_path("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    make_path("$tmp/x/rh9/x86_64") unless $legacy eq 'ppc-only';
+    make_path("$tmp/p/rh9/ppc64le") unless $legacy eq 'x86-only';
+    my (@signed, @reindexed);
+    my $ok = eval {
+        quiet { finalize_xcat_dep("$tmp/x", "$tmp/p",
+            sign => sub { push @signed, $_[0] },
+            reindex => sub { push @reindexed, $_[0] }) };
+        1;
+    };
+    ok(!$ok, "$legacy legacy input remains fatal in mixed roots");
+    my $expected = $legacy eq 'x86-only' ? qr/no ppc64le peer repo/
+        : $legacy eq 'ppc-only' ? qr/no x86_64 peer repo/ : qr/no x86_64 xCAT-genesis-base/;
+    like($@, $expected, "$legacy reports the missing legacy input");
+    is_deeply(\@signed, [], "$legacy signs nothing");
+    is_deeply(\@reindexed, [], "$legacy indexes nothing");
 }
 
 # ---- restamp_release_line: CD --build-number Release stamping (PR #62 review point 1) ----------

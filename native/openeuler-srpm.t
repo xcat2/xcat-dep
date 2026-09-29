@@ -2,6 +2,7 @@ use strict;
 use warnings;
 
 use Cwd qw(abs_path cwd);
+use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Spec;
@@ -13,6 +14,7 @@ use Test::More;
 use lib "$RealBin/../lib", "$RealBin/../t/lib";
 use XCAT::BuildUtils qw(capture_command command_exists digest_file read_binary write_binary);
 use XCAT::GenesisReleaseTest qw(run_capture);
+use XCAT::NFSLock ();
 
 plan skip_all => 'Linux RPM tools and user namespaces required'
     unless $^O eq 'linux' && !grep { !command_exists($_) } qw(rpm rpmkeys rpmbuild createrepo_c unshare gpg gpgconf);
@@ -98,6 +100,14 @@ PERL
         make_path("$repo/$cell");
         copy($opt{published}{$cell}, "$repo/$cell/python3-scp-0.14.5-1.noarch.rpm") or die $!;
     }
+    my ($held_lock, $lock_path, $lock_before);
+    if ($opt{hold_cell}) {
+        my $cell = "$repo/$opt{hold_cell}";
+        make_path(dirname($cell));
+        $lock_path = dirname($cell) . '/.' . basename($cell) . '.lock';
+        $held_lock = XCAT::NFSLock->acquire($lock_path, quiet => 1);
+        $lock_before = read_binary("$lock_path/metadata");
+    }
     local $ENV{PATH} = "$tmp/bin:$ENV{PATH}";
     local $ENV{MOCKBUILD_ALL_MOUNTNS} = 1;
     local $ENV{SCP_CALLS} = "$tmp/$name calls.jsonl";
@@ -119,8 +129,11 @@ PERL
         '--skip-genesis', '--skip-perl', '--skip-tarball', @options);
     my @calls = -f $ENV{SCP_CALLS}
         ? map { decode_json($_) } split /\n/, read_binary($ENV{SCP_CALLS}) : ();
+    my $lock_after = $held_lock && -f "$lock_path/metadata" ? read_binary("$lock_path/metadata") : undef;
+    $held_lock->release if $held_lock;
     return {rc => $rc, calls => \@calls, log => read_binary("$tmp/$name.log"), input => $input,
-        repo => $repo, out => $out, root => $root};
+        repo => $repo, out => $out, root => $root, lock_path => $lock_path,
+        lock_before => $lock_before, lock_after => $lock_after};
 }
 
 my $selected = scenario('selected');
@@ -252,6 +265,93 @@ my $wrong_cell = scenario('carry-wrong-cell', missing => 1,
     published => {'rh20.03sp4/x86_64' => $published}, options => ['--skip-xcat-dep']);
 isnt($wrong_cell->{rc}, 0, 'a signed package in the EL-shaped path cannot fill a native cell');
 like($wrong_cell->{log}, qr/MISSING python3-scp/, 'the native gate reports the package absent from its own cell');
+
+for my $held ('openeuler20.03sp4/x86_64', 'rh20.03sp4/x86_64') {
+    my $native = $held =~ /^openeuler/;
+    my $result = scenario($native ? 'native-lock' : 'decoy-lock', missing => 1,
+        hold_cell => $held, published => {'openeuler20.03sp4/x86_64' => $published},
+        options => ['--skip-xcat-dep', '--try-unlock-timeout', 0]);
+    if ($native) {
+        isnt($result->{rc}, 0, 'the native published cell lock excludes a second publisher');
+        like($result->{log}, qr/Trying to unlock \Q$result->{lock_path}\E failed/,
+            'the refusal names the lock beside the native published cell');
+        is(read_binary("$result->{repo}/openeuler20.03sp4/x86_64/sentinel"), 'previous repository',
+            'native lock refusal preserves the published repository');
+        ok(!-d "$result->{out}/mockbuild-all/$target-source-contract",
+            'native lock refusal precedes carry-over and collection');
+    } else {
+        is($result->{rc}, 0, 'an EL-shaped decoy lock does not block native carry-over and deployment')
+            or diag($result->{log});
+        ok(-f "$result->{repo}/openeuler20.03sp4/x86_64/python3-scp-0.14.5-1.noarch.rpm",
+            'the unlocked native cell receives the carried package');
+        my $metadata = "$result->{repo}/openeuler20.03sp4/x86_64/xcat-dep.repo";
+        my $config = -f $metadata ? read_binary($metadata) : '';
+        like($config, qr{^baseurl=.*\/openeuler20\.03sp4/x86_64$}m,
+            'the native repository configuration names the deployed cell');
+    }
+    is_deeply($result->{calls}, [], "$held lock case runs no package builder");
+    is($result->{lock_after}, $result->{lock_before}, "$held remains held by its original owner");
+}
+
+for my $name ('native-only', 'mixed', 'legacy-locked') {
+    my $root = "$tmp/finalize-$name";
+    my @native = ("$root/openeuler20.03sp4/x86_64", "$root/openeuler24.03/ppc64le");
+    make_path(@native);
+    write_binary("$_/marker", 'native repository') for @native;
+    my @held_cells = @native;
+    my ($x, $p) = ("$root/rh9/x86_64", "$root/rh9/ppc64le");
+    my ($xrpm, $prpm) = ('xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm',
+        'xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm');
+    if ($name ne 'native-only') {
+        make_path($x, $p);
+        copy($published, "$x/$xrpm") or die $!;
+        copy($published, "$p/$prpm") or die $!;
+        push @held_cells, $p;
+        push @held_cells, $x if $name eq 'legacy-locked';
+    }
+    my @held;
+    for my $cell (@held_cells) {
+        my $path = dirname($cell) . '/.' . basename($cell) . '.lock';
+        my $lock = XCAT::NFSLock->acquire($path, quiet => 1);
+        push @held, [$lock, $path, read_binary("$path/metadata")];
+    }
+    my $logfile = "$tmp/finalize-$name.log";
+    my $rc = run_capture($logfile, $^X, $collector, '--finalize-xcat-dep',
+        '--x86_64-repo', $root, '--ppc64le-repo', $root, '--finalize-arch', 'x86_64',
+        '--build-timestamp', $epoch, '--try-unlock-timeout', 0, '--no-verify-repo');
+    my $log = read_binary($logfile);
+    if ($name eq 'legacy-locked') {
+        isnt($rc, 0, 'finalization refuses a held legacy destination lock');
+        like($log, qr{Trying to unlock \Q$root\E/rh9/\.x86_64\.lock failed},
+            'finalization refuses the same sibling lock as an EL publisher');
+        ok(!-e "$x/$prpm", 'lock refusal precedes the legacy cross-copy');
+        ok(!-d "$x/repodata", 'lock refusal precedes legacy reindexing');
+    } else {
+        is($rc, 0, "$name finalization ignores held native and unselected cell locks") or diag($log);
+        if ($name eq 'mixed') {
+            ok(-f "$x/$prpm", 'selected legacy destination receives its foreign Genesis');
+            is(-f "$x/$prpm" ? digest_file("$x/$prpm") : undef, digest_file("$p/$prpm"),
+                'legacy cross-copy preserves the source RPM');
+            ok(-f "$x/repodata/repomd.xml", 'selected legacy destination is reindexed');
+            ok(!-e "$p/$xrpm", 'unselected legacy source receives no foreign Genesis');
+            ok(!-d "$p/repodata", 'unselected legacy source is not reindexed');
+        } else {
+            like($log, qr/openEuler.*skipping/, 'native-only finalization explains the skip');
+            unlike($log, qr/(?:acquired|took-over) repository cell lock/,
+                'native-only finalization acquires no cell lock');
+        }
+    }
+    for my $native (@native) {
+        is_deeply([glob("$native/*")], ["$native/marker"], "$name adds no native artifacts");
+        is(read_binary("$native/marker"), 'native repository', "$name preserves native content");
+    }
+    for my $held (@held) {
+        my ($lock, $path, $before) = @$held;
+        is(-f "$path/metadata" ? read_binary("$path/metadata") : undef, $before,
+            "$name preserves the existing owner of $path");
+        $lock->release;
+    }
+}
 
 my $skipped = scenario('skip-dep', missing => 1, options => ['--skip-xcat-dep', '--dry-run']);
 is($skipped->{rc}, 0, 'skipping dependency builds does not require the source RPM');

@@ -6,6 +6,7 @@ use File::Basename qw(dirname);
 use File::Copy qw(copy);
 use File::Path qw(make_path);
 use File::Temp qw(tempdir);
+use File::Slurper qw(read_text write_text);
 use Digest::SHA qw(sha256_hex);
 use JSON::PP qw(decode_json);
 use Test::More;
@@ -31,23 +32,6 @@ my $commit = '0123456789abcdef0123456789abcdef01234567';
 my $payload = "private compiler download fixture\n";
 my $hash = sha256_hex($payload);
 my $sequence = 0;
-
-sub write_file {
-    my ($path, $text) = @_;
-    make_path(dirname($path));
-    open(my $fh, '>', $path) or die "$path: $!";
-    print {$fh} $text;
-    close($fh) or die "$path: $!";
-}
-
-sub read_file {
-    my ($path) = @_;
-    return '' unless -f $path;
-    open(my $fh, '<', $path) or die "$path: $!";
-    my $text = do { local $/; <$fh> };
-    close($fh) or die "$path: $!";
-    return $text // '';
-}
 
 my $double = <<'DOUBLE';
 #!/usr/bin/perl
@@ -136,14 +120,15 @@ sub run_case {
     my $checkout = "$directory/source";
     my $bin = "$directory/bin";
     make_path($checkout, $bin);
-    for my $relative ('MockBuildUtils.pm', 'lib/XCAT/BuildUtils.pm', 'goconserver/gomod/go.mod', 'goconserver/gomod/go.sum') {
+    for my $relative ('MockBuildUtils.pm', 'lib/XCAT/BuildUtils.pm', 'lib/XCAT/NFSLock.pm', 'goconserver/gomod/go.mod', 'goconserver/gomod/go.sum') {
         make_path(dirname("$checkout/$relative"));
         copy("$root/$relative", "$checkout/$relative") or die $!;
     }
     copy($builder, "$checkout/goconserver/mockbuild.pl") or die $!;
-    write_file("$checkout/goconserver/toolchains/go1.25.12.sha256",
+    make_path("$checkout/goconserver/toolchains");
+    write_text("$checkout/goconserver/toolchains/go1.25.12.sha256",
         join('', map { "$hash  go1.25.12.linux-$_.tar.gz\n" } qw(amd64 ppc64le)));
-    write_file("$bin/double", $double);
+    write_text("$bin/double", $double);
     chmod 0755, "$bin/double";
     symlink('double', "$bin/$_") or die $! for qw(uname bash git wget mock rpm go rpmbuild rpm2cpio cpio);
     my @arguments = ('--work-dir', "$directory/work", '--result-dir', "$directory/results",
@@ -173,9 +158,11 @@ sub run_case {
     }
     waitpid($pid, 0);
     my $status = $?;
-    my @commands = map { decode_json($_) } grep { length } split /\n/, read_file("$directory/commands.jsonl");
-    return { directory => $directory, status => $status, output => read_file("$directory/output"),
-        spec => read_file("$directory/work/goconserver.spec"), commands => \@commands };
+    my $log = -f "$directory/commands.jsonl" ? read_text("$directory/commands.jsonl") : '';
+    my @commands = map { decode_json($_) } grep { length } split /\n/, $log;
+    return { directory => $directory, status => $status, output => read_text("$directory/output"),
+        spec => -f "$directory/work/goconserver.spec" ? read_text("$directory/work/goconserver.spec") : '',
+        commands => \@commands };
 }
 
 sub calls {
@@ -204,7 +191,7 @@ for my $cell (@cells) {
     my $config = "openeuler-$version-$arch";
     my $case = run_case(os_version => $os_version, arch => $arch);
     is($case->{status}, 0, "$config full CLI succeeds with external build doubles") or diag($case->{output});
-    like(read_file("$case->{directory}/work/mock-deterministic.cfg"), qr/^include\('\/etc\/mock\/\Q$config\E\.cfg'\)/m,
+    like(read_text("$case->{directory}/work/mock-deterministic.cfg"), qr/^include\('\/etc\/mock\/\Q$config\E\.cfg'\)/m,
         "$config builds inside its exact native config");
     like($case->{spec}, qr/^Release:\s+4$/m, "$config retains the native empty dist macro");
     like($case->{spec}, qr/^BuildArch:\s+\Q$arch\E$/m, "$config retains its native architecture");
@@ -214,7 +201,7 @@ for my $cell (@cells) {
     like($case->{spec}, qr/^echo '\Q$hash\E  %\{SOURCE3\}' \| sha256sum -c -$/m, "$config verifies the compiler again in RPM prep");
     is(scalar @{calls($case, 'mock', '--buildsrpm')}, 1, "$config reaches SRPM construction after verification");
     is(scalar @{calls($case, 'mock', '--rebuild')}, 1, "$config reaches native RPM reconstruction");
-    is(read_file("$case->{directory}/results/goconserver-0.3.3-4.$arch.rpm"), "fixture binary RPM\n", "$config collects the build output");
+    is(read_text("$case->{directory}/results/goconserver-0.3.3-4.$arch.rpm"), "fixture binary RPM\n", "$config collects the build output");
     ok(!-d "$case->{directory}/work/goconserver-src/.git", "$config removes fetched Git metadata from the sources");
     build_metadata($case, '2023-11-14T22:13:20Z', $config);
 }
@@ -223,7 +210,7 @@ for my $cell (@cells) {
     my $case = run_case(config => 'openeuler-22.03sp4-x86_64');
     is($case->{status}, 0, 'explicit native target overrides host release detection');
     is(scalar @{calls($case, 'bash')}, 0, 'explicit target requires no host release query');
-    like(read_file("$case->{directory}/work/mock-deterministic.cfg"), qr/openeuler-22\.03sp4-x86_64\.cfg/, 'explicit service pack is retained');
+    like(read_text("$case->{directory}/work/mock-deterministic.cfg"), qr/openeuler-22\.03sp4-x86_64\.cfg/, 'explicit service pack is retained');
 }
 
 for my $options (
@@ -279,7 +266,7 @@ for my $row (
     my ($options, $config, $release) = @$row;
     my $case = run_case(%$options);
     is($case->{status}, 0, "EL$release full CLI succeeds") or diag($case->{output});
-    like(read_file("$case->{directory}/work/mock-deterministic.cfg"), qr/\Q$config\E\.cfg/, "EL$release retains the EL10 build peer");
+    like(read_text("$case->{directory}/work/mock-deterministic.cfg"), qr/\Q$config\E\.cfg/, "EL$release retains the EL10 build peer");
     like($case->{spec}, qr/^Release:\s+4\.el\Q$release\E$/m, "EL$release retains its target dist suffix");
     like($case->{spec}, qr/^BuildRequires:\s+golang$/m, "EL$release retains the distro compiler");
     unlike($case->{spec}, qr/^Source3:/m, "EL$release has no native compiler source");
@@ -298,7 +285,7 @@ for my $row (
     is_deeply([map { $_->{goarch} } @$go], ['riscv64', 'riscv64'], 'EL cross path selects the target GOARCH');
     is(scalar @{calls($case, 'rpmbuild', 'riscv64')}, 1, 'EL cross path packages for the requested target');
     is(scalar @{calls($case, 'mock')} + scalar @{calls($case, 'wget')}, 0, 'EL cross path does not invoke native mock or compiler staging');
-    is(read_file("$case->{directory}/results/goconserver-0.3.3-4.riscv64.rpm"), "fixture binary RPM\n", 'EL cross path collects its package output');
+    is(read_text("$case->{directory}/results/goconserver-0.3.3-4.riscv64.rpm"), "fixture binary RPM\n", 'EL cross path collects its package output');
 }
 
 done_testing();
