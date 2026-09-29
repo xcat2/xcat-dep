@@ -450,8 +450,7 @@ my %forcearch_targets = (
     },
 );
 
-# Each target deploys one cell, <repo-dep>/rh<rel>/<arch>, and locks only that cell: the per-arch
-# runs of one build share --repo-dep and never wait on each other.
+# Lock each target's repository cell so architecture builds can share --repo-dep.
 my @cell_locks = map {
     my $cell = target_cell($_);
     make_path(dirname($cell));
@@ -1338,9 +1337,7 @@ sub build_native_inputs {
     return ($runtime, \@source_roots);
 }
 
-# Assemble the built per-target repo into the deployable, signed per-EL layout
-# <repo-dep>/rh<rel>/<arch>: copy the binary rpms, sign, createrepo, and drop the
-# xcat-dep.repo / mklocalrepo.sh / buildinfo.txt (ready to push to xcat.org).
+# Publish each target in its native repository layout with signatures, metadata and local repository helpers.
 sub deploy_target {
     my ($tgt, $info) = @_;
     my $rel   = $info->{rel};

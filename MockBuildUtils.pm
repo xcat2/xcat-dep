@@ -608,12 +608,9 @@ sub cross_copy_genesis {
     return $copied;
 }
 
-# finalize_xcat_dep: cross-populate the noarch xCAT-genesis-base between each matching
-# <os>/x86_64 and <os>/ppc64le repo pair (issue #7610), then re-index the repos that changed.
-# %opt: sign => coderef($rpm) applied to copied rpms (or undef); reindex => coderef($dir) run on
-# a repo whose rpm set changed (or undef). Both injected so this stays free of gpg/createrepo
-# state and is unit-testable. Requires each arch's own genesis rpm to be present (a pair with no
-# genesis is a hard error, never a silent no-op) and fails if no repo pair is found at all.
+# Cross-populate Genesis RPMs between matching legacy architecture repositories; skip openEuler cells.
+# Both peers and their own Genesis RPMs are required. Empty roots are errors.
+# The sign and reindex callbacks operate on copied RPMs and selected destination repositories.
 # Architectures whose xCAT-genesis-base is cross-provisioned into every peer repo, so a management
 # node can netboot nodes of any arch (issue #7610). Each entry maps the repo/subdir arch name to the
 # genesis rpm's xCAT "tarch" (xCAT collapses ppc/ppc64le into tarch ppc64; x86_64 stays x86_64). This
