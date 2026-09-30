@@ -21,10 +21,21 @@ open(my $pipe, '-|', 'python3', "$RealBin/fixtures/mock-configs.py", "$RealBin/.
 my $json = do {local $/; <$pipe>};
 close($pipe) or die "native mock config loader failed: $?";
 my $configs = decode_json($json);
+my $absent = delete $configs->{_absent_templates} || [];
+diag("base template absent on this host, its configs are skipped: @$absent") if @$absent;
 for my $cell (@cells) {
     my ($version, $release, $releasever, $arch) = @$cell;
     my $target = "openeuler-$version-$arch";
     my $config = $configs->{$target};
+    if ($config->{error}) {
+        my ($missing) = $config->{error} =~ m{templates/([^/\s]+\.tpl)};
+        if (defined($missing) && grep { $_ eq $missing } @$absent) {
+            note("$target skipped: $missing is not installed on this host");
+            next;
+        }
+        fail("$target loads: $config->{error}");
+        next;
+    }
     is($config->{root}, $target, "$target selects its own buildroot");
     is($config->{target_arch}, $arch, "$target selects its native architecture");
     is_deeply($config->{legal_host_arches}, [$arch], "$target requires a native host");
@@ -35,8 +46,18 @@ for my $cell (@cells) {
     my @names = $arch eq 'ppc64le' ? ('OS') : ('OS', 'everything', 'update');
     is_deeply([sort grep {$_ ne 'main'} keys %$repos], [sort @names], "$target selects only published native repositories");
     is($repos->{main}{gpgcheck}, '1', "$target requires native package signatures");
+    ok(!exists $repos->{main}{minrate}, "$target keeps dnf's rate abort, which is what tries a mirror");
+    cmp_ok($repos->{main}{timeout}, '>=', 300, "$target waits before it abandons a slow host");
     my $base = "https://repo.openeuler.org/openEuler-$release";
-    is_deeply([map {$repos->{$_}{baseurl}} @names], [map {"$base/$_/$arch/"} @names], "$target pins repository URLs to its exact release");
+    for my $repo (@names) {
+        my @urls = split ' ', $repos->{$repo}{baseurl};
+        isnt($urls[0], "$base/$repo/$arch/", "$target does not read $repo from the slowest host first");
+        ok(scalar(grep { $_ eq "$base/$repo/$arch/" } @urls),
+            "$target still carries the canonical $repo url");
+        cmp_ok(scalar @urls, '>', 1, "$target has a fallback for $repo");
+        ok(!grep({ $_ !~ m{/openEuler-\Q$release\E/\Q$repo\E/\Q$arch\E/$} } @urls),
+            "$target pins every $repo url to its exact release and architecture");
+    }
     is_deeply([map {$repos->{$_}{gpgkey}} @names], [map {"$base/OS/$arch/RPM-GPG-KEY-openEuler"} @names], "$target uses the release signing key");
     ok(!grep({$repos->{$_}{gpgcheck} ne '1' || $repos->{$_}{skip_if_unavailable} ne '0'} @names), "$target fails on unsigned packages or unavailable repositories");
 }
