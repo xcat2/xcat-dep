@@ -20,6 +20,7 @@ use Archive::Tar;
 use version;
 use MockBuildUtils qw(read_manifest version_matches);
 use XCAT::BuildUtils qw(read_lines);
+use XCAT::NativeInputs qw(load_inputs);
 
 # The records xCAT builds, and the class Net::DNS must return for each. The numbers are the
 # algorithm codes of xCAT::DHCP::OmapiPolicy (157 hmac-md5, 163 hmac-sha256, 165 hmac-sha512).
@@ -52,11 +53,21 @@ sub at_least_floor { return version->parse($_[0]) >= version->parse($KEY_FLOOR) 
 ok(at_least_floor($version),
     "the spec builds Net::DNS $KEY_FLOOR or newer ($version), so KEY is in the core distribution");
 
-# Every target whose manifest section lists perl-Net-DNS builds it from this one spec, so the
-# records must work for all of them. A target that takes Net::DNS from EPEL is not listed.
+# A target that takes Net::DNS from EPEL is not listed in the manifest. A native target can list it
+# and still not build it: its input catalog pins the distribution's rpm as a publisher input. The
+# pin of such a target names the version of that rpm, not the version of this spec.
 my %manifest = read_manifest("$root/packages-manifest.conf");
 my @targets  = grep { exists $manifest{$_}{'perl-Net-DNS'} } sort keys %manifest;
 die 'no manifest target builds perl-Net-DNS; this test covers nothing' unless @targets;
+
+my $native  = load_inputs($root, { 'perl-Net-DNS' => 1 });
+my $owner   = $native->{nodes}{ $native->{outputs}{'perl-Net-DNS'} // '' } // {};
+my %shipped;
+if (($owner->{type} // '') eq 'publisher') {
+    my ($published) = ($owner->{url} // '') =~ m{/perl-Net-DNS-(\d+(?:\.\d+)+)-[^/]+\.rpm\z}
+        or die "cannot read the perl-Net-DNS version from $owner->{url}\n";
+    $shipped{ $native->{catalog}{target} } = $published;
+}
 
 # The pin is the second place the version is written down, and mockbuild-all.pl fails the run
 # when the built rpm does not match it. A pin below $KEY_FLOOR puts a Net::DNS without KEY back
@@ -68,6 +79,11 @@ for my $target (@targets) {
     ok($exact, "[$target] the perl-Net-DNS pin ($pin) names one exact version");
     ok($exact && at_least_floor($pin),
         "[$target] the perl-Net-DNS pin ($pin) is $KEY_FLOOR or newer");
+    if (my $published = $shipped{$target}) {
+        ok(version_matches($published, $pin),
+            "[$target] the perl-Net-DNS pin ($pin) accepts the published rpm the target ships ($published)");
+        next;
+    }
     ok(version_matches($version, $pin),
         "[$target] the perl-Net-DNS pin ($pin) accepts the version the spec builds ($version)");
 }
