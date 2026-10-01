@@ -77,6 +77,9 @@ jobs:
           prove -v t/riscv64_perl_cell.t
           sudo -E prove -v -It/lib t/common-repo-gate.t
           prove -v t/openeuler.t
+          prove -v t/openeuler_mock_template_include.t
+          prove -v -Ilib t/openeuler_native_trust_dbpath.t
+          prove -v -Ilib t/openeuler_native_cpio_scan.t
 
       # Ubuntu's AppArmor policy blocks these unprivileged test namespaces.
       - name: Run native packaging tests

@@ -21,18 +21,11 @@ open(my $pipe, '-|', 'python3', "$RealBin/fixtures/mock-configs.py", "$RealBin/.
 my $json = do {local $/; <$pipe>};
 close($pipe) or die "native mock config loader failed: $?";
 my $configs = decode_json($json);
-my $absent = delete $configs->{_absent_templates} || [];
-diag("base template absent on this host, its configs are skipped: @$absent") if @$absent;
 for my $cell (@cells) {
     my ($version, $release, $releasever, $arch) = @$cell;
     my $target = "openeuler-$version-$arch";
     my $config = $configs->{$target};
     if ($config->{error}) {
-        my ($missing) = $config->{error} =~ m{templates/([^/\s]+\.tpl)};
-        if (defined($missing) && grep { $_ eq $missing } @$absent) {
-            note("$target skipped: $missing is not installed on this host");
-            next;
-        }
         fail("$target loads: $config->{error}");
         next;
     }
