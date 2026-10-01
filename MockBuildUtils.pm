@@ -116,9 +116,10 @@ use constant NATIVE_BUILD_GID => 1000;
 # and mock, reloaded to chrootuid 1000, cannot open its logs in them.
 sub native_owner_command {
     my ($overlay, $mock_cfg, $command) = @_;
-    my $script = 'mount --bind ' . sh_quote($overlay) . ' ' . sh_quote($mock_cfg)
+    my $script = 'umask 0002 && mount --bind ' . sh_quote($overlay) . ' ' . sh_quote($mock_cfg)
         . ' && exec sh -c ' . sh_quote($command);
-    return 'unshare --mount --propagation private -- sh -c ' . sh_quote($script);
+    return 'unshare --mount --propagation private -- setpriv --regid ' . NATIVE_BUILD_GID
+        . ' --clear-groups -- sh -c ' . sh_quote($script);
 }
 
 # print_step: print a step banner.
