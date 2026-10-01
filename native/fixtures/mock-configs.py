@@ -10,12 +10,21 @@ source = Path(sys.argv[1]).resolve()
 with tempfile.TemporaryDirectory() as directory:
     config_path = Path(directory)
     (config_path / 'templates').mkdir()
+    absent = []
     for parent in ('openeuler-20.03-sp4.tpl', 'openeuler-22.03-sp4.tpl', 'openeuler-24.03.tpl'):
-        shutil.copyfile(Path('/etc/mock/templates') / parent, config_path / 'templates' / parent)
+        source_template = Path('/etc/mock/templates') / parent
+        if not source_template.is_file():
+            absent.append(parent)
+            continue
+        shutil.copyfile(source_template, config_path / 'templates' / parent)
     shutil.copyfile(source / 'templates/openeuler-lts-xcat.tpl', config_path / 'templates/openeuler-lts-xcat.tpl')
-    result = {}
+    result = {'_absent_templates': absent}
     for wrapper in sorted(source.glob('openeuler-*.cfg')):
-        config = load_config(str(config_path), str(wrapper))
+        try:
+            config = load_config(str(config_path), str(wrapper))
+        except Exception as why:
+            result[wrapper.stem] = {'error': str(why)}
+            continue
         repos = configparser.ConfigParser(interpolation=None)
         repos.read_string(config['dnf.conf'])
         result[wrapper.stem] = {key: config[key] for key in ('root', 'target_arch', 'legal_host_arches', 'releasever', 'dist', 'use_bootstrap_image')}
