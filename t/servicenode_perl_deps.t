@@ -13,17 +13,16 @@ use MockBuildUtils qw(read_manifest);
 # requires, declares perl dependencies that EL keeps in CRB or in EPEL, so `dnf install xCATsn` on
 # a service node does not resolve unless xcat-dep carries them.
 #
-# The set below was read on 2026-09-04 from the "nothing provides" lines of:
+# The set below was read on 2026-10-01 from the "nothing provides" lines of:
 #   dnf --releasever=<el> --installroot=<empty> install xCATsn \
 #       --repofrompath=baseos,<alma>/<el>/BaseOS/<arch>/os/ \
 #       --repofrompath=appstream,<alma>/<el>/AppStream/<arch>/os/ \
 #       --repofrompath=core,<xcat-core repo> --repofrompath=dep,<xcat-dep repo>
 # x86_64 and ppc64le give the same answer on every release.
 #
-# perl-Net-DNS is left out although an EL10 service node needs it. xcat-dep carries Net-DNS 0.80,
-# which has no KEY resource record, and xCAT builds one in ddns.pm. Shipping 0.80 to a service
-# node replaces a working AppStream copy with a broken one, so the EL10 Net-DNS gap waits for the
-# version bump.
+# perl-DB_File is the one package this set leaves out. xCAT-server requires it outside riscv64,
+# no AlmaLinux 10 repository carries it, and it needs libdb, which EL10 dropped. xcat-dep has no
+# source for it, so listing it here would assert a package nothing can build.
 
 my %SN_PERL_DEPS = (
     8  => [qw(perl-Crypt-CBC perl-Crypt-Rijndael perl-Crypt-SSLeay perl-Digest-SHA1
@@ -31,7 +30,7 @@ my %SN_PERL_DEPS = (
     9  => [qw(perl-Crypt-CBC perl-Crypt-Rijndael perl-Crypt-SSLeay
               perl-Expect perl-HTML-Form perl-IO-Tty perl-Net-Telnet)],
     10 => [qw(perl-Crypt-CBC perl-Crypt-Rijndael perl-Crypt-SSLeay perl-Digest-SHA1
-              perl-Expect perl-HTML-Form perl-IO-Tty perl-Net-Telnet)],
+              perl-Expect perl-HTML-Form perl-IO-Tty perl-Net-DNS perl-Net-Telnet)],
 );
 
 my $builder = "$RealBin/../mockbuild-perl-packages.pl";
