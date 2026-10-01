@@ -288,8 +288,10 @@ my @default_order = qw(
     perl-Sys-Virt
 );
 
-# The perl deps of xCAT that EL takes from EPEL. Built only where there is no EPEL (riscv64,
-# --epel-gap); the x86_64/ppc64le repos keep getting them from EPEL. perl-Path-Class is a
+# The perl deps of xCAT that EL takes from EPEL. --epel-gap adds them to the default set, for a
+# target with no EPEL (riscv64). The default is not the whole story: mockbuild-all.pl passes
+# --packages from packages-manifest.conf, which lists some of these for the EPEL-fed targets too,
+# because a service node reads no EPEL. perl-Path-Class is a
 # build dep of perl-Crypt-SSLeay only. Not here although in the table: perl-SOAP-Lite (its
 # fc29 BuildRequires IO::SessionData, MIME::Lite, XML::Parser::Lite, Test::XML are EPEL-only
 # too, so it cannot be built or installed without EPEL; xCAT uses it for HP blades only).
