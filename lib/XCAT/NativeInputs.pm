@@ -330,7 +330,11 @@ sub native_overlay_text {
     $out .= "config_opts['chrootuid'] = $uid\nconfig_opts['chrootgid'] = 1000\n";
     $out .= "config_opts['dnf.conf'] += \"\"\"$repo\"\"\"\n";
     $out .= "config_opts['plugin_conf']['bind_mount_enable'] = True\n";
-    $out .= "config_opts['plugin_conf']['procenv_enable'] = " . ($bootstrap ? 'False' : 'True') . "\n";
+    # mock's procenv plugin runs the HOST's /usr/bin/procenv, not the chroot's, and it installs
+    # procenv into the buildroot itself through preexisting_deps. Enabling it made every native
+    # build need a host package neither repository declares, for a log nothing reads. mock's
+    # default is off; leave it there.
+    $out .= "config_opts['plugin_conf']['procenv_enable'] = False\n";
     $out .= "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append("
         . '(' . JSON::PP->new->encode($prereqs) . ', ' . JSON::PP->new->encode($prereqs) . "))\n";
     return $out;
