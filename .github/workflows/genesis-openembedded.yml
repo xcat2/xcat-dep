@@ -21,7 +21,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            apt-utils createrepo-c dpkg-dev gnupg \
+            apt-utils bats createrepo-c dpkg-dev gnupg \
             libfile-slurper-perl \
             libparallel-forkmanager-perl libperl-critic-perl rpm rpm2cpio cpio
 
@@ -77,6 +77,7 @@ jobs:
           prove -v t/riscv64_perl_cell.t
           sudo -E prove -v -It/lib t/common-repo-gate.t
           prove -v t/openeuler.t
+          bats t/verify-xcatsn-install.bats
 
       # Ubuntu's AppArmor policy blocks these unprivileged test namespaces.
       - name: Run native packaging tests
