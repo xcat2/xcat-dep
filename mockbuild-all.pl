@@ -1289,21 +1289,9 @@ sub native_overlay {
     return if $dry_run;
     my $base = "$work/native-base.cfg";
     copy("/etc/mock/$target.cfg", $base) or die "Cannot snapshot native mock configuration: $!\n";
-    my $url = $prereqs;
-    $url =~ s{([^A-Za-z0-9_./~-])}{sprintf('%%%02X', ord($1))}ge;
-    my $repo = "\n[xcat-native-inputs]\nname=xCAT native build prerequisites\nbaseurl=file://$url\n"
-        . "gpgkey=file://$url/repodata/repomd.xml.key\ngpgcheck=1\nrepo_gpgcheck=1\n"
-        . "enabled=1\nskip_if_unavailable=0\n";
     for my $key (1000, 0, 'procenv') {
-        my $uid = $key eq 'procenv' ? 1000 : $key;
         open my $fh, '>', $plan->{overlays}{$key} or die "Cannot write native overlay: $!\n";
-        print {$fh} 'include(' . JSON::PP->new->encode($base) . ")\n";
-        print {$fh} "config_opts['chrootuid'] = $uid\nconfig_opts['chrootgid'] = 1000\n";
-        print {$fh} "config_opts['dnf.conf'] += \"\"\"$repo\"\"\"\n";
-        print {$fh} "config_opts['plugin_conf']['bind_mount_enable'] = True\n";
-        print {$fh} "config_opts['plugin_conf']['procenv_enable'] = " . ($key eq 'procenv' ? 'False' : 'True') . "\n";
-        print {$fh} "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append("
-            . '(' . JSON::PP->new->encode($prereqs) . ', ' . JSON::PP->new->encode($prereqs) . "))\n";
+        print {$fh} XCAT::NativeInputs::native_overlay_text($key, $base, $prereqs);
         close $fh or die "Cannot close native overlay: $!\n";
     }
     open my $ledger, '>', "$work/native-overlays.json" or die "Cannot record native overlays: $!\n";

@@ -14,7 +14,7 @@ use File::Temp qw(tempdir);
 use JSON::PP;
 
 our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust
-                    trust_dbpath scan_cpio_for_elf);
+                    trust_dbpath scan_cpio_for_elf native_overlay_text);
 
 sub read_file {
     my ($path) = @_;
@@ -298,6 +298,42 @@ sub validate_outputs {
         die "Missing output from $node->{name}: $_\n" for grep { !$seen{$_} } sort keys %allowed;
     }
     return \%seen;
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 native_overlay_text
+
+    Descriptions: Render one native mock overlay configuration.
+
+    Arguments:
+        $purpose  - 1000, 0 or 'procenv'. 'procenv' is the overlay that builds
+                    procenv itself.
+        $base     - path of the snapshotted base mock configuration to include.
+        $prereqs  - path of the local repository holding the built prerequisites.
+
+    Returns: the overlay file content.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub native_overlay_text {
+    my ($purpose, $base, $prereqs) = @_;
+    my $bootstrap = $purpose eq 'procenv';
+    my $uid = $bootstrap ? 1000 : $purpose;
+    my $url = $prereqs;
+    $url =~ s{([^A-Za-z0-9_./~-])}{sprintf('%%%02X', ord($1))}ge;
+    my $repo = "\n[xcat-native-inputs]\nname=xCAT native build prerequisites\nbaseurl=file://$url\n"
+        . "gpgkey=file://$url/repodata/repomd.xml.key\ngpgcheck=1\nrepo_gpgcheck=1\n"
+        . "enabled=1\nskip_if_unavailable=0\n";
+    my $out = 'include(' . JSON::PP->new->encode($base) . ")\n";
+    $out .= "config_opts['chrootuid'] = $uid\nconfig_opts['chrootgid'] = 1000\n";
+    $out .= "config_opts['dnf.conf'] += \"\"\"$repo\"\"\"\n";
+    $out .= "config_opts['plugin_conf']['bind_mount_enable'] = True\n";
+    $out .= "config_opts['plugin_conf']['procenv_enable'] = " . ($bootstrap ? 'False' : 'True') . "\n";
+    $out .= "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append("
+        . '(' . JSON::PP->new->encode($prereqs) . ', ' . JSON::PP->new->encode($prereqs) . "))\n";
+    return $out;
 }
 
 1;
