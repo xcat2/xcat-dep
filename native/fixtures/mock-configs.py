@@ -9,16 +9,12 @@ from mockbuild.config import load_config
 source = Path(sys.argv[1]).resolve()
 with tempfile.TemporaryDirectory() as directory:
     config_path = Path(directory)
-    (config_path / 'templates').mkdir()
-    absent = []
-    for parent in ('openeuler-20.03-sp4.tpl', 'openeuler-22.03-sp4.tpl', 'openeuler-24.03.tpl'):
-        source_template = Path('/etc/mock/templates') / parent
-        if not source_template.is_file():
-            absent.append(parent)
-            continue
-        shutil.copyfile(source_template, config_path / 'templates' / parent)
-    shutil.copyfile(source / 'templates/openeuler-lts-xcat.tpl', config_path / 'templates/openeuler-lts-xcat.tpl')
-    result = {'_absent_templates': absent}
+    templates = config_path / 'templates'
+    templates.mkdir()
+    for installed in Path('/etc/mock/templates').glob('*.tpl'):
+        shutil.copyfile(installed, templates / installed.name)
+    shutil.copyfile(source / 'templates/openeuler-lts-xcat.tpl', templates / 'openeuler-lts-xcat.tpl')
+    result = {}
     for wrapper in sorted(source.glob('openeuler-*.cfg')):
         try:
             config = load_config(str(config_path), str(wrapper))
