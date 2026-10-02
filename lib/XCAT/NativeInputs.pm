@@ -224,14 +224,14 @@ sub verify_input {
 }
 
 sub trust_dbpath {
-    my ($work) = @_;
     my $root = $ENV{XCAT_DEP_TRUST_TMP} || File::Spec->tmpdir();
-    return File::Spec->catdir($root, 'xcat-dep-trust-' . substr(Digest::SHA::sha256_hex($work), 0, 16));
+    # The keyring lives until this process exits, after the last verify_input of the run.
+    return tempdir('xcat-dep-trust-XXXXXX', DIR => $root, CLEANUP => 1);
 }
 
 sub publisher_trust {
     my ($plan, $work) = @_;
-    my $trust = trust_dbpath($work);
+    my $trust = trust_dbpath();
     make_path($trust, "$work/gnupg");
     chmod 0700, "$work/gnupg";
     my $listing = capture('gpg', '--homedir', "$work/gnupg", '--batch', '--with-colons', '--show-keys', $plan->{publisher_key});
