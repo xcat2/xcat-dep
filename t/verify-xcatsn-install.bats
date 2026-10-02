@@ -113,6 +113,7 @@ leftover_dirs() {
     grep -q -- "--enablerepo=baseos,appstream,xcat-core,xcat-dep " "$CALLS"
     grep -q -- "--import /keys/a /keys/b" "$CALLS"
     grep -q -- "--setopt=gpgcheck=1" "$CALLS"
+    grep -q -- "--setopt=optional_metadata_types=filelists" "$CALLS"
     [[ $output == *"PASS: xCATsn installed on EL9"*", 2 packages"* ]]
 }
 

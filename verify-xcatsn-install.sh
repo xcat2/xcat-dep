@@ -13,7 +13,9 @@ Usage: verify-xcatsn-install.sh -r RELEASE [-k KEYFILE]... [-n] BASEOS APPSTREAM
   BASEOS ...   local repository directories, each with a repodata/ subdirectory
 
 Give at least one -k, or -n. The installroot is made under ${TMPDIR:-/var/tmp}
-and removed on exit.
+and removed on exit. The rpm of an EL10 host rejects the AlmaLinux 8 key, which
+has SHA-1 bindings. For EL8, point RPM_SEQUOIA_CRYPTO_POLICY at a policy that
+sets sha1.second_preimage_resistance = "always".
 EOF
 }
 
@@ -98,6 +100,8 @@ main() {
         --disablerepo='*' --setopt=reposdir="$empty"
         --setopt=module_platform_id="platform:el$release"
         --setopt=install_weak_deps=False
+        # EL8 packages carry file dependencies outside primary.xml. dnf 4.19 and later skip filelists.
+        --setopt=optional_metadata_types=filelists
         "${args[@]}" --enablerepo="$(IFS=,; echo "${REPO_IDS[*]}")")
     if (( nogpg )); then
         args+=(--nogpgcheck)
