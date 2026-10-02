@@ -9,20 +9,8 @@ use lib $RealBin, "$RealBin/..";
 use MockBuildUtils qw(read_manifest);
 
 # A service node reaches only the OS install tree copycds made -- BaseOS and AppStream -- plus the
-# xcat-core and xcat-dep repositories. It never reaches CRB or EPEL. xCAT-server, which xCATsn
-# requires, declares perl dependencies that EL keeps in CRB or in EPEL, so `dnf install xCATsn` on
-# a service node does not resolve unless xcat-dep carries them.
-#
-# The set below was read on 2026-10-01 from the "nothing provides" lines of:
-#   dnf --releasever=<el> --installroot=<empty> install xCATsn \
-#       --repofrompath=baseos,<alma>/<el>/BaseOS/<arch>/os/ \
-#       --repofrompath=appstream,<alma>/<el>/AppStream/<arch>/os/ \
-#       --repofrompath=core,<xcat-core repo> --repofrompath=dep,<xcat-dep repo>
-# x86_64 and ppc64le give the same answer on every release.
-#
-# perl-DB_File is the one package this set leaves out. xCAT-server requires it outside riscv64,
-# no AlmaLinux 10 repository carries it, and it needs libdb, which EL10 dropped. xcat-dep has no
-# source for it, so listing it here would assert a package nothing can build.
+# xcat-core and xcat-dep repositories. It never reaches CRB or EPEL. Each list below names the
+# perl packages xCAT-server requires that BaseOS and AppStream of that EL release do not carry.
 
 my %SN_PERL_DEPS = (
     8  => [qw(perl-Crypt-CBC perl-Crypt-Rijndael perl-Crypt-SSLeay perl-Digest-SHA1
