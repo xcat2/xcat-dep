@@ -2,6 +2,11 @@
 # otherwise touched by the build-root policy scripts.
 %global debug_package %{nil}
 %global __os_install_post %{nil}
+# openSUSE rpm does not define _pkgdocdir, so the doc path below arrives unexpanded and
+# rpmbuild stops with: File must begin with "/": %%{_pkgdocdir}
+%if %{undefined _pkgdocdir}
+%global _pkgdocdir %{_defaultdocdir}/ipxe-xcat
+%endif
 
 Name:           ipxe-xcat
 Version:        2.0.0
