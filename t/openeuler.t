@@ -2,7 +2,8 @@
 use strict;
 use warnings;
 use FindBin qw($RealBin);
-use lib "$RealBin/..";
+use lib "$RealBin/..", "$RealBin/../lib";
+use XCAT::NativeInputs qw(load_inputs);
 use Test::More;
 use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir install_deps_command
                       install_deps_packages derive_target_from_repo_path read_manifest);
@@ -55,4 +56,26 @@ for my $path (
     is(derive_target_from_repo_path($path), undef, "$path has no native target");
 }
 
+# xCAT and xCATsn name the netboot loaders and the console backend as Requires on every arch, so a
+# package missing from a target section is not a smaller build: it is "nothing provides <pkg>" when
+# dnf installs xCAT on the management node. The EL section of the same arch is the reference set,
+# because openEuler is rpm-md and installs the same core packages. Both exemptions were measured
+# against the built core rpms with rpm -qp --requires, not read off a spec conditional.
+my %exempt = (
+    'conserver-xcat' => 'xCAT requires goconserver; no core rpm requires conserver-xcat',
+    'elilo-xcat'     => 'no core rpm requires elilo-xcat',
+);
+my $reference = 'alma+epel-10-ppc64le';
+ok(scalar keys %{$manifest{$reference}}, "$reference is the reference section and is not empty");
+for my $pkg (sort keys %{$manifest{$reference}}) {
+    next if $exempt{$pkg};
+    ok(exists $manifest{'openeuler-24.03-ppc64le'}{$pkg},
+        "openeuler-24.03-ppc64le declares $pkg, which $reference also declares");
+}
+
+# A manifest entry alone is not enough. The ppc64le target resolves its whole manifest through the
+# native input catalog, which refuses a name no node produces, so the catalog has to declare an
+# owner for the package as well.
+my $plan = eval { load_inputs("$RealBin/..", $manifest{'openeuler-24.03-ppc64le'}) };
+ok($plan, 'every package the ppc64le manifest requires has a native output owner') or diag($@);
 done_testing();
