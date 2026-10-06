@@ -20,11 +20,11 @@ Patch2: elilo-big-bzimage-limit.patch
 Patch3: elilo-gnu-efi-strncpy-conflict.patch
 Source4: elilo-xcat-3.14-6.noarch.rpm
 # Ship the tracked prebuilt EFI payload (SOURCE4) instead of compiling on targets where the
-# gnu-efi toolchain layout does not support elilo's build: ppc64le (no x86 EFI toolchain) and
-# EL8 (gnu-efi-devel places elf_x86_64_efi.lds under a path elilo's Makefile does not find).
+# gnu-efi toolchain layout does not support elilo's build: ppc64le and aarch64 (no x86 EFI
+# toolchain) and EL8 (gnu-efi-devel places elf_x86_64_efi.lds under a path elilo's Makefile does not find).
 # elilo-x64.efi is a noarch artifact, so the prebuilt is byte-identical to the compiled one.
-# Use the tracked prebuilt on ppc (no x86 EFI toolchain) and on EL8 (gnu-efi lds path gap).
-# Three SEPARATE %if blocks, each a single simple compare -- NOT one `A || B` expression (the
+# Use the tracked prebuilt on ppc and aarch64 (no x86 EFI toolchain) and on EL8 (gnu-efi lds path gap).
+# SEPARATE %if blocks, each a single simple compare -- NOT one `A || B` expression (the
 # older rpm in the EL8/EL9 mock chroot mis-evaluates `||`), and NOT %ifarch (during `rpmbuild -bs`
 # the srpm's BuildRequires are frozen against %{_host_cpu}, not the target). Crucially, alma ppc
 # chroots report %{_host_cpu}=powerpc64le while rocky reports ppc64le, so BOTH must be matched --
@@ -33,6 +33,9 @@ Source4: elilo-xcat-3.14-6.noarch.rpm
 %global use_prebuilt 1
 %endif
 %if "%{_host_cpu}" == "powerpc64le"
+%global use_prebuilt 1
+%endif
+%if "%{_host_cpu}" == "aarch64"
 %global use_prebuilt 1
 %endif
 %if 0%{?rhel} == 8
@@ -68,7 +71,7 @@ sed -i 's|^EFILIB[[:space:]]*=.*|EFILIB   = /usr/lib64|' Make.defaults
 sed -i 's|^EFICRT0[[:space:]]*=.*|EFICRT0   = /usr/lib|' Make.defaults
 %endif
 %if 0%{?use_prebuilt}
-# Reuse the prebuilt EFI payload from the tracked noarch package (ppc64le / EL8).
+# Reuse the prebuilt EFI payload from the tracked noarch package (ppc64le / aarch64 / EL8).
 mkdir -p prebuilt
 rpm2cpio %{SOURCE4} | (cd prebuilt && cpio -idm --quiet)
 test -f prebuilt/tftpboot/xcat/elilo-x64.efi
