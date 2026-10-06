@@ -1076,6 +1076,17 @@
       "build_uid": 1000
     },
     {
+      "name": "ipxe-xcat",
+      "type": "owner",
+      "outputs": [
+        "ipxe-xcat"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
       "name": "xnba-undi",
       "type": "owner",
       "outputs": [

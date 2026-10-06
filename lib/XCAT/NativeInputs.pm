@@ -79,7 +79,7 @@ sub load_inputs {
         die "Invalid native input type '$type'\n" unless $type =~ /\A(?:srpm|publisher|owner)\z/;
         if ($type eq 'owner') {
             die "Unsupported native build owner '$name'\n" unless grep { $_ eq $name }
-                qw(goconserver grub2-xcat ipmitool-xcat syslinux-xcat xnba-undi xCAT-genesis-base
+                qw(goconserver grub2-xcat ipmitool-xcat ipxe-xcat syslinux-xcat xnba-undi xCAT-genesis-base
                    perl-Crypt-Rijndael perl-Crypt-SSLeay perl-HTTP-Async perl-IO-Stty perl-Net-HTTPS-NB perl-Net-Telnet);
         }
         if ($type ne 'publisher') {

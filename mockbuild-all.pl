@@ -1167,8 +1167,8 @@ sub target_profile {
             noarch_cfg   => $target,
             forcearch    => 0,
             epel         => 0,
-            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi python3-scp)],
-            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat python3-scp)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
     }
