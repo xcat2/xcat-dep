@@ -54,7 +54,7 @@ sub write_stub {
 # run_build($target_arch): run the build shell with the chroot's architecture reported as
 # $target_arch, and return what it asked the outside world to do.
 sub run_build {
-    my ($target_arch) = @_;
+    my ($target_arch, %options) = @_;
     my $root = tempdir(CLEANUP => 1);
     my ($bin, $rec, $work) = ("$root/bin", "$root/rec", "$root/work");
     make_path($bin, $rec, $work);
@@ -98,9 +98,33 @@ sub run_build {
     # The real debian/rules has to see the environment, so run its build target for real.
     write_stub($bin, 'dpkg-buildpackage', 'make -f debian/rules override_dh_auto_build');
     # The downloaded toolchain never lands, so `go` always resolves here. It records the environment
-    # of each invocation, which is the thing under test.
+    # of each invocation, which is the thing under test, and it stamps the GOAMD64 it was given into
+    # the binary it emits -- the real compiler does that, and debian/rules reads it back.
+    # FIXTURE_GOAMD64 makes it report a different setting, which is what a compiler that ignores the
+    # request looks like.
     write_stub($bin, 'go', qq{
-        echo "GOARCH=\${GOARCH-} GOOS=\${GOOS-} ARGV=\$*" >> '$rec/go-calls'
+        echo "GOARCH=\${GOARCH-} GOOS=\${GOOS-} GOAMD64=\${GOAMD64-<unset>} ARGV=\$*" >> '$rec/go-calls'
+        case "\$1" in
+        build)
+            out=''; prev=''
+            for a in "\$\@"; do [ "\$prev" = -o ] && out="\$a"; prev="\$a"; done
+            [ -n "\$out" ] || exit 0
+            printf '#!/bin/sh\\nexit 0\\n' > "\$out"; chmod 755 "\$out"
+            {   printf '%s: go1.25.12\\n\\tpath\\tcommand-line-arguments\\n' "\$out"
+                printf '\\tbuild\\tGOARCH=%s\\n' "\${GOARCH-}"
+                [ "\${GOARCH-}" = amd64 ] &&
+                    printf '\\tbuild\\tGOAMD64=%s\\n' "\${FIXTURE_GOAMD64:-\${GOAMD64-}}"
+            } > "\$out.meta"
+            ;;
+        env)
+            for v in "\$\@"; do
+                case "\$v" in env) ;; GOARCH) echo "\${GOARCH-}";; *) echo '';; esac
+            done
+            ;;
+        version)
+            if [ "\$2" = -m ]; then cat "\$3.meta"; else echo 'go version go1.25.12 linux/\${GOARCH-}'; fi
+            ;;
+        esac
         exit 0
     });
 
@@ -108,8 +132,10 @@ sub run_build {
     print {$fh} build_script();
     close($fh);
 
+    my $fixture = $options{goamd64} || '';
     my $rc = system('/bin/bash', '-c',
         "cd '$work' && PATH=\"$bin:\$PATH\" SOURCE_DATE_EPOCH=1789413339 "
+      . "FIXTURE_GOAMD64='$fixture' "
       . "bash '$root/build.sh' > '$root/build.log' 2>&1");
 
     my $slurp = sub {
@@ -178,5 +204,31 @@ compiles_for($n, $host_go, 'a native cell compiles for its own architecture');
 # ---- dpkg and Go spell the POWER architecture differently ----------------------------------------
 my $p = run_build('ppc64el');
 compiles_for($p, 'ppc64le', 'the dpkg name ppc64el reaches go as ppc64le');
+
+# ---- the x86-64 baseline the amd64 deb is compiled for -------------------------------------------
+# The published x86_64 goconserver was compiled GOAMD64=v3 and stopped a pre-AVX2 headnode with
+# SIGILL. debian/rules is where dpkg-buildpackage compiles, so the setting has to reach that file's
+# own build target and the binary has to be read back. An export line is not evidence: the failure
+# is the export not reaching the compiler, and a grep for the line passes when it does not.
+{
+    my $a = run_build('amd64');
+    is($a->{rc}, 0, 'an amd64 cell builds when the compiler honours GOAMD64=v1')
+        or diag($a->{log});
+    my @builds = grep { /ARGV=.*\bbuild\b/ } @{ $a->{go_calls} };
+    is(scalar @builds, 2, 'the amd64 cell reaches both `go build` calls')
+        or diag(join("\n", @{ $a->{go_calls} }));
+    is_deeply([ grep { !/\bGOAMD64=v1\b/ } @builds ], [],
+        'every `go build` in the amd64 cell is told GOAMD64=v1')
+        or diag(join("\n", @builds));
+    is(scalar(grep { /ARGV=version -m / } @{ $a->{go_calls} }), 2,
+        'the gate reads the build metadata of both amd64 binaries')
+        or diag(join("\n", @{ $a->{go_calls} }));
+
+    my $bad = run_build('amd64', goamd64 => 'v3');
+    isnt($bad->{rc}, 0, 'a v3 amd64 binary fails the deb build');
+    like($bad->{log}, qr/reports 'GOAMD64=v3', not GOAMD64=v1/,
+        'the diagnostic names the setting the amd64 binary carries')
+        or diag($bad->{log});
+}
 
 done_testing;
