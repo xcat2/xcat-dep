@@ -25,6 +25,7 @@ our @EXPORT_OK = qw(
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg
+    native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
 );
@@ -99,6 +100,25 @@ sub sh_quote {
     $s = '' if !defined $s;
     $s =~ s/'/'"'"'/g;
     return "'$s'";
+}
+
+# The host group the native openEuler builds run as: xcatnative, gid 1000. The native mock overlays
+# set chrootgid to it and chrootuid to the catalog's build_uid, so mock creates --resultdir and opens
+# state.log, build.log and root.log in it as that uid and group.
+use constant NATIVE_BUILD_GID => 1000;
+
+# native_owner_command: wrap a native build step so it runs against $overlay instead of the target's
+# own mock configuration, and with the identity mock will write results as.
+#
+# A dep builder makes its own result directories before mock starts -- ipxe-xcat/mockbuild.pl calls
+# make_path on $work_dir/srpm and $work_dir/rpm and passes each one to mock as --resultdir. The
+# script runs as root, so without the gid and the umask below those directories are root root 0755
+# and mock, reloaded to chrootuid 1000, cannot open its logs in them.
+sub native_owner_command {
+    my ($overlay, $mock_cfg, $command) = @_;
+    my $script = 'mount --bind ' . sh_quote($overlay) . ' ' . sh_quote($mock_cfg)
+        . ' && exec sh -c ' . sh_quote($command);
+    return 'unshare --mount --propagation private -- sh -c ' . sh_quote($script);
 }
 
 # print_step: print a step banner.

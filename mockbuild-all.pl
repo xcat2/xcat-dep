@@ -1247,9 +1247,7 @@ sub source_rpm_build_command {
 sub native_owner_command {
     my ($plan, $target, $command, $uid) = @_;
     my $overlay = $plan->{overlays}{$uid} // die "Missing native mock overlay\n";
-    my $script = 'mount --bind ' . sh_quote($overlay) . ' ' . sh_quote("/etc/mock/$target.cfg")
-        . ' && exec sh -c ' . sh_quote($command);
-    return 'unshare --mount --propagation private -- sh -c ' . sh_quote($script);
+    return MockBuildUtils::native_owner_command($overlay, "/etc/mock/$target.cfg", $command);
 }
 
 sub native_overlay {
