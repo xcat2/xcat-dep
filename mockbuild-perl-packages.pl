@@ -10,7 +10,7 @@ use FindBin qw($RealBin);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(mock_chroot_uid mock_result_dirs);
+use MockBuildUtils qw(mock_result_dirs);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -523,7 +523,7 @@ sub build_package {
     my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $pkg_run_dir);
     # This script runs as root, and mock writes a --resultdir as the uid its configuration names.
     my ($srpm_result, $restamp_result, $rebuild_result) =
-        mock_result_dirs($pkg_run_dir, mock_chroot_uid($det_mock_cfg));
+        mock_result_dirs($pkg_run_dir, $det_mock_cfg);
 
     my $run_log = "$pkg_log/run.log";
     open my $runfh, '>', $run_log or die "Cannot write $run_log: $!\n";
