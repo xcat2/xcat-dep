@@ -78,4 +78,10 @@ for my $pkg (sort keys %{$manifest{$reference}}) {
 # owner for the package as well.
 my $plan = eval { load_inputs("$RealBin/..", $manifest{'openeuler-24.03-ppc64le'}) };
 ok($plan, 'every package the ppc64le manifest requires has a native output owner') or diag($@);
+# xCAT requires ipxe-xcat on x86_64 (xCAT.spec, upstream 32a688b3), so an x86_64 openEuler section
+# without it builds a repo where "dnf install xCAT" answers "nothing provides ipxe-xcat".
+for my $target (map { "openeuler-$_-x86_64" } qw(20.03sp4 22.03sp4 24.03sp4)) {
+    ok(exists $manifest{$target}{'ipxe-xcat'}, "$target declares ipxe-xcat, which xCAT requires on x86_64");
+}
+
 done_testing();
