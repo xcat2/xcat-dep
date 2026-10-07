@@ -19,7 +19,7 @@ use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 use XCAT::NFSLock ();
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell resolve_mock_cfg
-                      NATIVE_BUILD_GID
+                      NATIVE_BUILD_GID epel_target_profile
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest derive_target_from_repo_path
@@ -1179,13 +1179,16 @@ sub target_profile {
             epel      => 0,
         };
     }
-    my ($rel) = $target =~ /epel-(\d+)-/;
-    die "Could not parse EL release from target '$target'\n" unless defined $rel;
+    # The target name, not the host, decides the architecture of the rpms and so the repository
+    # cell they deploy to. A host of another architecture cross-builds the target through mock's
+    # own --forcearch, which is what gives the emulated build its own step timeout below.
+    my $epel = epel_target_profile($target, $host_arch);
+    die "Could not parse EL release from target '$target'\n" unless $epel;
     return {
-        rel          => $rel,
-        arch         => $host_arch,
+        rel          => $epel->{rel},
+        arch         => $epel->{arch},
         noarch_cfg   => $target,
-        forcearch    => 0,
+        forcearch    => $epel->{forcearch},
         epel         => 1,
         dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
         # xCAT Requires all of these on every arch, and every one of them builds natively on
