@@ -16,7 +16,7 @@ License: GPL
 Group: System/Boot
 Source0: https://www.kernel.org/pub/linux/utils/boot/syslinux/%{name}-%{VERSION}.tar.xz
 Patch0: syslinux-6.03-multibootif.patch
-ExclusiveArch: i386 i486 i586 i686 athlon pentium4 x86_64 ppc64le
+ExclusiveArch: i386 i486 i586 i686 athlon pentium4 x86_64 ppc64le aarch64
 Packager: H. Peter Anvin <hpa@zytor.com>
 Buildroot: %{_tmppath}/%{name}-%{VERSION}-root
 Autoreq: 0
@@ -30,7 +30,7 @@ BuildRequires: libuuid-devel
 # a system bootloader, and may be necessary for system recovery.
 %define _sbindir /sbin
 
-%ifnarch ppc64le
+%ifnarch ppc64le aarch64
 %package devel
 Summary: Development environment for SYSLINUX add-on modules
 Group: Development/Libraries
@@ -43,7 +43,7 @@ filesystems, Linux ext2/ext3 filesystems (EXTLINUX), PXE network boots
 (PXELINUX), or ISO 9660 CD-ROMs (ISOLINUX).  It also includes a tool,
 MEMDISK, which loads legacy operating systems from these media.
 
-%ifnarch ppc64le
+%ifnarch ppc64le aarch64
 %description devel
 The SYSLINUX boot loader contains an API, called COM32, for writing
 sophisticated add-on modules.  This package contains the libraries
@@ -88,7 +88,7 @@ make CC='%{my_cc}' PYTHON=python3 installer
 
 %install
 rm -rf %{buildroot}
-%ifarch ppc64le
+%ifarch ppc64le aarch64
 make CC='%{my_cc}' PYTHON=python3 install \
 	INSTALLROOT=%{buildroot} BINDIR=%{_bindir} SBINDIR=%{_sbindir} \
 	LIBDIR=%{_libdir} DATADIR=%{_datadir} \
@@ -126,14 +126,14 @@ rm -rf %{buildroot}
 %{_datadir}/syslinux/*.bin
 %{_datadir}/syslinux/*.0
 %{_datadir}/syslinux/memdisk
-%ifnarch ppc64le
+%ifnarch ppc64le aarch64
 %{_datadir}/syslinux/dosutil/*
 %endif
 %{_datadir}/syslinux/diag/*
 %{_datadir}/syslinux/efi32
 %{_datadir}/syslinux/efi64
 
-%ifnarch ppc64le
+%ifnarch ppc64le aarch64
 %files devel
 %{_datadir}/syslinux/com32
 %endif

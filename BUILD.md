@@ -387,6 +387,14 @@ Because of this, to build `ppc64le` artifacts you must run `mockbuild-all.pl` on
 
 In short: build `ppc64le` packages on a Power machine.
 
+`aarch64` works the same way, natively on an aarch64 host against EPEL, for EL10 only: the
+manifest has an `[alma+epel-10-aarch64]` section and no EL8/EL9 one, so pass
+`--target alma+epel-10-aarch64` (a run without `--target` also tries rh8 and rh9 and stops at the
+missing section). The x86 boot loaders are built there like on ppc64le: `elilo-xcat` ships its
+tracked prebuilt EFI payload and `syslinux-xcat` installs the prebuilt bootloader blobs of the
+release tarball, so the noarch rpms carry the same payload as the ppc64le build. aarch64 is not
+part of the `--finalize-xcat-dep` cross-arch genesis copy.
+
 # riscv64 (EL10): cross-building on an x86_64 host
 
 There is no riscv64 build host in the xCAT build farm and no EPEL for riscv64, so the
