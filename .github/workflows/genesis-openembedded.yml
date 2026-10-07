@@ -97,3 +97,15 @@ jobs:
             echo 'a native test file was skipped' >&2
             exit 1
           fi
+
+      # Ubuntu ships no mock, so the test of mock's configuration loader runs on Fedora.
+      - name: Run mock configuration loader test
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/src:ro" -w /src fedora:42 bash -ec '
+            dnf -y -q install mock perl perl-File-Slurper >/dev/null
+            prove -v native/mock-chroot-uid.t' 2>&1 | tee mock.tap
+          if grep -E '^1\.\.0 # SKIP|^native/[^ ]+\.t \.+ skipped' mock.tap; then
+            echo 'the mock configuration loader test was skipped' >&2
+            exit 1
+          fi
