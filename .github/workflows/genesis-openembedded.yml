@@ -23,7 +23,26 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             apt-utils bats createrepo-c dpkg-dev gnupg \
             libfile-slurper-perl \
-            libparallel-forkmanager-perl libperl-critic-perl rpm rpm2cpio cpio
+            libparallel-forkmanager-perl libperl-critic-perl rpm rpm2cpio cpio \
+            grub-common curl ca-certificates
+
+      - name: Install the arm64-efi grub modules
+        # t/aarch64_target.t runs the spec's own grub2-mkimage command, and it skips when the
+        # arm64-efi modules are absent -- which is a skip exactly where the suite runs, so it
+        # measures nothing. grub-efi-arm64-bin is Architecture: arm64 and cannot be installed on
+        # the amd64 runner, but the modules inside it are target code, not host code, so
+        # extracting the deb puts them in place without enabling a foreign architecture.
+        run: |
+          set -euo pipefail
+          base=http://ports.ubuntu.com/ubuntu-ports/pool/main/g/grub2-unsigned
+          deb=$(curl -sS "$base/" | grep -oE 'grub-efi-arm64-bin_[^"]*_arm64\.deb' | sort -u | tail -1)
+          [ -n "$deb" ] || { echo "no grub-efi-arm64-bin deb found under $base" >&2; exit 1; }
+          curl -sSO "$base/$deb"
+          sudo dpkg -x "$deb" /
+          # The modules are what the test needs; say so on the branch that earned it.
+          n=$(ls /usr/lib/grub/arm64-efi 2>/dev/null | wc -l)
+          [ "$n" -gt 0 ] || { echo "the deb extracted no arm64-efi modules" >&2; exit 1; }
+          echo "installed $n arm64-efi grub modules from $deb"
 
       - name: Run static checks
         run: |
@@ -75,6 +94,8 @@ jobs:
           prove -v -It/lib t/genesis_openembedded_release.t
           sudo -E prove -v -It/lib t/genesis_openembedded_consumer.t
           prove -v t/riscv64_perl_cell.t
+          prove -v t/aarch64_target.t
+          prove -v t/aarch64_cross_build.t
           sudo -E prove -v -It/lib t/common-repo-gate.t
           prove -v t/openeuler.t
           prove -v t/openeuler_mock_template_include.t
