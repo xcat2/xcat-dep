@@ -7,7 +7,7 @@ use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Glob qw(bsd_glob);
 use File::Find;
-use File::Path qw(remove_tree);
+use File::Path qw(make_path remove_tree);
 use lib dirname(__FILE__) . '/lib';
 use XCAT::NFSLock ();
 use Sys::Hostname;
@@ -24,7 +24,7 @@ our @EXPORT_OK = qw(
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
-    build_mock_uniqueext rpm_in_cell resolve_mock_cfg
+    build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
 );
@@ -898,6 +898,44 @@ sub resolve_mock_cfg {
     my $short = $short_forms{$os_id} // $os_id;
     die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
       . "(tried $cfg_dir/${os_id}+epel-${rel}-${arch}.cfg and $cfg_dir/${short}+epel-${rel}-${arch}.cfg)\n";
+}
+
+# mock_chroot_uid($cfg[, $search_dir]): the uid mock builds as with this configuration. It is the
+# last config_opts['chrootuid'] in $cfg and in the files it includes. With none, it is the uid that
+# runs mock, which is mock's own default. mock resolves a relative include against one directory.
+# $search_dir names that directory and defaults to the directory of $cfg. A missing include is
+# skipped: it can set no chrootuid.
+sub mock_chroot_uid {
+    my ($cfg, $search_dir) = @_;
+    $search_dir //= dirname($cfg);
+    my $uid = $>;
+    my @queue = ($cfg);
+    my %seen;
+    while (my $path = shift @queue) {
+        next if $seen{$path}++;
+        open my $fh, '<', $path or next;
+        while (my $line = <$fh>) {
+            $uid = $1 if $line =~ /^\s*config_opts\['chrootuid'\]\s*=\s*(\d+)/;
+            next unless $line =~ /^\s*include\(\s*['"]([^'"]+)['"]\s*\)/;
+            my $included = $1;
+            push @queue, $included =~ m{^/} ? $included : "$search_dir/$included";
+        }
+        close $fh;
+    }
+    return $uid;
+}
+
+# mock_result_dirs($dir, $uid): create the three --resultdir directories one package build gives
+# mock, below $dir, owned by $uid. mock 6.8 reloads its uid manager from chrootuid, so it opens
+# state.log, build.log and root.log in --resultdir as that uid, not as the user that ran mock.
+sub mock_result_dirs {
+    my ($dir, $uid) = @_;
+    my @dirs = map { "$dir/$_" } qw(srpm restamp-srpm rpm);
+    for my $result (@dirs) {
+        make_path($result);
+        chown $uid, -1, $result or die "Cannot give $result to uid $uid: $!\n";
+    }
+    return @dirs;
 }
 
 1;
