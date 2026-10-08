@@ -24,25 +24,13 @@ jobs:
             apt-utils bats createrepo-c dpkg-dev gnupg \
             libfile-slurper-perl \
             libparallel-forkmanager-perl libperl-critic-perl rpm rpm2cpio cpio \
-            grub-common curl ca-certificates
+            grub-common ca-certificates
 
       - name: Install the arm64-efi grub modules
-        # t/aarch64_target.t runs the spec's own grub2-mkimage command, and it skips when the
-        # arm64-efi modules are absent -- which is a skip exactly where the suite runs, so it
-        # measures nothing. grub-efi-arm64-bin is Architecture: arm64 and cannot be installed on
-        # the amd64 runner, but the modules inside it are target code, not host code, so
-        # extracting the deb puts them in place without enabling a foreign architecture.
-        run: |
-          set -euo pipefail
-          base=http://ports.ubuntu.com/ubuntu-ports/pool/main/g/grub2-unsigned
-          deb=$(curl -sS "$base/" | grep -oE 'grub-efi-arm64-bin_[^"]*_arm64\.deb' | sort -u | tail -1)
-          [ -n "$deb" ] || { echo "no grub-efi-arm64-bin deb found under $base" >&2; exit 1; }
-          curl -sSO "$base/$deb"
-          sudo dpkg -x "$deb" /
-          # The modules are what the test needs; say so on the branch that earned it.
-          n=$(ls /usr/lib/grub/arm64-efi 2>/dev/null | wc -l)
-          [ "$n" -gt 0 ] || { echo "the deb extracted no arm64-efi modules" >&2; exit 1; }
-          echo "installed $n arm64-efi grub modules from $deb"
+        # t/aarch64_target.t runs the spec's own grub2-mkimage command, and it skips without
+        # the arm64-efi modules -- a skip exactly where the suite runs. The script reads them
+        # from the runner's own suite through apt's signed metadata.
+        run: sudo ./install-grub-arm64-modules.sh
 
       - name: Run static checks
         run: |
@@ -104,6 +92,7 @@ jobs:
           prove -v -Ilib t/openeuler_native_trust_dbpath.t
           prove -v -Ilib t/openeuler_native_cpio_scan.t
           bats t/verify-xcatsn-install.bats
+          bats t/install-grub-arm64-modules.bats
 
       # Ubuntu's AppArmor policy blocks these unprivileged test namespaces.
       - name: Run native packaging tests
