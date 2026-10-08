@@ -14,7 +14,7 @@ use File::Temp qw(tempdir);
 use JSON::PP;
 
 our @EXPORT_OK = qw(load_inputs stage_inputs verify_input rpm_identity validate_outputs publisher_trust
-                    trust_dbpath scan_cpio_for_elf);
+                    trust_dbpath scan_cpio_for_elf native_overlay_text);
 
 sub read_file {
     my ($path) = @_;
@@ -79,7 +79,7 @@ sub load_inputs {
         die "Invalid native input type '$type'\n" unless $type =~ /\A(?:srpm|publisher|owner)\z/;
         if ($type eq 'owner') {
             die "Unsupported native build owner '$name'\n" unless grep { $_ eq $name }
-                qw(goconserver grub2-xcat ipmitool-xcat syslinux-xcat xnba-undi xCAT-genesis-base
+                qw(goconserver grub2-xcat ipmitool-xcat ipxe-xcat syslinux-xcat xnba-undi xCAT-genesis-base
                    perl-Crypt-Rijndael perl-Crypt-SSLeay perl-HTTP-Async perl-IO-Stty perl-Net-HTTPS-NB perl-Net-Telnet);
         }
         if ($type ne 'publisher') {
@@ -298,6 +298,46 @@ sub validate_outputs {
         die "Missing output from $node->{name}: $_\n" for grep { !$seen{$_} } sort keys %allowed;
     }
     return \%seen;
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 native_overlay_text
+
+    Descriptions: Render one native mock overlay configuration.
+
+    Arguments:
+        $purpose  - 1000, 0 or 'procenv'. 'procenv' is the overlay that builds
+                    procenv itself.
+        $base     - path of the snapshotted base mock configuration to include.
+        $prereqs  - path of the local repository holding the built prerequisites.
+
+    Returns: the overlay file content.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub native_overlay_text {
+    my ($purpose, $base, $prereqs) = @_;
+    my $bootstrap = $purpose eq 'procenv';
+    my $uid = $bootstrap ? 1000 : $purpose;
+    my $url = $prereqs;
+    $url =~ s{([^A-Za-z0-9_./~-])}{sprintf('%%%02X', ord($1))}ge;
+    my $repo = "\n[xcat-native-inputs]\nname=xCAT native build prerequisites\nbaseurl=file://$url\n"
+        . "gpgkey=file://$url/repodata/repomd.xml.key\ngpgcheck=1\nrepo_gpgcheck=1\n"
+        . "enabled=1\nskip_if_unavailable=0\n";
+    my $out = 'include(' . JSON::PP->new->encode($base) . ")\n";
+    $out .= "config_opts['chrootuid'] = $uid\nconfig_opts['chrootgid'] = 1000\n";
+    $out .= "config_opts['dnf.conf'] += \"\"\"$repo\"\"\"\n";
+    $out .= "config_opts['plugin_conf']['bind_mount_enable'] = True\n";
+    # mock's procenv plugin runs the HOST's /usr/bin/procenv, not the chroot's, and it installs
+    # procenv into the buildroot itself through preexisting_deps. Enabling it made every native
+    # build need a host package neither repository declares, for a log nothing reads. mock's
+    # default is off; leave it there.
+    $out .= "config_opts['plugin_conf']['procenv_enable'] = False\n";
+    $out .= "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append("
+        . '(' . JSON::PP->new->encode($prereqs) . ', ' . JSON::PP->new->encode($prereqs) . "))\n";
+    return $out;
 }
 
 1;

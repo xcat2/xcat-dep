@@ -294,7 +294,7 @@ for my $case (['publisher-elf', qr/ELF payload/], ['publisher-arch', qr/not a no
 
 my @namespace = ('unshare', ($> == 0 ? () : ('--user', '--map-root-user')), '--mount', '--propagation', 'private');
 my $can_owner = $host_arch eq 'ppc64le'
-    && run_capture("$tmp/mock-loader.log", 'python3', '-c', 'from mockbuild.util import load_config') == 0
+    && run_capture("$tmp/mock-loader.log", 'python3', '-c', 'from mockbuild.config import load_config') == 0
     && run_capture("$tmp/namespace.log", @namespace, 'true') == 0;
 SKIP: {
     skip 'Whole native owner requires POWER, native Mock and a private mount namespace', 52 unless $can_owner;
