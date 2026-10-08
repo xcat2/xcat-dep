@@ -279,7 +279,10 @@ $go_prep
 # but PINNED + integrity-checked by the committed go.sum, so the build is reproducible without a
 # vendored tree. GOTOOLCHAIN=local pins the chroot's Go (never auto-downloads a toolchain).
 $go_environment
-export GOFLAGS=-mod=mod GOTOOLCHAIN=local CGO_ENABLED=0
+# GOAMD64 is set here, not inherited: EL10 raises its platform baseline to x86-64-v3 and its
+# golang bakes GOAMD64=v3 in as the default. One el10 chroot compiles the x86_64 binary that
+# is published for rh8, rh9 and rh10, and a v3 binary stops a pre-AVX2 node with SIGILL.
+export GOFLAGS=-mod=mod GOTOOLCHAIN=local CGO_ENABLED=0 GOAMD64=v1
 export GOCACHE=%{_builddir}/.gocache GOPATH=%{_builddir}/.gopath GOMODCACHE=%{_builddir}/.gomodcache
 go build -trimpath -buildvcs=false -ldflags "$go_ldflags" -o goconserver goconserver.go
 go build -trimpath -buildvcs=false -ldflags "$go_ldflags" -o congo cmd/congo.go
@@ -290,6 +293,24 @@ install -Dm0755 congo       %{buildroot}/usr/bin/congo
 install -Dm0644 %{SOURCE1} %{buildroot}/usr/lib/systemd/system/goconserver.service
 install -Dm0644 %{SOURCE2} %{buildroot}/etc/goconserver/server.conf
 mkdir -p %{buildroot}/var/log/goconserver %{buildroot}/var/lib/goconserver
+
+%check
+$go_environment
+# Read GOAMD64 out of the binaries that are staged for packaging. An export line can stop
+# reaching the compiler, and a grep for that line passes when it does. The build metadata in the
+# binary names what compiled it, so this gate fails the build instead of publishing a v3 binary.
+# Do not write an rpm section name in this comment. rpm reads the name as the start of a new
+# section, even behind a hash, and refuses the spec.
+if [ "\$(go env GOARCH)" = amd64 ]; then
+    for bin in goconserver congo; do
+        setting=\$(go version -m %{buildroot}/usr/bin/\$bin |
+            awk -F'\\t' '\$2 == "build" && \$3 ~ /^GOAMD64=/ { print \$3 }')
+        if [ "\$setting" != "GOAMD64=v1" ]; then
+            echo "FATAL: \$bin reports '\$setting', not GOAMD64=v1" >&2
+            exit 1
+        fi
+    done
+fi
 
 %files
 /usr/bin/goconserver
@@ -384,6 +405,8 @@ sub cross_build_and_package {
     local $ENV{GOFLAGS}     = '-mod=mod';
     local $ENV{GOTOOLCHAIN} = 'local';
     local $ENV{GOARCH}      = $goarch{$target_arch};
+    # Explicit, so no build inherits a distro default again (see the %build comment).
+    local $ENV{GOAMD64}     = 'v1';
 
     my $bin_dir = "$work_dir/bin";
     make_path($bin_dir);
@@ -395,6 +418,7 @@ sub cross_build_and_package {
             sh_quote($ldflags) . " -o " . sh_quote("$bin_dir/$out") . " " . sh_quote($main) .
             " >" . sh_quote("$log_dir/go-build-$out.log") . " 2>&1");
         die "$out binary not built\n" if !-x "$bin_dir/$out";
+        assert_goamd64_v1("$bin_dir/$out");
     }
 
     print_step("Assemble SRPM sources");
@@ -498,6 +522,32 @@ SPEC
 
     print_step("Completed");
     print "Results in: $result_dir\n";
+    return;
+}
+
+#-------------------------------------------------------------------------------
+
+=head3 assert_goamd64_v1
+
+    Descriptions: Stop the build when an amd64 Go binary was not compiled with GOAMD64=v1.
+                  The check reads the binary's own build metadata, because an export line can
+                  stop reaching the compiler and still be present in the script.
+    Arguments:    $binary -- path to a compiled Go binary
+    Returns:      nothing; dies when the setting is absent or not v1
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub assert_goamd64_v1 {
+    my ($binary) = @_;
+    my $quoted = sh_quote($binary);
+    my $meta = `go version -m $quoted 2>&1`;
+    die "FATAL: go version -m $binary failed:\n$meta" if $? != 0;
+    # GOAMD64 applies to amd64 only; another GOARCH records no such setting.
+    return if $meta !~ /^\s*build\s+GOARCH=amd64\s*$/m;
+    my ($setting) = $meta =~ /^\s*build\s+(GOAMD64=\S+)\s*$/m;
+    $setting = 'no GOAMD64 setting' if !defined $setting;
+    die "FATAL: $binary reports $setting, not GOAMD64=v1\n" if $setting ne 'GOAMD64=v1';
     return;
 }
 
