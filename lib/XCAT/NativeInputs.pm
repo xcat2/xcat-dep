@@ -80,7 +80,7 @@ sub load_inputs {
         if ($type eq 'owner') {
             die "Unsupported native build owner '$name'\n" unless grep { $_ eq $name }
                 qw(goconserver grub2-xcat ipmitool-xcat ipxe-xcat syslinux-xcat xnba-undi xCAT-genesis-base
-                   perl-Crypt-Rijndael perl-Crypt-SSLeay perl-HTTP-Async perl-IO-Stty perl-Net-HTTPS-NB perl-Net-Telnet);
+                   perl-Crypt-Rijndael perl-Crypt-SSLeay perl-HTTP-Async perl-IO-Stty perl-Net-DNS perl-Net-HTTPS-NB perl-Net-Telnet);
         }
         if ($type ne 'publisher') {
             my $uid = $type eq 'owner' && ($name eq 'xnba-undi' || $name eq 'xCAT-genesis-base') ? 0 : 1000;

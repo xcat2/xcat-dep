@@ -7,7 +7,7 @@ use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Glob qw(bsd_glob);
 use File::Find;
-use File::Path qw(remove_tree);
+use File::Path qw(make_path remove_tree);
 use lib dirname(__FILE__) . '/lib';
 use XCAT::NFSLock ();
 use Sys::Hostname;
@@ -24,7 +24,7 @@ our @EXPORT_OK = qw(
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
-    build_mock_uniqueext rpm_in_cell resolve_mock_cfg
+    build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -919,6 +919,42 @@ sub resolve_mock_cfg {
     my $short = $short_forms{$os_id} // $os_id;
     die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
       . "(tried $cfg_dir/${os_id}+epel-${rel}-${arch}.cfg and $cfg_dir/${short}+epel-${rel}-${arch}.cfg)\n";
+}
+
+# mock's own loader reads the configuration, so include() and the assignments around it resolve as
+# they do in a build. With no chrootuid, the loader returns the uid that runs it, as mock does.
+my $MOCK_CHROOTUID_LOADER = <<'PYTHON';
+import sys
+try:
+    from mockbuild.config import MOCKCONFDIR, load_config
+except ImportError:
+    sys.exit('mock is not installed: cannot import mockbuild.config')
+print(load_config(MOCKCONFDIR, sys.argv[1])['chrootuid'])
+PYTHON
+
+# mock_chroot_uid($cfg): the uid mock builds as with configuration file $cfg.
+sub mock_chroot_uid {
+    my ($cfg) = @_;
+    open my $pipe, '-|', 'python3', '-c', $MOCK_CHROOTUID_LOADER, $cfg
+        or die "Cannot run python3 to load $cfg: $!\n";
+    my $out = do { local $/; <$pipe> } // '';
+    close $pipe or die "mock cannot load $cfg\n";
+    $out =~ /\A(\d+)\n\z/ or die "mock gives no chrootuid for $cfg\n";
+    return $1;
+}
+
+# mock_result_dirs($dir, $cfg): create the three --resultdir directories one package build gives
+# mock, below $dir, owned by the uid mock builds as with $cfg. mock 6.8 reloads its uid manager from
+# chrootuid, so it opens state.log, build.log and root.log in --resultdir as that uid.
+sub mock_result_dirs {
+    my ($dir, $cfg) = @_;
+    my $uid = mock_chroot_uid($cfg);
+    my @dirs = map { "$dir/$_" } qw(srpm restamp-srpm rpm);
+    for my $result (@dirs) {
+        make_path($result);
+        chown $uid, -1, $result or die "Cannot give $result to uid $uid: $!\n";
+    }
+    return @dirs;
 }
 
 1;
