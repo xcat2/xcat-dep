@@ -19,6 +19,7 @@ use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 use XCAT::NFSLock ();
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell resolve_mock_cfg
+                      NATIVE_BUILD_GID
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest derive_target_from_repo_path
@@ -156,6 +157,21 @@ my @HELD_LOCKS;
 my $LOCK_OWNER_PID;
 my ($COMMON_STAGE, $COMMON_DESTINATION, $COMMON_BACKUP);
 my %NATIVE_PLANS;
+
+# Create a directory mock writes for a native build. mock 6.8 reloads its uid manager from
+# chrootuid, so it creates --resultdir and opens state.log, build.log and root.log in it as
+# chrootuid/chrootgid, not as the user that started mock. This script runs as root, so such a
+# directory carries the native build gid and is group writable. native_owner_command gives the step
+# the same gid and a 0002 umask, so what the step creates below it inherits both.
+sub make_native_path {
+    my ($native, @dirs) = @_;
+    make_path(@dirs);
+    return unless $native;
+    for my $dir (@dirs) {
+        chown -1, NATIVE_BUILD_GID, $dir or die "Cannot set the native build group on $dir: $!\n";
+        chmod 0775, $dir or die "Cannot make $dir writable by the native build group: $!\n";
+    }
+}
 for my $sig (qw(INT TERM HUP)) {
     $SIG{$sig} = sub { exit 1; };
 }
@@ -739,6 +755,7 @@ if (!$skip_build) {
             my $script = $builder->{script};
             my $step_result = "$build_root/$name";
             my $step_log    = "$log_root/$name";
+            make_native_path($native, $step_result) if $native && !$dry_run;
             my $step_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, $name);
             my $mock_cfg = $builder->{noarch} ? $profile->{noarch_cfg} : $target;
             my $cmd = $builder->{srpm}
@@ -778,6 +795,7 @@ if (!$skip_build) {
     if (!$skip_perl && @perl_pkgs) {
         my $perl_result = "$build_root/perl/$arch";
         my $perl_log    = "$log_root/perl/$arch";
+        make_native_path($native, $perl_result) if $native && !$dry_run;
         my $perl_uniqueext = build_mock_uniqueext($run_id, ++$build_step_seq, 'perl-list6');
         # Bound the perl builder's OWN internal parallelism to this target's budget; otherwise it
         # forks one mock build per perl package (~7), which -- multiplied by parallel EL targets --
@@ -858,7 +876,8 @@ if (!$skip_build) {
                    '--gpg-home', shell_quote(File::Spec->rel2abs($gpg_home ne '' ? $gpg_home
                        : $ENV{GNUPGHOME} || "$ENV{HOME}/.gnupg"))) : ()),
         );
-        $cmd = native_owner_command($native, $target, $cmd, 0) if $native;
+        $cmd = native_owner_command($native, $target, $cmd,
+            $native->{nodes}{'xCAT-genesis-base'}{build_uid}) if $native;
         push @build_steps, {
             id   => 'genesis',
             step => 'Build xCAT-genesis-base (per-target, OS-dependent)',
@@ -873,7 +892,8 @@ if (!$skip_build) {
     if (@build_steps) {
         if ($native) {
             for my $step (grep { $_->{id} ne 'genesis' } @build_steps) {
-                $step->{cmd} = native_owner_command($native, $target, $step->{cmd}, 1000);
+                $step->{cmd} = native_owner_command($native, $target, $step->{cmd},
+                    native_step_build_uid($native, $step));
             }
         }
         # Prefer the caller-supplied cap (global budget / active targets). Fall back to the old
@@ -1147,8 +1167,8 @@ sub target_profile {
             noarch_cfg   => $target,
             forcearch    => 0,
             epel         => 0,
-            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi python3-scp)],
-            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat python3-scp)],
+            required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
     }
@@ -1200,9 +1220,10 @@ sub install_mock_cfg {
 
 sub source_rpm_build_command {
     my ($builder, $target, $uniqueext, $result, $log, $work) = @_;
+    my $native = $NATIVE_PLANS{$target};
     my $cfg = "$work/mock-deterministic.cfg";
     if (!$dry_run) {
-        make_path($work, $result);
+        make_native_path($native, $work, $result);
         open my $fh, '>', $cfg or die "Cannot write $cfg: $!\n";
         print {$fh} "include('/etc/mock/$target.cfg')\n";
         print {$fh} "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$SOURCE_DATE_EPOCH'\n";
@@ -1234,7 +1255,7 @@ sub source_rpm_build_command {
                     . ' -i ' . sh_quote($path), log => "$log/spec-patch.log");
         }
         my $restamped = "$work/restamp-srpm";
-        make_path($restamped) unless $dry_run;
+        make_native_path($native, $restamped) unless $dry_run;
         $prefix = "$mock --buildsrpm --spec " . sh_quote($specs[0])
             . ' --sources ' . sh_quote("$top/SOURCES") . ' --resultdir ' . sh_quote($restamped)
             . ' && set -- ' . sh_quote($restamped) . '/*.src.rpm'
@@ -1244,12 +1265,21 @@ sub source_rpm_build_command {
     return $prefix . "$mock --rebuild $srpm --resultdir " . sh_quote($result);
 }
 
+# The uid a step builds as, from the catalog. xnba-undi declares 0, like xCAT-genesis-base, and the
+# step id does not say so: reading the uid off the id built it as 1000 against its own declaration.
+sub native_step_build_uid {
+    my ($plan, $step) = @_;
+    my %uids = map { ($plan->{nodes}{$_}{build_uid} // 1000) => 1 }
+        sort keys %{$step->{native_results} // {}};
+    die "Step $step->{id} mixes native build uids: " . join(', ', sort keys %uids) . "\n"
+        if keys(%uids) > 1;
+    return (keys %uids)[0] // 1000;
+}
+
 sub native_owner_command {
     my ($plan, $target, $command, $uid) = @_;
     my $overlay = $plan->{overlays}{$uid} // die "Missing native mock overlay\n";
-    my $script = 'mount --bind ' . sh_quote($overlay) . ' ' . sh_quote("/etc/mock/$target.cfg")
-        . ' && exec sh -c ' . sh_quote($command);
-    return 'unshare --mount --propagation private -- sh -c ' . sh_quote($script);
+    return MockBuildUtils::native_owner_command($overlay, "/etc/mock/$target.cfg", $command);
 }
 
 sub native_overlay {
@@ -1259,21 +1289,9 @@ sub native_overlay {
     return if $dry_run;
     my $base = "$work/native-base.cfg";
     copy("/etc/mock/$target.cfg", $base) or die "Cannot snapshot native mock configuration: $!\n";
-    my $url = $prereqs;
-    $url =~ s{([^A-Za-z0-9_./~-])}{sprintf('%%%02X', ord($1))}ge;
-    my $repo = "\n[xcat-native-inputs]\nname=xCAT native build prerequisites\nbaseurl=file://$url\n"
-        . "gpgkey=file://$url/repodata/repomd.xml.key\ngpgcheck=1\nrepo_gpgcheck=1\n"
-        . "enabled=1\nskip_if_unavailable=0\n";
     for my $key (1000, 0, 'procenv') {
-        my $uid = $key eq 'procenv' ? 1000 : $key;
         open my $fh, '>', $plan->{overlays}{$key} or die "Cannot write native overlay: $!\n";
-        print {$fh} 'include(' . JSON::PP->new->encode($base) . ")\n";
-        print {$fh} "config_opts['chrootuid'] = $uid\nconfig_opts['chrootgid'] = 1000\n";
-        print {$fh} "config_opts['dnf.conf'] += \"\"\"$repo\"\"\"\n";
-        print {$fh} "config_opts['plugin_conf']['bind_mount_enable'] = True\n";
-        print {$fh} "config_opts['plugin_conf']['procenv_enable'] = " . ($key eq 'procenv' ? 'False' : 'True') . "\n";
-        print {$fh} "config_opts['plugin_conf']['bind_mount_opts']['dirs'].append("
-            . '(' . JSON::PP->new->encode($prereqs) . ', ' . JSON::PP->new->encode($prereqs) . "))\n";
+        print {$fh} XCAT::NativeInputs::native_overlay_text($key, $base, $prereqs);
         close $fh or die "Cannot close native overlay: $!\n";
     }
     open my $ledger, '>', "$work/native-overlays.json" or die "Cannot record native overlays: $!\n";
@@ -1305,6 +1323,7 @@ sub build_native_inputs {
         my $node = $plan->{nodes}{$name};
         next unless $node->{type} eq 'srpm';
         my $result = "$work/native-results/$name";
+        make_native_path($plan, "$work/native-results") unless $dry_run;
         my $log = "$logs/native/$name";
         my $uniqueext = build_mock_uniqueext("$target-$run_id", ++$sequence, $name);
         my %builder = (%$node, srpm => $node->{staged} // "$work/native-inputs/$name/" . basename($node->{url}));
