@@ -15,7 +15,7 @@ use FindBin qw($RealBin);
 use Test::More;
 
 use lib $RealBin, "$RealBin/..";
-use MockBuildUtils qw(epel_target_profile);
+use MockBuildUtils qw(epel_target_profile epel_cell_path cell_lock_path);
 
 # A cross-built target: the rpms and the cell are the target's architecture, not the host's.
 {
@@ -46,6 +46,22 @@ for my $case (['alma+epel-10-x86_64',  'x86_64',  '10'],
     is($p->{rel},       $rel,  "$target on $host: EL release $rel");
     is($p->{arch},      $host, "$target on $host: builds natively for $host");
     is($p->{forcearch}, 0,     "$target on $host: no cross-build");
+}
+
+# The two EL10 targets deploy to different cells, so they take different cell locks. With the
+# architecture taken from the host, both resolved to rh10/x86_64 and to one lock: the aarch64 build
+# on xcat-master held .x86_64.lock, and the x86_64 build of the same run waited out its 100 retries
+# and exited before it built anything (xcat-dep-build-el10-x86_64 builds 92 and 93).
+{
+    my $repo = '/repo/yum/xcat-dep';
+    my %cell = map { $_ => epel_cell_path($repo, epel_target_profile("alma+epel-10-$_", 'x86_64')) }
+      qw(x86_64 aarch64);
+    is($cell{aarch64}, "$repo/rh10/aarch64", 'the aarch64 target deploys to the aarch64 cell');
+    is($cell{x86_64},  "$repo/rh10/x86_64",  'the x86_64 target deploys to the x86_64 cell');
+    isnt(cell_lock_path($cell{aarch64}), cell_lock_path($cell{x86_64}),
+        'the two EL10 targets of one host take different cell locks');
+    is(cell_lock_path($cell{aarch64}), "$repo/rh10/.aarch64.lock",
+        'a cell lock sits beside its cell');
 }
 
 # A name that is not an EPEL target is refused, so the caller can keep its own error. The

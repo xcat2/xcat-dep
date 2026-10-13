@@ -19,7 +19,7 @@ use FindBin qw($RealBin);
 use lib $RealBin, "$RealBin/lib";
 use XCAT::NFSLock ();
 use MockBuildUtils qw(sh_quote print_step version_matches required_pkgs rpm_in_cell resolve_mock_cfg
-                      NATIVE_BUILD_GID epel_target_profile
+                      NATIVE_BUILD_GID epel_target_profile epel_cell_path cell_lock_path
                       carry_over_rpms rpm_name rpm_arch rpm_source_rpm rpm_digests_ok
                       install_deps_packages install_deps_command missing_perl_modules
                       read_manifest derive_target_from_repo_path
@@ -2493,15 +2493,7 @@ sub target_cell {
     my ($target) = @_;
     my $native = openeuler_repo_subdir($target);
     return "$repo_dep/$native" if defined $native;
-    my $profile = target_profile($target);
-    return "$repo_dep/rh$profile->{rel}/$profile->{arch}";
-}
-
-# The lock of a repository cell <dir>/<arch> sits beside it, as <dir>/.<arch>.lock: the deploy
-# replaces the cell directory itself.
-sub cell_lock_path {
-    my ($cell) = @_;
-    return dirname($cell) . '/.' . basename($cell) . '.lock';
+    return epel_cell_path($repo_dep, target_profile($target));
 }
 
 # Release locks on every exit path, but only from the process that acquired them.

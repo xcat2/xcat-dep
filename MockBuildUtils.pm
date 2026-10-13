@@ -25,6 +25,7 @@ our @EXPORT_OK = qw(
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg epel_target_profile
+    epel_cell_path cell_lock_path
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -908,6 +909,24 @@ sub epel_target_profile {
     my ($rel, $arch) = $target =~ /epel-(\d+)-(.+)\z/;
     return undef unless defined $rel && defined $arch;
     return { rel => $rel, arch => $arch, forcearch => ($arch eq $host_arch ? 0 : 1) };
+}
+
+# epel_cell_path($repo_dep, $profile): the repository cell an EPEL target deploys,
+# <repo-dep>/rh<rel>/<arch>, from the profile epel_target_profile returns.
+#
+# The deploy, the carry-over and the cell lock all take the path from here, so the lock covers the
+# directory the deploy writes. Two targets share a lock exactly when they share a cell.
+sub epel_cell_path {
+    my ($repo_dep, $profile) = @_;
+    return undef unless defined $repo_dep && $profile;
+    return "$repo_dep/rh$profile->{rel}/$profile->{arch}";
+}
+
+# cell_lock_path($cell): the lock of a repository cell <dir>/<arch> sits beside it, as
+# <dir>/.<arch>.lock, because the deploy replaces the cell directory itself.
+sub cell_lock_path {
+    my ($cell) = @_;
+    return dirname($cell) . '/.' . basename($cell) . '.lock';
 }
 
 # resolve_mock_cfg($os_id, $rel, $arch[, $cfg_dir]): the mock config for EL release $rel on this
