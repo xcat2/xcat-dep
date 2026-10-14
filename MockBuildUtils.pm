@@ -25,6 +25,7 @@ our @EXPORT_OK = qw(
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
+    make_traversable_path
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -922,14 +923,23 @@ sub resolve_mock_cfg {
 }
 
 # mock's own loader reads the configuration, so include() and the assignments around it resolve as
-# they do in a build. With no chrootuid, the loader returns the uid that runs it, as mock does.
+# they do in a build. With no chrootuid, the loader returns the caller, as mock does: as root, the
+# user that SUDO_UID, USERHELPER_UID or PKEXEC_UID names.
 my $MOCK_CHROOTUID_LOADER = <<'PYTHON';
+import os
 import sys
 try:
     from mockbuild.config import MOCKCONFDIR, load_config
+    from mockbuild.uid import setup_uid_manager
 except ImportError:
     sys.exit('mock is not installed: cannot import mockbuild.config')
-print(load_config(MOCKCONFDIR, sys.argv[1])['chrootuid'])
+args = (MOCKCONFDIR, sys.argv[1])
+if os.geteuid() == 0:
+    # As mock main(): load the configuration as the user that sudo names.
+    opts = setup_uid_manager().run_in_subprocess_without_privileges(load_config, *args)
+else:
+    opts = load_config(*args)
+print(opts['chrootuid'])
 PYTHON
 
 # mock_chroot_uid($cfg): the uid mock builds as with configuration file $cfg.
@@ -943,15 +953,28 @@ sub mock_chroot_uid {
     return $1;
 }
 
+# make_traversable_path(@dirs): make_path(@dirs), then give mode 0755 to each directory it created,
+# because make_path applies the umask. Directories that already exist keep their mode.
+# Returns the directories it created.
+sub make_traversable_path {
+    my @made = make_path(@_);
+    for my $dir (@made) {
+        chmod 0755, $dir or die "Cannot make $dir traversable: $!\n";
+    }
+    return @made;
+}
+
 # mock_result_dirs($dir, $cfg): create the three --resultdir directories one package build gives
 # mock, below $dir, owned by the uid mock builds as with $cfg. mock 6.8 reloads its uid manager from
-# chrootuid, so it opens state.log, build.log and root.log in --resultdir as that uid.
+# chrootuid, so it opens state.log, build.log and root.log in --resultdir as that uid. The parents
+# that this sub creates get mode 0755, so that uid can reach the result directories.
 sub mock_result_dirs {
     my ($dir, $cfg) = @_;
     my $uid = mock_chroot_uid($cfg);
     my @dirs = map { "$dir/$_" } qw(srpm restamp-srpm rpm);
+    make_traversable_path($dir);
+    make_path(@dirs);
     for my $result (@dirs) {
-        make_path($result);
         chown $uid, -1, $result or die "Cannot give $result to uid $uid: $!\n";
     }
     return @dirs;

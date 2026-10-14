@@ -10,7 +10,7 @@ use FindBin qw($RealBin);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(mock_result_dirs);
+use MockBuildUtils qw(mock_result_dirs make_traversable_path);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -335,7 +335,8 @@ if (@packages && $jobs > scalar(@packages)) {
 
 make_path($result_dir);
 make_path($log_dir);
-make_path($work_dir);
+# mock reaches its result directories through the work directory.
+make_traversable_path($work_dir);
 
 print_step("Configuration");
 print "repo_root:   $repo_root\n";
@@ -513,7 +514,7 @@ sub build_package {
     my $status_file = "$pkg_log/status.txt";
 
     remove_tree($pkg_run_dir) if -d $pkg_run_dir;
-    make_path($pkg_run_dir);
+    make_traversable_path($pkg_run_dir);
     make_path($pkg_result);
     make_path($pkg_log);
     # Clear any status/error left by an earlier run in a reused log dir BEFORE building, so a crash
