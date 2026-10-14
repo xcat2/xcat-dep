@@ -8,11 +8,11 @@ use warnings;
 use FindBin qw($RealBin);
 use File::Basename qw(basename);
 use File::Temp qw(tempdir);
-use POSIX ();
 use Test::More;
 
-use lib $RealBin, "$RealBin/..";
+use lib $RealBin, "$RealBin/..", "$RealBin/lib";
 use MockBuildUtils qw(mock_result_dirs);
+use XCAT::MockResultTest qw(writable_as);
 
 # Flush before the first fork below, or the child repeats this file's TAP output on exit.
 $| = 1;
@@ -48,27 +48,26 @@ SKIP: {
     }
 }
 
-done_testing();
+# A first build under umask 077: mock_result_dirs creates the work and package directories too.
+my $fresh = tempdir(CLEANUP => 1);
+my $fresh_mode = (stat $fresh)[2] & 07777;
+my $umask = umask 077;
+my @fresh = mock_result_dirs("$fresh/work/perl-Net-DNS", $cfg);
+umask $umask;
+is((stat $_)[2] & 07777, 0755, "the new parent $_ is traversable")
+    for "$fresh/work", "$fresh/work/perl-Net-DNS";
+is((stat $fresh)[2] & 07777, $fresh_mode, 'the existing directory keeps its mode');
 
-# writable_as($uid, $dir): true when a process running as $uid can create a log in $dir. The child
-# exits 2 rather than reporting a write it made as root, so a failed setuid cannot read as a pass.
-sub writable_as {
-    my ($uid, $dir) = @_;
-    my $probe = "$dir/state.log";
-    unlink $probe;
-    my $pid = fork() // die "fork: $!\n";
-    if (!$pid) {
-        $) = "$uid $uid";
-        $( = $uid;
-        POSIX::setuid($uid);
-        POSIX::_exit(2) if $> != $uid || $< != $uid;
-        my $fh;
-        my $ok = open($fh, '>', $probe) ? 1 : 0;
-        close $fh if $ok;
-        POSIX::_exit($ok ? 0 : 1);
-    }
-    waitpid $pid, 0;
-    my $status = $?;
-    unlink $probe;
-    return $status == 0;
+SKIP: {
+    skip 'a directory owned by another uid needs root', 3 if $> != 0;
+    # /tmp, where the work directory goes, is traversable. Only the new directories are under test.
+    my $tree = tempdir(CLEANUP => 1);
+    chmod 0755, $tree or die "Cannot make $tree traversable: $!\n";
+    $build_uid = 1000;
+    my $umask = umask 077;
+    my @dirs = mock_result_dirs("$tree/work/perl-Net-DNS", $cfg);
+    umask $umask;
+    ok(writable_as(1000, $_), basename($_) . ' in a fresh tree takes a state.log from uid 1000') for @dirs;
 }
+
+done_testing();
