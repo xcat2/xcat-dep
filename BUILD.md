@@ -395,6 +395,17 @@ tracked prebuilt EFI payload and `syslinux-xcat` installs the prebuilt bootloade
 release tarball, so the noarch rpms carry the same payload as the ppc64le build. aarch64 is not
 part of the `--finalize-xcat-dep` cross-arch genesis copy.
 
+`aarch64` also builds on an x86_64 host. mock applies `--forcearch=aarch64` to the
+`alma+epel-10-aarch64` config when the host is not aarch64, so the chroot runs aarch64 binaries
+through `qemu-aarch64-static` and produces aarch64 rpms. The host needs that emulator and its
+`binfmt_misc` handler; without them mock warns at the start of the build and the chroot cannot run
+its own rpm scriptlets. EL packages no `qemu-user-static`, so take the static binary from a Fedora
+container, as the riscv64 host prerequisites do.
+
+A cross-build is slower than a native one and is otherwise the same build: the rpms and the
+repository cell carry the target architecture, not the host one, and the step timeout is the
+emulated bound.
+
 # riscv64 (EL10): cross-building on an x86_64 host
 
 There is no riscv64 build host in the xCAT build farm and no EPEL for riscv64, so the

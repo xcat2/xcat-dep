@@ -130,11 +130,17 @@ my $grub_spec = slurp($grub_spec_file);
     # build does not carry, or efi_uga, makes grub2-mkimage fail.
   SKIP: {
         my $moddir = '/usr/lib/grub/arm64-efi';
-        skip 'grub2-mkimage or the arm64-efi grub modules are not installed', 4
-            unless -d $moddir && system('command -v grub2-mkimage >/dev/null 2>&1') == 0;
+        # Debian and Ubuntu name the tool grub-mkimage and EL names it grub2-mkimage. The CI
+        # runner is Ubuntu, so looking only for the EL name skips the checks exactly where the
+        # suite runs, which measures nothing.
+        my ($mkimage) = grep { system("command -v $_ >/dev/null 2>&1") == 0 }
+                        qw(grub2-mkimage grub-mkimage);
+        skip 'no grub2-mkimage or grub-mkimage, or the arm64-efi grub modules are not installed', 4
+            unless -d $moddir && $mkimage;
         skip 'no grub2-mkimage command in the spec', 4 if $cmd eq '';
         my $tmp = tempdir(CLEANUP => 1);
         my $run = $cmd;
+        $run =~ s/\Agrub2-mkimage\b/$mkimage/;
         $run =~ s/(?<=\s-o\s)\S+/$tmp\/grubaa64.efi/;
         is(system("$run >/dev/null 2>&1"), 0, "the spec's grub2-mkimage command succeeds");
         my $image = '';
