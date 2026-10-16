@@ -22,6 +22,7 @@ use XCAT::BuildUtils qw(
 );
 use XCAT::GenesisRelease qw(
   architectures
+  oe_source_dir
   deb_package_name
   minimum_release_version
   rpm_package_name
@@ -62,9 +63,8 @@ my %requested = map { $_ => 1 } @requested_architectures;
 umask(0022);
 
 $xcat_source = abs_path($xcat_source) or die "Cannot resolve xcat-core source\n";
-for my $path (qw(Version xCAT-genesis-builder/oe/build xCAT-genesis-builder/oe/export)) {
-    die "xcat-core source is missing $path\n" unless -f "$xcat_source/$path";
-}
+die "xcat-core source is missing Version\n" unless -f "$xcat_source/Version";
+my $oe_dir = oe_source_dir($xcat_source);
 die "xcat-core checkout is not clean\n"
   if capture_command('git', '-C', $xcat_source, 'status', '--porcelain') ne '';
 
@@ -79,7 +79,7 @@ if ($xcat_ref ne '') {
       unless $revision eq $expected;
 }
 if ($requested{s390x}) {
-    my $architecture_reporter = "$xcat_source/xCAT-genesis-builder/oe/build";
+    my $architecture_reporter = "$xcat_source/$oe_dir/build";
     my $probe_work = tempdir('xcat-genesis-capabilities.XXXXXX', TMPDIR => 1, CLEANUP => 1);
     my $supported_output;
     {
@@ -133,7 +133,7 @@ local $ENV{XCAT_GENESIS_WORK_DIR} = $oe_work;
 {
     local $ENV{TMPDIR} = $oe_tmp;
     make_path($oe_tmp);
-    run_command("$xcat_source/xCAT-genesis-builder/oe/build", @requested_architectures);
+    run_command("$xcat_source/$oe_dir/build", @requested_architectures);
 }
 my $effective_deploy = "$oe_tmp/deploy";
 die "Invalid OpenEmbedded deploy directory: $effective_deploy\n"
@@ -143,7 +143,7 @@ for my $architecture (@requested_architectures) {
     my $export = "$work/exports/$architecture";
     make_path(dirname($export));
     run_command(
-        "$xcat_source/xCAT-genesis-builder/oe/export",
+        "$xcat_source/$oe_dir/export",
         $architecture, $effective_deploy, $export,
     );
 
