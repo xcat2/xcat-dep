@@ -628,17 +628,6 @@
       "runtime": false
     },
     {
-      "name": "perl-Net-DNS",
-      "type": "publisher",
-      "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Net-DNS-1.40-1.oe2403.noarch.rpm",
-      "sha256": "c6d9932ccfaae2e515635b00204e86b5121516f5693d4fb345ae0d979bfbde23",
-      "outputs": [
-        "perl-Net-DNS"
-      ],
-      "needs": [],
-      "runtime": true
-    },
-    {
       "name": "perl-Package-Generator",
       "type": "publisher",
       "url": "https://repo.openeuler.org/openEuler-24.03-LTS/everything/x86_64/Packages/perl-Package-Generator-1.106-14.oe2403.noarch.rpm",
@@ -1029,6 +1018,17 @@
       "type": "owner",
       "outputs": [
         "perl-Net-Telnet"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
+      "name": "perl-Net-DNS",
+      "type": "owner",
+      "outputs": [
+        "perl-Net-DNS"
       ],
       "needs": [
         "procenv"

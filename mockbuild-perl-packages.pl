@@ -6,8 +6,11 @@ use Cwd qw(abs_path);
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
+use FindBin qw($RealBin);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
+use lib $RealBin, "$RealBin/lib";
+use MockBuildUtils qw(mock_result_dirs make_traversable_path);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -332,7 +335,8 @@ if (@packages && $jobs > scalar(@packages)) {
 
 make_path($result_dir);
 make_path($log_dir);
-make_path($work_dir);
+# mock reaches its result directories through the work directory.
+make_traversable_path($work_dir);
 
 print_step("Configuration");
 print "repo_root:   $repo_root\n";
@@ -510,7 +514,7 @@ sub build_package {
     my $status_file = "$pkg_log/status.txt";
 
     remove_tree($pkg_run_dir) if -d $pkg_run_dir;
-    make_path($pkg_run_dir);
+    make_traversable_path($pkg_run_dir);
     make_path($pkg_result);
     make_path($pkg_log);
     # Clear any status/error left by an earlier run in a reused log dir BEFORE building, so a crash
@@ -518,6 +522,9 @@ sub build_package {
     unlink $status_file, "$pkg_log/error.txt";
 
     my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $pkg_run_dir);
+    # This script runs as root, and mock writes a --resultdir as the uid its configuration names.
+    my ($srpm_result, $restamp_result, $rebuild_result) =
+        mock_result_dirs($pkg_run_dir, $det_mock_cfg);
 
     my $run_log = "$pkg_log/run.log";
     open my $runfh, '>', $run_log or die "Cannot write $run_log: $!\n";
@@ -536,8 +543,6 @@ sub build_package {
     my $ok = 0;
 
     my $srpm_path = '';
-    my $rebuild_result = "$pkg_run_dir/rpm";
-    make_path($rebuild_result);
 
     eval {
         if ($cfg->{mode} eq 'srpm') {
@@ -556,8 +561,6 @@ sub build_package {
                 my ($espec) = sort glob("$ext/SPECS/*.spec");
                 die "No spec found after unpacking srpm for $pkg\n" if !$espec;
                 append_release_suffix($espec, $release_suffix);
-                my $restamp_result = "$pkg_run_dir/restamp-srpm";
-                make_path($restamp_result);
                 run(
                     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
                     " --buildsrpm --spec " . sh_quote($espec) .
@@ -611,8 +614,6 @@ sub build_package {
                 " > " . sh_quote("$pkg_log/prep.log") . " 2>&1"
             );
 
-            my $srpm_result = "$pkg_run_dir/srpm";
-            make_path($srpm_result);
             run_mock(
                 "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
                 " --buildsrpm --spec " . sh_quote($spec) .

@@ -7,7 +7,7 @@ use File::Basename qw(basename dirname);
 use File::Copy qw(copy);
 use File::Glob qw(bsd_glob);
 use File::Find;
-use File::Path qw(remove_tree);
+use File::Path qw(make_path remove_tree);
 use lib dirname(__FILE__) . '/lib';
 use XCAT::NFSLock ();
 use Sys::Hostname;
@@ -24,8 +24,8 @@ our @EXPORT_OK = qw(
     rpm_version rpm_release rpm_sigmd5 rpm_is_signed restamp_release_line
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
-    build_mock_uniqueext rpm_in_cell resolve_mock_cfg epel_target_profile
-    epel_cell_path cell_lock_path
+    build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
+    make_traversable_path epel_target_profile epel_cell_path cell_lock_path
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -953,6 +953,64 @@ sub resolve_mock_cfg {
     my $short = $short_forms{$os_id} // $os_id;
     die "Could not find mock config for ${os_id}+epel-${rel}-${arch} "
       . "(tried $cfg_dir/${os_id}+epel-${rel}-${arch}.cfg and $cfg_dir/${short}+epel-${rel}-${arch}.cfg)\n";
+}
+
+# mock's own loader reads the configuration, so include() and the assignments around it resolve as
+# they do in a build. With no chrootuid, the loader returns the caller, as mock does: as root, the
+# user that SUDO_UID, USERHELPER_UID or PKEXEC_UID names.
+my $MOCK_CHROOTUID_LOADER = <<'PYTHON';
+import os
+import sys
+try:
+    from mockbuild.config import MOCKCONFDIR, load_config
+    from mockbuild.uid import setup_uid_manager
+except ImportError:
+    sys.exit('mock is not installed: cannot import mockbuild.config')
+args = (MOCKCONFDIR, sys.argv[1])
+if os.geteuid() == 0:
+    # As mock main(): load the configuration as the user that sudo names.
+    opts = setup_uid_manager().run_in_subprocess_without_privileges(load_config, *args)
+else:
+    opts = load_config(*args)
+print(opts['chrootuid'])
+PYTHON
+
+# mock_chroot_uid($cfg): the uid mock builds as with configuration file $cfg.
+sub mock_chroot_uid {
+    my ($cfg) = @_;
+    open my $pipe, '-|', 'python3', '-c', $MOCK_CHROOTUID_LOADER, $cfg
+        or die "Cannot run python3 to load $cfg: $!\n";
+    my $out = do { local $/; <$pipe> } // '';
+    close $pipe or die "mock cannot load $cfg\n";
+    $out =~ /\A(\d+)\n\z/ or die "mock gives no chrootuid for $cfg\n";
+    return $1;
+}
+
+# make_traversable_path(@dirs): make_path(@dirs), then give mode 0755 to each directory it created,
+# because make_path applies the umask. Directories that already exist keep their mode.
+# Returns the directories it created.
+sub make_traversable_path {
+    my @made = make_path(@_);
+    for my $dir (@made) {
+        chmod 0755, $dir or die "Cannot make $dir traversable: $!\n";
+    }
+    return @made;
+}
+
+# mock_result_dirs($dir, $cfg): create the three --resultdir directories one package build gives
+# mock, below $dir, owned by the uid mock builds as with $cfg. mock 6.8 reloads its uid manager from
+# chrootuid, so it opens state.log, build.log and root.log in --resultdir as that uid. The parents
+# that this sub creates get mode 0755, so that uid can reach the result directories.
+sub mock_result_dirs {
+    my ($dir, $cfg) = @_;
+    my $uid = mock_chroot_uid($cfg);
+    my @dirs = map { "$dir/$_" } qw(srpm restamp-srpm rpm);
+    make_traversable_path($dir);
+    make_path(@dirs);
+    for my $result (@dirs) {
+        chown $uid, -1, $result or die "Cannot give $result to uid $uid: $!\n";
+    }
+    return @dirs;
 }
 
 1;
