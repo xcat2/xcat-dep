@@ -1,0 +1,13 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+# Upstream has no test suite. Key generation runs the OpenSSL code that the key exchange uses.
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	./uftp_keymgt -g ec:secp256r1 check.key
+	./uftp_keymgt check.key 2>&1 | grep 'ECDSA, curve'
+	rm -f check.key
+endif

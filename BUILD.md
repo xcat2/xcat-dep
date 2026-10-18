@@ -99,10 +99,12 @@ matching MN and installs xCAT + the freshly built xcat-dep there).
   `conserver-xcat` explicitly (it is **not** pulled in as a dependency), disable the `goconserver`
   service and enable the `conserver` service.
 - **`uftp`** is UFTP 5.0.4, the multicast file transfer tool, built from the upstream source with
-  the fixes in `uftp/00*.patch`, for every EL target. RHEL and EPEL do not ship it. xCAT does not require it: install `uftp` on the management
+  the fixes in `uftp/00*.patch`. It is built as an rpm for every EL
+  target and as a deb for every Ubuntu target. RHEL and EPEL do not ship it, and Ubuntu ships UFTP
+  4.10, which does not work with UFTP 5. xCAT does not require it: install `uftp` on the management
   node (the `uftp` sender) and in a diskless image (the `uftpd` receiver) to distribute images over
-  UFTP. The package enables no service. It is EL-only for now: there is no deb, and the `uftp` 4.10
-  that Ubuntu ships is not supported, because the sender and the receiver must both run UFTP 5.
+  UFTP. The package enables no service. The deb replaces the Ubuntu `uftp` package, and removes the
+  init script and the logrotate file of that package, which started `uftpd` as a service.
 
 # Skip and Control Flags
 
@@ -672,7 +674,7 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
 - **`sbuild-all.pl`** — the orchestrator (run as **root** on the Ubuntu build host: the amd64 host for
   `amd64` and, through qemu-user, for `riscv64`; the ppc host for `ppc64el`).
 - **`BuildUtils.pm`** — shared, unit-tested helpers + the canonical CLI spec (mirrors `MockBuildUtils.pm`).
-- **`<dep>/sbuild.pl`** ×7 — per-package builders (mirror `<dep>/mockbuild.pl`); each drives its
+- **`<dep>/sbuild.pl`** ×9 — per-package builders (mirror `<dep>/mockbuild.pl`); each drives its
   maintained `debian/` in the chroot and collects the `.deb`(s). Invoked by `sbuild-all.pl`.
 - **`debs-manifest.conf`** — per `[<codename>-<arch>]` required set + version pins.
 - **`t/sbuild-all.t`** — unit tests for the pure helpers (`prove t/`).
