@@ -1,0 +1,39 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 7/23] Reject DONE for a section the file does not have
+
+handle_done() set nak_section_last from the section of a DONE without
+a check. When the NAK timer expired, get_naks() then read and wrote
+section_done and read naklist past their ends. Reject a DONE for a
+section past the end of the file, and make get_naks() return no NAKs
+for such a section. An empty file has no sections, and its DONE names
+section 0, so that DONE is still accepted.
+---
+ client_transfer.c | 6 ++++++
+ 1 file changed, 6 insertions(+)
+
+diff --git a/client_transfer.c b/client_transfer.c
+index e5d7af0..ba1ff82 100644
+--- a/client_transfer.c
++++ b/client_transfer.c
+@@ -870,6 +870,7 @@ unsigned int get_naks(struct group_list_t *group,
+     unsigned int nakidx, naklistidx, numnaks;
+     
+     if ((group->phase == PHASE_MIDGROUP) || (group->file_id == 0) ||
++        (section >= group->fileinfo.sections) ||
+         (group->fileinfo.section_done[section])) {
+         *naks = NULL;
+         return 0;
+@@ -951,6 +952,11 @@ void handle_done(struct group_list_t *group, const unsigned char *message,
+         // We're at end of group, so set local file_id=0 to flag this
+         group->file_id = 0;
+     }
++    if (group->file_id && (group->phase != PHASE_MIDGROUP) &&
++            (section > 0) && (section >= group->fileinfo.sections)) {
++        glog2(group, "Rejecting DONE: invalid section %d", section);
++        return;
++    }
+ 
+     if (group->file_id) {
+         glog2(group, "Got DONE message for section %d", section);

@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 6/23] Reject a last FILESEG of the wrong length
+
+handle_fileseg() checked the length of every block except the last.
+A short last block fit in the disk cache, but the cache length then
+used the tail size of the file, so flush_disk_cache() wrote bytes from
+past the cache into the file. A long copy of the last block that
+arrived while the block was in the cache was copied past the cache.
+Reject a last block whose length is not the tail size of the file.
+---
+ client_transfer.c | 11 ++++++++---
+ 1 file changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/client_transfer.c b/client_transfer.c
+index de88cef..e5d7af0 100644
+--- a/client_transfer.c
++++ b/client_transfer.c
+@@ -657,7 +657,7 @@ void handle_fileseg(struct group_list_t *group, const unsigned char *message,
+     const struct tfmcc_data_info_he *tfmcc;
+     const unsigned char *data;
+     const uint8_t *he;
+-    int datalen, section, cache_offset, status_idx;
++    int datalen, expected_len, section, cache_offset, status_idx;
+     uint32_t seq, i, sec_block, blocks_this_sec;
+     unsigned extlen;
+ 
+@@ -715,8 +715,13 @@ void handle_fileseg(struct group_list_t *group, const unsigned char *message,
+         return;
+     }
+ 
+-    if ((datalen != group->blocksize) &&
+-            (seq != group->fileinfo.blocks - 1)) {
++    if (seq == group->fileinfo.blocks - 1) {
++        expected_len = (int)(group->fileinfo.size -
++                             ((f_offset_t)seq * group->blocksize));
++    } else {
++        expected_len = group->blocksize;
++    }
++    if (datalen != expected_len) {
+         glog2(group, "Rejecting FILESEG: invalid data size %d", datalen);
+         return;
+     }

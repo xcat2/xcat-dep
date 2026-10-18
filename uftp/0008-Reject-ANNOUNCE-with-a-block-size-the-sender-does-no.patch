@@ -1,0 +1,50 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 8/23] Reject ANNOUNCE with a block size the sender does not accept
+
+read_announce() of the client and of the proxy took the block size of
+an ANNOUNCE without a check. A block size of 0 made the client divide
+by zero in read_fileinfo(). A block size above the packet size made
+the proxy read and copy that many bytes of NAKs past its 9000 byte
+buffers. Reject an ANNOUNCE whose block size is outside the range that
+the sender accepts, 512 to MAXMTU - 200 bytes.
+---
+ client_announce.c | 6 ++++++
+ proxy_upstream.c  | 6 ++++++
+ 2 files changed, 12 insertions(+)
+
+diff --git a/client_announce.c b/client_announce.c
+index 86555f3..d9f0195 100644
+--- a/client_announce.c
++++ b/client_announce.c
+@@ -851,6 +851,12 @@ int read_announce(struct group_list_t *group, unsigned char *packet,
+         memcpy(&group->multi.sin.sin_addr.s_addr, privatemcast, iplen);
+     }
+     group->fileinfo.fd = -1;
++    if ((group->blocksize < 512) || (group->blocksize > MAXMTU - 200)) {
++        glog1(group, "Rejecting ANNOUNCE from %08X: invalid block size %u",
++                     ntohl(group->src_id), group->blocksize);
++        send_abort(group, "Invalid block size");
++        return 0;
++    }
+     if (server_count) {
+         group->server_fp = fp_lookup(group->src_id, server_list, server_count);
+         if (!group->server_fp) {
+diff --git a/proxy_upstream.c b/proxy_upstream.c
+index e2545e4..9a9fc98 100644
+--- a/proxy_upstream.c
++++ b/proxy_upstream.c
+@@ -393,6 +393,12 @@ int read_announce(struct pr_group_list_t *group, unsigned char *packet,
+         send_upstream_abort(group, 0, "Invalid header size");
+         return 0;
+     }
++    if ((group->blocksize < 512) || (group->blocksize > MAXMTU - 200)) {
++        glog1(group, "Rejecting ANNOUNCE from %08X: invalid block size %u",
++                     ntohl(group->src_id), group->blocksize);
++        send_upstream_abort(group, 0, "Invalid block size");
++        return 0;
++    }
+     if ((announce->hlen * 4U) > sizeof(struct announce_h) + (2U * iplen)) {
+         he = (uint8_t *)announce + sizeof(struct announce_h) + (2U * iplen);
+         if (*he == EXT_ENC_INFO) {

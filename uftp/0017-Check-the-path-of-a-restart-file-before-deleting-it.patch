@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 17/23] Check the path of a restart file before deleting it
+
+With -T, a group that restarts a failed transfer and then ends
+without that file deletes the partial file of the earlier run under
+the temp directory. A FILEINFO of the restarted group could first
+replace a directory of that path with a symbolic link, and the
+deletion then removed a file outside the temp directory. Leave the
+file alone when a directory in its path is a symbolic link.
+---
+ client_common.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/client_common.c b/client_common.c
+index f89c14d..2a21c5b 100644
+--- a/client_common.c
++++ b/client_common.c
+@@ -506,6 +506,11 @@ void file_cleanup(struct group_list_t *group, int abort_session)
+                 glog0(group,"Max pathname length exceeded: %s%c_group_%08X%c%s",
+                             tempdir, PATH_SEP, group->group_id, PATH_SEP,
+                             group->restartinfo->name);
++            } else if (link_in_path(filepath,
++                    len - strlen(group->restartinfo->name) - 1)) {
++                // A later FILEINFO can replace a directory of the path.
++                glog0(group, "Leaving %s: a directory in its path is a "
++                             "symbolic link", filepath);
+             } else {
+                 unlink(filepath);
+             }

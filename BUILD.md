@@ -49,6 +49,7 @@ This guide uses the following placeholders consistently:
 - `<REPO_ROOT>/syslinux/mockbuild.pl`
 - `<REPO_ROOT>/goconserver/mockbuild.pl`
 - `<REPO_ROOT>/conserver/mockbuild.pl`
+- `<REPO_ROOT>/uftp/mockbuild.pl`
 - `<REPO_ROOT>/xnba/mockbuild.pl`
 - `<REPO_ROOT>/ipxe-xcat/mockbuild.pl`
 - `<REPO_ROOT>/mockbuild-perl-packages.pl`
@@ -64,7 +65,8 @@ one `[<target>]` section (matching `--target`, e.g. `[alma+epel-10-x86_64]`) of
 listed for it; a package absent from a target's section is not built for that target (the per-EL
 perl set differs because the OS/EPEL already provides some modules). Note `conserver-xcat` is **not**
 pulled in by `dnf install xCAT` (goconserver superseded it), yet it is listed in — and therefore
-built for — every target, because some deployments still use it. The lists were derived empirically — on a clean MN of each
+built for — every target, because some deployments still use it. `uftp` is not pulled in either,
+and every EL target lists it (see "Packages notes"). The lists were derived empirically — on a clean MN of each
 (EL, arch), `dnf install xCAT` from xcat.org latest, and the packages whose `from_repo=xcat-dep`
 are exactly the required set. See the file header for details.
 
@@ -96,6 +98,11 @@ matching MN and installs xCAT + the freshly built xcat-dep there).
   compatibility. Core packages depend on `goconserver`; to use conserver you must install
   `conserver-xcat` explicitly (it is **not** pulled in as a dependency), disable the `goconserver`
   service and enable the `conserver` service.
+- **`uftp`** is UFTP 5.0.4, the multicast file transfer tool, built from the upstream source with
+  the fixes in `uftp/00*.patch`, for every EL target. RHEL and EPEL do not ship it. xCAT does not require it: install `uftp` on the management
+  node (the `uftp` sender) and in a diskless image (the `uftpd` receiver) to distribute images over
+  UFTP. The package enables no service. It is EL-only for now: there is no deb, and the `uftp` 4.10
+  that Ubuntu ships is not supported, because the sender and the receiver must both run UFTP 5.
 
 # Skip and Control Flags
 
@@ -104,7 +111,7 @@ Use these flags to skip specific operations:
 - `--skip-genesis`
   - Skips the `xCAT-genesis-base` build (`<XCAT_SOURCE>/buildrpms.pl --package xCAT-genesis-base`).
 - `--skip-xcat-dep`
-  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `xnba-undi`, `ipxe-xcat`).
+  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `uftp`, `xnba-undi`, `ipxe-xcat`).
 - `--skip-perl`
   - Skips `<REPO_ROOT>/mockbuild-perl-packages.pl`.
   - With any of the three flags above, the run repository, the tarball and the deployed cell keep
@@ -484,7 +491,7 @@ missing, and then builds the `[rocky-10-riscv64-xcat]` section of `packages-mani
 
 | what | how |
 |---|---|
-| ipmitool-xcat, conserver-xcat | `mock --rebuild` in the riscv64 chroot (emulated), `--target-arch riscv64` |
+| ipmitool-xcat, conserver-xcat, uftp | `mock --rebuild` in the riscv64 chroot (emulated), `--target-arch riscv64` |
 | goconserver | cross-compiled on the host (`GOARCH=riscv64`), packaged with `rpmbuild --target riscv64` |
 | grub2-xcat (noarch) | built in the native, EPEL-free `rocky-10-x86_64` chroot |
 | perl list6 + EPEL gap (`--epel-gap`) | `mockbuild-perl-packages.pl --target-arch riscv64 --noarch-mock-cfg rocky-10-x86_64 --epel-gap`: XS modules in the riscv64 chroot, noarch modules in the native chroot |
@@ -539,8 +546,8 @@ deployable repo `<OUTPUT>/xcat-dep/rh10/riscv64/` (rpms, `repodata/`, `xcat-dep.
 `mklocalrepo.sh`, `buildinfo.txt`). Builder failures are tolerated and listed at the end.
 The cross-built rpms are smoke-tested without installing them on the host: ipmitool-xcat,
 conserver-xcat and the XS perl modules inside the emulated chroot, goconserver by running
-its binaries through the binfmt handler. No build step installs an rpm on the build host
-(see "Per-target package manifest").
+its binaries through the binfmt handler, uftp by the `%check` of its spec in the emulated
+chroot. No build step installs an rpm on the build host (see "Per-target package manifest").
 
 # Validation Commands
 
