@@ -65,6 +65,7 @@ jobs:
             lib/XCAT/GenesisRelease.pm \
             mockbuild-all.pl \
             native/uftp-fixes.t \
+            native/uftp-openeuler.t \
             t/build_utils.t \
             t/common-repo-gate.t \
             t/genesis_openembedded_release.t \
@@ -110,7 +111,8 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           prove -v native/buildinfo_provenance.t native/goconserver-openeuler.t \
             native/openeuler-power-inputs.t native/openeuler-srpm.t \
-            native/xnba-release-suffix.t native/uftp-fixes.t 2>&1 | tee native.tap
+            native/xnba-release-suffix.t native/uftp-fixes.t \
+            native/uftp-openeuler.t 2>&1 | tee native.tap
           # prove returns success when a test file skips all its checks.
           if grep -E '^1\.\.0 # SKIP|^native/[^ ]+\.t \.+ skipped' native.tap; then
             echo 'a native test file was skipped' >&2

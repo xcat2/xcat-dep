@@ -64,7 +64,6 @@ for my $path (
 my %exempt = (
     'conserver-xcat' => 'xCAT requires goconserver; no core rpm requires conserver-xcat',
     'elilo-xcat'     => 'no core rpm requires elilo-xcat',
-    'uftp'           => 'no core rpm requires uftp',
 );
 my $reference = 'alma+epel-10-ppc64le';
 ok(scalar keys %{$manifest{$reference}}, "$reference is the reference section and is not empty");
