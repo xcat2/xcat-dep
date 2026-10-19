@@ -66,7 +66,7 @@ listed for it; a package absent from a target's section is not built for that ta
 perl set differs because the OS/EPEL already provides some modules). Note `conserver-xcat` is **not**
 pulled in by `dnf install xCAT` (goconserver superseded it), yet it is listed in — and therefore
 built for — every target, because some deployments still use it. `uftp` is not pulled in either,
-and every EL target lists it (see "Packages notes"). The lists were derived empirically — on a clean MN of each
+and every EL and openEuler target lists it (see "Packages notes"). The lists were derived empirically — on a clean MN of each
 (EL, arch), `dnf install xCAT` from xcat.org latest, and the packages whose `from_repo=xcat-dep`
 are exactly the required set. See the file header for details.
 
@@ -99,9 +99,9 @@ matching MN and installs xCAT + the freshly built xcat-dep there).
   `conserver-xcat` explicitly (it is **not** pulled in as a dependency), disable the `goconserver`
   service and enable the `conserver` service.
 - **`uftp`** is UFTP 5.0.4, the multicast file transfer tool, built from the upstream source with
-  the fixes in `uftp/00*.patch`. It is built as an rpm for every EL
-  target and as a deb for every Ubuntu target. RHEL and EPEL do not ship it, and Ubuntu ships UFTP
-  4.10, which does not work with UFTP 5. xCAT does not require it: install `uftp` on the management
+  the fixes in `uftp/00*.patch`. It is built as an rpm for every EL and openEuler target and as a
+  deb for every Ubuntu target. RHEL, EPEL and openEuler do not ship it, and Ubuntu ships UFTP 4.10,
+  which does not work with UFTP 5. xCAT does not require it: install `uftp` on the management
   node (the `uftp` sender) and in a diskless image (the `uftpd` receiver) to distribute images over
   UFTP. The package enables no service. The deb replaces the Ubuntu `uftp` package, and removes the
   init script and the logrotate file of that package, which started `uftpd` as a service.
