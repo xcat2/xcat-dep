@@ -8,6 +8,7 @@ use XCAT::BuildUtils qw(digest_file read_lines relative_files);
 
 our @EXPORT_OK = qw(
   architectures
+  oe_source_dir
   deb_package_prefix
   deb_package_name
   minimum_release_version
@@ -34,6 +35,25 @@ my %RELEASE_ARCHITECTURES = (
     1 => \@RELEASE_V1_ARCHITECTURES,
     2 => \@RELEASE_V2_ARCHITECTURES,
 );
+
+# xcat-core 2a7364476 renamed xCAT-genesis-builder to xCAT-genesis-base. A dep build
+# serves both: the released core still carries the old name, and master carries the new
+# one. Take whichever the checkout has, and name both when it has neither.
+my @OE_SOURCE_DIRS = qw(xCAT-genesis-base/oe xCAT-genesis-builder/oe);
+
+sub oe_source_dir {
+    my ($xcat_source, @required) = @_;
+    @required = qw(build export) unless @required;
+
+    my @missing;
+    foreach my $dir (@OE_SOURCE_DIRS) {
+        my @absent = grep { !-f "$xcat_source/$dir/$_" } @required;
+        return $dir unless @absent;
+        push(@missing, map { "$dir/$_" } @absent);
+    }
+    die "xcat-core source has no OpenEmbedded Genesis builder: missing "
+      . join(', ', @missing) . "\n";
+}
 
 sub architectures {
     return @ARCHITECTURES;

@@ -1,11 +1,25 @@
 #!/usr/bin/make -f
 export CGO_ENABLED=0
+# Set explicitly, so the compiler never takes a distro default. A GOAMD64=v3 binary stops a
+# pre-AVX2 node with SIGILL.
+export GOAMD64=v1
 %:
 	dh $@
 override_dh_auto_configure:
+# The last recipe line reads GOAMD64 out of the binaries that were just compiled. An export line
+# can stop reaching the compiler, and a grep for that line passes when it does.
 override_dh_auto_build:
 	go build -trimpath -buildvcs=false -ldflags "-X main.Version=0.3.3" -o goconserver goconserver.go
 	go build -trimpath -buildvcs=false -ldflags "-X main.Version=0.3.3" -o congo cmd/congo.go
+	if [ "$$(go env GOARCH)" = amd64 ]; then \
+		for bin in goconserver congo; do \
+			setting=$$(go version -m $$bin | awk -F'\t' '$$2 == "build" && $$3 ~ /^GOAMD64=/ { print $$3 }'); \
+			if [ "$$setting" != "GOAMD64=v1" ]; then \
+				echo "FATAL: $$bin reports '$$setting', not GOAMD64=v1" >&2; \
+				exit 1; \
+			fi; \
+		done; \
+	fi
 override_dh_auto_install:
 	install -D -m 755 goconserver $(CURDIR)/debian/goconserver/usr/bin/goconserver
 	install -D -m 755 congo $(CURDIR)/debian/goconserver/usr/bin/congo

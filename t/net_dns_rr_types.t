@@ -73,7 +73,15 @@ if (($owner->{type} // '') eq 'publisher') {
 # when the built rpm does not match it. A pin below $KEY_FLOOR puts a Net::DNS without KEY back
 # into the repositories a service node reads, which have no EPEL copy to outrank it. An operator
 # pin (">= 0.80") accepts such a build too, so only an exact version is allowed here.
+# Net::DNS 1.56 fixes CVE-2026-64193 (EDNS EXTENDED-ERROR code injection) and CVE-2026-64194
+# (unbounded compression-pointer chains). A target ships either the published rpm its catalog pins
+# or the release this spec builds; that release, not the pin, is what reaches the repository.
+my $CVE_FLOOR = '1.56';
+
 for my $target (@targets) {
+    my $ships = $shipped{$target} // $version;
+    ok(version->parse($ships) >= version->parse($CVE_FLOOR),
+        "[$target] ships Net::DNS $CVE_FLOOR or newer ($ships), with CVE-2026-64193 and CVE-2026-64194 fixed");
     my $pin = $manifest{$target}{'perl-Net-DNS'};
     my $exact = $pin =~ /\A\d+(?:\.\d+)+\z/ ? 1 : 0;
     ok($exact, "[$target] the perl-Net-DNS pin ($pin) names one exact version");
