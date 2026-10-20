@@ -106,6 +106,47 @@ matching MN and installs xCAT + the freshly built xcat-dep there).
   UFTP. The package enables no service. The deb replaces the Ubuntu `uftp` package, and removes the
   init script and the logrotate file of that package, which started `uftpd` as a service.
 
+  Each file in `uftp/00*.patch` is a git commit, and its message gives the defect that it fixes.
+  To move the fixes to a new UFTP release, apply them to the current release in a git repository,
+  then rebase them onto the new release. `<new-archive>` is the path of the new release archive:
+
+  ```sh
+  mkdir uftp-src && cd uftp-src && git init -q &&
+    tar -xzf <xcat-dep>/uftp/uftp-<current>.tar.gz --strip-components=1 &&
+    git add -A && git commit -qm 'uftp <current>' && git tag old &&
+    git am <xcat-dep>/uftp/00*.patch && git branch fixes &&
+    git switch --detach old && git rm -rq . &&
+    tar -xzf <new-archive> --strip-components=1 &&
+    git add -A && git commit -qm 'uftp <new>' && git tag new &&
+    git rebase -i --onto new old fixes
+  ```
+
+  In the rebase, drop each fix that `Changes.txt` of the new release lists. When the release
+  already carries a fix, the rebase stops at it with nothing to commit or with a conflict: run
+  `git rebase --skip`. Resolve a conflict in any other fix, `git add` the files, and run
+  `git rebase --continue`. The patch that marks the xCAT build changes the version string, so it
+  conflicts with each release: keep the new version and add the mark. Keep this patch last,
+  because xCAT uses only a `uftp` with the mark.
+
+  When the rebase is complete, run this in `uftp-src` to export the patches and replace them and
+  their links in xcat-dep:
+
+  ```sh
+  src=$PWD && git merge-base --is-ancestor new fixes && rm -rf out &&
+    git format-patch --zero-commit --no-signature -o out new..fixes &&
+    cd <xcat-dep>/uftp && rm 00*.patch debian/patches/00*.patch && cp "$src"/out/00*.patch . &&
+    cd debian/patches && for p in ../../00*.patch; do ln -s "$p" .; done && ls 00*.patch > series
+  ```
+
+  List the new files in the `PatchN` lines of `uftp/uftp.spec`. Replace the archive in `uftp/`,
+  and put its digest in `uftp/SHA256SUMS`. Change the version in `uftp/uftp.spec`,
+  `uftp/sbuild.pl` and the `uftp` lines of `packages-manifest.conf` and `debs-manifest.conf`, and
+  add an entry to `uftp/debian/changelog`. Keep the version in `uftp/debian/uftp.maintscript`,
+  which names the first package without the files of the Ubuntu `uftp` package. Then run
+  `native/uftp-fixes.t`, which builds the archive with the patches of the spec, and build the deb
+  of one Ubuntu target. A fix that the release carries in another form can need a change to its
+  test.
+
 # Skip and Control Flags
 
 Use these flags to skip specific operations:
