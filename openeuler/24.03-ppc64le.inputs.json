@@ -1109,6 +1109,19 @@
       "build_uid": 1000
     },
     {
+      "name": "uftp",
+      "type": "owner",
+      "outputs": [
+        "uftp",
+        "uftp-debuginfo",
+        "uftp-debugsource"
+      ],
+      "needs": [
+        "procenv"
+      ],
+      "build_uid": 1000
+    },
+    {
       "name": "xCAT-genesis-base",
       "type": "owner",
       "outputs": [

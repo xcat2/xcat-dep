@@ -536,9 +536,11 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
         or diag("missing ipxe-xcat in: @no_ipxe_xcat");
     is_deeply(\@missing, [], 'conserver-xcat is present in every legacy manifest target section')
         or diag("missing conserver-xcat in: @missing");
-    # uftp is optional for xCAT like conserver-xcat, and BUILD.md documents it for every EL target.
-    my @no_uftp = grep { !exists $m{$_}{uftp} } @targets, 'rocky-10-riscv64-xcat';
-    is_deeply(\@no_uftp, [], 'uftp is present in every EL manifest target section')
+    # uftp is optional for xCAT like conserver-xcat, and BUILD.md documents it for every EL and
+    # openEuler target.
+    my @no_uftp = grep { !exists $m{$_}{uftp} }
+        @targets, 'rocky-10-riscv64-xcat', grep { /^openeuler-/ } sort keys %m;
+    is_deeply(\@no_uftp, [], 'uftp is present in every EL and openEuler manifest target section')
         or diag("missing uftp in: @no_uftp");
     my @native_missing = grep { /^openeuler-/ && !exists $m{$_}{goconserver} } sort keys %m;
     is_deeply(\@native_missing, [], 'native manifest targets retain goconserver');
