@@ -460,7 +460,7 @@ my %forcearch_targets = (
         arch         => 'riscv64',
         # x86_64 only, as the mock config admits: syslinux-xcat builds on x86 and ppc64le alone.
         noarch_cfg   => 'rocky-10-x86_64',
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp)],
         required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                             perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
     },
@@ -613,6 +613,7 @@ my @dep_builders = (
     { name => 'syslinux-xcat', script => "$repo_root/syslinux/mockbuild.pl", noarch => 1 },
     { name => 'goconserver', script => "$repo_root/goconserver/mockbuild.pl" },
     { name => 'conserver-xcat', script => "$repo_root/conserver/mockbuild.pl" },
+    { name => 'uftp',        script => "$repo_root/uftp/mockbuild.pl" },
     { name => 'xnba-undi',   script => "$repo_root/xnba/mockbuild.pl", noarch => 1 },
     { name => 'python3-scp', srpm => "$repo_root/python-scp/python-scp-0.14.5-1.oe2403.src.rpm",
       sha256 => '3461d2a3fe0122cac2893d8465ad1271ae21e5570a31d4402e3f887ef545a0e8' },
@@ -1167,7 +1168,7 @@ sub target_profile {
             noarch_cfg   => $target,
             forcearch    => 0,
             epel         => 0,
-            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat python3-scp)],
+            dep_builders => [qw(grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp python3-scp)],
             required     => [qw(ipmitool-xcat syslinux-xcat grub2-xcat xnba-undi ipxe-xcat
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
@@ -1190,7 +1191,7 @@ sub target_profile {
         noarch_cfg   => $target,
         forcearch    => $epel->{forcearch},
         epel         => 1,
-        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat)],
+        dep_builders => [qw(elilo-xcat grub2-xcat ipmitool-xcat syslinux-xcat goconserver conserver-xcat xnba-undi ipxe-xcat uftp)],
         # xCAT Requires all of these on every arch, and every one of them builds natively on
         # every arch (the noarch deps -- grub2-xcat, xnba-undi, ipxe-xcat -- just repackage committed
         # artifacts), so a self-sufficient per-arch build produces the whole set.

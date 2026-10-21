@@ -1,0 +1,30 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sat, 17 Oct 2026 15:45:00 -0300
+Subject: [PATCH 1/23] Reject STATUS for a section the file does not have
+
+handle_status() turns the section number of a STATUS into an offset in
+naklist, which holds one byte for each block of the file. It did not
+check the section, so a receiver in the session that sent a section
+past the end of the file made the server write past naklist. Reject
+such a STATUS.
+---
+ server_transfer.c | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/server_transfer.c b/server_transfer.c
+index 65c9131..64bdb53 100644
+--- a/server_transfer.c
++++ b/server_transfer.c
+@@ -489,6 +489,11 @@ void handle_status(const unsigned char *message, unsigned meslen,
+                      ntohs(status->file_id), finfo->file_id );
+         return;
+     }
++    if (section >= finfo->sections) {
++        glog1(finfo, "Rejecting STATUS from %s: invalid section %d",
++                     destlist[hostidx].name, section);
++        return;
++    }
+ 
+     tfmcc = NULL;
+     if (status->hlen * 4U > sizeof(struct status_h)) {

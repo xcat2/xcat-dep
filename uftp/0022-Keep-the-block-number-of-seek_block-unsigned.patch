@@ -1,0 +1,36 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 22/23] Keep the block number of seek_block() unsigned
+
+transfer_send_thread() passes its uint32_t block number to
+seek_block(), which took an int. The section count allows more than
+2^31 blocks with large blocks, and from block 2^31 on the block number
+became negative. Both seeks then failed, and the sender tried the same
+block again without end. Take the block number as uint32_t.
+---
+ server_phase.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/server_phase.c b/server_phase.c
+index 27155ec..e58e1c0 100644
+--- a/server_phase.c
++++ b/server_phase.c
+@@ -501,7 +501,7 @@ void handle_transfer_phase(unsigned char *packet,unsigned char *decrypted,
+  * Seeks to a particular block in a file
+  * Returns 1 on success, 0 on error
+  */
+-int seek_block(const struct finfo_t *finfo, int file, int block,
++int seek_block(const struct finfo_t *finfo, int file, uint32_t block,
+                f_offset_t *offset)
+ {
+     f_offset_t new_offset;
+@@ -512,7 +512,7 @@ int seek_block(const struct finfo_t *finfo, int file, int block,
+         return 0;
+     }
+     if (new_offset != (f_offset_t)block * blocksize) {
+-        glog0(finfo, "block %d: offset is " F_i64, block, new_offset);
++        glog0(finfo, "block %u: offset is " F_i64, block, new_offset);
+         glog0(finfo, "  should be " F_i64, (f_offset_t)block * blocksize);
+         if ((new_offset = lseek_func(file, ((f_offset_t)block * blocksize),
+                                      SEEK_SET)) == -1) {

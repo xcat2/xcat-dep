@@ -302,6 +302,12 @@ SKIP: {
     is_deeply(\@miss_go, [], 'goconserver present in every manifest target')
         or diag("missing goconserver in: @miss_go");
 
+    # uftp is optional for xCAT, but a management node and a diskless image of every target need
+    # UFTP 5 to distribute images over UFTP, and Ubuntu ships UFTP 4.
+    my @miss_uftp = grep { !exists $m{$_}{'uftp'} } @targets;
+    is_deeply(\@miss_uftp, [], 'uftp present in every manifest target')
+        or diag("missing uftp in: @miss_uftp");
+
     # The noarch boot components (syslinux-xcat, grub2-xcat, elilo-xcat, xnba-undi, ipxe-xcat) are
     # Architecture:all single-producer (built ONCE on amd64) but REQUIRED-PRESENT on EVERY target
     # incl. ppc64el and riscv64, so the gate verifies those repos actually carry them (matches the
@@ -719,6 +725,7 @@ STUB
         'elilo-xcat'     => 'elilo',
         'xnba-undi'      => 'xnba',
         'ipxe-xcat'      => 'ipxe-xcat',
+        'uftp'           => 'uftp',
     );
     my %manifest = read_manifest("$root/debs-manifest.conf");
     my %seen;

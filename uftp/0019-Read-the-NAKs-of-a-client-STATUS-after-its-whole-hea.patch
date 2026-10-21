@@ -1,0 +1,136 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 19/23] Read the NAKs of a client STATUS after its whole header in the proxy
+
+add_naks_to_pending() took the NAKs of a client STATUS from the end of
+status_h, and copied blocksize bytes. With -C tfmcc, a client puts a
+20-byte extension before its NAKs. The proxy took that extension as
+NAKs, moved each real NAK 160 blocks later, and lost the NAKs at the
+end of a full section. A STATUS for a short section has fewer NAK
+bytes than blocksize, and the proxy took the rest from old data in its
+packet buffer. Take the NAKs from the end of the whole header to the
+end of the message.
+---
+ proxy_common.c     | 19 +++++++++++++------
+ proxy_common.h     |  4 ++--
+ proxy_downstream.c | 10 +++++-----
+ 3 files changed, 20 insertions(+), 13 deletions(-)
+
+diff --git a/proxy_common.c b/proxy_common.c
+index b4762f5..c8debd5 100644
+--- a/proxy_common.c
++++ b/proxy_common.c
+@@ -313,13 +313,20 @@ void send_all_pending(struct pr_group_list_t *group)
+  * Add the NAKs in the given STATUS message to the list of pending NAKs
+  */
+ void add_naks_to_pending(struct pr_group_list_t *group, int pendidx,
+-                         const unsigned char *message)
++                         const unsigned char *message, unsigned meslen)
+ {
++    const struct status_h *status;
+     const unsigned char *naks;
+-    unsigned i;
++    unsigned naklen, i;
+ 
+-    naks = message + sizeof(struct status_h);
+-    for (i = 0; i < group->blocksize; i++) {
++    // The NAKs follow the header extensions and end with the message.
++    status = (const struct status_h *)message;
++    naks = message + (status->hlen * 4);
++    naklen = meslen - (status->hlen * 4);
++    if (naklen > group->blocksize + 1U) {
++        naklen = group->blocksize + 1;
++    }
++    for (i = 0; i < naklen; i++) {
+         group->pending[pendidx].naklist[i] |= naks[i];
+     }
+ }
+@@ -330,7 +337,7 @@ void add_naks_to_pending(struct pr_group_list_t *group, int pendidx,
+  * If the pending list is full after adding the given message, then send.
+  */
+ void check_pending(struct pr_group_list_t *group, int hostidx,
+-                   const unsigned char *message)
++                   const unsigned char *message, unsigned meslen)
+ {
+     const struct fileinfoack_h *fileinfoack;
+     const struct status_h *status;
+@@ -434,7 +441,7 @@ void check_pending(struct pr_group_list_t *group, int hostidx,
+         if (!pending->naklist) {
+             pending->naklist = safe_calloc(group->blocksize + 1, 1);
+         }
+-        add_naks_to_pending(group, pendidx, message);
++        add_naks_to_pending(group, pendidx, message, meslen);
+         break;
+     case COMPLETE:
+         hlen = sizeof(struct complete_h);
+diff --git a/proxy_common.h b/proxy_common.h
+index 7bccd2c..673d186 100644
+--- a/proxy_common.h
++++ b/proxy_common.h
+@@ -42,7 +42,7 @@ void set_timeout(struct pr_group_list_t *group, int pending_reset, int rescale);
+ int max_msg_dest(struct pr_group_list_t *group, int func, int hlen);
+ void send_all_pending(struct pr_group_list_t *group);
+ void check_pending(struct pr_group_list_t *group, int hostdix,
+-                   const unsigned char *message);
++                   const unsigned char *message, unsigned meslen);
+ int load_pending(struct pr_group_list_t *group, int pendidx, int func,
+                  uint32_t *addrlist, int listlen);
+ int check_unfinished_clients(struct pr_group_list_t *group, int abort);
+@@ -70,7 +70,7 @@ int verify_fingerprint(const struct fp_list_t *fplist, int listlen,
+ uint8_t *build_v4_verify_data(struct pr_group_list_t *group, int hostidx,
+                               int *verifylen, int full);
+ void add_naks_to_pending(struct pr_group_list_t *group, int pendidx,
+-                         const unsigned char *message);
++                         const unsigned char *message, unsigned meslen);
+ 
+ #endif  // _PROXY_COMMON_H
+ 
+diff --git a/proxy_downstream.c b/proxy_downstream.c
+index e924f52..ea65d89 100644
+--- a/proxy_downstream.c
++++ b/proxy_downstream.c
+@@ -308,7 +308,7 @@ void handle_register(struct pr_group_list_t *group, int hostidx,
+     glog2(group, "Received REGISTER%s from %s", dupmsg ? "+" : "", dest->name);
+ 
+     if (dest->state == PR_CLIENT_REGISTERED) {
+-        check_pending(group, hostidx, message);
++        check_pending(group, hostidx, message, meslen);
+     }
+ }
+ 
+@@ -392,7 +392,7 @@ void handle_clientkey(struct pr_group_list_t *group, int hostidx,
+     // Pass in a dummy REGISTER message to check_pending, since
+     // CLIENT_KEY is basically an extension of REGISTER.
+     reg.func = REGISTER;
+-    check_pending(group, hostidx, (unsigned char *)&reg);
++    check_pending(group, hostidx, (unsigned char *)&reg, sizeof(reg));
+ }
+ 
+ /**
+@@ -483,7 +483,7 @@ void handle_fileinfo_ack(struct pr_group_list_t *group, int hostidx,
+ 
+     log2(group->group_id, group->group_inst, ntohs(fileinfoack->file_id),
+             "Received FILEINFO_ACK from %s", dest->name);
+-    check_pending(group, hostidx, message);
++    check_pending(group, hostidx, message, meslen);
+ }
+ 
+ /**
+@@ -823,7 +823,7 @@ void handle_status(struct pr_group_list_t *group, int hostidx,
+     log2(group->group_id, group->group_inst, ntohs(status->file_id),
+             "Got STATUS for section %d from %s", mes_section, dest->name);
+ 
+-    check_pending(group, hostidx, message);
++    check_pending(group, hostidx, message, meslen);
+ }
+ 
+ /**
+@@ -875,6 +875,6 @@ void handle_complete(struct pr_group_list_t *group, int hostidx,
+         }
+     }
+ 
+-    check_pending(group, hostidx, message);
++    check_pending(group, hostidx, message, meslen);
+ }
+ 

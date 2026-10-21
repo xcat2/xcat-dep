@@ -1,0 +1,61 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 20/23] Check the path of a backup file before using it
+
+With -A, move_to_backup() moves an existing file to the same path
+below a backup directory. An entry that it moved there can be a
+symbolic link that a sender created. A later backup below that name
+went through the link, and deleted and replaced a file outside the
+destination and backup directories. When a directory in the path of
+the backup file is a symbolic link, delete the file instead, as when
+the backup path is too long. A backup path can be longer than
+MAXPATHNAME, so link_in_path() now holds MAXBACKUPPATHNAME bytes, and
+takes a longer path as a link.
+---
+ client_common.c   | 8 ++++++++
+ client_fileinfo.c | 5 ++++-
+ 2 files changed, 12 insertions(+), 1 deletion(-)
+
+diff --git a/client_common.c b/client_common.c
+index 2a21c5b..a87c9f2 100644
+--- a/client_common.c
++++ b/client_common.c
+@@ -998,6 +998,14 @@ void move_to_backup(struct group_list_t *group)
+         clear_path(group->fileinfo.filepath, group);
+         return;
+     }
++    // An earlier backup can hold a symbolic link that a sender created.
++    if (link_in_path(backup_file,
++                     strlen(backupdir[group->fileinfo.destdiridx]))) {
++        glog0(group, "A directory in the path of backup file %s is a "
++                     "symbolic link, deleting", backup_file);
++        clear_path(group->fileinfo.filepath, group);
++        return;
++    }
+     clear_path(backup_file, group);
+     if (!create_path_to_file(group, backup_file)) {
+         glog0(group, "Error creating path to backup file");
+diff --git a/client_fileinfo.c b/client_fileinfo.c
+index 76c329e..68ff5a9 100644
+--- a/client_fileinfo.c
++++ b/client_fileinfo.c
+@@ -204,7 +204,7 @@ int read_fileinfo(struct group_list_t *group, const unsigned char *message,
+ int link_in_path(const char *path, int root_len)
+ {
+ #ifndef WINDOWS
+-    char dir[MAXPATHNAME];
++    char dir[MAXBACKUPPATHNAME];
+     stat_struct statbuf;
+     int i;
+ 
+@@ -212,6 +212,9 @@ int link_in_path(const char *path, int root_len)
+         if ((path[i] != PATH_SEP) || (path[i - 1] == PATH_SEP)) {
+             continue;
+         }
++        if ((size_t)i >= sizeof(dir)) {
++            return 1;
++        }
+         memcpy(dir, path, i);
+         dir[i] = '\x0';
+         if (lstat_func(dir, &statbuf) == -1) {

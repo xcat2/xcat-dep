@@ -1,0 +1,2 @@
+rm_conffile /etc/init.d/uftp 5.0.4-1~
+rm_conffile /etc/logrotate.d/uftp 5.0.4-1~

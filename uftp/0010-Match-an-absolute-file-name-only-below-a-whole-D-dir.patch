@@ -1,0 +1,31 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 10/23] Match an absolute file name only below a whole -D directory
+
+setup_dest_file() compared an absolute file name with each -D
+directory over the length of the directory only. With -D /dest, the
+name /dest-other/x matched, and the client wrote outside /dest. Accept
+the match only when the directory ends at a path separator of the
+name.
+---
+ client_fileinfo.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/client_fileinfo.c b/client_fileinfo.c
+index 598e435..e890a30 100644
+--- a/client_fileinfo.c
++++ b/client_fileinfo.c
+@@ -226,7 +226,11 @@ int setup_dest_file(struct group_list_t *group)
+             return 0;
+         }
+         for (found_dest_dir = 0, i = 0; i < destdircnt; i++) {
+-            if (!ncmp(group->fileinfo.name, destdir[i], strlen(destdir[i]))) {
++            len = strlen(destdir[i]);
++            if (!ncmp(group->fileinfo.name, destdir[i], len) &&
++                    ((group->fileinfo.name[len] == PATH_SEP) ||
++                     (group->fileinfo.name[len] == '\x0') ||
++                     ((len > 0) && (destdir[i][len - 1] == PATH_SEP)))) {
+                 if (!cmp(group->fileinfo.name, destdir[i])) {
+                     glog1(group, "Rejecting file with absolute pathname: "
+                                 "can't have the same name as a dest directory");

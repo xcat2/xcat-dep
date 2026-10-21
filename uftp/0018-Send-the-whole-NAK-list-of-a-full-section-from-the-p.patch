@@ -1,0 +1,44 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 18/23] Send the whole NAK list of a full section from the proxy
+
+The proxy kept blocksize bytes of NAKs for each section and sent them
+upstream in its STATUS. The server requires blocks / 8 + 1 bytes, and
+a client sends that many. For a section of blocksize * 8 blocks this
+is blocksize + 1, so the server rejected every STATUS of the proxy for
+such a section, and the blocks that its clients lost there were never
+sent again. Keep and send blocksize + 1 bytes.
+---
+ proxy_common.c   | 2 +-
+ proxy_upstream.c | 4 +++-
+ 2 files changed, 4 insertions(+), 2 deletions(-)
+
+diff --git a/proxy_common.c b/proxy_common.c
+index acd5ffa..b4762f5 100644
+--- a/proxy_common.c
++++ b/proxy_common.c
+@@ -432,7 +432,7 @@ void check_pending(struct pr_group_list_t *group, int hostidx,
+         pending->file_id = ntohs(status->file_id);
+         pending->section = ntohs(status->section);
+         if (!pending->naklist) {
+-            pending->naklist = safe_calloc(group->blocksize, 1);
++            pending->naklist = safe_calloc(group->blocksize + 1, 1);
+         }
+         add_naks_to_pending(group, pendidx, message);
+         break;
+diff --git a/proxy_upstream.c b/proxy_upstream.c
+index 9a9fc98..cc2ef9a 100644
+--- a/proxy_upstream.c
++++ b/proxy_upstream.c
+@@ -1266,7 +1266,9 @@ void send_status(struct pr_group_list_t *group, int pendidx)
+     status->hlen = sizeof(struct status_h) / 4;
+     status->file_id = htons(pending->file_id);
+     status->section = htons(pending->section);
+-    payloadlen = group->blocksize;
++    // The server needs blocks / 8 + 1 bytes of NAKs: blocksize + 1 for a
++    // section of blocksize * 8 blocks.
++    payloadlen = group->blocksize + 1;
+     sent_naks = (unsigned char *)status + sizeof(struct status_h);
+     memcpy(sent_naks, pending->naklist, payloadlen);
+     memset(pending->naklist, 0, payloadlen);

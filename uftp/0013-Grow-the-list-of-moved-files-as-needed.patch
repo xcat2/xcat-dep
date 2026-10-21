@@ -1,0 +1,95 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 13/23] Grow the list of moved files as needed
+
+At the end of a group, move_files() kept the path of each top level
+entry that it moved from the temp directory in an array of 10000
+entries on the stack, without a bound. A group with more top level
+entries wrote past the array. Keep the list in memory that grows as
+needed.
+---
+ client_transfer.c | 43 +++++++++++++++++++++++++++++--------------
+ 1 file changed, 29 insertions(+), 14 deletions(-)
+
+diff --git a/client_transfer.c b/client_transfer.c
+index ba1ff82..fe1eb55 100644
+--- a/client_transfer.c
++++ b/client_transfer.c
+@@ -183,14 +183,36 @@ void move_files_individual(struct group_list_t *group, const char *local_temp,
+     }
+ }
+ 
++/**
++ * Adds a copy of path to a list of moved files, which grows as needed
++ */
++static void add_moved_file(struct group_list_t *group, char ***filelist,
++                           int *filecount, int *filemax, const char *path)
++{
++    if (*filecount == *filemax) {
++        *filemax = *filemax ? *filemax * 2 : 64;
++        *filelist = realloc(*filelist, *filemax * sizeof(char *));
++        if (*filelist == NULL) {
++            gsyserror(group, "realloc failed!");
++            exit(ERR_ALLOC);
++        }
++    }
++    (*filelist)[*filecount] = strdup(path);
++    if ((*filelist)[*filecount] == NULL) {
++        gsyserror(group, "strdup failed!");
++        exit(ERR_ALLOC);
++    }
++    (*filecount)++;
++}
++
+ /**
+  * Move all files from temp to destination directory if at end of group
+  */
+ void move_files(struct group_list_t *group)
+ {
+     char temppath[MAXPATHNAME], destpath[MAXPATHNAME];
+-    char *filelist[10000];  // TODO: no magic number
+-    int len, filecount, i;
++    char **filelist = NULL;
++    int len, filecount, filemax = 0, i;
+ 
+     if (!strcmp(tempdir, "") || (group->file_id != 0)) {
+         return;
+@@ -245,12 +267,8 @@ void move_files(struct group_list_t *group)
+                             GetLastError(), 0, errbuf, sizeof(errbuf), NULL);
+                     glog0(group, "error (%d): %s", GetLastError(), errbuf);
+                 }
+-                filelist[filecount] = strdup(destpath);
+-                if (filelist[filecount] == NULL) {
+-                    gsyserror(group, "strdup failed!");
+-                    exit(ERR_ALLOC);
+-                }
+-                filecount++;
++                add_moved_file(group, &filelist, &filecount, &filemax,
++                               destpath);
+             }
+         } while (_findnexti64(ffhandle, &finfo) == 0);
+         _findclose(ffhandle);
+@@ -288,12 +306,8 @@ void move_files(struct group_list_t *group)
+                 if (rename(temppath, destpath) == -1) {
+                     gsyserror(group, "Couldn't move file");
+                 }
+-                filelist[filecount] = strdup(destpath);
+-                if (filelist[filecount] == NULL) {
+-                    gsyserror(group, "strdup failed!");
+-                    exit(ERR_ALLOC);
+-                }
+-                filecount++;
++                add_moved_file(group, &filelist, &filecount, &filemax,
++                               destpath);
+             }
+         }
+         if (errno && (errno != ENOENT)) {
+@@ -306,6 +320,7 @@ void move_files(struct group_list_t *group)
+     for (i = 0; i < filecount; i++) {
+         free(filelist[i]);
+     }
++    free(filelist);
+     snprintf(temppath, sizeof(temppath), "%s%c_group_%08X", tempdir,
+              PATH_SEP, group->group_id);
+     if (rmdir(temppath) == -1) {

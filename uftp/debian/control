@@ -1,0 +1,19 @@
+Source: uftp
+Section: net
+Priority: optional
+Maintainer: xCAT <xcat-user@lists.sourceforge.net>
+Build-Depends: debhelper-compat (= 12), libssl-dev
+Standards-Version: 4.5.0
+Homepage: https://uftp-multicast.sourceforge.net/
+Rules-Requires-Root: no
+
+Package: uftp
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: encrypted UDP based file transfer with multicast
+ UFTP sends files to many receivers at the same time over IP multicast,
+ and encrypts the transfer by default. This package contains the uftp
+ sender, the uftpd receiver, the uftpproxyd proxy and the uftp_keymgt
+ key tool. It installs no service: uftpd runs only when it is started.
+ .
+ This is UFTP 5, which does not work with UFTP 4 senders or receivers.
