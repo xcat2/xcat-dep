@@ -1,0 +1,79 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 16/23] Leave a file at cleanup that another group replaced
+
+With -D and without -T or -t, a FILEINFO of a second group for the
+name of an open file deletes that file and creates a new one. When the
+second group completed and the first one then aborted, file_cleanup()
+of the first group deleted the completed file of the second. A first
+group that completed set the times of that file and ran the
+postreceive script on it. Compare the open file with the file at its
+path before cleanup, and leave the path alone when they differ.
+---
+ client_common.c | 29 +++++++++++++++++++++++++++--
+ 1 file changed, 27 insertions(+), 2 deletions(-)
+
+diff --git a/client_common.c b/client_common.c
+index 6e185ac..f89c14d 100644
+--- a/client_common.c
++++ b/client_common.c
+@@ -378,6 +378,24 @@ void run_postreceive(struct group_list_t *group, char *file)
+     run_postreceive_multi(group, files, 1);
+ }
+ 
++/**
++ * Returns 1 if path names the open file fd, 0 otherwise
++ */
++static int path_is_open_file(const char *path, int fd)
++{
++#ifndef WINDOWS
++    stat_struct path_stat, fd_stat;
++
++    if ((lstat_func(path, &path_stat) == -1) || (fstat(fd, &fd_stat) == -1)) {
++        return 0;
++    }
++    return ((path_stat.st_dev == fd_stat.st_dev) &&
++            (path_stat.st_ino == fd_stat.st_ino));
++#else
++    return 1;
++#endif
++}
++
+ /**
+  * Clean up a group list entry.  Close the file if open,
+  * free malloc'ed structures, drop the multicast group
+@@ -385,9 +403,13 @@ void run_postreceive(struct group_list_t *group, char *file)
+  */
+ void file_cleanup(struct group_list_t *group, int abort_session)
+ {
+-    int linked;
++    int linked, replaced;
+ 
+     if (group->fileinfo.fd >= 0) {
++        // Another group can replace or remove the file after FILEINFO.
++        replaced = !path_is_open_file(tempfile ? group->fileinfo.temppath :
++                                      group->fileinfo.filepath,
++                                      group->fileinfo.fd);
+         glog2(group, "starting file close");
+         close(group->fileinfo.fd);
+         glog2(group, "done file close");
+@@ -398,6 +420,9 @@ void file_cleanup(struct group_list_t *group, int abort_session)
+         if (linked) {
+             glog0(group, "Leaving %s: a directory in its path is now a "
+                          "symbolic link", group->fileinfo.filepath);
++        } else if (replaced) {
++            glog0(group, "Leaving %s: another group replaced or removed "
++                         "the file", group->fileinfo.filepath);
+         } else if (abort_session && !strcmp(tempdir, "")) {
+             if (tempfile) {
+                 unlink(group->fileinfo.temppath);
+@@ -422,7 +447,7 @@ void file_cleanup(struct group_list_t *group, int abort_session)
+                 }
+             }
+         }
+-        if (!linked && !abort_session && !strcmp(tempdir, "")) {
++        if (!linked && !replaced && !abort_session && !strcmp(tempdir, "")) {
+             run_postreceive(group, group->fileinfo.filepath);
+         }
+     }

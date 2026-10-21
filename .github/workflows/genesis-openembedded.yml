@@ -24,7 +24,7 @@ jobs:
             apt-utils bats createrepo-c dpkg-dev gnupg \
             libfile-slurper-perl \
             libparallel-forkmanager-perl libperl-critic-perl rpm rpm2cpio cpio \
-            grub-common ca-certificates
+            grub-common ca-certificates build-essential libssl-dev patch
 
       - name: Install the arm64-efi grub modules
         # t/aarch64_target.t runs the spec's own grub2-mkimage command, and it skips without
@@ -46,6 +46,9 @@ jobs:
           perl -c ipxe-xcat/sbuild.pl
           perl -c ipxe-xcat/verify-payload.pl
           rpmspec -P ipxe-xcat/ipxe-xcat.spec >/dev/null
+          perl -c uftp/mockbuild.pl
+          perl -c uftp/sbuild.pl
+          rpmspec -P uftp/uftp.spec >/dev/null
           rpmspec -P \
             -D 'genesis_arch x86_64' \
             -D 'version 2.19.0' \
@@ -61,12 +64,15 @@ jobs:
             lib/XCAT/BuildUtils.pm \
             lib/XCAT/GenesisRelease.pm \
             mockbuild-all.pl \
+            native/uftp-fixes.t \
             t/build_utils.t \
             t/common-repo-gate.t \
             t/genesis_openembedded_release.t \
             t/genesis_openembedded_consumer.t \
             t/ipxe_xcat_payload.t \
-            t/lib/XCAT/GenesisReleaseTest.pm
+            t/lib/XCAT/GenesisReleaseTest.pm \
+            uftp/mockbuild.pl \
+            uftp/sbuild.pl
 
       - name: Run package tests
         run: |
@@ -104,7 +110,7 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           prove -v native/buildinfo_provenance.t native/goconserver-openeuler.t \
             native/openeuler-power-inputs.t native/openeuler-srpm.t \
-            native/xnba-release-suffix.t 2>&1 | tee native.tap
+            native/xnba-release-suffix.t native/uftp-fixes.t 2>&1 | tee native.tap
           # prove returns success when a test file skips all its checks.
           if grep -E '^1\.\.0 # SKIP|^native/[^ ]+\.t \.+ skipped' native.tap; then
             echo 'a native test file was skipped' >&2

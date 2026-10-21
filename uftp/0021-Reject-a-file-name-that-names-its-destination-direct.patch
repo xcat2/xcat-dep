@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 21/23] Reject a file name that names its destination directory
+
+setup_dest_file() rejected an absolute name equal to a -D directory,
+but not the same directory written as /dest/ or /dest/., and not the
+relative names . and ./ either. A delete request for such a name made
+move_to_backup() remove everything in the destination directory, and
+a regular file did the same before its open failed. Reject a name
+whose part below the destination has only separators and .
+components. A free space request still names the destination as ".".
+---
+ client_fileinfo.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/client_fileinfo.c b/client_fileinfo.c
+index 68ff5a9..1a5229c 100644
+--- a/client_fileinfo.c
++++ b/client_fileinfo.c
+@@ -228,6 +228,27 @@ int link_in_path(const char *path, int root_len)
+     return 0;
+ }
+ 
++/**
++ * Returns 1 if path after its first root_len characters holds only path
++ * separators and "." components, so that it names its root directory
++ */
++static int is_root_path(const char *path, int root_len)
++{
++    const char *p;
++
++    for (p = path + root_len; *p != '\x0'; p++) {
++        if (*p == PATH_SEP) {
++            continue;
++        }
++        if ((*p == '.') && (p > path) && (p[-1] == PATH_SEP) &&
++                ((p[1] == PATH_SEP) || (p[1] == '\x0'))) {
++            continue;
++        }
++        return 0;
++    }
++    return 1;
++}
++
+ /**
+  * Validate and establish the destination name of an incoming file.
+  * Returns 0 if the file was rejected for some reason, 1 otherwise.
+@@ -308,6 +329,13 @@ int setup_dest_file(struct group_list_t *group)
+         }
+         group->fileinfo.root_len = len - strlen(group->fileinfo.name) - 1;
+     }
++    // A free space request names the destination directory as "."
++    if ((group->fileinfo.ftype != FTYPE_FREESPACE) &&
++            is_root_path(group->fileinfo.filepath, group->fileinfo.root_len)) {
++        glog1(group, "Rejecting file: name is its destination directory");
++        early_complete(group, COMP_STAT_REJECTED, 0);
++        return 0;
++    }
+     if (link_in_path(group->fileinfo.filepath, group->fileinfo.root_len)) {
+         glog1(group, "Rejecting file: a directory in its path is a "
+                      "symbolic link");

@@ -8,6 +8,10 @@ native tools:
 prove -v native/*.t
 ```
 
+`uftp-fixes.t` builds the UFTP programs from the archive and patches in `uftp/`
+with AddressSanitizer. It needs a C compiler, `make`, `patch` and the OpenSSL
+headers.
+
 Use an ordinary user for RPM builds. `openeuler-power-inputs.t` exercises the
 whole build owner only on POWER with native Mock; its RPM admission checks also
 run on x86_64. When running that test as root, set `XCAT_TEST_BUILD_USER` to an

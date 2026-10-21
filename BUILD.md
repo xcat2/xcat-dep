@@ -49,6 +49,7 @@ This guide uses the following placeholders consistently:
 - `<REPO_ROOT>/syslinux/mockbuild.pl`
 - `<REPO_ROOT>/goconserver/mockbuild.pl`
 - `<REPO_ROOT>/conserver/mockbuild.pl`
+- `<REPO_ROOT>/uftp/mockbuild.pl`
 - `<REPO_ROOT>/xnba/mockbuild.pl`
 - `<REPO_ROOT>/ipxe-xcat/mockbuild.pl`
 - `<REPO_ROOT>/mockbuild-perl-packages.pl`
@@ -64,7 +65,8 @@ one `[<target>]` section (matching `--target`, e.g. `[alma+epel-10-x86_64]`) of
 listed for it; a package absent from a target's section is not built for that target (the per-EL
 perl set differs because the OS/EPEL already provides some modules). Note `conserver-xcat` is **not**
 pulled in by `dnf install xCAT` (goconserver superseded it), yet it is listed in — and therefore
-built for — every target, because some deployments still use it. The lists were derived empirically — on a clean MN of each
+built for — every target, because some deployments still use it. `uftp` is not pulled in either,
+and every EL target lists it (see "Packages notes"). The lists were derived empirically — on a clean MN of each
 (EL, arch), `dnf install xCAT` from xcat.org latest, and the packages whose `from_repo=xcat-dep`
 are exactly the required set. See the file header for details.
 
@@ -96,6 +98,54 @@ matching MN and installs xCAT + the freshly built xcat-dep there).
   compatibility. Core packages depend on `goconserver`; to use conserver you must install
   `conserver-xcat` explicitly (it is **not** pulled in as a dependency), disable the `goconserver`
   service and enable the `conserver` service.
+- **`uftp`** is UFTP 5.0.4, the multicast file transfer tool, built from the upstream source with
+  the fixes in `uftp/00*.patch`. It is built as an rpm for every EL
+  target and as a deb for every Ubuntu target. RHEL and EPEL do not ship it, and Ubuntu ships UFTP
+  4.10, which does not work with UFTP 5. xCAT does not require it: install `uftp` on the management
+  node (the `uftp` sender) and in a diskless image (the `uftpd` receiver) to distribute images over
+  UFTP. The package enables no service. The deb replaces the Ubuntu `uftp` package, and removes the
+  init script and the logrotate file of that package, which started `uftpd` as a service.
+
+  Each file in `uftp/00*.patch` is a git commit, and its message gives the defect that it fixes.
+  To move the fixes to a new UFTP release, apply them to the current release in a git repository,
+  then rebase them onto the new release. `<new-archive>` is the path of the new release archive:
+
+  ```sh
+  mkdir uftp-src && cd uftp-src && git init -q &&
+    tar -xzf <xcat-dep>/uftp/uftp-<current>.tar.gz --strip-components=1 &&
+    git add -A && git commit -qm 'uftp <current>' && git tag old &&
+    git am <xcat-dep>/uftp/00*.patch && git branch fixes &&
+    git switch --detach old && git rm -rq . &&
+    tar -xzf <new-archive> --strip-components=1 &&
+    git add -A && git commit -qm 'uftp <new>' && git tag new &&
+    git rebase -i --onto new old fixes
+  ```
+
+  In the rebase, drop each fix that `Changes.txt` of the new release lists. When the release
+  already carries a fix, the rebase stops at it with nothing to commit or with a conflict: run
+  `git rebase --skip`. Resolve a conflict in any other fix, `git add` the files, and run
+  `git rebase --continue`. The patch that marks the xCAT build changes the version string, so it
+  conflicts with each release: keep the new version and add the mark. Keep this patch last,
+  because xCAT uses only a `uftp` with the mark.
+
+  When the rebase is complete, run this in `uftp-src` to export the patches and replace them and
+  their links in xcat-dep:
+
+  ```sh
+  src=$PWD && git merge-base --is-ancestor new fixes && rm -rf out &&
+    git format-patch --zero-commit --no-signature -o out new..fixes &&
+    cd <xcat-dep>/uftp && rm 00*.patch debian/patches/00*.patch && cp "$src"/out/00*.patch . &&
+    cd debian/patches && for p in ../../00*.patch; do ln -s "$p" .; done && ls 00*.patch > series
+  ```
+
+  List the new files in the `PatchN` lines of `uftp/uftp.spec`. Replace the archive in `uftp/`,
+  and put its digest in `uftp/SHA256SUMS`. Change the version in `uftp/uftp.spec`,
+  `uftp/sbuild.pl` and the `uftp` lines of `packages-manifest.conf` and `debs-manifest.conf`, and
+  add an entry to `uftp/debian/changelog`. Keep the version in `uftp/debian/uftp.maintscript`,
+  which names the first package without the files of the Ubuntu `uftp` package. Then run
+  `native/uftp-fixes.t`, which builds the archive with the patches of the spec, and build the deb
+  of one Ubuntu target. A fix that the release carries in another form can need a change to its
+  test.
 
 # Skip and Control Flags
 
@@ -104,7 +154,7 @@ Use these flags to skip specific operations:
 - `--skip-genesis`
   - Skips the `xCAT-genesis-base` build (`<XCAT_SOURCE>/buildrpms.pl --package xCAT-genesis-base`).
 - `--skip-xcat-dep`
-  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `xnba-undi`, `ipxe-xcat`).
+  - Skips non-perl xcat-dep package builders (`elilo`, `grub2-xcat`, `ipmitool-xcat`, `syslinux-xcat`, `goconserver`, `conserver-xcat`, `uftp`, `xnba-undi`, `ipxe-xcat`).
 - `--skip-perl`
   - Skips `<REPO_ROOT>/mockbuild-perl-packages.pl`.
   - With any of the three flags above, the run repository, the tarball and the deployed cell keep
@@ -484,7 +534,7 @@ missing, and then builds the `[rocky-10-riscv64-xcat]` section of `packages-mani
 
 | what | how |
 |---|---|
-| ipmitool-xcat, conserver-xcat | `mock --rebuild` in the riscv64 chroot (emulated), `--target-arch riscv64` |
+| ipmitool-xcat, conserver-xcat, uftp | `mock --rebuild` in the riscv64 chroot (emulated), `--target-arch riscv64` |
 | goconserver | cross-compiled on the host (`GOARCH=riscv64`), packaged with `rpmbuild --target riscv64` |
 | grub2-xcat (noarch) | built in the native, EPEL-free `rocky-10-x86_64` chroot |
 | perl list6 + EPEL gap (`--epel-gap`) | `mockbuild-perl-packages.pl --target-arch riscv64 --noarch-mock-cfg rocky-10-x86_64 --epel-gap`: XS modules in the riscv64 chroot, noarch modules in the native chroot |
@@ -539,8 +589,8 @@ deployable repo `<OUTPUT>/xcat-dep/rh10/riscv64/` (rpms, `repodata/`, `xcat-dep.
 `mklocalrepo.sh`, `buildinfo.txt`). Builder failures are tolerated and listed at the end.
 The cross-built rpms are smoke-tested without installing them on the host: ipmitool-xcat,
 conserver-xcat and the XS perl modules inside the emulated chroot, goconserver by running
-its binaries through the binfmt handler. No build step installs an rpm on the build host
-(see "Per-target package manifest").
+its binaries through the binfmt handler, uftp by the `%check` of its spec in the emulated
+chroot. No build step installs an rpm on the build host (see "Per-target package manifest").
 
 # Validation Commands
 
@@ -665,7 +715,7 @@ Codename ↔ version (the single supported set — `BuildUtils` is the source of
 - **`sbuild-all.pl`** — the orchestrator (run as **root** on the Ubuntu build host: the amd64 host for
   `amd64` and, through qemu-user, for `riscv64`; the ppc host for `ppc64el`).
 - **`BuildUtils.pm`** — shared, unit-tested helpers + the canonical CLI spec (mirrors `MockBuildUtils.pm`).
-- **`<dep>/sbuild.pl`** ×7 — per-package builders (mirror `<dep>/mockbuild.pl`); each drives its
+- **`<dep>/sbuild.pl`** ×9 — per-package builders (mirror `<dep>/mockbuild.pl`); each drives its
   maintained `debian/` in the chroot and collects the `.deb`(s). Invoked by `sbuild-all.pl`.
 - **`debs-manifest.conf`** — per `[<codename>-<arch>]` required set + version pins.
 - **`t/sbuild-all.t`** — unit tests for the pure helpers (`prove t/`).

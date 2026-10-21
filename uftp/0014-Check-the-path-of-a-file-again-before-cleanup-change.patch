@@ -1,0 +1,127 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 14/23] Check the path of a file again before cleanup changes it
+
+file_cleanup() deleted, renamed and set the times of a file by its
+path. Between its FILEINFO and the cleanup, a FILEINFO of another
+group could replace a directory of that path with a symbolic link.
+With -D and without -T, an aborted file was then deleted outside the
+destination. Leave the file alone when a directory in its path has
+become a symbolic link.
+---
+ client.h          |  1 +
+ client_common.c   | 13 +++++++++++--
+ client_fileinfo.c | 10 +++++-----
+ client_fileinfo.h |  1 +
+ 4 files changed, 18 insertions(+), 7 deletions(-)
+
+diff --git a/client.h b/client.h
+index 0e080da..d205d28 100644
+--- a/client.h
++++ b/client.h
+@@ -62,6 +62,7 @@ struct file_t {
+     int64_t tstamp;             /// File timestamp
+     char filepath[MAXPATHNAME]; /// Local path to file
+     char temppath[MAXPATHNAME]; /// Local path to temp file
++    int root_len;               /// Length of the directory that holds filepath
+     char name[MAXPATHNAME];     /// Path name
+     char linkname[MAXPATHNAME]; /// Link name (symlinks only)
+     uint8_t *naklist;           /// NAK list
+diff --git a/client_common.c b/client_common.c
+index 0d5319f..6e185ac 100644
+--- a/client_common.c
++++ b/client_common.c
+@@ -60,6 +60,7 @@
+ 
+ #include "client.h"
+ #include "client_common.h"
++#include "client_fileinfo.h"
+ 
+ /**
+  * Look for a given group in the global group list
+@@ -384,12 +385,20 @@ void run_postreceive(struct group_list_t *group, char *file)
+  */
+ void file_cleanup(struct group_list_t *group, int abort_session)
+ {
++    int linked;
++
+     if (group->fileinfo.fd >= 0) {
+         glog2(group, "starting file close");
+         close(group->fileinfo.fd);
+         glog2(group, "done file close");
+         group->fileinfo.fd = -1;
+-        if (abort_session && !strcmp(tempdir, "")) {
++        // Another group can replace a directory of the path after FILEINFO.
++        linked = link_in_path(group->fileinfo.filepath,
++                              group->fileinfo.root_len);
++        if (linked) {
++            glog0(group, "Leaving %s: a directory in its path is now a "
++                         "symbolic link", group->fileinfo.filepath);
++        } else if (abort_session && !strcmp(tempdir, "")) {
+             if (tempfile) {
+                 unlink(group->fileinfo.temppath);
+             } else {
+@@ -413,7 +422,7 @@ void file_cleanup(struct group_list_t *group, int abort_session)
+                 }
+             }
+         }
+-        if (!abort_session && !strcmp(tempdir, "")) {
++        if (!linked && !abort_session && !strcmp(tempdir, "")) {
+             run_postreceive(group, group->fileinfo.filepath);
+         }
+     }
+diff --git a/client_fileinfo.c b/client_fileinfo.c
+index 64d9ee7..76c329e 100644
+--- a/client_fileinfo.c
++++ b/client_fileinfo.c
+@@ -201,7 +201,7 @@ int read_fileinfo(struct group_list_t *group, const unsigned char *message,
+  * Returns 1 if a directory in path after its first root_len characters
+  * is a symbolic link, 0 otherwise
+  */
+-static int link_in_path(const char *path, int root_len)
++int link_in_path(const char *path, int root_len)
+ {
+ #ifndef WINDOWS
+     char dir[MAXPATHNAME];
+@@ -231,7 +231,7 @@ static int link_in_path(const char *path, int root_len)
+  */
+ int setup_dest_file(struct group_list_t *group)
+ {
+-    int found_dest_dir, len, i, root_len;
++    int found_dest_dir, len, i;
+     int (*cmp)(const char *, const char *);
+     int (*ncmp)(const char *, const char *, size_t);
+ 
+@@ -286,7 +286,7 @@ int setup_dest_file(struct group_list_t *group)
+         group->fileinfo.destdiridx = i;
+         snprintf(group->fileinfo.filepath,
+             sizeof(group->fileinfo.filepath), "%s", group->fileinfo.name);
+-        root_len = strlen(destdir[i]);
++        group->fileinfo.root_len = strlen(destdir[i]);
+     } else {
+         if (!strcmp(tempdir, "")) {
+             len = snprintf(group->fileinfo.filepath,
+@@ -303,9 +303,9 @@ int setup_dest_file(struct group_list_t *group)
+             early_complete(group, COMP_STAT_REJECTED, 0);
+             return 0;
+         }
+-        root_len = len - strlen(group->fileinfo.name) - 1;
++        group->fileinfo.root_len = len - strlen(group->fileinfo.name) - 1;
+     }
+-    if (link_in_path(group->fileinfo.filepath, root_len)) {
++    if (link_in_path(group->fileinfo.filepath, group->fileinfo.root_len)) {
+         glog1(group, "Rejecting file: a directory in its path is a "
+                      "symbolic link");
+         early_complete(group, COMP_STAT_REJECTED, 0);
+diff --git a/client_fileinfo.h b/client_fileinfo.h
+index f483bfe..84fbc2a 100644
+--- a/client_fileinfo.h
++++ b/client_fileinfo.h
+@@ -34,5 +34,6 @@
+ void handle_fileinfo(struct group_list_t *group, const unsigned char *message,
+                      unsigned meslen, struct timeval rxtime);
+ void send_fileinfo_ack(struct group_list_t *group, int restart);
++int link_in_path(const char *path, int root_len);
+ 
+ #endif  // _CLIENT_FILEINFO_H

@@ -1,0 +1,40 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 9/23] Check every component of a file name for ..
+
+read_fileinfo() looked only at the first ".." in a file name. A name
+such as "a..b/../../x" passed, because the first ".." is inside the
+component "a..b", and the later components left the destination
+directory. Reject a name when any of its components is "..".
+---
+ client_fileinfo.c | 16 ++++++++++------
+ 1 file changed, 10 insertions(+), 6 deletions(-)
+
+diff --git a/client_fileinfo.c b/client_fileinfo.c
+index 505e1ea..598e435 100644
+--- a/client_fileinfo.c
++++ b/client_fileinfo.c
+@@ -168,12 +168,16 @@ int read_fileinfo(struct group_list_t *group, const unsigned char *message,
+         early_complete(group, COMP_STAT_REJECTED, 0);
+         return 0;
+     }
+-    p = strstr(group->fileinfo.name, "..");
+-    if ((p != NULL) && ((p[2] == '\x0') || (p[2] == '/') || (p[2] == '\\')) &&
+-           ((p == group->fileinfo.name) || (p[-1] == '/') || (p[-1] == '\\'))) {
+-        glog1(group, "Rejecting FILEINFO from server: filename contains ..");
+-        early_complete(group, COMP_STAT_REJECTED, 0);
+-        return 0;
++    for (p = group->fileinfo.name; p != NULL; p = strpbrk(p, "/\\")) {
++        if ((*p == '/') || (*p == '\\')) {
++            p++;
++        }
++        if ((p[0] == '.') && (p[1] == '.') &&
++                ((p[2] == '\x0') || (p[2] == '/') || (p[2] == '\\'))) {
++            glog1(group, "Rejecting FILEINFO from server: filename contains ..");
++            early_complete(group, COMP_STAT_REJECTED, 0);
++            return 0;
++        }
+     }
+     if (fileinfo->ftype == FTYPE_LINK) {
+         if (strlen(group->fileinfo.linkname) == 0) {

@@ -59,11 +59,12 @@ for my $path (
 # xCAT and xCATsn name the netboot loaders and the console backend as Requires on every arch, so a
 # package missing from a target section is not a smaller build: it is "nothing provides <pkg>" when
 # dnf installs xCAT on the management node. The EL section of the same arch is the reference set,
-# because openEuler is rpm-md and installs the same core packages. Both exemptions were measured
+# because openEuler is rpm-md and installs the same core packages. The exemptions were measured
 # against the built core rpms with rpm -qp --requires, not read off a spec conditional.
 my %exempt = (
     'conserver-xcat' => 'xCAT requires goconserver; no core rpm requires conserver-xcat',
     'elilo-xcat'     => 'no core rpm requires elilo-xcat',
+    'uftp'           => 'no core rpm requires uftp',
 );
 my $reference = 'alma+epel-10-ppc64le';
 ok(scalar keys %{$manifest{$reference}}, "$reference is the reference section and is not empty");

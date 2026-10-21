@@ -1,0 +1,49 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 15/23] Allocate the whole NAK list that STATUS sends
+
+get_naks() allocated blocksize bytes for the NAK list of a section,
+and send_status() copied blocks / 8 + 1 bytes of it into the STATUS.
+A section of blocksize * 8 blocks needs blocksize + 1 bytes, so a
+STATUS for a full section read and sent one byte past the list. With
+512-byte blocks, every file larger than 2 MiB has such a section.
+Allocate the length that send_status() sends.
+---
+ client_transfer.c | 9 ++++++---
+ 1 file changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/client_transfer.c b/client_transfer.c
+index fe1eb55..f1453b8 100644
+--- a/client_transfer.c
++++ b/client_transfer.c
+@@ -881,7 +881,7 @@ int file_done(struct group_list_t *group, int detail)
+ unsigned int get_naks(struct group_list_t *group, 
+                       unsigned int section, unsigned char **naks)
+ {
+-    unsigned int section_offset, blocks_this_sec, i;
++    unsigned int section_offset, blocks_this_sec, naklen, i;
+     unsigned int nakidx, naklistidx, numnaks;
+     
+     if ((group->phase == PHASE_MIDGROUP) || (group->file_id == 0) ||
+@@ -905,7 +905,10 @@ unsigned int get_naks(struct group_list_t *group,
+     glog3(group, "getting naks: section: %d, offset: %d, blocks: %d",
+                  section, section_offset, blocks_this_sec);
+ 
+-    *naks = safe_calloc(group->blocksize, 1);
++    // send_status() sends this many bytes: one more than the block size
++    // for a section of blocksize * 8 blocks.
++    naklen = (blocks_this_sec / 8) + 1;
++    *naks = safe_calloc(naklen, 1);
+ 
+     // Build NAK list
+     numnaks = 0;
+@@ -923,7 +926,7 @@ unsigned int get_naks(struct group_list_t *group,
+ 
+     // Highly verbose debugging -- print NAK list to send
+     if (log_level >= 5) {
+-        for (i = 0; i < group->blocksize; i++) {
++        for (i = 0; i < naklen; i++) {
+             sclog5("%02X ", (*naks)[i]);
+             if (i % 25 == 24) slog5(" ");
+         }
