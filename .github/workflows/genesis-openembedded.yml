@@ -21,9 +21,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            apt-utils createrepo-c dpkg-dev gnupg \
+            apt-utils bats createrepo-c dpkg-dev gnupg \
             libfile-slurper-perl \
-            libparallel-forkmanager-perl libperl-critic-perl rpm rpm2cpio cpio
+            libparallel-forkmanager-perl libperl-critic-perl rpm rpm2cpio cpio \
+            grub-common ca-certificates build-essential libssl-dev patch
+
+      - name: Install the arm64-efi grub modules
+        # t/aarch64_target.t runs the spec's own grub2-mkimage command, and it skips without
+        # the arm64-efi modules -- a skip exactly where the suite runs. The script reads them
+        # from the runner's own suite through apt's signed metadata.
+        run: sudo ./install-grub-arm64-modules.sh
 
       - name: Run static checks
         run: |
@@ -39,6 +46,9 @@ jobs:
           perl -c ipxe-xcat/sbuild.pl
           perl -c ipxe-xcat/verify-payload.pl
           rpmspec -P ipxe-xcat/ipxe-xcat.spec >/dev/null
+          perl -c uftp/mockbuild.pl
+          perl -c uftp/sbuild.pl
+          rpmspec -P uftp/uftp.spec >/dev/null
           rpmspec -P \
             -D 'genesis_arch x86_64' \
             -D 'version 2.19.0' \
@@ -54,12 +64,16 @@ jobs:
             lib/XCAT/BuildUtils.pm \
             lib/XCAT/GenesisRelease.pm \
             mockbuild-all.pl \
+            native/uftp-fixes.t \
+            native/uftp-openeuler.t \
             t/build_utils.t \
             t/common-repo-gate.t \
             t/genesis_openembedded_release.t \
             t/genesis_openembedded_consumer.t \
             t/ipxe_xcat_payload.t \
-            t/lib/XCAT/GenesisReleaseTest.pm
+            t/lib/XCAT/GenesisReleaseTest.pm \
+            uftp/mockbuild.pl \
+            uftp/sbuild.pl
 
       - name: Run package tests
         run: |
@@ -72,14 +86,23 @@ jobs:
           prove -v t/net_dns_rr_types.t
           prove -v t/repo-lock-race.t
           prove -v t/nfslock.t
+          prove -v t/genesis_oe_source_dir.t
           prove -v -It/lib t/genesis_openembedded_release.t
           sudo -E prove -v -It/lib t/genesis_openembedded_consumer.t
           prove -v t/riscv64_perl_cell.t
+          prove -v t/aarch64_target.t
+          prove -v t/aarch64_cross_build.t
           sudo -E prove -v -It/lib t/common-repo-gate.t
           prove -v t/openeuler.t
           prove -v t/openeuler_mock_template_include.t
+          # The result-directory checks create a directory owned by another uid, so they need root.
+          sudo -E prove -v t/perl_builder_mock_result_permissions.t
+          prove -v t/openeuler_native_result_permissions.t
+          prove -v -Ilib t/openeuler_native_procenv_plugin.t
           prove -v -Ilib t/openeuler_native_trust_dbpath.t
           prove -v -Ilib t/openeuler_native_cpio_scan.t
+          bats t/verify-xcatsn-install.bats
+          bats t/install-grub-arm64-modules.bats
 
       # Ubuntu's AppArmor policy blocks these unprivileged test namespaces.
       - name: Run native packaging tests
@@ -88,9 +111,22 @@ jobs:
           sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
           prove -v native/buildinfo_provenance.t native/goconserver-openeuler.t \
             native/openeuler-power-inputs.t native/openeuler-srpm.t \
-            native/xnba-release-suffix.t 2>&1 | tee native.tap
+            native/xnba-release-suffix.t native/uftp-fixes.t \
+            native/uftp-openeuler.t 2>&1 | tee native.tap
           # prove returns success when a test file skips all its checks.
           if grep -E '^1\.\.0 # SKIP|^native/[^ ]+\.t \.+ skipped' native.tap; then
             echo 'a native test file was skipped' >&2
+            exit 1
+          fi
+
+      # Ubuntu ships no mock, so the test of mock's configuration loader runs on Fedora.
+      - name: Run mock configuration loader test
+        run: |
+          set -o pipefail
+          docker run --rm -v "$PWD:/src:ro" -w /src fedora:42 bash -ec '
+            dnf -y -q install mock perl perl-File-Slurper >/dev/null
+            prove -v native/mock-chroot-uid.t' 2>&1 | tee mock.tap
+          if grep -E '^1\.\.0 # SKIP|^native/[^ ]+\.t \.+ skipped' mock.tap; then
+            echo 'the mock configuration loader test was skipped' >&2
             exit 1
           fi

@@ -41,7 +41,7 @@ die "Mode regenerate-from-el10-srcrpm is not supported in this script yet; use r
 
 make_path($recompile_dir) if !-d $recompile_dir;
 
-for my $bin (qw(mock rpmbuild rpm dnf file bash tar grep cmp)) {
+for my $bin (qw(mock rpmbuild rpm rpm2cpio cpio dnf file bash tar grep cmp)) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
@@ -208,6 +208,24 @@ run(
     "rpm -qpl " . sh_quote($main_rpm) .
     " | grep -Fx /tftpboot/boot/grub2/riscv64-efi/grubriscv64.efi >/dev/null"
 );
+# The aarch64 image is generated in %build (grub2-mkimage -O arm64-efi); openEuler ships without it.
+if ($mock_cfg !~ /^openeuler-/) {
+    run(
+        "rpm -qpl " . sh_quote($main_rpm) .
+        " | grep -Fx /tftpboot/boot/grub2/aarch64-efi/grubaa64.efi >/dev/null"
+    );
+    my $extract_dir = "$work_dir/payload";
+    remove_tree($extract_dir) if -d $extract_dir;
+    make_path($extract_dir);
+    run(
+        "cd " . sh_quote($extract_dir) . " && rpm2cpio " . sh_quote($main_rpm) .
+        " | cpio -idm --quiet ./tftpboot/boot/grub2/aarch64-efi/grubaa64.efi"
+    );
+    my $aa64_efi = "$extract_dir/tftpboot/boot/grub2/aarch64-efi/grubaa64.efi";
+    my $aa64_efi_type = pe_image_type($aa64_efi);
+    die "Unexpected aarch64 grub2 image type: $aa64_efi is $aa64_efi_type, expected PE32+ Aarch64\n"
+        if $aa64_efi_type ne 'PE32+ Aarch64';
+}
 print "Verified RPM name/arch/payload: $main_rpm\n";
 
 print_step("Copy artifacts and logs");

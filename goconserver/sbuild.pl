@@ -74,6 +74,10 @@ curl -fsSL "https://go.dev/dl/go${GO_PIN}.linux-${go_host_arch}.tar.gz" | tar -C
 export PATH="$gotoolchain/bin:$PATH"
 export GOTOOLCHAIN=local     # use exactly the pinned toolchain; never auto-download another
 export GOOS=linux GOARCH="$go_target_arch"
+# GOAMD64 is set, never inherited from the chroot: a v3 binary stops a pre-AVX2 node with
+# SIGILL, and one build serves every release of the family. debian/rules asserts the setting
+# reached the compiler.
+export GOAMD64=v1
 go version
 go env GOHOSTARCH GOARCH
 

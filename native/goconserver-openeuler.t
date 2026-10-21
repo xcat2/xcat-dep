@@ -94,10 +94,20 @@ if ($command eq 'uname') {
         print "/private/mock/root\n";
     } else { die "Unexpected mock arguments: @ARGV"; }
 } elsif ($command eq 'go') {
-    die 'Unexpected go invocation' unless $ARGV[0] eq 'build';
-    my $output = option('-o');
-    put($output, "#!/bin/sh\nexit 0\n");
-    chmod 0755, $output;
+    if ($ARGV[0] eq 'version') {
+        # The real compiler stamps the setting it was given into the binary. FIXTURE_GOAMD64 lets a
+        # case report a different one, which is what a compiler ignoring the request looks like.
+        die 'Unexpected go version arguments' unless @ARGV == 3 && $ARGV[1] eq '-m';
+        my $goarch  = $ENV{GOARCH} || 'amd64';
+        my $setting = $ENV{FIXTURE_GOAMD64} || $ENV{GOAMD64} || '';
+        print "$ARGV[2]: go1.25.12\n\tpath\tcommand-line-arguments\n\tbuild\tGOARCH=$goarch\n";
+        print "\tbuild\tGOAMD64=$setting\n" if $goarch eq 'amd64' && length $setting;
+    } else {
+        die 'Unexpected go invocation' unless $ARGV[0] eq 'build';
+        my $output = option('-o');
+        put($output, "#!/bin/sh\nexit 0\n");
+        chmod 0755, $output;
+    }
 } elsif ($command eq 'rpmbuild') {
     my ($top) = map { /^_topdir (.+)$/ ? $1 : () } @ARGV;
     die 'Missing rpmbuild topdir' unless defined $top;
@@ -149,6 +159,7 @@ sub run_case {
     local $ENV{FIXTURE_DOWNLOAD} = $options{corrupt} ? "corrupted payload\n" : $payload;
     local $ENV{FIXTURE_COMMIT} = exists($options{commit}) ? $options{commit} : $commit;
     local $ENV{FIXTURE_COMMIT_RC} = $options{commit_rc} || 0;
+    local $ENV{FIXTURE_GOAMD64} = $options{goamd64} || '';
     my $pid = fork();
     die $! unless defined $pid;
     if (!$pid) {
@@ -163,6 +174,12 @@ sub run_case {
     return { directory => $directory, status => $status, output => read_text("$directory/output"),
         spec => -f "$directory/work/goconserver.spec" ? read_text("$directory/work/goconserver.spec") : '',
         commands => \@commands };
+}
+
+sub spec_check {
+    my ($case) = @_;
+    my ($section) = $case->{spec} =~ /^%check\n(.*?)^%files$/ms;
+    return defined($section) ? $section : '';
 }
 
 sub calls {
@@ -198,6 +215,10 @@ for my $cell (@cells) {
     like($case->{spec}, qr/^Source3:\s+https:\/\/go\.dev\/dl\/go1\.25\.12\.linux-\Q$goarch\E\.tar\.gz$/m,
         "$config stages the matching pinned compiler");
     like($case->{spec}, qr/^BuildRequires:\s+coreutils tar gzip ca-certificates$/m, "$config uses the private compiler prerequisites");
+    # Each spec section runs its own shell, so %check has to put the private compiler back on PATH
+    # or it cannot read the metadata it gates on.
+    like(spec_check($case), qr/^export PATH=\Q%{_builddir}\E\/go\/bin:/m,
+        "$config puts the private compiler on PATH for the GOAMD64 gate");
     like($case->{spec}, qr/^echo '\Q$hash\E  %\{SOURCE3\}' \| sha256sum -c -$/m, "$config verifies the compiler again in RPM prep");
     is(scalar @{calls($case, 'mock', '--buildsrpm')}, 1, "$config reaches SRPM construction after verification");
     is(scalar @{calls($case, 'mock', '--rebuild')}, 1, "$config reaches native RPM reconstruction");
@@ -275,17 +296,39 @@ for my $row (
         like($case->{spec}, qr/^go build [^\n]*-ldflags "-X main.Version=%\{version\}" -o \Q$binary\E /m,
             "EL$release $binary preserves its existing linker flags");
     }
+    # The in-chroot compile is gated inside the spec, where the compiler is. Nothing else runs it,
+    # so this holds the section down against a silent deletion.
+    like(spec_check($case), qr/go version -m \Q%{buildroot}\E\/usr\/bin\/\$bin/,
+        "EL$release gates the staged binaries on their own build metadata");
 }
 
 {
     my $case = run_case(config => 'rocky-10-riscv64-xcat', target => 'riscv64');
     is($case->{status}, 0, 'existing EL cross packaging completes with external build doubles') or diag($case->{output});
-    my $go = calls($case, 'go');
+    my $go = calls($case, 'go', 'build');
     is(scalar @$go, 2, 'EL cross path invokes both host compiler outputs');
     is_deeply([map { $_->{goarch} } @$go], ['riscv64', 'riscv64'], 'EL cross path selects the target GOARCH');
     is(scalar @{calls($case, 'rpmbuild', 'riscv64')}, 1, 'EL cross path packages for the requested target');
     is(scalar @{calls($case, 'mock')} + scalar @{calls($case, 'wget')}, 0, 'EL cross path does not invoke native mock or compiler staging');
     is(read_text("$case->{directory}/results/goconserver-0.3.3-4.riscv64.rpm"), "fixture binary RPM\n", 'EL cross path collects its package output');
+}
+
+# The published x86_64 goconserver was compiled GOAMD64=v3 and stopped a pre-AVX2 headnode with
+# SIGILL. These two cases hold the gate down: it reads the setting from the binary, so it fails
+# when the compiler ignored the request, and an export line alone cannot satisfy it.
+{
+    my %cross = (config => 'rocky+epel-9-ppc64le', arch => 'ppc64le', target => 'x86_64');
+    my $case = run_case(%cross);
+    is($case->{status}, 0, 'amd64 cross build completes when the compiler honours GOAMD64=v1')
+        or diag($case->{output});
+    is(scalar @{calls($case, 'go', 'version')}, 2, 'the gate reads the metadata of both binaries');
+
+    my $bad = run_case(%cross, goamd64 => 'v3');
+    isnt($bad->{status}, 0, 'a v3 amd64 binary fails the build');
+    like($bad->{output}, qr/reports GOAMD64=v3, not GOAMD64=v1/,
+        'the diagnostic names the setting the binary carries');
+    ok(!-f "$bad->{directory}/results/goconserver-0.3.3-4.x86_64.rpm",
+        'a v3 amd64 binary is never packaged');
 }
 
 done_testing();

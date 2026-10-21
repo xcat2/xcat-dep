@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 3/23] Reject encrypted messages from a client without encryption state
+
+A client gets its encryption state when it registers, and a client
+behind a proxy never does. The transfer and completion phases checked
+only that the sender ID was in the host list, then decrypted with the
+state of that client, so an encrypted message with the ID of such a
+client made the server dereference a null pointer. Reject it.
+---
+ server_phase.c | 10 ++++++++++
+ 1 file changed, 10 insertions(+)
+
+diff --git a/server_phase.c b/server_phase.c
+index 5ae8df2..27155ec 100644
+--- a/server_phase.c
++++ b/server_phase.c
+@@ -436,6 +436,11 @@ void handle_transfer_phase(unsigned char *packet,unsigned char *decrypted,
+             send_abort(finfo, "Not in host list", receiver, header->src_id,0,0);
+             return;
+         }
++        if (!destlist[hostidx].encinfo) {
++            glog1(finfo, "Rejecting message from %s: no encryption state",
++                         destlist[hostidx].name);
++            return;
++        }
+         if (!validate_and_decrypt(packet, packetlen, &decrypted, 
+                 &decryptlen, keytype, destlist[hostidx].encinfo->c_app_key, 
+                 destlist[hostidx].encinfo->c_app_iv, ivlen)) {
+@@ -1272,6 +1277,11 @@ void handle_completion_phase(unsigned char *packet,
+             send_abort(finfo, "Not in host list", receiver, header->src_id,0,0);
+             return;
+         }
++        if (!destlist[hostidx].encinfo) {
++            glog1(finfo, "Rejecting message from %s: no encryption state",
++                         destlist[hostidx].name);
++            return;
++        }
+         if (!validate_and_decrypt(packet, packetlen, &decrypted, 
+                 &decryptlen, keytype, destlist[hostidx].encinfo->c_app_key, 
+                 destlist[hostidx].encinfo->c_app_iv, ivlen)) {

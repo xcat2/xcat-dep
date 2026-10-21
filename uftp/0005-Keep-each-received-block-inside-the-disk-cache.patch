@@ -1,0 +1,66 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Vin=C3=ADcius=20Ferr=C3=A3o?= <2031761+viniciusferrao@users.noreply.github.com>
+Date: Sun, 18 Oct 2026 10:00:00 -0300
+Subject: [PATCH 5/23] Keep each received block inside the disk cache
+
+The client sized cache_status with cache_len / blocksize, which rounds
+down. A short last block can fit in the bytes that remain after the
+last full block of the cache, so the client marked it one entry past
+cache_status. With the default cache of 1048576 bytes and blocks of
+1300 bytes, this happens when the last block has 776 bytes or fewer
+and lands at entry 806. Round the count up.
+
+After it flushed a full cache, the client placed the next block at its
+distance from the new cache start. With a small cache (-c) and large
+blocks, a block that arrived after lost blocks landed past the end of
+the cache. Start the cache at that block when it does not fit.
+---
+ client_common.c   | 3 ++-
+ client_fileinfo.c | 3 ++-
+ client_transfer.c | 5 +++++
+ 3 files changed, 9 insertions(+), 2 deletions(-)
+
+diff --git a/client_common.c b/client_common.c
+index 8ba3883..0d5319f 100644
+--- a/client_common.c
++++ b/client_common.c
+@@ -561,7 +561,8 @@ int flush_disk_cache(struct group_list_t *group)
+             group->fileinfo.cache_end = group->fileinfo.cache_start;
+             group->fileinfo.cache_len = 0;
+             memset(group->fileinfo.cache, 0, cache_len);
+-            memset(group->fileinfo.cache_status,0,cache_len / group->blocksize);
++            memset(group->fileinfo.cache_status, 0,
++                   (cache_len + group->blocksize - 1) / group->blocksize);
+             return 1;
+         }
+     }
+diff --git a/client_fileinfo.c b/client_fileinfo.c
+index 2b7e415..505e1ea 100644
+--- a/client_fileinfo.c
++++ b/client_fileinfo.c
+@@ -416,7 +416,8 @@ void handle_fileinfo_regular(struct group_list_t *group)
+     group->fileinfo.cache_end = 0;
+     group->fileinfo.cache_len = 0;
+     group->fileinfo.cache = safe_calloc(cache_len, 1);
+-    group->fileinfo.cache_status = safe_calloc(cache_len / group->blocksize, 1);
++    group->fileinfo.cache_status = safe_calloc(
++            (cache_len + group->blocksize - 1) / group->blocksize, 1);
+     group->phase = PHASE_RECEIVING;
+     send_fileinfo_ack(group, group->fileinfo.restart);
+     set_timeout(group, 0);
+diff --git a/client_transfer.c b/client_transfer.c
+index 5100728..de88cef 100644
+--- a/client_transfer.c
++++ b/client_transfer.c
+@@ -762,6 +762,11 @@ void handle_fileseg(struct group_list_t *group, const unsigned char *message,
+                     }
+                     cache_offset = (seq - group->fileinfo.cache_start) *
+                                    group->blocksize;
++                    if ((cache_offset + datalen) > cache_len) {
++                        group->fileinfo.cache_start = seq;
++                        group->fileinfo.cache_end = seq;
++                        cache_offset = 0;
++                    }
+                 } else {
+                     for (i = group->fileinfo.cache_end; i <= seq; i++) {
+                         if (!group->fileinfo.naklist[i]) {

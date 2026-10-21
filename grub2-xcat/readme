@@ -34,3 +34,20 @@ copied to /tftpboot/boot/grub2/grub2.riscv64 by the package scripts, which
 is the boot file xCAT hands to DHCP client architecture 27 (0x001b). To
 refresh it, take EFI/BOOT/grubriscv64.efi from the BaseOS tree of the EL10
 release you target and record the release, source rpm and sha256 here.
+
+#aarch64:
+aarch64 nodes boot through UEFI firmware and grub2 only, like riscv64, but
+the distro grubaa64.efi cannot be shipped as is: its embedded prefix points
+at the distro's /EFI/<vendor> directory, so it never finds the
+boot/grub2/grub.cfg-<HEXIP> that nodeset writes. The image is therefore
+generated in %build with
+
+  grub2-mkimage -O arm64-efi -p /boot/grub2 -o grubaa64.efi <modules>
+
+(BuildRequires grub2-tools and the noarch grub2-efi-aa64-modules), the same
+/boot/grub2 prefix the grub2.ppc core image uses. efi_uga is not in the
+module list: it is x86 only and grub2-mkimage aborts on it for arm64-efi.
+It is installed as /tftpboot/boot/grub2/aarch64-efi/grubaa64.efi and
+copied to /tftpboot/boot/grub2/grub2.aarch64 by %post, which is the boot
+file xCAT hands to DHCP client architecture 11 (0x000b). The openEuler
+build carries no grub2-efi-aa64-modules and ships without the image.

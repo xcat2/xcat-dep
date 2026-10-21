@@ -126,6 +126,7 @@ my %PKG_DIR = (
     'elilo-xcat'     => 'elilo',
     'xnba-undi'      => 'xnba',
     'ipxe-xcat'      => 'ipxe-xcat',
+    'uftp'           => 'uftp',
 );
 
 # Build the GetOptions map from the shared standard_options() spec (so the flag vocabulary matches

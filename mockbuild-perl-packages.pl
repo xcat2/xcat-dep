@@ -6,8 +6,11 @@ use Cwd qw(abs_path);
 use File::Basename qw(dirname basename);
 use File::Copy qw(copy);
 use File::Path qw(make_path remove_tree);
+use FindBin qw($RealBin);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
+use lib $RealBin, "$RealBin/lib";
+use MockBuildUtils qw(mock_result_dirs make_traversable_path);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -187,6 +190,14 @@ my %meta = (
         rpm_arch   => 'noarch',
         module     => 'IO::Stty',
     },
+    'perl-IO-Tty' => {
+        mode      => 'spec',
+        pkg_dir   => "$repo_root/perl-IO-Tty",
+        spec      => "$repo_root/perl-IO-Tty/perl-IO-Tty.spec",
+        rpm_name  => 'perl-IO-Tty',
+        rpm_arch  => 'native',
+        module    => 'IO::Tty',
+    },
     'perl-Mail-Sender' => {
         mode       => 'srpm',
         pkg_dir    => "$repo_root/perl-Mail-Sender",
@@ -274,13 +285,16 @@ my @default_order = qw(
     perl-HTML-Form
     perl-HTTP-Async
     perl-IO-Stty
+    perl-IO-Tty
     perl-Net-HTTPS-NB
     perl-Net-Telnet
     perl-Sys-Virt
 );
 
-# The perl deps of xCAT that EL takes from EPEL. Built only where there is no EPEL (riscv64,
-# --epel-gap); the x86_64/ppc64le repos keep getting them from EPEL. perl-Path-Class is a
+# The perl deps of xCAT that EL takes from EPEL. --epel-gap adds them to the default set, for a
+# target with no EPEL (riscv64). The default is not the whole story: mockbuild-all.pl passes
+# --packages from packages-manifest.conf, which lists some of these for the EPEL-fed targets too,
+# because a service node reads no EPEL. perl-Path-Class is a
 # build dep of perl-Crypt-SSLeay only. Not here although in the table: perl-SOAP-Lite (its
 # fc29 BuildRequires IO::SessionData, MIME::Lite, XML::Parser::Lite, Test::XML are EPEL-only
 # too, so it cannot be built or installed without EPEL; xCAT uses it for HP blades only).
@@ -321,7 +335,8 @@ if (@packages && $jobs > scalar(@packages)) {
 
 make_path($result_dir);
 make_path($log_dir);
-make_path($work_dir);
+# mock reaches its result directories through the work directory.
+make_traversable_path($work_dir);
 
 print_step("Configuration");
 print "repo_root:   $repo_root\n";
@@ -499,7 +514,7 @@ sub build_package {
     my $status_file = "$pkg_log/status.txt";
 
     remove_tree($pkg_run_dir) if -d $pkg_run_dir;
-    make_path($pkg_run_dir);
+    make_traversable_path($pkg_run_dir);
     make_path($pkg_result);
     make_path($pkg_log);
     # Clear any status/error left by an earlier run in a reused log dir BEFORE building, so a crash
@@ -507,6 +522,9 @@ sub build_package {
     unlink $status_file, "$pkg_log/error.txt";
 
     my $det_mock_cfg = create_deterministic_mock_cfg($mock_cfg, $SOURCE_DATE_EPOCH, $pkg_run_dir);
+    # This script runs as root, and mock writes a --resultdir as the uid its configuration names.
+    my ($srpm_result, $restamp_result, $rebuild_result) =
+        mock_result_dirs($pkg_run_dir, $det_mock_cfg);
 
     my $run_log = "$pkg_log/run.log";
     open my $runfh, '>', $run_log or die "Cannot write $run_log: $!\n";
@@ -525,8 +543,6 @@ sub build_package {
     my $ok = 0;
 
     my $srpm_path = '';
-    my $rebuild_result = "$pkg_run_dir/rpm";
-    make_path($rebuild_result);
 
     eval {
         if ($cfg->{mode} eq 'srpm') {
@@ -545,8 +561,6 @@ sub build_package {
                 my ($espec) = sort glob("$ext/SPECS/*.spec");
                 die "No spec found after unpacking srpm for $pkg\n" if !$espec;
                 append_release_suffix($espec, $release_suffix);
-                my $restamp_result = "$pkg_run_dir/restamp-srpm";
-                make_path($restamp_result);
                 run(
                     "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
                     " --buildsrpm --spec " . sh_quote($espec) .
@@ -600,8 +614,6 @@ sub build_package {
                 " > " . sh_quote("$pkg_log/prep.log") . " 2>&1"
             );
 
-            my $srpm_result = "$pkg_run_dir/srpm";
-            make_path($srpm_result);
             run_mock(
                 "mock -r " . sh_quote($det_mock_cfg) . $mock_uniqueext_opt .
                 " --buildsrpm --spec " . sh_quote($spec) .
