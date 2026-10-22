@@ -212,15 +212,18 @@ sub acquire {
         $seen = $observed if defined($observed);
         if (defined($observed) && $observed->{'machine-id'} eq $here->{'machine-id'}) {
             if (mkdir($borrow)) {
+                _at('borrow-created');
                 # Steps 3 to 7.
                 my $taken = eval {
                     # The borrow names its taker, so a taker that dies here can be recovered
                     # below. Written before the death check, which is where a SIGKILL lands.
                     _write_metadata($borrow, this_process());
+                    _at('borrow-held');
                     my $again = _read_metadata($abs);
                     return 0 unless defined($again) && _key($again) eq _key($observed);
                     return 0 unless owner_is_dead($again, $here);
                     $self->{identity} = this_process();
+                    _at('before-commit');
                     _write_metadata($abs, $self->{identity});
                     1;
                 };
@@ -496,6 +499,7 @@ sub _reap_borrow {
     }
     return (0, 'other machine') unless $taker->{'machine-id'} eq $here->{'machine-id'};
     return (0, 'taker is alive') unless owner_is_dead($taker, $here);
+    _at('before-supersede');
     _drop_borrow($borrow);
     return (1, "taker pid $taker->{pid} is dead");
 }
@@ -512,6 +516,10 @@ sub _unchanged {
     $seen->{$dir} = $mark;
     return defined($before) && $before eq $mark ? 1 : 0;
 }
+
+# _at: a point in the protocol a test can stop a process at, to force one interleaving instead of
+# depending on timing. It does nothing here.
+sub _at { return }
 
 sub _key {
     my ($fields) = @_;
