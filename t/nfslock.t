@@ -110,17 +110,17 @@ for my $case (
     my $path = stage('retried.lock', metadata(pid => $parent, pstart => $parent_start));
     @slept = ();
     eval { XCAT::NFSLock->acquire($path, retries => 4, delay => 5, jitter => 2, label => 'cell lock'); 1 };
-    like($@, qr/\ATrying to unlock \Q$path\E failed after 4 retries; cell lock owned by pid $parent on machine /,
+    like($@, qr/\ACannot lock \Q$path\E: still held after 4 retries by pid $parent on machine /,
         'the error names the lock, the retries and the owner');
     is(scalar(@slept), 4, 'acquire waits R times');
     is(scalar(grep { $_ >= 3 && $_ <= 7 } @slept), 4, 'each wait is within T ± δ');
 
     @slept = ();
     eval { XCAT::NFSLock->acquire($path, timeout => 10); 1 };
-    like($@, qr/failed after 4 retries;/, 'a timeout of 10s with the default delay of 3s is 4 retries');
+    like($@, qr/still held after 4 retries by/, 'a timeout of 10s with the default delay of 3s is 4 retries');
     @slept = ();
     eval { XCAT::NFSLock->acquire($path); 1 };
-    like($@, qr/failed after 1 retry;/, 'a lock with no timeout still retries once');
+    like($@, qr/still held after 1 retry by/, 'a lock with no timeout still retries once');
 }
 
 # The lock stays with an owner that is not proven dead.
@@ -137,7 +137,7 @@ for my $case (
     my $path = stage($file, $text);
     @mkdirs = ();
     eval { XCAT::NFSLock->acquire($path, retries => 2); 1 };
-    like($@, qr/\ATrying to unlock \Q$path\E failed after 2 retries;/, "$name: the lock is not taken");
+    like($@, qr/\ACannot lock \Q$path\E: still held after 2 retries by/, "$name: the lock is not taken");
     is(scalar(grep { $_ eq "$path.borrow" } @mkdirs), $name =~ /live owner/ ? 3 : 0,
         "$name: lock.borrow is tried only for an owner on this machine with valid metadata");
     is(-e "$path/metadata" ? read_text("$path/metadata") : undef, $text, "$name: the metadata is unchanged");
@@ -165,13 +165,16 @@ for my $case (
     is($lock->release, 1, "$name: the new owner releases the lock") if $lock;
 }
 
-# Another process holds lock.borrow: this one does not take the lock.
+# Another process holds lock.borrow: this one does not take the lock. The borrow has to name a
+# LIVE taker. A borrow with no metadata is reaped instead, because no participant holds one for
+# longer than two file reads, and leaving it made the lock unacquirable for ever.
 {
     my $dead = metadata(pid => $gone);
     my $path = stage('borrowed.lock', $dead);
     mkdir("$path.borrow") or die "Cannot stage $path.borrow: $!";
+    write_text("$path.borrow/metadata", metadata(pid => $parent, pstart => $parent_start));
     eval { XCAT::NFSLock->acquire($path, retries => 2); 1 };
-    like($@, qr/\ATrying to unlock /, 'a lock under another borrower is not taken');
+    like($@, qr/\ACannot lock /, 'a lock under another borrower is not taken');
     is(read_text("$path/metadata"), $dead, 'the metadata under another borrower is unchanged');
     ok(-d "$path.borrow", 'the other borrower keeps lock.borrow');
 }

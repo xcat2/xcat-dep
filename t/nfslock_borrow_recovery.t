@@ -14,6 +14,7 @@ use FindBin qw($RealBin);
 use lib "$RealBin/../lib";
 use File::Temp qw(tempdir);
 use File::Slurper qw(read_text write_text);
+use POSIX ();
 use XCAT::NFSLock qw(this_process format_metadata parse_metadata process_start);
 
 my $dir = tempdir(CLEANUP => 1);
@@ -44,11 +45,13 @@ sub stage {
     return $path;
 }
 
-# Record the waits instead of sleeping, so a lock that cannot be recovered fails at once.
+# Record the waits instead of sleeping, so a lock that cannot be recovered fails at once. A
+# scenario can set $on_wait to act between two attempts, which is what a live taker does.
 my @slept;
+my $on_wait;
 {
     no warnings 'redefine';
-    *XCAT::NFSLock::_sleep = sub { push(@slept, $_[0]) };
+    *XCAT::NFSLock::_sleep = sub { push(@slept, $_[0]); $on_wait->() if $on_wait };
 }
 
 # Keep the lock's own log out of the TAP stream.
@@ -57,8 +60,9 @@ select($log_fh);
 
 sub take {
     my ($path) = @_;
-    @slept = ();
-    $logged = '';
+    @slept   = ();
+    $logged  = '';
+    $on_wait = undef;
     my $lock = eval { XCAT::NFSLock->acquire($path, retries => 2, label => 'probe') };
     return ($lock, $@, $logged);
 }
@@ -86,21 +90,55 @@ sub take {
                      borrow => metadata(pid => $live, pstart => $live_start));
     my ($lock, $err) = take($path);
     ok(!$lock, 'a borrow held by a live process is left alone');
-    like($err, qr/failed after 2 retries/, 'acquire waits out its retries rather than stealing it');
+    like($err, qr/still held after 2 retries/, 'acquire waits out its retries rather than stealing it');
     ok(-d "$path.borrow", 'the live borrow still exists');
 }
 
-# ---- 3. a borrow with no metadata is never assumed stale --------------------------------
-# What the old protocol left behind, and what the sweeper exists for. The module's own rule is
-# that staleness is never inferred from metadata it cannot validate, so this must NOT recover.
+# ---- 3. a borrow with no metadata, unchanged over two attempts, is reaped ---------------
+# What the earlier protocol left behind. It wrote no metadata into the borrow, and it held one
+# for the time of two file reads, so a metadata-less borrow that two attempts find unchanged is
+# held by nobody. Before this rule the lock was unacquirable for ever.
 {
     my $path = stage('legacy-borrow.lock',
                      lock   => metadata(pid => $gone, pstart => '1'),
                      borrow => 'none');
+    my ($lock, $err, $log) = take($path);
+    ok($lock, 'a metadata-less borrow is reaped and the dead owner is then evicted')
+        or diag "acquire died: $err";
+    ok(!-d "$path.borrow", 'the stranded borrow is gone');
+    like($log, qr/reaped-borrow .*no metadata/, 'and the log says which rule removed it');
+    undef $lock;
+}
+
+# ---- 3a. ONE attempt is not enough -----------------------------------------------------
+# The rule is "two attempts found it unchanged". Asserted on its own, because the stubbed sleep
+# makes scenario 3 pass either way: here the borrow is written to between the attempts, exactly
+# as a live taker writing its metadata would, so an unchanged test is the only thing that can
+# refuse it.
+{
+    my $path = stage('touched-borrow.lock',
+                     lock   => metadata(pid => $gone, pstart => '1'),
+                     borrow => 'none');
+    @slept = (); $logged = '';
+    my $turn = 0;
+    $on_wait = sub { mkdir("$path.borrow/busy-" . $turn++) };
+    my $lock = eval { XCAT::NFSLock->acquire($path, retries => 2, label => 'probe') };
+    ok(!$lock, 'a borrow that changes between two attempts is left alone');
+    ok(-d "$path.borrow", 'so the borrow survives');
+    cmp_ok($turn, '>', 1, 'control: the borrow really was touched between the attempts');
+}
+
+# ---- 3b. a borrow whose metadata does not validate is never assumed stale --------------
+# A metadata file that exists but does not hash may be a half-finished write. The rule above
+# covers an ABSENT file only, so this must still refuse.
+{
+    my $path = stage('junk-borrow.lock',
+                     lock   => metadata(pid => $gone, pstart => '1'),
+                     borrow => "pid=1\n");
     my ($lock, $err) = take($path);
-    ok(!$lock, 'a borrow with no metadata is not treated as stale');
-    like($err, qr/failed after 2 retries/, 'it waits out its retries instead');
-    ok(-d "$path.borrow", 'and the borrow is left for the sweeper');
+    ok(!$lock, 'a borrow with invalid metadata is not treated as stale');
+    like($err, qr/still held after 2 retries/, 'it waits out its retries instead');
+    ok(-d "$path.borrow", 'and the borrow is left alone');
 }
 
 # ---- 4. a borrow this module creates carries metadata -----------------------------------
@@ -160,7 +198,57 @@ sub take {
     is($act{"$root/.other.lock.d"}, 'kept', 'a lock owned by another machine is kept');
 }
 
-# ---- 6. a guard releases when the caller stops holding it ------------------------------
+# ---- 6. a lock.d with no metadata is refused, and only the sweeper removes it ----------
+# The build lock in xcat-core wrote no metadata and held lock.d for the whole build, so a
+# metadata-less lock.d can be a live build of the earlier code. acquire must refuse it: no fact
+# on disk tells that holder from a dead one. Only a caller that claims the root exclusively may
+# call it abandoned, which is the one condition under which the sweeper removes it.
+{
+    my $root = "$dir/no-metadata";
+    mkdir $root or die $!;
+    my $path = "$root/buildrpms.openeuler-20.03sp4-x86_64.lock.d";
+    mkdir $path or die $!;
+
+    my ($lock, $err) = take($path);
+    ok(!$lock, 'a lock.d with no metadata is not taken over');
+    like($err, qr/still held after 2 retries/, 'acquire waits out its retries and names the lock');
+    ok(-d $path, 'and the directory is left for the sweeper');
+
+    my %kept = map { $_->{path} => $_ } XCAT::NFSLock::sweep_stranded($root, undef);
+    is($kept{$path}{action}, 'kept', 'the sweeper keeps it without an exclusive claim');
+    like($kept{$path}{why}, qr/no exclusive claim/, 'and names the rule that kept it');
+
+    my %swept = map { $_->{path} => $_ } XCAT::NFSLock::sweep_stranded($root, undef, exclusive => 1);
+    is($swept{$path}{action}, 'removed', 'with the exclusive claim it is removed');
+    ok(!-d $path, 'so a later build can take the lock');
+}
+
+# ---- 7. a forked child cannot release its parent's lock --------------------------------
+# DESTROY calls release, so a child that inherits a guard and exits would otherwise remove a
+# lock its parent still holds. The pid test in release is the only thing that stops it.
+{
+    my $path = "$dir/forked.lock.d";
+    my $lock = XCAT::NFSLock->acquire($path, retries => 1, label => 'forked', quiet => 1);
+    pipe(my $reader, my $writer) or die "pipe: $!";
+    my $child = fork();
+    die "fork: $!" unless defined $child;
+    unless ($child) {
+        close $reader;
+        my $freed = $lock->release;
+        syswrite($writer, $freed ? "freed\n" : "kept\n");
+        # _exit, so the child runs no END block and flushes none of the parent's buffers.
+        POSIX::_exit(0);
+    }
+    close $writer;
+    my $said = <$reader> // '';
+    close $reader;
+    waitpid($child, 0);
+    is($said, "kept\n", 'release in a forked child frees nothing');
+    ok(-d $path, 'and the parent still holds its lock');
+    ok($lock->release, 'which the owning process can then release itself');
+}
+
+# ---- 8. a guard releases when the caller stops holding it ------------------------------
 # Without DESTROY the lock is held to the end of the process, and no take-over recovers it
 # either, because its owner is alive. Every caller here keeps its guards in an array for that
 # reason, so the leak was invisible.
