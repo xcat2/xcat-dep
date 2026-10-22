@@ -2,6 +2,14 @@ package XCAT::NFSLock;
 
 # NFS lock protocol
 #
+# Copies
+#   This module is vendored three times, because no repo installs another's build tooling:
+#     xcat-dep         lib/XCAT/NFSLock.pm              (this file, the original)
+#     xcat-core        build-utils/lib/XCAT/NFSLock.pm
+#     xcat-core-ci-cd  ci/lib/XCAT/NFSLock.pm
+#   The three must stay identical. They have diverged once already: sweep_stranded was added to
+#   the ci-cd copy alone, so the protocol hole it covers stayed open in the other two.
+#
 # A lock on a shared, possibly re-exported, NFS tree. flock and fcntl are not
 # available there. The protocol uses mkdir, rmdir, unlink and plain file
 # writes. It uses no rename.
@@ -19,9 +27,10 @@ package XCAT::NFSLock;
 #      Cloned VMs and images can share it by accident unless it is regenerated.
 #   3. Metadata writes eventually become readable completely and consistently.
 #   4. A host never declares one of its own live process incarnations dead.
-#   5. A process cannot die:
-#      - after it creates lock.d, until it publishes valid metadata;
-#      - while it holds lock.borrow, until it removes it.
+#   5. A process cannot die after it creates lock.d, until it publishes valid metadata.
+#      It MAY die while it holds lock.borrow: the borrow carries the same metadata as the lock,
+#      so a borrow whose taker is provably dead is recovered by the same rule. A borrow left by
+#      the earlier protocol carries none, and sweep_stranded removes those.
 #   6. A crashed worker leaves recoverable state. The owning host eventually
 #      returns and retries. Eventually one worker and its release complete.
 #   7. All participants follow the protocol.
@@ -57,8 +66,9 @@ package XCAT::NFSLock;
 #      - invalid or missing: retry
 #      - different machine-id: retry
 #      - same host: save the observed ownership identity
-#   3. mkdir lock.borrow
-#      - failure: retry
+#   3. mkdir lock.borrow, then write valid metadata into it
+#      - EEXIST: recover the borrow if its metadata proves its taker dead, then retry
+#      - other failure: retry
 #   4. Read and validate the metadata again.
 #      - invalid, missing, or ownership identity changed: rmdir lock.borrow, retry
 #   5. Prove that the recorded (boot-id, pid, pstart) is dead.
@@ -67,7 +77,8 @@ package XCAT::NFSLock;
 #   6. Replace the metadata with the identity of this process and a fresh token.
 #   7. rmdir lock.borrow
 #   8. Call the worker.
-#   9. mkdir lock.borrow
+#   9. mkdir lock.borrow, then write valid metadata into it
+#      - EEXIST: recover the borrow if its metadata proves its taker dead
 #      - failure: sleep(T + rand(-δ, δ)), retry step 9
 #  10. unlink lock.d/metadata
 #  11. rmdir lock.d (the actual unlock)
@@ -78,7 +89,8 @@ package XCAT::NFSLock;
 #   lock.d absent         => acquirable
 #   invalid metadata      => retry only
 #   different machine-id  => never recover here
-#   lock.borrow exists    => ownership transition or release in progress
+#   lock.borrow exists    => ownership transition or release in progress,
+#                            unless its metadata proves its taker dead
 #
 # Steps 1 to 7 are acquire, step 8 is the caller, steps 9 to 12 are release.
 # release does steps 10 and 11 only when the metadata names this acquisition.
@@ -86,12 +98,13 @@ package XCAT::NFSLock;
 # Log
 #   Unless quiet => 1, each lock event prints one line to the selected output handle:
 #     [nfslock] <UTC time> <host> pid=<pid> <event> <label> <lock.d> [detail]
-#   Events: acquired (step 1), took-over (step 6), wait (a retry), released (step 11),
-#   release-skipped. The time has milliseconds, so the lines of two hosts sort into one order.
+#   Events: acquired (step 1), took-over (step 6), reaped-borrow (step 3 or 9), wait (a retry),
+#   released (step 11), release-skipped. The time has milliseconds, so the lines of two hosts sort into one order.
 
 use strict;
 use warnings;
 use Cwd qw(abs_path);
+use File::Find ();
 use Digest::SHA qw(sha256_hex);
 use Errno qw(EEXIST ENOENT);
 use Exporter 'import';
@@ -100,7 +113,8 @@ use POSIX qw(strftime);
 use Sys::Hostname qw(hostname);
 use Time::HiRes ();
 
-our @EXPORT_OK = qw(this_process format_metadata parse_metadata owner_is_dead process_start);
+our @EXPORT_OK = qw(this_process format_metadata parse_metadata owner_is_dead process_start
+                    sweep_stranded);
 
 my @IDENTITY = qw(machine-id boot-id pid pstart token);
 
@@ -180,22 +194,33 @@ sub acquire {
         # Step 2.
         my $observed = _read_metadata($abs);
         $seen = $observed if defined($observed);
-        if (defined($observed) && $observed->{'machine-id'} eq $here->{'machine-id'} && mkdir($borrow)) {
-            # Steps 3 to 7.
-            my $taken = eval {
-                my $again = _read_metadata($abs);
-                return 0 unless defined($again) && _key($again) eq _key($observed);
-                return 0 unless owner_is_dead($again, $here);
-                $self->{identity} = this_process();
-                _write_metadata($abs, $self->{identity});
-                1;
-            };
-            my $error = $@;
-            rmdir($borrow);
-            die $error unless defined($taken);
-            if ($taken) {
-                $self->_log('took-over', 'from dead pid ' . $observed->{pid});
-                return $self;
+        if (defined($observed) && $observed->{'machine-id'} eq $here->{'machine-id'}) {
+            if (mkdir($borrow)) {
+                # Steps 3 to 7.
+                my $taken = eval {
+                    # The borrow names its taker, so a taker that dies here can be recovered
+                    # below. Written before the death check, which is where a SIGKILL lands.
+                    _write_metadata($borrow, this_process());
+                    my $again = _read_metadata($abs);
+                    return 0 unless defined($again) && _key($again) eq _key($observed);
+                    return 0 unless owner_is_dead($again, $here);
+                    $self->{identity} = this_process();
+                    _write_metadata($abs, $self->{identity});
+                    1;
+                };
+                my $error = $@;
+                _drop_borrow($borrow);
+                die $error unless defined($taken);
+                if ($taken) {
+                    $self->_log('took-over', 'from dead pid ' . $observed->{pid});
+                    return $self;
+                }
+            }
+            elsif ($! == EEXIST) {
+                # Step 3 fails for as long as the borrow exists, and that skips steps 4 to 7, so
+                # a taker killed here blocked the lock for every later acquire.
+                $self->_log('reaped-borrow', "taker pid $1 is dead")
+                    if _reap_borrow($borrow, $here) =~ /\Apid (\d+)\z/;
             }
         }
 
@@ -229,23 +254,27 @@ sub acquire {
 sub release {
     my ($self) = @_;
     return 0 if $self->{released} || $$ != $self->{pid};
+    # acquire blesses $self before it holds anything, and sets identity only once it does. An
+    # acquire that dies would otherwise reach the wait loop below and never leave it.
+    return 0 unless defined($self->{identity});
     my $path   = $self->{path};
     my $borrow = "$path.borrow";
     while (1) {
         # Step 9.
         if (mkdir($borrow)) {
+            eval { _write_metadata($borrow, $self->{identity}); 1 };
             my $current = _read_metadata($path);
             if (defined($current) && _key($current) eq _key($self->{identity})) {
                 $self->{released} = 1;
                 unlink("$path/metadata");
                 my $removed = rmdir($path);
                 my $error   = $!;
-                rmdir($borrow);
+                _drop_borrow($borrow);
                 warn "Cannot remove $path: $error\n" unless $removed;
                 $self->_log($removed ? 'released' : 'release-skipped', $removed ? () : ("rmdir: $error"));
                 return $removed ? 1 : 0;
             }
-            rmdir($borrow);
+            _drop_borrow($borrow);
             # Valid metadata of another acquisition, or no lock.d at all: this lock is gone.
             if (defined($current) || !-d $path) {
                 $self->{released} = 1;
@@ -256,6 +285,10 @@ sub release {
         elsif ($! != EEXIST) {
             warn "Cannot create $borrow: $!\n";
             return 0;
+        }
+        else {
+            # A taker killed while holding the borrow would otherwise block this release for ever.
+            _reap_borrow($borrow, _here());
         }
         _sleep(_wait($self->{delay}, $self->{jitter}));
     }
@@ -415,6 +448,30 @@ sub _canonical {
     return join('', map { "$_=$fields->{$_}\n" } sort @IDENTITY);
 }
 
+# _drop_borrow: remove a borrow this process created, metadata first.
+sub _drop_borrow {
+    my ($borrow) = @_;
+    unlink("$borrow/metadata");
+    return rmdir($borrow);
+}
+
+# _reap_borrow: remove a borrow whose taker is provably dead, and say what was found.
+#
+# The same rule the lock itself uses: a borrow is recovered only when its metadata is valid, names
+# this machine, and names a process this host can prove is dead. A borrow with no metadata is one
+# the previous protocol left, and staleness is never inferred from metadata that cannot be
+# validated -- sweep_stranded removes those.
+sub _reap_borrow {
+    my ($borrow, $here) = @_;
+    $here //= _here();
+    my $taker = _read_metadata($borrow);
+    return 'invalid' unless defined($taker);
+    return 'other machine' unless $taker->{'machine-id'} eq $here->{'machine-id'};
+    return 'alive' unless owner_is_dead($taker, $here);
+    _drop_borrow($borrow);
+    return "pid $taker->{pid}";
+}
+
 sub _key {
     my ($fields) = @_;
     return join("\n", map { $fields->{$_} } @IDENTITY);
@@ -489,6 +546,121 @@ sub _absolute {
     my ($path) = @_;
     my $dir = abs_path(dirname($path)) // dirname($path);
     return "$dir/" . basename($path);
+}
+
+#--------------------------------------------------------------------------------
+
+=head3 DESTROY
+
+    Descriptions:
+        Release the lock when the caller stops holding the returned object.
+
+        Without this a guard that goes out of scope keeps its lock to the end of the process, and
+        no take-over can recover it either, because its owner is alive. Every caller in this
+        project keeps its guards in an array for exactly that reason. release checks the pid, so a
+        forked child cannot free its parent's lock, and it is idempotent.
+
+    Arguments:
+        none
+    Returns:
+        nothing
+
+=cut
+
+#--------------------------------------------------------------------------------
+sub DESTROY {
+    local ($@, $!, $?);
+    my ($self) = @_;
+    eval { $self->release; 1 };
+    return;
+}
+
+#--------------------------------------------------------------------------------
+
+=head3 sweep_stranded
+
+    Descriptions:
+        Remove lock state that a killed process left behind, under one root.
+
+        Assumption 5 says a process cannot die while it holds lock.borrow. Under this CI it does:
+        the run policy aborts a condemned run and Jenkins sends SIGTERM. A borrow stranded that
+        way makes its lock PERMANENTLY unacquirable, because step 3 is mkdir(lock.borrow) and a
+        failure there skips steps 4 to 7 -- so the dead owner is never evicted and every later
+        acquire waits out its retries. xcat-ci #80 stranded one, and #81 exited 17 on it.
+
+        A dead owner's lock.d is removed as well. acquire would take it over, so this only saves
+        the wait.
+
+        It never infers staleness from metadata it cannot validate, and it never removes a lock
+        owned by a live process or by another machine.
+
+    Arguments:
+        $root: the directory to walk
+        $here: hash ref with machine-id, boot-id and start_of, as owner_is_dead takes
+        %opt:  exclusive => 1 when the caller holds the run's exclusive claim on $root, so no
+               live take-over can be in progress. Only then is a borrow removed: a borrow is
+               otherwise a transition that is milliseconds from finishing, and removing it lets
+               two takers rewrite one metadata file.
+    Returns:
+        A list of hash refs: path, action (removed or kept), why.
+
+=cut
+
+#--------------------------------------------------------------------------------
+sub sweep_stranded {
+    my ($root, $here, %opt) = @_;
+    $here //= _here();
+    my @found;
+    File::Find::find({
+        no_chdir => 1,
+        wanted   => sub {
+            my $d = $File::Find::name;
+            return unless -d $d;
+            # Both spellings. mockbuild-all.pl names a cell lock <dir>/.<arch>.lock, while
+            # cluster-test.pl names its build lock <repo>/.build.lock.d and sbuild-all.pl uses
+            # .sbuild-all.<arch>.nfslock. A matcher for '.lock' alone swept only the first.
+            push @found, $d if $d =~ /\.(?:lock(?:\.d)?|nfslock)(?:\.borrow)?\z/;
+        },
+    }, $root) if -d $root;
+
+    my @report;
+    # A borrow before its own lock: removing the borrow is what lets the lock be taken over.
+    for my $d (sort { ($b =~ /\.borrow\z/ ? 1 : 0) <=> ($a =~ /\.borrow\z/ ? 1 : 0) || $a cmp $b } @found) {
+        if ($d =~ /\.borrow\z/) {
+            unless ($opt{exclusive}) {
+                push @report, { path => $d, action => 'kept',
+                                why => 'a borrow may be a live take-over; no exclusive claim' };
+                next;
+            }
+            push @report, _remove($d, 'borrow stranded by a killed take-over');
+            next;
+        }
+        my $owner = _read_metadata($d);
+        unless (defined($owner)) {
+            push @report, { path => $d, action => 'kept',
+                            why => 'metadata missing or invalid; staleness is never inferred' };
+            next;
+        }
+        if ($owner->{'machine-id'} ne $here->{'machine-id'}) {
+            push @report, { path => $d, action => 'kept',
+                            why => "owned by machine $owner->{'machine-id'}" };
+            next;
+        }
+        unless (owner_is_dead($owner, $here)) {
+            push @report, { path => $d, action => 'kept',
+                            why => "pid $owner->{pid} is alive" };
+            next;
+        }
+        push @report, _remove($d, "owner pid $owner->{pid} is provably dead");
+    }
+    return @report;
+}
+
+sub _remove {
+    my ($dir, $why) = @_;
+    unlink("$dir/metadata");
+    if (rmdir($dir)) { return { path => $dir, action => 'removed', why => $why } }
+    return { path => $dir, action => 'kept', why => "cannot remove: $!" };
 }
 
 1;
