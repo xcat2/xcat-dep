@@ -975,7 +975,7 @@ sub test_rpm_repository_lock {
         '--skip-createrepo', '--skip-tarball', '--dry-run',
     );
     isnt($status, 0, 'a repository cell cannot have two publishers');
-    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 1 retry;/m,
+    like(read_binary($log), qr/^Cannot lock \Q$cell_lock\E: still held after 1 retry by/m,
         'the lock failure names the locked cell');
     ok(-d $cell_lock, 'a lock held on another machine is left in place');
     remove_tree($cell_lock);
@@ -1022,7 +1022,7 @@ sub test_finalize_cell_lock {
         '--finalize-xcat-dep', '--x86_64-repo', $x86, '--ppc64le-repo', $ppc,
     );
     isnt($status, 0, 'finalize does not rewrite a cell that a build holds');
-    like(read_binary($log), qr/^Trying to unlock \Q$cell_lock\E failed after 1 retry;/m,
+    like(read_binary($log), qr/^Cannot lock \Q$cell_lock\E: still held after 1 retry by/m,
         'finalize names the cell lock it waited for');
     ok(-d $cell_lock, 'the build keeps its cell lock');
     ok(!-e "$ppc/rh10/.ppc64le.lock", 'finalize releases the cell locks it took');
@@ -1038,7 +1038,8 @@ sub test_finalize_cell_lock {
         '--x86_64-repo', $x86, '--ppc64le-repo', $ppc,
     );
     isnt($arch_status, 0, 'finalize of an empty ppc64le cell fails');
-    unlike(read_binary($arch_log), qr/^Trying to unlock/m, 'finalize of ppc64le cells takes no x86_64 cell lock');
+    unlike(read_binary($arch_log), qr/^Cannot lock \Q$cell_lock\E/m,
+        'finalize of ppc64le cells takes no x86_64 cell lock');
     like(read_binary($arch_log), qr/no x86_64 xCAT-genesis-base rpm/, 'finalize of ppc64le cells reaches the genesis check');
     ok(-d $cell_lock, 'the x86_64 cell lock of the other machine is left in place');
     ok(!-e "$ppc/rh10/.ppc64le.lock", 'finalize releases the ppc64le cell lock');
@@ -1108,7 +1109,7 @@ sub test_publish_lock {
         my $run_status = run_apt_consumer(log => $run_log, output => $output, apt_dir => $apt_root,
             extra => [ '--publish-lock-wait', '2' ]);
         isnt($run_status, 0, "a publish does not start while a $build_arch run holds its lock");
-        like(read_binary($run_log), qr/^Trying to unlock \Q$run_lock\E failed after 1 retry;/m,
+        like(read_binary($run_log), qr/^Cannot lock \Q$run_lock\E: still held after 1 retry by/m,
             "the refusal names the $build_arch run lock");
         ok(!-d "$apt_root/dists", "nothing is published while a $build_arch run holds its lock");
         $running->release;
@@ -1124,7 +1125,7 @@ sub test_publish_lock {
         extra => [ '--publish-lock-wait', '2' ],
     );
     isnt($locked_status, 0, 'a locked apt tree is not published into');
-    like(read_binary($locked_log), qr/^Trying to unlock \Q$lockfile\E failed after 1 retry;/m,
+    like(read_binary($locked_log), qr/^Cannot lock \Q$lockfile\E: still held after 1 retry by/m,
         'the refusal names the lock another run owns');
     ok(!-d "$apt_root/dists", 'nothing is published while another run holds the lock');
 

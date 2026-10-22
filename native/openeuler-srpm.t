@@ -273,7 +273,7 @@ for my $held ('openeuler20.03sp4/x86_64', 'rh20.03sp4/x86_64') {
         options => ['--skip-xcat-dep', '--try-unlock-timeout', 0]);
     if ($native) {
         isnt($result->{rc}, 0, 'the native published cell lock excludes a second publisher');
-        like($result->{log}, qr/Trying to unlock \Q$result->{lock_path}\E failed/,
+        like($result->{log}, qr/Cannot lock \Q$result->{lock_path}\E: still held/,
             'the refusal names the lock beside the native published cell');
         is(read_binary("$result->{repo}/openeuler20.03sp4/x86_64/sentinel"), 'previous repository',
             'native lock refusal preserves the published repository');
@@ -322,7 +322,7 @@ for my $name ('native-only', 'mixed', 'legacy-locked') {
     my $log = read_binary($logfile);
     if ($name eq 'legacy-locked') {
         isnt($rc, 0, 'finalization refuses a held legacy destination lock');
-        like($log, qr{Trying to unlock \Q$root\E/rh9/\.x86_64\.lock failed},
+        like($log, qr{Cannot lock \Q$root\E/rh9/\.x86_64\.lock: still held},
             'finalization refuses the same sibling lock as an EL publisher');
         ok(!-e "$x/$prpm", 'lock refusal precedes the legacy cross-copy');
         ok(!-d "$x/repodata", 'lock refusal precedes legacy reindexing');
