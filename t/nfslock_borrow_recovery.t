@@ -426,6 +426,126 @@ sub reap    {
     ok($lock->release, 'which the owning process can then release itself');
 }
 
+# ---- 7a. a dead owner whose workers still run does not lose its lock -------------------
+# An owner is one process; the work it starts is not. The build wrapper runs each command in its
+# OWN process group, so SIGKILL on the wrapper leaves that group running, and a lock recovered
+# from the dead wrapper puts two builds in one checkout.
+#
+# BOTH halves are asserted. A test with only the blocking half cannot tell this rule from a lock
+# that recovers nothing at all, which would satisfy the same assertion and remove the reason the
+# recovery exists.
+{
+    my $path = "$dir/with-workers.lock.d";
+    pipe(my $stop_r, my $stop_w) or die "pipe: $!";
+    pipe(my $up_r,   my $up_w)   or die "pipe: $!";
+
+    # The worker: its own process group, as sh() gives each build command, and it outlives the
+    # owner that started it.
+    my $worker = fork();
+    die "fork: $!" unless defined $worker;
+    unless ($worker) {
+        close($stop_w); close($up_r);
+        POSIX::setpgid(0, 0);
+        open(STDOUT, '>', '/dev/null');
+        open(STDERR, '>', '/dev/null');
+        syswrite($up_w, 'w');
+        sysread($stop_r, my $go, 1);
+        POSIX::_exit(0);
+    }
+    close($stop_r); close($up_w);
+    is(read_bounded($up_r, 1, 20), 'w', 'control: the worker is running in its own group');
+    POSIX::setpgid($worker, $worker);
+
+    # The owner takes the lock, attaches the worker, and is then killed with a signal it cannot
+    # handle, so it runs no handler and detaches nothing.
+    my $owner = XCAT::NFSLock->acquire($path, retries => 1, label => 'owner', quiet => 1);
+    is($owner->attach($worker), 1, 'control: the owner records the worker group');
+    ok(-e "$path/workers/$worker." . process_start($worker), 'control: the record names the group');
+    write_text("$path/metadata", metadata(pid => $gone, pstart => '1'));   # the owner is now dead
+
+    my ($blocked, $err) = take($path);
+    ok(!$blocked, 'a dead owner whose worker group still exists keeps its lock');
+    like($err, qr/retained for surviving build workers in process group $worker\b/,
+        'and the refusal names the group that holds it');
+    ok(-d $path, 'the lock is still there');
+
+    my %swept = map { $_->{path} => $_ } XCAT::NFSLock::sweep_stranded($dir, undef, exclusive => 1);
+    is($swept{$path}{action}, 'kept', 'an exclusive claim does not override a live worker group');
+    like($swept{$path}{why}, qr/process group $worker still exist/, 'and says which group kept it');
+
+    # THE OTHER HALF. Let the worker exit, and the same lock must now be recoverable.
+    syswrite($stop_w, 'g');
+    waitpid($worker, 0);
+    my ($taken, $why) = take($path);
+    ok($taken, 'once the worker group is gone the lock IS recovered') or diag "acquire died: $why";
+    ok(!-d "$path/workers", 'and the take-over clears the records of the owner it replaced');
+    undef $taken;
+    close($up_r); close($stop_w);
+    $owner->{released} = 1;      # the metadata names another acquisition now
+}
+
+# ---- 7b. a group outlives its leader, and the lock reads the GROUP ---------------------
+# Reaping the group leader does not end the group: its children inherit it. A liveness test that
+# asked about the leader would call this group gone while a build worker still runs in it, which
+# is the same substitution the whole finding is about -- asking about one process instead of the
+# set that must be dead.
+#
+# detach is asserted here too. It must refuse while the group exists, so the retention is a
+# property of what is on disk and not of which call site remembered to run.
+{
+    my $path = "$dir/orphan.lock.d";
+    pipe(my $kid_stop_r,    my $kid_stop_w)    or die "pipe: $!";
+    pipe(my $leader_stop_r, my $leader_stop_w) or die "pipe: $!";
+    pipe(my $up_r,          my $up_w)          or die "pipe: $!";
+
+    my $leader = fork();
+    die "fork: $!" unless defined $leader;
+    unless ($leader) {
+        close($kid_stop_w); close($leader_stop_w); close($up_r);
+        POSIX::setpgid(0, 0);
+        open(STDOUT, '>', '/dev/null');
+        open(STDERR, '>', '/dev/null');
+        # The grandchild inherits the group and outlives the leader.
+        my $kid = fork();
+        if (defined($kid) && !$kid) {
+            syswrite($up_w, 'k');
+            sysread($kid_stop_r, my $go, 1);
+            POSIX::_exit(0);
+        }
+        sysread($leader_stop_r, my $go, 1);
+        POSIX::_exit(0);
+    }
+    close($kid_stop_r); close($leader_stop_r); close($up_w);
+    POSIX::setpgid($leader, $leader);
+    is(read_bounded($up_r, 1, 20), 'k', 'control: a grandchild runs in the leader\'s group');
+
+    my $lock = XCAT::NFSLock->acquire($path, retries => 1, label => 'orphan', quiet => 1);
+    is($lock->attach($leader), 1, 'control: the group is recorded while its leader is alive');
+
+    # The leader exits; the group does not.
+    syswrite($leader_stop_w, 'g');
+    waitpid($leader, 0);
+    is(process_start($leader), undef, 'control: the group LEADER is gone');
+    ok(kill(0, -$leader), 'control: the group itself is not');
+
+    is(scalar(XCAT::NFSLock::live_workers($path)), 1,
+        'a group that outlived its leader still counts as live');
+    is($lock->detach($leader), 0, 'and detach refuses to drop its record');
+
+    # The grandchild is not this process's child, so waitpid cannot reap it. Poll for the group
+    # to empty instead, bounded, so a regression fails rather than hangs.
+    syswrite($kid_stop_w, 'g');
+    my $deadline = Time::HiRes::time() + 20;
+    while (kill(0, -$leader) && Time::HiRes::time() < $deadline) {
+        select(undef, undef, undef, 0.01);
+    }
+    ok(!kill(0, -$leader), 'control: the group is empty once the grandchild exits');
+    is(scalar(XCAT::NFSLock::live_workers($path)), 0, 'and the record then counts as gone');
+    is($lock->detach($leader), 1, 'so detach drops it');
+    undef $lock;
+    close($_) for ($up_r, $kid_stop_w, $leader_stop_w);
+}
+
 # ---- 8. a take-over whose commit fails returns that error, and cleans up nothing --------
 # acquire set identity before writing the lock metadata, so a write that left partial metadata
 # and threw gave DESTROY a lock to release. release then retried for ever, because lock.d
