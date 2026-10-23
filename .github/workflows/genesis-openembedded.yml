@@ -86,6 +86,7 @@ jobs:
           prove -v t/net_dns_rr_types.t
           prove -v t/repo-lock-race.t
           prove -v t/nfslock.t
+          prove -v t/nfslock_borrow_recovery.t
           prove -v t/genesis_oe_source_dir.t
           prove -v -It/lib t/genesis_openembedded_release.t
           sudo -E prove -v -It/lib t/genesis_openembedded_consumer.t
