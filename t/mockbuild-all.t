@@ -376,6 +376,21 @@ SPEC
     ok(!$ok4, 'finalize dies when a ppc64le OS has no x86_64 peer repo (was silently skipped)');
     like($@, qr/no x86_64 peer repo/, 'finalize error names the missing x86_64 peer');
 
+    # A SUSE cell uses neither half of cross-arch Genesis. openSUSE ships no legacy Genesis
+    # (operator decision, 2026-10-22), so there is no payload to copy, and cells.tsv gives the
+    # sles12 cell x86_64 alone, so the ppc64le peer the EL cells must have will never exist.
+    # Both requirements must pass it by. Its completeness and signature gates still run:
+    # mockbuild-all.pl verifies every finalized cell, sles* among them, after this returns.
+    my $tmp5 = tempdir(CLEANUP => 1);
+    make_path("$tmp5/x/sles12/x86_64");   # one arch, no peer, no genesis
+    my $ok5 = eval { quiet { finalize_xcat_dep("$tmp5/x", "$tmp5/p") }; 1 };
+    ok($ok5, 'finalize passes a one-arch SUSE cell with no peer') or diag($@);
+
+    my $tmp6 = tempdir(CLEANUP => 1);
+    make_path("$tmp6/x/sles15/x86_64", "$tmp6/p/sles15/ppc64le");   # both arches, no genesis
+    my $ok6 = eval { quiet { finalize_xcat_dep("$tmp6/x", "$tmp6/p") }; 1 };
+    ok($ok6, 'finalize passes a two-arch SUSE cell with no Genesis') or diag($@);
+
     # @GENESIS_ARCHES is the single source of truth for the cross-arch matrix (add arches there).
     my %tarch = map { $_->{arch} => $_->{tarch} } @MockBuildUtils::GENESIS_ARCHES;
     is($tarch{x86_64},  'x86_64', 'GENESIS_ARCHES: x86_64 maps to tarch x86_64');
@@ -406,7 +421,8 @@ SPEC
 {
     my $tmp = tempdir(CLEANUP => 1);
     my ($x, $p) = ("$tmp/x/rh9/x86_64", "$tmp/p/rh9/ppc64le");
-    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le",
+                  "$tmp/x/sles12/x86_64");
     make_path($x, $p, @native);
     write_text("$x/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm", "x86 genesis\n");
     write_text("$p/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm", "ppc genesis\n");
