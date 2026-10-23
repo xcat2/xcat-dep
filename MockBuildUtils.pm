@@ -690,22 +690,28 @@ sub finalize_xcat_dep {
     # <os> built for only the OTHER arch slip through unseen -- finalize then never cross-populated
     # that cell and still exited 0 (PR #62 review). Every discovered <os> must carry every arch below.
     my %os;
-    my $native_cells = 0;
+    my @no_cross;
     for my $a (@GENESIS_ARCHES) {
         my $root = $repo{ $a->{arch} }
             // die "FATAL: [finalize] no repo root configured for arch '$a->{arch}' (wire it in %repo)\n";
         for my $dir (grep { -d "$_/$a->{arch}" } glob("$root/*")) {
             my $name = basename($dir);
-            if ($name =~ /^openeuler/) {
-                $native_cells++;
+            # openEuler builds one architecture per repository, and openSUSE ships no legacy
+            # Genesis, so neither has a payload to copy and neither has an architecture peer to
+            # wait for. cells.tsv gives the sles12 cell x86_64 alone. Both still pass the
+            # completeness and signature gates: mockbuild-all.pl verifies every finalized cell,
+            # sles* among them, after this returns.
+            if ($name =~ /^(?:openeuler|sles)/) {
+                push @no_cross, "$name/$a->{arch}";
                 next;
             }
             $os{$name} = 1;
         }
     }
+    print "[finalize] no cross-arch Genesis for: " . join(', ', sort @no_cross) . "\n" if @no_cross;
 
-    if (!%os && $native_cells) {
-        print "[finalize] openEuler repositories do not use cross-arch Genesis; skipping\n";
+    if (!%os && @no_cross) {
+        print "[finalize] no repository uses cross-arch Genesis; skipping\n";
         return;
     }
 
