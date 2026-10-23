@@ -323,14 +323,20 @@ sub parse_pin {
     return ('version');
 }
 
-# The mock target that builds each SUSE deploy directory. A deploy directory does not name the
-# chroot that builds it, so this needs a table rather than a pattern: mock-core-configs ships no
-# SLE config, because SLE repositories need a subscription, and Leap 15.6 shares SLE 15 SP6's
-# package base. sles12 is absent on purpose -- it has no buildable chroot, so it must resolve to
-# nothing rather than to a wrong target, which would publish one release's rpms as another's.
-my %SUSE_BUILD_TARGET = (
-    sles15 => 'opensuse-leap-15.6',
+# The Leap release that builds each SLE family, and the family it serves. mock-core-configs ships
+# no SLE config, because SLE repositories need a subscription, so each cell is built in the
+# openSUSE counterpart of its family. The SLE major is not the Leap major: Leap 15.6 carries SLE
+# 15 SP6's base, and Leap 42.3 carries SLE 12 SP3's -- rpm 4.11.2, perl 5.18.2, glibc 2.22.
+my %LEAP_SLE_MAJOR = (
+    '42.3' => 12,
+    '15.6' => 15,
+    '16.0' => 16,
 );
+
+# The reverse, for a deploy directory handed to the gates by path alone. Derived from the table
+# above so the two cannot disagree.
+my %SUSE_BUILD_TARGET =
+    map { ("sles$LEAP_SLE_MAJOR{$_}" => "opensuse-leap-$_") } keys %LEAP_SLE_MAJOR;
 
 sub derive_target_from_repo_path {
     my ($dir) = @_;
@@ -1024,13 +1030,17 @@ sub target_profile {
                                 perl-IO-Stty perl-HTTP-Async perl-Net-HTTPS-NB)],
         };
     }
-    # The dep repository publishes Leap under sles<MAJOR>, so every 15.x lands in sles15. Leap has
-    # no EPEL and builds natively; the dep set is the EL one without elilo-xcat, which packages an
-    # EL boot loader. 94daf29 added this mapping and a1ab393 removed it while scoping its pull
-    # request to EL, and the pipeline has asked for the target ever since.
-    if (my ($rel, $arch) = $target =~ /\Aopensuse-leap-(\d+)\.\d+-([A-Za-z0-9_]+)\z/) {
+    # Leap has no EPEL and builds natively; the dep set is the EL one without elilo-xcat, which
+    # packages an EL boot loader. 94daf29 added this mapping and a1ab393 removed it while scoping
+    # its pull request to EL, and the pipeline has asked for the target ever since.
+    if (my ($leap, $arch) = $target =~ /\Aopensuse-leap-(\d+\.\d+)-([A-Za-z0-9_]+)\z/) {
         die "openSUSE target '$target' requires a $arch build host, found $host_arch\n"
             unless $arch eq $host_arch;
+        # An unmapped Leap release must not publish into sles<leap major>: that would serve one
+        # family's rpms as another's.
+        my $rel = $LEAP_SLE_MAJOR{$leap}
+            or die "openSUSE target '$target' names no SLE family: add Leap $leap to"
+                 . " %LEAP_SLE_MAJOR\n";
         return {
             rel          => $rel,
             arch         => $arch,
