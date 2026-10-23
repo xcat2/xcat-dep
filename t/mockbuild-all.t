@@ -376,6 +376,21 @@ SPEC
     ok(!$ok4, 'finalize dies when a ppc64le OS has no x86_64 peer repo (was silently skipped)');
     like($@, qr/no x86_64 peer repo/, 'finalize error names the missing x86_64 peer');
 
+    # A SUSE cell uses neither half of cross-arch Genesis. openSUSE ships no legacy Genesis
+    # (operator decision, 2026-10-22), so there is no payload to copy, and cells.tsv gives the
+    # sles12 cell x86_64 alone, so the ppc64le peer the EL cells must have will never exist.
+    # Both requirements must pass it by. Its completeness and signature gates still run:
+    # mockbuild-all.pl verifies every finalized cell, sles* among them, after this returns.
+    my $tmp5 = tempdir(CLEANUP => 1);
+    make_path("$tmp5/x/sles12/x86_64");   # one arch, no peer, no genesis
+    my $ok5 = eval { quiet { finalize_xcat_dep("$tmp5/x", "$tmp5/p") }; 1 };
+    ok($ok5, 'finalize passes a one-arch SUSE cell with no peer') or diag($@);
+
+    my $tmp6 = tempdir(CLEANUP => 1);
+    make_path("$tmp6/x/sles15/x86_64", "$tmp6/p/sles15/ppc64le");   # both arches, no genesis
+    my $ok6 = eval { quiet { finalize_xcat_dep("$tmp6/x", "$tmp6/p") }; 1 };
+    ok($ok6, 'finalize passes a two-arch SUSE cell with no Genesis') or diag($@);
+
     # @GENESIS_ARCHES is the single source of truth for the cross-arch matrix (add arches there).
     my %tarch = map { $_->{arch} => $_->{tarch} } @MockBuildUtils::GENESIS_ARCHES;
     is($tarch{x86_64},  'x86_64', 'GENESIS_ARCHES: x86_64 maps to tarch x86_64');
@@ -406,7 +421,8 @@ SPEC
 {
     my $tmp = tempdir(CLEANUP => 1);
     my ($x, $p) = ("$tmp/x/rh9/x86_64", "$tmp/p/rh9/ppc64le");
-    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le");
+    my @native = ("$tmp/x/openeuler20.03sp4/x86_64", "$tmp/p/openeuler24.03/ppc64le",
+                  "$tmp/x/sles12/x86_64");
     make_path($x, $p, @native);
     write_text("$x/xCAT-genesis-base-x86_64-2.19.1-1.noarch.rpm", "x86 genesis\n");
     write_text("$p/xCAT-genesis-base-ppc64-2.19.1-1.noarch.rpm", "ppc genesis\n");
@@ -537,9 +553,12 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is_deeply(\@missing, [], 'conserver-xcat is present in every legacy manifest target section')
         or diag("missing conserver-xcat in: @missing");
     # uftp is optional for xCAT like conserver-xcat, and BUILD.md documents it for every EL and
-    # openEuler target.
+    # openEuler target. The Leap targets are excluded: UFTP 5 for Leap needs its own spec change,
+    # which this tree does not carry, and a manifest pin on a package nothing builds reads as
+    # MISSING in a zero-tolerance gate.
     my @no_uftp = grep { !exists $m{$_}{uftp} }
-        @targets, 'rocky-10-riscv64-xcat', grep { /^openeuler-/ } sort keys %m;
+        (grep { !/^opensuse-/ } @targets), 'rocky-10-riscv64-xcat',
+        grep { /^openeuler-/ } sort keys %m;
     is_deeply(\@no_uftp, [], 'uftp is present in every EL and openEuler manifest target section')
         or diag("missing uftp in: @no_uftp");
     my @native_missing = grep { /^openeuler-/ && !exists $m{$_}{goconserver} } sort keys %m;
@@ -642,13 +661,23 @@ for my $case (
     ['/repo/rh9/s390x/', 'alma+epel-9-s390x'],
     ['/repo/rh10/ppc64le//', 'alma+epel-10-ppc64le'],
     ['/repo/rh10/riscv64', 'alma+epel-10-riscv64'],
+    # A SUSE cell resolves to the Leap chroot that builds it. Without this the post-build gate and
+    # --verify-repo are handed a sles15 directory, derive nothing, and the cell publishes unverified.
+    ['/repo/sles15/x86_64', 'opensuse-leap-15.6-x86_64'],
+    ['/repo/sles15/ppc64le/', 'opensuse-leap-15.6-ppc64le'],
+    # sles12 is built in a Leap 42.3 chroot: 42.3 carries SLE 12 SP3's base. Without this the
+    # cell is deployed and the completeness and signature gates derive nothing for it.
+    ['/repo/sles12/x86_64', 'opensuse-leap-42.3-x86_64'],
 ) {
     my ($path, $target) = @$case;
     is(derive_target_from_repo_path($path), $target, "$path selects $target");
 }
 is(derive_target_from_repo_path(undef), undef, 'missing path has no target');
 is(derive_target_from_repo_path(''), undef, 'empty path has no target');
-for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64') {
+for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64',
+              # An SLE family nothing builds must resolve to nothing: a guess here would verify
+              # one release's cell against another release's manifest section.
+              '/repo/sles13/x86_64') {
     is(derive_target_from_repo_path($path), undef, "$path has no target");
 }
 
