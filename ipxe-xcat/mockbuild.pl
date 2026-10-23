@@ -11,7 +11,7 @@ use File::Path qw(make_path remove_tree);
 use FindBin qw($RealBin);
 use Getopt::Long qw(GetOptions);
 use lib "$RealBin/..", "$RealBin/../lib";
-use MockBuildUtils qw(resolve_mock_cfg);
+use MockBuildUtils qw(packaged_path resolve_mock_cfg);
 use XCAT::BuildUtils qw(capture_command digest_file print_step require_command run_command shell_quote);
 
 my $pkg_dir   = abs_path($RealBin);
@@ -111,11 +111,16 @@ run_command('bash', '-o', 'pipefail', '-c', 'cd ' . shell_quote($payload)
     . ' && rpm2cpio ' . shell_quote($rpm) . ' | cpio -idm --quiet');
 run_command('perl', "$pkg_dir/verify-payload.pl", "$payload/tftpboot/xcat/ipxe",
     "$pkg_dir/payload.sha256");
-check_installed("$payload/usr/share/doc/ipxe-xcat/ipxe-$version-source.tar.gz",
+# The document and licence directories are distribution policy: openSUSE installs documents
+# under /usr/share/doc/packages. Read both back from the package rather than name them.
+my @documents = split(/\n/, capture_command('rpm', '-qpd', $rpm));
+my @licences  = split(/\n/, capture_command('rpm', '-qpL', $rpm));
+check_installed($payload . packaged_path(\@documents, 'ipxe-xcat', "ipxe-$version-source.tar.gz"),
     "$pkg_dir/ipxe-$version-source.tar.gz");
 for my $licence (grep { m{^licenses/} } @sources) {
     (my $installed = $licence) =~ s{^licenses/}{};
-    check_installed("$payload/usr/share/licenses/ipxe-xcat/$installed", "$pkg_dir/$licence");
+    check_installed($payload . packaged_path(\@licences, 'ipxe-xcat', $installed),
+        "$pkg_dir/$licence");
 }
 
 print_step('Collect the results');

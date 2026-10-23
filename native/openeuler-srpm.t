@@ -336,7 +336,10 @@ for my $name ('native-only', 'mixed', 'legacy-locked') {
             ok(!-e "$p/$xrpm", 'unselected legacy source receives no foreign Genesis');
             ok(!-d "$p/repodata", 'unselected legacy source is not reindexed');
         } else {
-            like($log, qr/openEuler.*skipping/, 'native-only finalization explains the skip');
+            like($log, qr/no cross-arch Genesis for:[^\n]*openeuler/,
+                'native-only finalization names the repositories it skips');
+            like($log, qr/no repository uses cross-arch Genesis; skipping/,
+                '... and says it skipped the cross-copy');
             unlike($log, qr/(?:acquired|took-over) repository cell lock/,
                 'native-only finalization acquires no cell lock');
         }
