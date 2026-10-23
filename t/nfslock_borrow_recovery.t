@@ -594,6 +594,148 @@ sub reap    {
     unlink "$path/metadata"; rmdir $path;
 }
 
+# spawn_worker: a process in its OWN group, blocked until this process releases it. Returns the
+# pgid and a code ref that ends it and waits for the group to empty.
+sub spawn_worker {
+    pipe(my $stop_r, my $stop_w) or die "pipe: $!";
+    pipe(my $up_r,   my $up_w)   or die "pipe: $!";
+    my $pid = fork();
+    die "fork: $!" unless defined $pid;
+    unless ($pid) {
+        close($stop_w); close($up_r);
+        POSIX::setpgid(0, 0);
+        open(STDOUT, '>', '/dev/null');
+        open(STDERR, '>', '/dev/null');
+        syswrite($up_w, 'w');
+        sysread($stop_r, my $go, 1);
+        POSIX::_exit(0);
+    }
+    close($stop_r); close($up_w);
+    POSIX::setpgid($pid, $pid);
+    die "the worker did not start\n" unless read_bounded($up_r, 1, 20) eq 'w';
+    my $end = sub {
+        syswrite($stop_w, 'g');
+        waitpid($pid, 0);
+        my $deadline = Time::HiRes::time() + 20;
+        while (kill(0, -$pid) && Time::HiRes::time() < $deadline) {
+            select(undef, undef, undef, 0.01);
+        }
+        close($up_r); close($stop_w);
+        return !kill(0, -$pid);
+    };
+    return ($pid, $end);
+}
+
+# ---- 9a. release keeps the lock whole when a worker blocks the removal -----------------
+# release deleted the owner metadata and marked the guard released BEFORE it knew the removal
+# could finish. With a live worker the rmdir failed, and the lock was left holding workers and no
+# owner -- which acquire refuses for ever, because there is nothing there to validate. A lock
+# still HELD is refused with a reason and recovers when its owner dies; that one never did.
+{
+    my $path = "$dir/release-busy.lock.d";
+    my ($worker, $end_worker) = spawn_worker();
+    my $lock = XCAT::NFSLock->acquire($path, retries => 2, label => 'busy', quiet => 1);
+    is($lock->attach($worker), 1, 'control: the owner records a live worker group');
+
+    is($lock->release, 0, 'release does not free a lock whose worker group still exists');
+    ok(-d $path, 'the lock directory survives');
+    ok(-e "$path/metadata", 'and so does the ownership metadata');
+    is($lock->release, 0, 'a second attempt still refuses, and still keeps it whole');
+    ok(-e "$path/metadata", 'the metadata is still there after that attempt');
+
+    # THE OTHER HALF. The worker exits, and the SAME guard must finish the release.
+    ok($end_worker->(), 'control: the worker group is gone');
+    is($lock->release, 1, 'the same guard then releases the lock it kept');
+    ok(!-d $path, 'and the directory is gone');
+    my $next = eval { XCAT::NFSLock->acquire($path, retries => 1, label => 'next', quiet => 1) };
+    ok($next, 'so a later acquire succeeds') or diag "acquire died: $@";
+    undef $next;
+}
+
+# ---- 9b. an owner that exits without releasing leaves a lock that recovers -------------
+# The reviewer's path. The owner gives up and exits, so nothing retries. The lock must still be
+# recoverable once the owner AND the worker are both gone, which needs its metadata intact.
+{
+    my $path = "$dir/owner-gone.lock.d";
+    my ($worker, $end_worker) = spawn_worker();
+    pipe(my $said_r, my $said_w) or die "pipe: $!";
+    my $owner = fork();
+    die "fork: $!" unless defined $owner;
+    unless ($owner) {
+        close($said_r);
+        open(STDOUT, '>', '/dev/null');
+        open(STDERR, '>', '/dev/null');
+        my $held = eval { XCAT::NFSLock->acquire($path, retries => 2, label => 'gone', quiet => 1) };
+        $held->attach($worker) if $held;
+        my $freed = $held ? $held->release : -1;
+        syswrite($said_w, $freed == 0 ? 'k' : 'x');
+        POSIX::_exit(0);      # no DESTROY, so nothing retries after this
+    }
+    close($said_w);
+    is(read_bounded($said_r, 1, 20), 'k', 'control: the owner could not release, and exited');
+    waitpid($owner, 0);
+    ok(-e "$path/metadata", 'the owner it left behind is still named in the metadata');
+
+    my ($blocked, $err) = take($path);
+    ok(!$blocked, 'a later acquire is refused while the worker group exists');
+    like($err, qr/process group $worker\b/, 'and the refusal names that group');
+
+    # THE OTHER HALF. Both the owner and the worker are gone now.
+    ok($end_worker->(), 'control: the worker group is gone');
+    my ($taken, $why) = take($path);
+    ok($taken, 'and the lock is then recovered from its dead owner') or diag "acquire died: $why";
+    undef $taken;
+    close($said_r);
+}
+
+# ---- 9c. the sweep does not turn a recoverable lock into a dead one -------------------
+# _remove deleted the metadata and then failed on the workers directory, so the sweep reported
+# "kept" and left a lock nothing could validate. A take-over recovers the very same lock by
+# itself, so the sweep was leaving it in a WORSE state than doing nothing.
+{
+    my $root = "$dir/sweep-workers";
+    mkdir $root or die $!;
+    my $path = "$root/completed.lock.d";
+    mkdir $path or die $!;
+    write_text("$path/metadata", metadata(pid => $gone, pstart => '1'));
+    mkdir "$path/workers" or die $!;
+    # A record of a COMPLETED worker: a pid above pid_max names no group.
+    write_text("$path/workers/$gone.1", '');
+
+    my %act = map { $_->{path} => $_ } XCAT::NFSLock::sweep_stranded($root, undef);
+    is($act{$path}{action}, 'removed', 'the sweep removes a dead owner that has completed worker records');
+    ok(!-d $path, 'the directory is gone, not left without its metadata');
+
+    # THE OTHER HALF, and the reason this matters: the lock has to be usable afterwards.
+    my $next = eval { XCAT::NFSLock->acquire($path, retries => 1, label => 'after', quiet => 1) };
+    ok($next, 'so a later acquire succeeds') or diag "acquire died: $@";
+    undef $next;
+}
+
+# ---- 9d. a lock the sweep keeps is left exactly as it was -----------------------------
+# The other direction. Whatever the sweep refuses to remove must still carry its metadata, or
+# refusing to remove it is the same damage by another route.
+{
+    my $root = "$dir/sweep-live";
+    mkdir $root or die $!;
+    my $path = "$root/live.lock.d";
+    mkdir $path or die $!;
+    my $text = metadata(pid => $gone, pstart => '1');
+    write_text("$path/metadata", $text);
+    my ($worker, $end_worker) = spawn_worker();
+    mkdir "$path/workers" or die $!;
+    write_text("$path/workers/$worker." . process_start($worker), '');
+
+    my %act = map { $_->{path} => $_ } XCAT::NFSLock::sweep_stranded($root, undef, exclusive => 1);
+    is($act{$path}{action}, 'kept', 'a lock with a live worker group is kept, exclusive claim or not');
+    is(read_text("$path/metadata"), $text, 'and its metadata is untouched');
+
+    ok($end_worker->(), 'control: the worker group is gone');
+    my ($taken, $why) = take($path);
+    ok($taken, 'so the lock is still recoverable afterwards') or diag "acquire died: $why";
+    undef $taken;
+}
+
 # ---- 10. a guard releases when the caller stops holding it -----------------------------
 # Without DESTROY the lock is held to the end of the process, and no take-over recovers it
 # either, because its owner is alive. Every caller here keeps its guards in an array for that
