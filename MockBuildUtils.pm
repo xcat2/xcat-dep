@@ -25,6 +25,7 @@ our @EXPORT_OK = qw(
     cross_copy_genesis finalize_xcat_dep bump_dep_release_suffix
     createrepo_c_cmd sign_and_index_repo
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
+    packaged_path
     make_traversable_path epel_target_profile epel_cell_path cell_lock_path
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
@@ -932,6 +933,37 @@ sub cell_lock_path {
 # resolve_mock_cfg($os_id, $rel, $arch[, $cfg_dir]): the mock config for EL release $rel on this
 # host, <id>+epel-<rel>-<arch>. /etc/os-release says 'almalinux' where mock-core-configs names the
 # file 'alma', so the short form is tried too. $cfg_dir defaults to /etc/mock.
+#-------------------------------------------------------------------------------
+
+=head3 packaged_path
+
+    Descriptions: find where a package installed one of its documentation or
+        licence files. The directory is distribution policy: EL puts the
+        documents of a package under /usr/share/doc, openSUSE under
+        /usr/share/doc/packages, so a build-time check cannot name it. Read it
+        back from the package instead.
+    Arguments:
+        $paths:  array ref of absolute paths, as "rpm -qpd" or "rpm -qpL" prints them
+        $subdir: the last directory the package owns, normally the package name
+        $want:   the path of the wanted file below $subdir, e.g. "ipxe/COPYING"
+    Returns:
+        the one path that ends in "/$subdir/$want". Dies when the number of
+        matches is not one, and names how many paths were searched.
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub packaged_path {
+    my ($paths, $subdir, $want) = @_;
+    my @all = @{ $paths || [] };
+    my @hit = grep { m{^/.*/\Q$subdir\E/\Q$want\E\z} } @all;
+    die "packaged_path: no packaged path ends in $subdir/$want (searched "
+      . scalar(@all) . ")\n" if !@hit;
+    die "packaged_path: $subdir/$want matches " . scalar(@hit)
+      . " packaged paths: @hit\n" if @hit > 1;
+    return $hit[0];
+}
+
 sub resolve_mock_cfg {
     my ($os_id, $rel, $arch, $cfg_dir) = @_;
     $cfg_dir //= '/etc/mock';
