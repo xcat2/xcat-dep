@@ -649,6 +649,9 @@ for my $case (
     # --verify-repo are handed a sles15 directory, derive nothing, and the cell publishes unverified.
     ['/repo/sles15/x86_64', 'opensuse-leap-15.6-x86_64'],
     ['/repo/sles15/ppc64le/', 'opensuse-leap-15.6-ppc64le'],
+    # sles12 is built in a Leap 42.3 chroot: 42.3 carries SLE 12 SP3's base. Without this the
+    # cell is deployed and the completeness and signature gates derive nothing for it.
+    ['/repo/sles12/x86_64', 'opensuse-leap-42.3-x86_64'],
 ) {
     my ($path, $target) = @$case;
     is(derive_target_from_repo_path($path), $target, "$path selects $target");
@@ -656,9 +659,9 @@ for my $case (
 is(derive_target_from_repo_path(undef), undef, 'missing path has no target');
 is(derive_target_from_repo_path(''), undef, 'empty path has no target');
 for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64',
-              # sles12 has no chroot in this commit. It must resolve to nothing: a guess here
-              # would verify one release's cell against another release's manifest section.
-              '/repo/sles12/x86_64') {
+              # An SLE family nothing builds must resolve to nothing: a guess here would verify
+              # one release's cell against another release's manifest section.
+              '/repo/sles13/x86_64') {
     is(derive_target_from_repo_path($path), undef, "$path has no target");
 }
 

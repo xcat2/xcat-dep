@@ -25,11 +25,13 @@ ok($profile, 'MockBuildUtils decides what a target builds and which cell it publ
 ok($baseurl, 'MockBuildUtils decides which channel a cell advertises');
 ok($label,   'MockBuildUtils names a cell');
 
-# The cell is sles<MAJOR>/<arch>: every 15.x publishes under sles15, which is the directory
-# xcat.org serves and the one a SUSE conf's DEP_REPO points at.
+# The cell is sles<SLE MAJOR>/<arch>, and the SLE major is not the Leap major. Leap 15.6 carries
+# SLE 15 SP6's base and Leap 42.3 carries SLE 12 SP3's, so 42.3 publishes into sles12. That is the
+# directory xcat.org serves and the one cells.tsv gives the sles12 cell.
 my %cell = (
     'opensuse-leap-15.6-x86_64'  => 'sles15/x86_64',
     'opensuse-leap-15.6-ppc64le' => 'sles15/ppc64le',
+    'opensuse-leap-42.3-x86_64'  => 'sles12/x86_64',
 );
 
 subtest 'an openSUSE target yields a profile' => sub {
@@ -96,7 +98,33 @@ subtest 'every openSUSE cell has a manifest section' => sub {
     my %m = MockBuildUtils::read_manifest("$RealBin/../packages-manifest.conf");
     for my $t (sort keys %cell) {
         ok(exists $m{$t}, "packages-manifest.conf has a section for $t");
+        # openSUSE ships no legacy Genesis, so no openSUSE target builds the payload. The gate is
+        # zero tolerance: a pin on a package nothing builds reads as MISSING and stops the deploy.
+        ok(!exists $m{$t}{'xCAT-genesis-base'},
+            "... and $t does not pin xCAT-genesis-base");
     }
+    # The control: an EL section still pins it, so the assertion above measures the openSUSE
+    # sections and not a manifest that lost the pin everywhere.
+    ok(exists $m{'alma+epel-10-x86_64'}{'xCAT-genesis-base'},
+        'an EL section still pins xCAT-genesis-base');
+};
+
+# Leap 42.3 is end of life. mock ships no configuration for it, so the build needs the one in
+# mock-configs/, which install_mock_cfg copies to /etc/mock. The live mirror answers 404 for the
+# 42.3 tree and the discontinued archive serves it, with the rpm-md metadata under repo/oss/suse/
+# rather than repo/oss/.
+subtest 'Leap 42.3 ships its own mock configuration' => sub {
+    my $cfg = "$RealBin/../mock-configs/opensuse-leap-42.3-x86_64.cfg";
+    ok(-f $cfg, 'mock-configs carries the Leap 42.3 chroot') or return;
+    my $text = do { local (@ARGV, $/) = ($cfg); <> };
+    like($text, qr{^config_opts\['root'\]\s*=\s*'opensuse-leap-42\.3-x86_64'}m,
+        '... named for the target, so install_mock_cfg finds it');
+    like($text, qr{discontinued/distribution/leap/42\.3/repo/oss/suse/},
+        '... reading the distribution tree from the discontinued archive');
+    like($text, qr{discontinued/update/leap/42\.3/oss/},
+        '... and its updates from the same archive');
+    unlike($text, qr{baseurl=\S*download\.opensuse\.org/distribution/leap/42\.3},
+        '... and not from the live mirror, which answers 404 for 42.3');
 };
 
 done_testing();
