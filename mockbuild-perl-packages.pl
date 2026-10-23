@@ -10,7 +10,8 @@ use FindBin qw($RealBin);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(mock_result_dirs make_traversable_path);
+use MockBuildUtils qw(mock_result_dirs make_traversable_path
+                      mock_exit_is_transient mock_attempts);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -901,20 +902,26 @@ sub capture {
     return $out;
 }
 
-# mock exits 30 when its package manager failed (chroot init, build deps), which against public
-# mirrors is most often a transient download error (stale mirror metadata): retry such a run once.
+# A mock run that died rather than failed its build is given another attempt.
+# mock_exit_is_transient names the exit codes that mean the run, not the build: 30 for the package
+# manager, 255 for a chroot that died with no rpm error. Exit 1 is the build itself and is not
+# retried. One dead chroot used to fail the package, the cell, the family and the whole run:
+# perl-Digest-SHA1 in xcat-dep-build-el8-x86_64 #107, ten of eleven packages passing beside it.
 sub run_mock {
     my ($cmd) = @_;
-    print "+ $cmd\n";
-    my $rc = system($cmd);
-    if ($rc != -1 && ($rc >> 8) == 30) {
-        print "mock failed with rc=30 (package manager); retrying once\n";
-        $rc = system($cmd);
+    my $tries = mock_attempts();
+    my $exit;
+    for my $attempt (1 .. $tries) {
+        print "+ $cmd\n";
+        my $rc = system($cmd);
+        return if $rc == 0;
+        $exit = $rc == -1 ? 255 : ($rc >> 8);
+        last unless mock_exit_is_transient($exit) && $attempt < $tries;
+        print "mock run died with rc=$exit (not a build failure);"
+            . " attempt $attempt of $tries, retrying\n";
+        sleep 5 * $attempt;
     }
-    if ($rc != 0) {
-        my $exit = $rc == -1 ? 255 : ($rc >> 8);
-        die "Command failed (rc=$exit): $cmd\n";
-    }
+    die "Command failed (rc=$exit): $cmd\n";
 }
 
 sub run_capture_rc {
