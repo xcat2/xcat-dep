@@ -28,6 +28,7 @@ our @EXPORT_OK = qw(
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
     packaged_path
     make_traversable_path epel_target_profile epel_cell_path cell_lock_path
+    perl_buildreq_compat_needed perl_buildreq_compat_spec perl_mock_cfg_text
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     recover_common_repository
@@ -1149,6 +1150,55 @@ sub dep_repo_label {
     my ($cell) = @_;
     my ($dir, $arch) = split m{/}, $cell, 2;
     return defined $arch ? "$dir $arch" : $cell;
+}
+
+# The Fedora perl source rpms BuildRequire perl-generators and perl-interpreter. openSUSE has
+# neither: there perl provides the interpreter and rpm generates the perl dependencies itself, so
+# dnf builddep stops before the build. A build-only rpm provides those names and pulls the real
+# perl. It is never shipped: only the mock configuration of a SUSE target sees its repository.
+sub perl_buildreq_compat_needed {
+    my ($base_cfg) = @_;
+    return 0 unless defined $base_cfg;
+    return $base_cfg =~ /opensuse|sles|suse/i ? 1 : 0;
+}
+
+sub perl_buildreq_compat_spec {
+    return <<'SPEC';
+Name:           xcat-perl-buildreq-compat
+Version:        1
+Release:        1
+Summary:        Build-only compat: provide Fedora perl BuildRequires names on SUSE
+License:        MIT
+BuildArch:      noarch
+Provides:       perl-generators
+Provides:       perl-interpreter
+Provides:       perl-devel
+Requires:       perl
+%description
+Satisfies the perl-generators, perl-interpreter and perl-devel BuildRequires of
+Fedora perl source rpms in an openSUSE chroot. SUSE ships the perl development
+headers inside perl itself. Never shipped.
+%files
+%changelog
+SPEC
+}
+
+# The deterministic mock configuration one perl build uses. $compat_repo is the directory
+# perl_buildreq_compat_needed asked the caller to build; a SUSE target without one is refused,
+# because building without the compat is the failure this exists to prevent.
+sub perl_mock_cfg_text {
+    my ($base_cfg, $epoch, $compat_repo) = @_;
+    my $text = "include('/etc/mock/${base_cfg}.cfg')\n"
+             . "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$epoch'\n";
+    return $text unless perl_buildreq_compat_needed($base_cfg);
+    die "perl_mock_cfg_text: $base_cfg needs the perl BuildRequires"
+      . " compat repository and none was given\n"
+        unless defined $compat_repo && length $compat_repo;
+    # priority=1 so the compat rpm wins over anything of the same name in the target repositories.
+    $text .= "config_opts['dnf.conf'] += \"\"\"\n[xcat-buildreq-compat]\n"
+           . "name=xcat perl BuildRequires compat\n"
+           . "baseurl=file://$compat_repo\nenabled=1\ngpgcheck=0\npriority=1\n\"\"\"\n";
+    return $text;
 }
 
 # mock's own loader reads the configuration, so include() and the assignments around it resolve as
