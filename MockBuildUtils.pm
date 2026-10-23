@@ -27,6 +27,7 @@ our @EXPORT_OK = qw(
     target_profile FORCEARCH_TARGETS dep_repo_baseurl dep_repo_label
     build_mock_uniqueext rpm_in_cell resolve_mock_cfg mock_chroot_uid mock_result_dirs
     packaged_path
+    mock_exit_is_transient mock_attempts
     make_traversable_path epel_target_profile epel_cell_path cell_lock_path
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
@@ -1170,6 +1171,31 @@ else:
     opts = load_config(*args)
 print(opts['chrootuid'])
 PYTHON
+
+# The mock exit codes that say the RUN died rather than the BUILD failed, so another attempt can
+# answer differently.
+#
+#   30  mock's package manager failed -- a stale mirror, a chroot init that could not resolve.
+#   255 the chroot or its nspawn died with no rpm error behind it. perl-Digest-SHA1 in
+#       xcat-dep-build-el8-x86_64 #107: `make test` reported PASS, %doc ended `+ exit 0`, and the
+#       next line was `Child return code was: 255` with no rpm error, the Provides/Requires pass
+#       never run. The same srpm with the same defines, alone on the same host, builds and exits 0.
+#
+# Exit 1 is NOT here: mock exits 1 when rpmbuild itself failed, and three attempts at a broken
+# spec is three times the wait for the same answer. Neither is an unlisted code -- a new one wants
+# a reader, not three silent attempts.
+my %MOCK_TRANSIENT_EXIT = (30 => 1, 255 => 1);
+
+sub mock_exit_is_transient {
+    my ($exit) = @_;
+    return 0 unless defined $exit;
+    return $MOCK_TRANSIENT_EXIT{$exit} ? 1 : 0;
+}
+
+# Attempts a transient mock run is given. xcat-core's buildrpms.pl sh_retry uses 3 for the same
+# class; 2 here because the perl list already runs eight builds in parallel and every attempt is
+# a full chroot init -- a third attempt costs more of the cell's cap than it has ever bought.
+sub mock_attempts { return 2; }
 
 # mock_chroot_uid($cfg): the uid mock builds as with configuration file $cfg.
 sub mock_chroot_uid {
