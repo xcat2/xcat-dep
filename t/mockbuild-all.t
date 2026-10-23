@@ -537,9 +537,12 @@ is(rpm_release(tempdir(CLEANUP => 1), 'nonexistent-pkg'), undef, 'rpm_release is
     is_deeply(\@missing, [], 'conserver-xcat is present in every legacy manifest target section')
         or diag("missing conserver-xcat in: @missing");
     # uftp is optional for xCAT like conserver-xcat, and BUILD.md documents it for every EL and
-    # openEuler target.
+    # openEuler target. The Leap targets are excluded: UFTP 5 for Leap needs its own spec change,
+    # which this tree does not carry, and a manifest pin on a package nothing builds reads as
+    # MISSING in a zero-tolerance gate.
     my @no_uftp = grep { !exists $m{$_}{uftp} }
-        @targets, 'rocky-10-riscv64-xcat', grep { /^openeuler-/ } sort keys %m;
+        (grep { !/^opensuse-/ } @targets), 'rocky-10-riscv64-xcat',
+        grep { /^openeuler-/ } sort keys %m;
     is_deeply(\@no_uftp, [], 'uftp is present in every EL and openEuler manifest target section')
         or diag("missing uftp in: @no_uftp");
     my @native_missing = grep { /^openeuler-/ && !exists $m{$_}{goconserver} } sort keys %m;
@@ -642,13 +645,20 @@ for my $case (
     ['/repo/rh9/s390x/', 'alma+epel-9-s390x'],
     ['/repo/rh10/ppc64le//', 'alma+epel-10-ppc64le'],
     ['/repo/rh10/riscv64', 'alma+epel-10-riscv64'],
+    # A SUSE cell resolves to the Leap chroot that builds it. Without this the post-build gate and
+    # --verify-repo are handed a sles15 directory, derive nothing, and the cell publishes unverified.
+    ['/repo/sles15/x86_64', 'opensuse-leap-15.6-x86_64'],
+    ['/repo/sles15/ppc64le/', 'opensuse-leap-15.6-ppc64le'],
 ) {
     my ($path, $target) = @$case;
     is(derive_target_from_repo_path($path), $target, "$path selects $target");
 }
 is(derive_target_from_repo_path(undef), undef, 'missing path has no target');
 is(derive_target_from_repo_path(''), undef, 'empty path has no target');
-for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64') {
+for my $path ('/repo', '/repo/rh10', '/repo/rh10/x86_64/repodata', '/repo/notrh10/x86_64',
+              # sles12 has no chroot in this commit. It must resolve to nothing: a guess here
+              # would verify one release's cell against another release's manifest section.
+              '/repo/sles12/x86_64') {
     is(derive_target_from_repo_path($path), undef, "$path has no target");
 }
 
