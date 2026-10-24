@@ -9,7 +9,7 @@ use File::Path qw(make_path remove_tree);
 use Getopt::Long qw(GetOptions);
 use FindBin qw($RealBin);
 use lib "$RealBin/..";
-use MockBuildUtils qw(restamp_release_line);
+use MockBuildUtils qw(restamp_release_line host_build_payload_compressor);
 
 my $script_dir = abs_path(dirname(__FILE__));
 my $repo_root  = abs_path("$script_dir/..");
@@ -147,12 +147,15 @@ print $fh $simple_spec;
 close $fh;
 
 print_step("Build RPM");
+my $payload = host_build_payload_compressor($mock_cfg);
+print "payload:    " . (defined($payload) ? $payload : '(host default)') . "\n";
 my $rpmbuild_cmd = join(' ',
     'rpmbuild',
     '--define', sh_quote("_topdir $rpmbuild_top"),
     '--define', sh_quote("use_source_date_epoch_as_buildtime 1"),
     '--define', sh_quote("clamp_mtime_to_source_date_epoch 1"),
     '--define', sh_quote("_buildhost xcat-build"),
+    (defined($payload) ? ('--define', sh_quote("_binary_payload $payload")) : ()),
     '-ba',
     sh_quote("$rpmbuild_top/SPECS/xnba-undi.spec"),
 );
