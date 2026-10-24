@@ -11,7 +11,7 @@ use POSIX qw(strftime);
 use FindBin;
 use lib "$FindBin::Bin/..", "$FindBin::Bin/../lib";
 use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir
-                      goconserver_needs_pinned_go);
+                      goconserver_needs_pinned_go goconserver_pinned_go_buildrequires);
 use XCAT::BuildUtils qw(digest_file read_lines);
 
 my $script_dir = abs_path(dirname(__FILE__));
@@ -240,7 +240,7 @@ if ($pinned_go) {
     run("wget --https-only --tries=3 --timeout=60 -q -O " . sh_quote($go_archive) . " " . sh_quote($go_url));
     die "Go toolchain checksum mismatch: $go_file\n" unless digest_file($go_archive) eq $go_hash;
     $go_source = "Source3:        $go_url\n";
-    $go_requires = 'coreutils tar gzip ca-certificates';
+    $go_requires = goconserver_pinned_go_buildrequires($mock_cfg);
     $go_prep = "echo '$go_hash  %{SOURCE3}' | sha256sum -c -\ntar -C %{_builddir} -xzf %{SOURCE3}\n";
     $go_environment = 'export PATH=%{_builddir}/go/bin:$PATH' . "\ngo version\n";
 }

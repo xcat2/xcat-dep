@@ -54,4 +54,29 @@ for my $target (sort keys %pinned) {
 is($needs->(undef) ? 1 : 0, 0, 'an undefined target does not ask for the toolchain archive');
 is($needs->('')    ? 1 : 0, 0, 'an empty target does not ask for the toolchain archive');
 
+# go build fetches modules over HTTPS, so a pinned-Go chroot needs CA roots. openSUSE keeps the
+# roots in ca-certificates-mozilla and ships only tooling in ca-certificates; EL and openEuler
+# keep them in ca-certificates itself. Measured in a Leap 42.3 chroot: Go's system pool holds 146
+# roots with no ca-certificates package, 0 once ca-certificates alone is installed, and 201 once
+# ca-certificates-mozilla is added.
+my $req = MockBuildUtils->can('goconserver_pinned_go_buildrequires');
+ok($req, 'MockBuildUtils says what a pinned-Go chroot needs installed')
+  or do { done_testing(); exit 0 };
+
+for my $target (sort keys %pinned) {
+    my $got = $req->($target);
+    if (!$pinned{$target}) {
+        is($got, undef, "$target needs no toolchain dependencies");
+        next;
+    }
+    like($got, qr/\bca-certificates\b/, "$target installs the CA tooling");
+    if ($target =~ /\Aopensuse-/) {
+        like($got, qr/\bca-certificates-mozilla\b/,
+            "$target also installs the roots, which openSUSE packages separately");
+    } else {
+        unlike($got, qr/ca-certificates-mozilla/,
+            "$target keeps its roots in ca-certificates and asks for no openSUSE package");
+    }
+}
+
 done_testing();
