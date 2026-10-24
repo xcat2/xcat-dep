@@ -30,6 +30,7 @@ our @EXPORT_OK = qw(
     make_traversable_path epel_target_profile epel_cell_path cell_lock_path
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
+    goconserver_needs_pinned_go
     recover_common_repository
 );
 
@@ -80,6 +81,23 @@ sub openeuler_repo_subdir {
     die "Unsupported openEuler build target '$target'\n"
         unless $target =~ /\Aopeneuler-((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)-(x86_64|ppc64le)\z/;
     return "openeuler$1/$2";
+}
+
+# goconserver_needs_pinned_go($target): true when the build must bring its own Go toolchain
+# archive instead of taking one from BuildRequires.
+#
+# goconserver's committed go.mod names a go directive, and GOTOOLCHAIN=local never steps outside
+# the Go the chroot already has, so a chroot whose newest Go is older than that directive cannot
+# build goconserver at all. Two targets are in that position. openEuler packages no Go under any
+# name. Leap 42.3 has no 'golang' package either: it names the compiler 'go', and its newest is
+# go1.11 against a directive that asks for 1.25. Leap 15.6 resolves 'golang' to go1.25 and needs
+# nothing.
+sub goconserver_needs_pinned_go {
+    my ($target) = @_;
+    return 0 if !defined($target) || $target eq '';
+    return 1 if $target =~ /\Aopeneuler-/;
+    return 1 if $target =~ /\Aopensuse-leap-42\.3-/;
+    return 0;
 }
 
 # missing_perl_modules(@modules): those that cannot be loaded, in order. The point of --install-deps
