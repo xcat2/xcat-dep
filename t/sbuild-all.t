@@ -19,6 +19,7 @@ use BuildUtils qw(install_deps_packages install_deps_command missing_perl_module
                   index_has_native_arch control_binary_arch skip_arch_all_on
                   supported_arches is_supported_arch
                   codename_to_version version_to_codename known_codenames
+                  stranded_suites
                   chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
                   control_field
                   deb_field deb_version deb_hash cross_copy_genesis_deb
@@ -858,6 +859,56 @@ STUB
         eval { ensure_foreign_arch_support($foreign) };
         is( $@, '', "a foreign $foreign build with the handler registered proceeds" );
     }
+}
+
+
+# --- stranded_suites: which suites a Genesis release publication would leave behind ------------
+# Publishing a release replaces the one shared pool pool/main/xcat-genesis-openembedded that
+# EVERY suite's Packages indexes, so a suite this run does not rebuild keeps indexing files the
+# release retired. The guard refuses that, and it was asking the wrong question: it compared
+# --dists against known_codenames(), which is the codenames this build system can build (focal,
+# jammy, noble, resolute), not the suites a given repository contains. The CI apt tree is
+# assembled from a manifest with no 20.04 cell and carries three, so the publication was refused
+# outright and the Genesis payload could not be published on that tree at all.
+{
+    my $root = tempdir(CLEANUP => 1);
+    my $tree = sub {
+        my $dir = tempdir(DIR => $root, CLEANUP => 1);
+        make_path("$dir/dists/$_") for @_;
+        return $dir;
+    };
+
+    # A suite the tree does not carry has no index to invalidate, so it is not at risk.
+    my $three = $tree->(qw(jammy noble resolute));
+    is_deeply([ stranded_suites($three, [qw(jammy noble resolute)]) ], [],
+        'a tree carrying three suites strands none when all three are rebuilt');
+    is_deeply([ stranded_suites($three, [qw(focal jammy noble resolute)]) ], [],
+        'a codename the tree does not carry is not stranded by being rebuilt');
+
+    # The property the guard exists for, and the fix must not lose it: a suite the tree HAS and
+    # this run does not rebuild is named.
+    is_deeply([ stranded_suites($three, ['noble']) ], [qw(jammy resolute)],
+        'a tree carrying three suites strands the two this run does not rebuild');
+    my $four = $tree->(qw(focal jammy noble resolute));
+    is_deeply([ stranded_suites($four, [qw(jammy noble resolute)]) ], ['focal'],
+        'focal is still stranded when the tree carries it and the run omits it');
+    is_deeply([ stranded_suites($four, []) ], [qw(focal jammy noble resolute)],
+        'a run that rebuilds nothing strands every suite the tree carries');
+
+    # A tree with no suite yet has nothing to leave indexing anything, so this run defines the
+    # set. Without this an empty tree could never take its first release.
+    my $empty = $tree->();
+    is_deeply([ stranded_suites($empty, [qw(jammy noble)]) ], [],
+        'a tree with no suite strands nothing');
+    is_deeply([ stranded_suites("$root/does-not-exist", [qw(jammy noble)]) ], [],
+        'a tree that does not exist strands nothing');
+
+    # dists/ holds directories. A stray file there is not a suite.
+    my $stray = $tree->(qw(jammy));
+    open(my $fh, '>', "$stray/dists/README") or die $!;
+    close($fh);
+    is_deeply([ stranded_suites($stray, ['jammy']) ], [],
+        'a file under dists/ is not counted as a suite');
 }
 
 done_testing;

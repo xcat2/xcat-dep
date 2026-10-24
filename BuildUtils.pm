@@ -34,6 +34,7 @@ our @EXPORT_OK = qw(
     parse_packages_index parse_release_architectures resolve_present_names
     index_has_native_arch control_binary_arch skip_arch_all_on
     codename_to_version version_to_codename known_codenames
+    stranded_suites
     supported_arches is_supported_arch
     chroot_name chroot_sources_list chroot_is_disposable chroot_build_script
     chroot_build_timeout
@@ -67,6 +68,24 @@ my %ARCH   = map { $_ => 1 } @ARCHES;
 sub supported_arches   { return @ARCHES; }
 sub is_supported_arch  { my ($a) = @_; return defined($a) && $ARCH{$a} ? 1 : 0; }
 sub codename_to_version { my ($c) = @_; return $CODENAME_TO_VERSION{$c // ''}; }
+
+#---------------------------------------------------------------------------------------------------
+# stranded_suites($apt_dir, $dists_aref): the suites an apt tree carries that this run does not
+# rebuild. Publishing a Genesis release replaces the one shared pool every suite indexes, so each
+# of these would be left indexing files the new release retired.
+#
+# The at-risk set is what the TREE carries, read from dists/, not every codename this script
+# knows. A codename with no dists/<codename> has no index to invalidate, so demanding it protects
+# nothing and refuses the publication outright. A tree with no suite carries nothing, so it
+# strands nothing and takes its first release.
+#---------------------------------------------------------------------------------------------------
+sub stranded_suites {
+    my ($apt_dir, $dists) = @_;
+    my %rebuilt = map { $_ => 1 } @{ $dists // [] };
+    my @carried = sort map { basename($_) } grep { -d } glob("$apt_dir/dists/*");
+    return grep { !$rebuilt{$_} } @carried;
+}
+
 sub version_to_codename { my ($v) = @_; return $VERSION_TO_CODENAME{$v // ''}; }
 
 # ---------------------------------------------------------------------------------------------------

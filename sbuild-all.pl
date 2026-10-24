@@ -51,6 +51,7 @@ use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifes
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
                   codename_to_version known_codenames supported_arches is_supported_arch
+                  stranded_suites
                   chroot_name chroot_sources_list
                   chroot_is_disposable
                   control_field
@@ -320,7 +321,13 @@ if ($genesis_release ne '') {
     # Every suite's Packages index points into the shared Genesis pool, and publishing a release
     # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
     # files that no longer exist. Publish a release for all of them or for none.
-    my @missing = grep { my $c = $_; !grep { $_ eq $c } @dist_list } known_codenames();
+    #
+    # "All of them" is the suites the TARGET REPOSITORY carries, not every codename this script
+    # knows. A codename with no dists/<codename> has no index to invalidate, so requiring it
+    # protects nothing and refuses the publication outright: an apt tree assembled from a
+    # manifest with no 20.04 cell carries jammy, noble and resolute, and asking it for focal
+    # left the Genesis payload unpublishable on that tree.
+    my @missing = stranded_suites($apt_dir, \@dist_list);
     die "FATAL: --genesis-release updates the shared Genesis pool every suite indexes, so it must\n"
       . "       cover all of them; --dists omits: @missing\n" if @missing;
     print_step('Genesis release');

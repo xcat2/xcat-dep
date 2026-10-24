@@ -476,6 +476,51 @@ sub test_deb_consumer {
     is(digest_file($pool_package), $before_subset,
         'partial suite failure leaves the shared package unchanged');
 
+    # "All of them" is the suites the TARGET TREE carries, not every codename the script knows.
+    # BuildUtils.pm knows focal; an apt tree assembled from a manifest with no 20.04 cell carries
+    # jammy, noble and resolute. Requiring focal there protected nothing -- focal has no index to
+    # invalidate -- and refused the publication outright, so the Genesis payload could not be
+    # published on that tree at all. xcat-dep-build-ubuntu build 110 verified the release and then
+    # died on "--dists omits: focal".
+    my $subset_tree = "$tmp/apt-three-suites";
+    my $subset_out = "$tmp/out-three-suites";
+    make_path($subset_tree, $subset_out);
+    my @three = qw(jammy noble resolute);
+    my $three_log = "$tmp/deb-three-suites.log";
+    my $three_status = run_apt_consumer(
+        log => $three_log, output => $subset_out, apt_dir => $subset_tree,
+        dists => \@three,
+        extra => [ '--genesis-release', $release_root ],
+    );
+    is($three_status, 0,
+        'a tree carrying three of the four known suites publishes the release for those three')
+        or diag read_binary($three_log);
+    unlike(read_binary($three_log), qr/--dists omits/,
+        'no suite is demanded of a tree that does not carry it');
+    for my $cn (@three) {
+        ok(-f "$subset_tree/dists/$cn/main/binary-amd64/Packages",
+            "$cn is indexed in the three-suite tree");
+    }
+    ok(!-e "$subset_tree/dists/focal",
+        'the suite the tree never carried is not created by the publication');
+
+    # And the guard still holds where it protects something: the same release, published for one
+    # suite of a tree that carries three, is refused and names the two it would strand.
+    my $strand_log = "$tmp/deb-strand.log";
+    my $strand_status = run_apt_consumer(
+        log => $strand_log, output => $subset_out, apt_dir => $subset_tree,
+        dists => ['noble'],
+        extra => [ '--genesis-release', $release_root ],
+    );
+    isnt($strand_status, 0,
+        'a tree carrying three suites still refuses a release published for one');
+    like(read_binary($strand_log), qr/--dists omits:.*\bjammy\b/,
+        'the refusal names a suite the tree carries and this run would strand');
+    like(read_binary($strand_log), qr/--dists omits:.*\bresolute\b/,
+        'the refusal names both stranded suites');
+    unlike(read_binary($strand_log), qr/--dists omits:.*\bfocal\b/,
+        'the refusal does not name a suite the tree never carried');
+
     # A later suite rebuild carries no release and must keep indexing the shared pool.
     my $refresh_log = "$tmp/deb-refresh.log";
     my $refresh_status = run_apt_consumer(
