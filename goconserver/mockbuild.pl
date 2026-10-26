@@ -10,7 +10,8 @@ use Getopt::Long qw(GetOptions);
 use POSIX qw(strftime);
 use FindBin;
 use lib "$FindBin::Bin/..", "$FindBin::Bin/../lib";
-use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir);
+use MockBuildUtils qw(openeuler_build_target openeuler_repo_subdir
+                      goconserver_needs_pinned_go goconserver_pinned_go_buildrequires);
 use XCAT::BuildUtils qw(digest_file read_lines);
 
 my $script_dir = abs_path(dirname(__FILE__));
@@ -60,6 +61,7 @@ if (!$mock_cfg) {
 }
 
 my $native_repo = openeuler_repo_subdir($mock_cfg);
+my $pinned_go   = goconserver_needs_pinned_go($mock_cfg);
 my ($rel) = $mock_cfg =~ /-(\d+)-/;
 $rel //= '10';
 my $dist_suffix = defined($native_repo) ? '' : ".el$rel";
@@ -80,7 +82,7 @@ if (defined($native_repo)) {
 # host only fetches the pinned source and drives mock. A forcearch chroot would run that compile
 # under qemu, so the cross build instead cross-compiles on the host and packages the result with
 # rpmbuild --target.
-for my $bin (qw(git rpm), (defined($native_repo) ? 'wget' : ()), ($cross ? qw(go rpmbuild) : qw(mock))) {
+for my $bin (qw(git rpm), ($pinned_go ? 'wget' : ()), ($cross ? qw(go rpmbuild) : qw(mock))) {
     run("command -v " . sh_quote($bin) . " >/dev/null 2>&1");
 }
 
@@ -227,7 +229,7 @@ write_file("$sources_dir/server.conf", $server_conf);
 my ($go_source, $go_prep, $go_environment) = ('', '', '');
 my $native_changelog = '';
 my $go_requires = 'golang';
-if (defined($native_repo)) {
+if ($pinned_go) {
     my $go_file = "go1.25.12.linux-$goarch{$arch}.tar.gz";
     my %checksums = map { my ($hash, $name) = split /\s+/, $_; ($name, $hash) }
       read_lines("$pkg_dir/toolchains/go1.25.12.sha256");
@@ -238,9 +240,11 @@ if (defined($native_repo)) {
     run("wget --https-only --tries=3 --timeout=60 -q -O " . sh_quote($go_archive) . " " . sh_quote($go_url));
     die "Go toolchain checksum mismatch: $go_file\n" unless digest_file($go_archive) eq $go_hash;
     $go_source = "Source3:        $go_url\n";
-    $go_requires = 'coreutils tar gzip ca-certificates';
+    $go_requires = goconserver_pinned_go_buildrequires($mock_cfg);
     $go_prep = "echo '$go_hash  %{SOURCE3}' | sha256sum -c -\ntar -C %{_builddir} -xzf %{SOURCE3}\n";
     $go_environment = 'export PATH=%{_builddir}/go/bin:$PATH' . "\ngo version\n";
+}
+if (defined($native_repo)) {
     $native_changelog = "* Tue Sep 08 2026 xCAT build - $version-4\n- Build in the native openEuler target with the verified Go 1.25.12 source archive.\n\n";
 }
 

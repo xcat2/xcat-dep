@@ -31,6 +31,7 @@ our @EXPORT_OK = qw(
     perl_buildreq_compat_needed perl_buildreq_compat_spec perl_mock_cfg_text
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
+    goconserver_needs_pinned_go goconserver_pinned_go_buildrequires
     recover_common_repository
 );
 
@@ -81,6 +82,42 @@ sub openeuler_repo_subdir {
     die "Unsupported openEuler build target '$target'\n"
         unless $target =~ /\Aopeneuler-((?:20|22|24)\.03(?:sp[1-9][0-9]*)?)-(x86_64|ppc64le)\z/;
     return "openeuler$1/$2";
+}
+
+# goconserver_needs_pinned_go($target): true when the build must bring its own Go toolchain
+# archive instead of taking one from BuildRequires.
+#
+# goconserver's committed go.mod names a go directive, and GOTOOLCHAIN=local never steps outside
+# the Go the chroot already has, so a chroot whose newest Go is older than that directive cannot
+# build goconserver at all. Two targets are in that position. openEuler packages no Go under any
+# name. Leap 42.3 has no 'golang' package either: it names the compiler 'go', and its newest is
+# go1.11 against a directive that asks for 1.25. Leap 15.6 resolves 'golang' to go1.25 and needs
+# nothing.
+sub goconserver_needs_pinned_go {
+    my ($target) = @_;
+    return 0 if !defined($target) || $target eq '';
+    return 1 if $target =~ /\Aopeneuler-/;
+    return 1 if $target =~ /\Aopensuse-leap-42\.3-/;
+    return 0;
+}
+
+# goconserver_pinned_go_buildrequires($target): what a pinned-Go build needs IN the chroot,
+# beyond the toolchain archive it brings itself. undef when the chroot supplies Go.
+#
+# go build fetches the pinned modules over HTTPS, so the chroot must hold CA roots. openSUSE
+# splits them: 'ca-certificates' is the tooling and carries no root, and the roots are in
+# 'ca-certificates-mozilla'. Asking for the tooling alone is worse than asking for nothing.
+# Measured in a Leap 42.3 chroot, Go's system pool holds 146 roots before 'ca-certificates' is
+# installed and 0 after it, because the package takes the trust store over without filling it;
+# go build then fails every module fetch with "x509: certificate signed by unknown authority".
+# With 'ca-certificates-mozilla' the pool holds 201. EL and openEuler keep the roots in
+# 'ca-certificates' itself and need no second package.
+sub goconserver_pinned_go_buildrequires {
+    my ($target) = @_;
+    return undef unless goconserver_needs_pinned_go($target);
+    my @req = qw(coreutils tar gzip ca-certificates);
+    push @req, 'ca-certificates-mozilla' if $target =~ /\Aopensuse-/;
+    return join(' ', @req);
 }
 
 # missing_perl_modules(@modules): those that cannot be loaded, in order. The point of --install-deps
