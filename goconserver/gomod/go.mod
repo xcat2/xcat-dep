@@ -1,6 +1,6 @@
 module github.com/xcat2/goconserver
 
-go 1.25.12
+go 1.25.0
 
 replace github.com/kr/pty => github.com/creack/pty v1.1.21
 

@@ -10,7 +10,8 @@ use FindBin qw($RealBin);
 use Getopt::Long qw(GetOptions);
 use Parallel::ForkManager;
 use lib $RealBin, "$RealBin/lib";
-use MockBuildUtils qw(mock_result_dirs make_traversable_path);
+use MockBuildUtils qw(mock_result_dirs make_traversable_path
+                      perl_buildreq_compat_needed perl_buildreq_compat_spec perl_mock_cfg_text);
 
 my $repo_root = abs_path(dirname(__FILE__));
 my $work_dir  = '/tmp/perl-list6-mockbuild';
@@ -965,11 +966,36 @@ sub resolve_mock_cfg {
 sub create_deterministic_mock_cfg {
     my ($base_cfg, $epoch, $dir) = @_;
     my $cfg_path = "$dir/mock-deterministic.cfg";
+    my $compat = perl_buildreq_compat_needed($base_cfg)
+        ? suse_buildreq_compat_repo($dir) : undef;
     open my $fh, '>', $cfg_path or die "Cannot write $cfg_path: $!\n";
-    print $fh "include('/etc/mock/${base_cfg}.cfg')\n";
-    print $fh "config_opts['environment']['SOURCE_DATE_EPOCH'] = '$epoch'\n";
+    print $fh perl_mock_cfg_text($base_cfg, $epoch, $compat);
     close $fh;
     return $cfg_path;
+}
+
+# Build the compat rpm named by perl_buildreq_compat_spec and leave it in a local createrepo'd
+# directory; return that directory. It is built UNDER the caller's per-package build directory,
+# never a shared path: each build_package fork runs this once for its own package, and
+# mockbuild-all gives every (run, target, arch) its own work directory, so parallel perl builds
+# cannot race on it. Idempotent within a directory.
+sub suse_buildreq_compat_repo {
+    my ($base_dir) = @_;
+    my $base = "$base_dir/suse-buildreq-compat";
+    return "$base/repo" if -f "$base/repo/repodata/repomd.xml";
+    my $rpmroot = "$base/rpmbuild";
+    make_path("$rpmroot/SPECS", "$base/repo");
+    my $spec = "$rpmroot/SPECS/xcat-perl-buildreq-compat.spec";
+    open my $s, '>', $spec or die "Cannot write $spec: $!\n";
+    print {$s} perl_buildreq_compat_spec();
+    close $s;
+    system("rpmbuild --define " . sh_quote("_topdir $rpmroot") . " -bb " . sh_quote($spec)
+           . " >/dev/null 2>&1") == 0
+        or die "FATAL: could not build the perl BuildRequires compat rpm\n";
+    system("cp " . sh_quote("$rpmroot/RPMS/noarch/") . "xcat-perl-buildreq-compat-*.noarch.rpm "
+           . sh_quote("$base/repo/") . " && createrepo_c " . sh_quote("$base/repo") . " >/dev/null 2>&1") == 0
+        or die "FATAL: could not index the perl BuildRequires compat repository\n";
+    return "$base/repo";
 }
 
 sub resolve_source_urls {

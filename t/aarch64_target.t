@@ -112,7 +112,7 @@ my $grub_spec = slurp($grub_spec_file);
         '%postun removes grub2.aarch64');
 
   SKIP: {
-        skip 'rpmspec not available', 4 unless $have_rpmspec;
+        skip 'rpmspec not available', 6 unless $have_rpmspec;
         my $el = parsed_spec($grub_spec_file, rhel => 10);
         ok(defined $el, 'rpmspec parses grub2-xcat.spec for EL10') or $el = '';
         like($el, qr/^BuildRequires:\s*grub2-efi-aa64-modules\s*$/m, '... and EL keeps the aarch64 image');
@@ -123,6 +123,13 @@ my $grub_spec = slurp($grub_spec_file);
         ok(defined $oe && $oe !~ /grub2-efi-aa64-modules|grub2-mkimage|aarch64-efi\/$/m,
             'openEuler builds without the aarch64 image');
         like($oe // '', qr{if \[ -f /tftpboot/boot/grub2/aarch64-efi/grubaa64\.efi \]},
+            '... and its %post copies grub2.aarch64 only when the image exists');
+
+        # openSUSE packages grub2 under other names: its package is built without the image too.
+        my $suse = parsed_spec($grub_spec_file, suse_version => 1500);
+        ok(defined $suse && $suse !~ /grub2-tools|grub2-efi-aa64-modules|grub2-mkimage|aarch64-efi\/$/m,
+            'openSUSE builds without the aarch64 image');
+        like($suse // '', qr{if \[ -f /tftpboot/boot/grub2/aarch64-efi/grubaa64\.efi \]},
             '... and its %post copies grub2.aarch64 only when the image exists');
     }
 

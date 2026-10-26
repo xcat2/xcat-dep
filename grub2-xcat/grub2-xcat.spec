@@ -26,7 +26,8 @@ Source2: grubriscv64.efi
 # and the /boot/grub2 prefix grub2.ppc uses. grub2-efi-aa64-modules is noarch, so the
 # image builds on every EL build host. The openEuler x86_64 repositories carry no
 # grub2-efi-aa64-modules and openEuler has no aarch64 target, so it ships without the image.
-%if ! 0%{?openEuler}
+# openSUSE packages grub2 under other names, so its package ships without the image too.
+%if ! 0%{?openEuler} && ! 0%{?suse_version}
 BuildRequires: grub2-tools
 BuildRequires: grub2-efi-aa64-modules
 %endif
@@ -57,7 +58,7 @@ aarch64 nodes, which boot through UEFI and grub2 only.
 #%endif
 
 %build
-%if ! 0%{?openEuler}
+%if ! 0%{?openEuler} && ! 0%{?suse_version}
 # The aarch64 network loader: net search finds the boot/grub2/grub.cfg-<HEXIP> that
 # nodeset links. efi_uga is left out: it is x86 only, and grub2-mkimage aborts on it
 # for arm64-efi.
@@ -83,7 +84,7 @@ tar -xf grub2-res.tar
 %endif
 mkdir -p $RPM_BUILD_ROOT/%{prefix}/riscv64-efi
 install -m 0644 %{SOURCE2} $RPM_BUILD_ROOT/%{prefix}/riscv64-efi/grubriscv64.efi
-%if ! 0%{?openEuler}
+%if ! 0%{?openEuler} && ! 0%{?suse_version}
 mkdir -p $RPM_BUILD_ROOT/%{prefix}/aarch64-efi
 install -m 0644 %{_builddir}/grubaa64.efi $RPM_BUILD_ROOT/%{prefix}/aarch64-efi/grubaa64.efi
 %endif
@@ -111,7 +112,7 @@ exit 0
 # one for sles, one for rhel. yes, it's ugly...
 %{prefix}/powerpc-ieee1275/
 %{prefix}/riscv64-efi/
-%if ! 0%{?openEuler}
+%if ! 0%{?openEuler} && ! 0%{?suse_version}
 %{prefix}/aarch64-efi/
 %endif
 %defattr(-,root,root)

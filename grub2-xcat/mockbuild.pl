@@ -208,8 +208,9 @@ run(
     "rpm -qpl " . sh_quote($main_rpm) .
     " | grep -Fx /tftpboot/boot/grub2/riscv64-efi/grubriscv64.efi >/dev/null"
 );
-# The aarch64 image is generated in %build (grub2-mkimage -O arm64-efi); openEuler ships without it.
-if ($mock_cfg !~ /^openeuler-/) {
+# The aarch64 image is generated in %build (grub2-mkimage -O arm64-efi); openEuler and openSUSE
+# ship without it.
+if ($mock_cfg !~ /^(?:openeuler|opensuse)-/) {
     run(
         "rpm -qpl " . sh_quote($main_rpm) .
         " | grep -Fx /tftpboot/boot/grub2/aarch64-efi/grubaa64.efi >/dev/null"
