@@ -1,5 +1,11 @@
 %global genesis_arch %{?genesis_arch}%{!?genesis_arch:x86_64}
 
+# The payload is a pre-built netboot image, shipped verbatim beside its SHA256SUMS. rpm's
+# install-post and debuginfo passes rewrite what they find, and the ppc64, ppc64le and
+# riscv64 payloads are ELF, which an x86_64 build host cannot strip.
+%global __os_install_post %{nil}
+%global debug_package %{nil}
+
 Name: xCAT-genesis-openembedded-%{genesis_arch}
 Version: %{?version}%{!?version:0}
 Release: %{?release}%{!?release:1}
