@@ -32,6 +32,7 @@ our @EXPORT_OK = qw(
     native_owner_command NATIVE_BUILD_GID
     openeuler_build_target openeuler_repo_subdir
     goconserver_needs_pinned_go goconserver_pinned_go_buildrequires
+    host_build_payload_compressor
     recover_common_repository
 );
 
@@ -112,6 +113,20 @@ sub goconserver_needs_pinned_go {
 # go build then fails every module fetch with "x509: certificate signed by unknown authority".
 # With 'ca-certificates-mozilla' the pool holds 201. EL and openEuler keep the roots in
 # 'ca-certificates' itself and need no second package.
+# host_build_payload_compressor($target): the rpm _binary_payload a HOST-built package must use
+# for this target, or undef to keep the host default.
+#
+# A few packages repackage pre-built binaries and so run rpmbuild on the build host instead of in
+# the target chroot. The host is EL10 and its rpm writes a zstd payload, but rpm gained zstd in
+# 4.14: Leap 42.3 ships 4.11 and reports such a payload as "cpio: Bad magic". xz is readable by
+# every rpm these targets ship, and is what the openSUSE core packages already use.
+sub host_build_payload_compressor {
+    my ($target) = @_;
+    return undef if !defined($target) || $target eq '';
+    return 'w9.xzdio' if $target =~ /\Aopensuse-leap-42\.3-/;
+    return undef;
+}
+
 sub goconserver_pinned_go_buildrequires {
     my ($target) = @_;
     return undef unless goconserver_needs_pinned_go($target);
