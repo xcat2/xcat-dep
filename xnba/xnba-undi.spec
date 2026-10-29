@@ -41,6 +41,20 @@ The xCAT Network Boot Agent is a slightly modified version of iPXE.  It provides
 %patch5 -p1
 %patch6 -p1
 
+# iPXE builds with NET_PROTO_IPV6 off: src/config/general.h comments the define out. The
+# loader then has no IPv6 at all, so a node that netboots over IPv6 reaches xNBA and stops
+# at "No configuration methods succeeded" without ever sending a DHCPv6 solicit.
+#
+# config/local/general.h is included after the defaults, so it is the place to turn the
+# protocol on. The guard keeps it out of undionly.kkpxe: a BIOS PXE ROM has a size limit to
+# respect, and BIOS PXE has no IPv6 form to use it with.
+mkdir -p src/config/local
+cat > src/config/local/general.h <<'XNBALOCALCONFIG'
+#if defined ( PLATFORM_efi )
+#define NET_PROTO_IPV6
+#endif
+XNBALOCALCONFIG
+
 %build
 
 rm -rf %{buildroot}
