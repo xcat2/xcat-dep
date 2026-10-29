@@ -51,6 +51,7 @@ use BuildUtils qw(sh_quote print_step version_matches required_pkgs read_manifes
                   parse_packages_index parse_release_architectures resolve_present_names
                   index_has_native_arch control_binary_arch skip_arch_all_on
                   codename_to_version known_codenames supported_arches is_supported_arch
+                  stranded_suites
                   chroot_name chroot_sources_list
                   chroot_is_disposable
                   control_field
@@ -320,9 +321,17 @@ if ($genesis_release ne '') {
     # Every suite's Packages index points into the shared Genesis pool, and publishing a release
     # replaces that pool -- so a run that rebuilt only some suites would leave the others indexing
     # files that no longer exist. Publish a release for all of them or for none.
-    my @missing = grep { my $c = $_; !grep { $_ eq $c } @dist_list } known_codenames();
-    die "FATAL: --genesis-release updates the shared Genesis pool every suite indexes, so it must\n"
-      . "       cover all of them; --dists omits: @missing\n" if @missing;
+    #
+    # "All of them" is the suites the TARGET REPOSITORY carries, not every codename this script
+    # knows. A codename with no dists/<codename> has no index to invalidate, so requiring it
+    # protects nothing and refuses the publication outright: an apt tree assembled from a
+    # manifest with no 20.04 cell carries jammy, noble and resolute, and asking it for focal
+    # left the Genesis payload unpublishable on that tree.
+    #
+    # This reading is older than the publish lock, so another publisher can still add a suite.
+    # refuse_stranded_suites() runs again under the lock, where the answer is authoritative. This
+    # call only fails a hopeless run before it builds.
+    refuse_stranded_suites();
     print_step('Genesis release');
     print "  $genesis_release (" . scalar(genesis_release_debs()) . " deb packages)\n";
 }
@@ -1021,6 +1030,16 @@ sub verify_assembled_repo {
 # ---------------------------------------------------------------------------------------------------
 my $PUBLISH_LOCK;
 
+# refuse_stranded_suites(): die when a Genesis release published for @dist_list would leave a suite
+# the tree carries indexing the pool this release replaces. Called twice -- once before the build,
+# to fail a hopeless run early, and once under the publish lock, where the answer is authoritative.
+sub refuse_stranded_suites {
+    my @missing = stranded_suites($apt_dir, \@dist_list);
+    die "FATAL: --genesis-release updates the shared Genesis pool every suite indexes, so it must\n"
+      . "       cover all of them; --dists omits: @missing\n" if @missing;
+    return 1;
+}
+
 sub acquire_publish_lock {
     make_path($output_root);
     my $lockfile = "$output_root/.sbuild-all.publish.nfslock";
@@ -1250,6 +1269,13 @@ sub publish_repo {
     warn "WARN: publishing an UNSIGNED apt repo (no --gpg-sign) -- apt clients will reject it\n"
         unless $gpg_sign;
     acquire_publish_lock();
+
+    # Re-read the suites under the lock. The reading taken where --genesis-release was resolved is
+    # older than the lock, so another publisher can have added a suite since. The side tree is
+    # seeded from the published tree, which copies that suite's index in verbatim, while
+    # install_genesis_release_debs wipes the shared pool the index names. The completeness gate
+    # does not see it: it checks the suites in --dists only.
+    refuse_stranded_suites() if $genesis_release ne '';
 
     # Side-tree name carries the pid too: --run-id has second granularity, and two runs that start in
     # the same second must not pick the same scratch path.

@@ -79,7 +79,7 @@ SKIP: {
 }
 
 SKIP: {
-    skip 'APT repository tools are not installed', 63
+    skip 'APT repository tools are not installed', 72
       unless $^O eq 'linux'
       && command_exists('dpkg-deb')
       && command_exists('apt-ftparchive');
@@ -88,6 +88,7 @@ SKIP: {
     test_legacy_deb_consumer();
     test_partial_deb_release();
     test_publish_lock();
+    test_publish_race_adds_suite();
 }
 
 done_testing();
@@ -309,6 +310,43 @@ SH
 
 sub run_apt_consumer {
     my (%args) = @_;
+    return run_capture($args{log}, apt_consumer_command(%args));
+}
+
+# Start a run WITHOUT waiting for it, so the test can change the apt tree while the run is blocked
+# on the publish lock. _exit, never exit: the child must not run this file's END blocks, and must
+# not flush the parent's buffers a second time.
+sub spawn_apt_consumer {
+    my (%args) = @_;
+    my @command = apt_consumer_command(%args);
+    my $pid = fork();
+    die "Cannot fork: $!\n" unless defined $pid;
+    return $pid if $pid;
+    open(STDOUT, '>:raw', $args{log}) or POSIX::_exit(99);
+    open(STDERR, '>&', STDOUT) or POSIX::_exit(99);
+    exec(@command) or POSIX::_exit(99);
+}
+
+sub reap_spawned {
+    my ($pid) = @_;
+    waitpid($pid, 0);
+    return 255 if $? == -1;
+    return 128 + ($? & 127) if $? & 127;
+    return $? >> 8;
+}
+
+sub wait_for_path {
+    my ($path, $seconds) = @_;
+    my $deadline = Time::HiRes::time() + $seconds;
+    until (-e $path) {
+        return 0 if Time::HiRes::time() >= $deadline;
+        sleep(0.05);
+    }
+    return 1;
+}
+
+sub apt_consumer_command {
+    my (%args) = @_;
     my @dists = @{ $args{dists} // \@APT_SUITES };
     my @build_mode = $args{build} ? ('--dry-run') : ('--skip-build');
     my $manifest = $args{manifest};
@@ -316,8 +354,7 @@ sub run_apt_consumer {
         $manifest = "$args{output}/manifest.conf";
         write_apt_manifest($manifest);
     }
-    return run_capture(
-        $args{log},
+    return (
         $^X, $deb_consumer,
         '--repo-root',   $repo_root,
         '--output-root', $args{output},
@@ -475,6 +512,51 @@ sub test_deb_consumer {
         'partial suite failure explains the consistency requirement');
     is(digest_file($pool_package), $before_subset,
         'partial suite failure leaves the shared package unchanged');
+
+    # "All of them" is the suites the TARGET TREE carries, not every codename the script knows.
+    # BuildUtils.pm knows focal; an apt tree assembled from a manifest with no 20.04 cell carries
+    # jammy, noble and resolute. Requiring focal there protected nothing -- focal has no index to
+    # invalidate -- and refused the publication outright, so the Genesis payload could not be
+    # published on that tree at all. xcat-dep-build-ubuntu build 110 verified the release and then
+    # died on "--dists omits: focal".
+    my $subset_tree = "$tmp/apt-three-suites";
+    my $subset_out = "$tmp/out-three-suites";
+    make_path($subset_tree, $subset_out);
+    my @three = qw(jammy noble resolute);
+    my $three_log = "$tmp/deb-three-suites.log";
+    my $three_status = run_apt_consumer(
+        log => $three_log, output => $subset_out, apt_dir => $subset_tree,
+        dists => \@three,
+        extra => [ '--genesis-release', $release_root ],
+    );
+    is($three_status, 0,
+        'a tree carrying three of the four known suites publishes the release for those three')
+        or diag read_binary($three_log);
+    unlike(read_binary($three_log), qr/--dists omits/,
+        'no suite is demanded of a tree that does not carry it');
+    for my $cn (@three) {
+        ok(-f "$subset_tree/dists/$cn/main/binary-amd64/Packages",
+            "$cn is indexed in the three-suite tree");
+    }
+    ok(!-e "$subset_tree/dists/focal",
+        'the suite the tree never carried is not created by the publication');
+
+    # And the guard still holds where it protects something: the same release, published for one
+    # suite of a tree that carries three, is refused and names the two it would strand.
+    my $strand_log = "$tmp/deb-strand.log";
+    my $strand_status = run_apt_consumer(
+        log => $strand_log, output => $subset_out, apt_dir => $subset_tree,
+        dists => ['noble'],
+        extra => [ '--genesis-release', $release_root ],
+    );
+    isnt($strand_status, 0,
+        'a tree carrying three suites still refuses a release published for one');
+    like(read_binary($strand_log), qr/--dists omits:.*\bjammy\b/,
+        'the refusal names a suite the tree carries and this run would strand');
+    like(read_binary($strand_log), qr/--dists omits:.*\bresolute\b/,
+        'the refusal names both stranded suites');
+    unlike(read_binary($strand_log), qr/--dists omits:.*\bfocal\b/,
+        'the refusal does not name a suite the tree never carried');
 
     # A later suite rebuild carries no release and must keep indexing the shared pool.
     my $refresh_log = "$tmp/deb-refresh.log";
@@ -1146,6 +1228,110 @@ sub test_publish_lock {
     ok(!-e $lockfile, 'the publisher releases the publish lock when it exits');
     isnt(read_binary("$apt_root/dists/noble/Release"), "abandoned\n",
         'a side tree abandoned by a dead run is never published');
+}
+
+# A suite ANOTHER publisher adds while this run queues for the publish lock ------------------------
+# --genesis-release is resolved before the publish lock, so its reading of dists/ is older than the
+# lock. A --dists noble run against a tree that carries only noble passes that reading, queues
+# behind another publisher, and reaches the pool after that publisher has published jammy.
+# publish_repo seeds its side tree from the published tree, so jammy's index is copied in verbatim
+# while install_genesis_release_debs wipes and refills the shared pool: jammy is then left naming a
+# DEB the new release retired. The completeness gate does not catch it either, because it checks
+# the suites in --dists.
+#
+# The window is made deterministic instead of raced. The test holds the publish lock, so the run
+# queues; it waits for the RUN locks, which the run takes after --genesis-release is resolved, so
+# the pre-lock reading has provably happened and saw no jammy; only then does jammy appear.
+sub test_publish_race_adds_suite {
+    local $ENV{SOURCE_DATE_EPOCH} = $epoch;
+    my $later = 'snap202610150000';
+    my $published = make_package_release("$tmp/deb-race-published", 'deb');
+    my $arriving = build_package_release(
+        root          => "$tmp/deb-race-arriving",
+        format        => 'deb',
+        architectures => [ architectures() ],
+        packager      => $packager,
+        version       => $version,
+        release       => $later,
+        revision      => $revision,
+        epoch         => $epoch,
+    );
+    my $published_deb = "xcat-genesis-openembedded-x86-64_${version}-${release}_all.deb";
+    my $arriving_deb  = "xcat-genesis-openembedded-x86-64_${version}-${later}_all.deb";
+
+    my $apt_root = "$tmp/apt-race";
+    my $output = "$tmp/deb-race-output";
+    stage_apt_suites($output, "$tmp/deb-race-legacy");
+
+    # The tree the other publisher leaves behind: jammy and noble, both indexing one shared pool.
+    my $seed_log = "$tmp/deb-race-seed.log";
+    is(run_apt_consumer(log => $seed_log, output => $output, apt_dir => $apt_root,
+            dists => [qw(jammy noble)], extra => [ '--genesis-release', $published ]), 0,
+        'a tree carrying jammy and noble takes a Genesis release')
+        or diag read_binary($seed_log);
+    my $pool = "$apt_root/pool/main/xcat-genesis-openembedded";
+    like(read_binary("$apt_root/dists/jammy/main/binary-amd64/Packages"),
+        qr{^Filename: pool/main/xcat-genesis-openembedded/\Q$published_deb\E$}m,
+        'the jammy index names the pooled DEB of that release');
+
+    # As far as the queued run can see, jammy has not arrived yet.
+    my $parked = "$tmp/apt-race-parked-jammy";
+    rename("$apt_root/dists/jammy", $parked) or die "cannot park dists/jammy: $!\n";
+
+    my $lockfile = "$output/.sbuild-all.publish.nfslock";
+    my $run_lock = "$output/.sbuild-all.ppc64el.nfslock";
+    my $held = XCAT::NFSLock->acquire($lockfile);
+    my $race_log = "$tmp/deb-race.log";
+    my $pid = spawn_apt_consumer(
+        log => $race_log, output => $output, apt_dir => $apt_root, dists => ['noble'],
+        extra => [ '--genesis-release', $arriving, '--publish-lock-wait', '120' ],
+    );
+    unless (wait_for_path($run_lock, 120)) {
+        kill('TERM', $pid);
+        $held->release;
+        reap_spawned($pid);
+        die "the queued run never took its run locks:\n" . read_binary($race_log);
+    }
+    rename($parked, "$apt_root/dists/jammy") or die "cannot restore dists/jammy: $!\n";
+    $held->release;
+    my $status = reap_spawned($pid);
+    my $log = read_binary($race_log);
+
+    like($log, qr/^\s*publish lock acquired:/m,
+        'the queued run gets the publish lock once the other publisher releases it');
+    isnt($status, 0,
+        'a suite that arrived while the run queued is not left indexing a retired release');
+    like($log, qr/--dists omits:.*\bjammy\b/,
+        'the refusal names the suite that arrived after the pre-lock reading');
+    ok(-f "$pool/$published_deb",
+        'the DEB the jammy index names is still in the shared pool');
+    ok(!-e "$pool/$arriving_deb",
+        'the release that would have retired it was not published');
+
+    # Positive control, same hold-queue-release sequence with nothing arriving. Without it the
+    # refusal above could come from the lock handoff rather than from the suite.
+    my $control_output = "$tmp/deb-race-control-output";
+    stage_apt_suites($control_output, "$tmp/deb-race-control-legacy");
+    my $control_log = "$tmp/deb-race-control.log";
+    my $control_held = XCAT::NFSLock->acquire("$control_output/.sbuild-all.publish.nfslock");
+    my $control_pid = spawn_apt_consumer(
+        log => $control_log, output => $control_output, apt_dir => $apt_root,
+        dists => [qw(jammy noble)],
+        extra => [ '--genesis-release', $arriving, '--publish-lock-wait', '120' ],
+    );
+    unless (wait_for_path("$control_output/.sbuild-all.ppc64el.nfslock", 120)) {
+        kill('TERM', $control_pid);
+        $control_held->release;
+        reap_spawned($control_pid);
+        die "the control run never took its run locks:\n" . read_binary($control_log);
+    }
+    $control_held->release;
+    my $control_status = reap_spawned($control_pid);
+    is($control_status, 0,
+        'the same queue-then-lock sequence publishes when no suite arrives')
+        or diag read_binary($control_log);
+    ok(-f "$pool/$arriving_deb",
+        'the control run publishes the arriving release into the shared pool');
 }
 
 sub test_activation_helper {
