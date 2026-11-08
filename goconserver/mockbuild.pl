@@ -399,8 +399,7 @@ system("mock -r " . sh_quote($build_cfg) . $mock_uniqueext_opt .
 # xcat-dep-build-el10-x86_64 build 143 failed there and took the EL family with it. The
 # directories are recreated rather than the scrub narrowed, because mock knows the order to
 # unmount this build's tree in and removing it by hand is what propagates an unmount to the host.
-foreach my $cache (qw(dnf_cache root_cache yum_cache)) {
-    my $dir = "/var/cache/mock/$build_cfg-bootstrap/$cache";
+foreach my $dir (MockBuildUtils::mock_bootstrap_cache_dirs($build_cfg)) {
     make_path($dir) unless -d $dir;
 }
 
