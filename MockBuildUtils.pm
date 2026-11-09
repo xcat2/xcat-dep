@@ -17,7 +17,7 @@ our @EXPORT_OK = qw(
     install_deps_packages install_deps_command missing_perl_modules
     sh_quote print_step
     version_matches required_pkgs skipped_builder carry_over_rpms rpm_name rpm_arch rpm_source_rpm
-    source_package rpm_digests_ok
+    source_package rpm_digests_ok mock_bootstrap_cache_dirs
     have_rpm read_manifest
     derive_target_from_repo_path verify_repo_packages verify_repo_signature verify_rpm_signatures
     parse_evr evr_cmp evr_constraint_ok parse_pin rpmkeys_checksig_problem
@@ -120,6 +120,27 @@ sub goconserver_needs_pinned_go {
 # the target chroot. The host is EL10 and its rpm writes a zstd payload, but rpm gained zstd in
 # 4.14: Leap 42.3 ships 4.11 and reports such a payload as "cpio: Bad magic". xz is readable by
 # every rpm these targets ship, and is what the openSUSE core packages already use.
+#-------------------------------------------------------------------------------
+
+=head3 mock_bootstrap_cache_dirs
+
+    Descriptions: the bootstrap cache directories mock binds into the NEXT package's build.
+                  mock --scrub=bootstrap removes them and does not put them back.
+    Arguments: $cfg  -- the mock configuration name
+               $root -- the cache root. Defaults to XCAT_MOCK_CACHE_ROOT, then
+                        /var/cache/mock. A test runs the builder in a user namespace that
+                        cannot write the host cache, so it points this at its own directory.
+    Returns: the three directory paths, in a stable order
+
+=cut
+
+#-------------------------------------------------------------------------------
+sub mock_bootstrap_cache_dirs {
+    my ($cfg, $root) = @_;
+    $root = $ENV{XCAT_MOCK_CACHE_ROOT} || '/var/cache/mock' unless defined $root and length $root;
+    return map { "$root/$cfg-bootstrap/$_" } qw(dnf_cache root_cache yum_cache);
+}
+
 sub host_build_payload_compressor {
     my ($target) = @_;
     return undef if !defined($target) || $target eq '';

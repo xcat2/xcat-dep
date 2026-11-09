@@ -388,6 +388,21 @@ for my $log (qw(build.log root.log state.log)) {
 system("mock -r " . sh_quote($build_cfg) . $mock_uniqueext_opt .
        " --scrub=chroot --scrub=bootstrap >" . sh_quote("$log_dir/mock-scrub.log") . " 2>&1");
 
+# --scrub=bootstrap removes the SHARED /var/cache/mock/<cfg>-bootstrap cache as well as this
+# build's own bootstrap tree, and mock does not put it back. The next package in the run binds
+# that cache into its bootstrap and fails before it compiles anything:
+#
+#   /bin/mount -n -o bind /var/cache/mock/alma+epel-10-x86_64-bootstrap/yum_cache \
+#       /var/lib/mock/alma+epel-10-x86_64-bootstrap-<uniqueext>/root/var/cache/yum
+#
+# mock exits 32 and the step fails. conserver-xcat builds immediately after goconserver, so
+# xcat-dep-build-el10-x86_64 build 143 failed there and took the EL family with it. The
+# directories are recreated rather than the scrub narrowed, because mock knows the order to
+# unmount this build's tree in and removing it by hand is what propagates an unmount to the host.
+foreach my $dir (MockBuildUtils::mock_bootstrap_cache_dirs($build_cfg)) {
+    make_path($dir) unless -d $dir;
+}
+
 print_step("Completed");
 print "Results in: $result_dir\n";
 exit 0;
