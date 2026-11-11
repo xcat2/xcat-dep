@@ -66,6 +66,12 @@
       "needs": [
         "procenv"
       ],
+      "patches": [
+        {
+          "path": "ksh/ksh-1.0.8-openeuler-racy-timing-checks.patch",
+          "sha256": "7f2a54d2bd6d7ea6dcbcf976b7c64fd1911db0b44a761e16fea58725593fc491"
+        }
+      ],
       "build_uid": 1000
     },
     {
