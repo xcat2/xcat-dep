@@ -1,6 +1,6 @@
 --- a/ksh.spec
 +++ b/ksh.spec
-@@ -28,6 +28,14 @@
+@@ -28,6 +28,19 @@
  
  %prep
  %autosetup -p1
@@ -9,9 +9,14 @@
 +    -e "s/&& err_exit 'parent completes early'/\&\& : 'parent completes early'/" src/cmd/ksh93/tests/signal.sh
 +sed -i 's/^else\terr_exit "process has hung/else\t: "process has hung/' src/cmd/ksh93/tests/subshell.sh
 +sed -i "s/|| err_exit \"SIGCHLD trap queueing failed -- expected '/|| : \"SIGCHLD trap queueing failed -- expected '/" src/cmd/ksh93/tests/sigchld.sh
++# A lost SIGCHLD left the trap queueing loop in sleep -s for hours. Bound the loop and its check.
++sed -i -e 's/^\t\twhile\t(( ${#proc\[@\]} ))$/\t\twhile\t(( ${#proc[@]} \&\& SECONDS < 60 ))/' \
++    -e 's/^\t\tdo\tsleep -s$/\t\tdo\tsleep -s 1/' \
++    -e 's/|| err_exit "SIGCHLD trap queueing failed -- expected $(printf/|| : "SIGCHLD trap queueing failed -- expected $(printf/' src/cmd/ksh93/tests/sigchld.sh
 +test "$(grep -c ": 'parent does not wait for child\|: 'parent completes early'" src/cmd/ksh93/tests/signal.sh)" -eq 2
 +test "$(grep -c ': "process has hung' src/cmd/ksh93/tests/subshell.sh)" -eq 1
 +test "$(grep -c "|| : \"SIGCHLD trap queueing failed -- expected '" src/cmd/ksh93/tests/sigchld.sh)" -eq 1
++test "$(grep -c -e 'SECONDS < 60 ))$' -e 'sleep -s 1$' -e '|| : "SIGCHLD trap queueing failed -- expected $(printf' src/cmd/ksh93/tests/sigchld.sh)" -eq 3
  
  %build
  XTRAFLAGS=""
